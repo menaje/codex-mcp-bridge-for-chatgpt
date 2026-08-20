@@ -13,6 +13,8 @@ describe("config policy", () => {
     expect(config.allowedRoots).toEqual([realpathSync(process.cwd())]);
     expect(config.defaultSandbox).toBe("read-only");
     expect(config.allowWorkspaceWrite).toBe(false);
+    expect(config.defaultApprovalPolicy).toBe("on-request");
+    expect(config.maxConcurrentJobs).toBe(2);
   });
 
   it("requires token or explicit local no-auth", () => {
@@ -54,7 +56,12 @@ describe("config policy", () => {
 
     expect(enforceSandbox(config, "read-only")).toBe("read-only");
     expect(() => enforceSandbox(config, "workspace-write")).toThrow(/ALLOW_WRITE/);
-    expect(() => enforceSandbox(config, "danger-full-access")).toThrow(/ALLOW_DANGER/);
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access"
+      })
+    ).toThrow(/Invalid sandbox/);
   });
 
   it("finds sensitive-looking files before delegation", () => {
@@ -63,6 +70,13 @@ describe("config policy", () => {
     writeFileSync(path.join(root, "server.pem"), "secret\n");
 
     expect(findSensitiveFiles(root)).toEqual([path.join(root, ".env"), path.join(root, "server.pem")]);
+  });
+
+  it("allows a documented .env.example template", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(path.join(root, ".env.example"), "TOKEN=replace-me\n");
+
+    expect(findSensitiveFiles(root)).toEqual([]);
   });
 
   it("blocks sensitive-looking symlink names before delegation", () => {

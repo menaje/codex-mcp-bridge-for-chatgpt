@@ -9,7 +9,7 @@ const server = createHttpServer(config, upstream);
 
 server.listen(config.port, config.host, () => {
   const authHint = config.token && !config.noAuth ? "Bearer token required" : "no auth";
-  console.log(`codex-gpt-bridge listening on http://${config.host}:${config.port}/mcp (${authHint})`);
+  console.log(`codex-mcp-bridge listening on http://${config.host}:${config.port}/mcp (${authHint})`);
   console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
 });
 

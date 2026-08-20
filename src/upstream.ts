@@ -24,20 +24,29 @@ export class CodexStdioUpstream implements CodexUpstream {
 
   async callTool(name: string, args: Record<string, unknown>, timeoutMs: number): Promise<ToolResult> {
     const client = await this.getClient();
-    return client.callTool(
-      {
-        name,
-        arguments: args
-      },
-      undefined,
-      {
-        timeout: timeoutMs,
-        resetTimeoutOnProgress: true
-      }
-    ) as Promise<ToolResult>;
+    try {
+      return (await client.callTool(
+        {
+          name,
+          arguments: args
+        },
+        undefined,
+        {
+          timeout: timeoutMs,
+          resetTimeoutOnProgress: true
+        }
+      )) as ToolResult;
+    } catch (error) {
+      await this.reset();
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
+    await this.reset();
+  }
+
+  private async reset(): Promise<void> {
     await this.client?.close();
     await this.transport?.close();
     this.client = undefined;
@@ -52,8 +61,13 @@ export class CodexStdioUpstream implements CodexUpstream {
     if (!this.connecting) {
       this.connecting = this.connect();
     }
-    this.client = await this.connecting;
-    return this.client;
+    try {
+      this.client = await this.connecting;
+      return this.client;
+    } catch (error) {
+      await this.reset();
+      throw error;
+    }
   }
 
   private async connect(): Promise<Client> {
@@ -63,12 +77,14 @@ export class CodexStdioUpstream implements CodexUpstream {
       stderr: "pipe"
     });
     transport.stderr?.on("data", (chunk) => {
-      process.stderr.write(`[codex-mcp] ${chunk.toString()}`);
+      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+        process.stderr.write(`[codex-mcp] ${chunk.toString()}`);
+      }
     });
 
     const client = new Client(
       {
-        name: "codex-gpt-bridge",
+        name: "codex-mcp-bridge",
         version: "0.1.0"
       },
       {

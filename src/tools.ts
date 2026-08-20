@@ -15,6 +15,7 @@ type CodexJob = {
   updatedAt: number;
   cwd?: string;
   sandbox?: SandboxMode;
+  activeKey: string;
   status: CodexJobStatus;
   result?: ToolResult;
   error?: string;
@@ -24,11 +25,19 @@ type CodexJob = {
 export class CodexJobRegistry {
   private readonly jobs = new Map<string, CodexJob>();
 
+  constructor(
+    private readonly maxConcurrentJobs = 2,
+    private readonly ttlMs = 6 * 60 * 60 * 1000,
+    private readonly maxJobs = 1000
+  ) {}
+
   get size(): number {
+    this.prune();
     return this.jobs.size;
   }
 
   get(jobId: string): CodexJob | undefined {
+    this.prune();
     return this.jobs.get(jobId);
   }
 
@@ -37,6 +46,14 @@ export class CodexJobRegistry {
     run: () => Promise<ToolResult>,
     onComplete?: (result: ToolResult) => void
   ): CodexJob {
+    this.prune();
+    const running = [...this.jobs.values()].filter((job) => job.status === "running");
+    if (running.length >= this.maxConcurrentJobs) {
+      throw new Error(`Too many Codex jobs are running. The configured limit is ${this.maxConcurrentJobs}.`);
+    }
+    if (running.some((job) => job.activeKey === input.activeKey)) {
+      throw new Error("A Codex job is already running for this working directory.");
+    }
     const now = Date.now();
     const job: CodexJob = {
       ...input,
@@ -65,11 +82,15 @@ export class CodexJobRegistry {
   }
 
   private prune(): void {
-    if (this.jobs.size <= 1000) {
-      return;
+    const cutoff = Date.now() - this.ttlMs;
+    for (const [jobId, job] of this.jobs) {
+      if (job.status !== "running" && job.updatedAt < cutoff) {
+        this.jobs.delete(jobId);
+      }
     }
+    if (this.jobs.size <= this.maxJobs) return;
     const sorted = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of sorted.slice(0, this.jobs.size - 1000)) {
+    for (const job of sorted.filter((job) => job.status !== "running").slice(0, this.jobs.size - this.maxJobs)) {
       this.jobs.delete(job.jobId);
     }
   }
@@ -99,17 +120,18 @@ export function registerBridgeTools(
     async () => {
       const tools = await upstream.listTools();
       return textResult({
-        bridge: "codex-gpt-bridge",
+        bridge: "codex-mcp-bridge",
         auth: config.token && !config.noAuth ? "bearer-token" : "none",
         allowedRoots: config.allowedRoots,
         defaultSandbox: config.defaultSandbox,
         allowWorkspaceWrite: config.allowWorkspaceWrite,
-        allowDangerFullAccess: config.allowDangerFullAccess,
         defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
         defaultApprovalPolicy: config.defaultApprovalPolicy,
         fastReturnMs: config.fastReturnMs,
         trackedSessions: sessions.size(),
         trackedJobs: jobs.size,
+        maxConcurrentJobs: config.maxConcurrentJobs,
+        maxPromptChars: config.maxPromptChars,
         upstreamTools: tools
       });
     }
@@ -122,7 +144,11 @@ export function registerBridgeTools(
       description:
         "Run a read-only local Codex inspection in an allowed working directory. The bridge forces Codex read-only and does not permit file modifications. If Codex does not finish before the bridge fast-return deadline, this tool returns a jobId; call codex_job_status with that jobId until it completes.",
       inputSchema: {
-        prompt: z.string().min(1).describe("Read-only inspection or analysis prompt for Codex."),
+        prompt: z
+          .string()
+          .min(1)
+          .max(config.maxPromptChars)
+          .describe("Read-only inspection or analysis prompt for Codex."),
         cwd: z
           .string()
           .min(1)
@@ -167,7 +193,8 @@ export function registerBridgeTools(
               threadId,
               cwd,
               sandbox,
-              createdAt: Date.now()
+              createdAt: Date.now(),
+              lastUsedAt: Date.now()
             });
           }
         }
@@ -182,7 +209,7 @@ export function registerBridgeTools(
       description:
         "Start a local Codex session in an allowed working directory using the bridge sandbox policy. Prefer codex_read for read-only project inspections. If Codex does not finish before the bridge fast-return deadline, this tool returns a jobId; call codex_job_status with that jobId until it completes.",
       inputSchema: {
-        prompt: z.string().min(1).describe("Task prompt for Codex."),
+        prompt: z.string().min(1).max(config.maxPromptChars).describe("Task prompt for Codex."),
         cwd: z
           .string()
           .min(1)
@@ -203,7 +230,6 @@ export function registerBridgeTools(
       const cwd = resolveAllowedCwd(args.cwd, config.allowedRoots);
       enforceSensitiveFilePreflight(config, cwd, "run Codex");
       const sandbox = enforceSandbox(config, args.sandbox as SandboxMode | undefined);
-      rejectDangerSandbox(sandbox);
       const payload: Record<string, unknown> = {
         prompt: args.prompt,
         cwd,
@@ -224,7 +250,8 @@ export function registerBridgeTools(
               threadId,
               cwd,
               sandbox,
-              createdAt: Date.now()
+              createdAt: Date.now(),
+              lastUsedAt: Date.now()
             });
           }
         }
@@ -240,7 +267,7 @@ export function registerBridgeTools(
         "Continue a Codex session that was first created through this bridge. If Codex does not finish before the bridge fast-return deadline, this tool returns a jobId; call codex_job_status with that jobId until it completes.",
       inputSchema: {
         threadId: z.string().min(1).describe("Thread id returned by codex_read or codex_run."),
-        prompt: z.string().min(1).describe("Follow-up prompt for the same Codex session."),
+        prompt: z.string().min(1).max(config.maxPromptChars).describe("Follow-up prompt for the same Codex session."),
         timeoutMs: z
           .number()
           .int()
@@ -271,7 +298,8 @@ export function registerBridgeTools(
               prompt: args.prompt
             },
             args.timeoutMs || config.upstreamTimeoutMs
-          )
+          ),
+        onComplete: () => sessions.touch(args.threadId)
       });
     }
   );
@@ -331,6 +359,7 @@ async function runCodexWithFastReturn(input: {
   operation: "codex_read" | "codex_run" | "codex_reply";
   cwd: string;
   sandbox: SandboxMode;
+  activeKey?: string;
   run: () => Promise<ToolResult>;
   onComplete?: (result: ToolResult) => void;
 }): Promise<ToolResult> {
@@ -338,7 +367,8 @@ async function runCodexWithFastReturn(input: {
     {
       operation: input.operation,
       cwd: input.cwd,
-      sandbox: input.sandbox
+      sandbox: input.sandbox,
+      activeKey: input.activeKey || `cwd:${input.cwd}`
     },
     input.run,
     input.onComplete
@@ -374,26 +404,19 @@ function enforceSensitiveFilePreflight(config: BridgeConfig, cwd: string, operat
   const sensitiveFiles = findSensitiveFiles(cwd);
   if (sensitiveFiles.length > 0) {
     throw new Error(
-      `Refusing to ${operation} because sensitive-looking files were found: ${sensitiveFiles.join(", ")}. Move them outside the allowed root or set CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
+      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found under the allowed root. Move them outside the root or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
     );
-  }
-}
-
-function rejectDangerSandbox(sandbox: SandboxMode): void {
-  if (sandbox === "danger-full-access") {
-    throw new Error("danger-full-access is not exposed through ChatGPT bridge tools.");
   }
 }
 
 function codexToolAnnotations(config: BridgeConfig) {
   const readOnly =
     config.defaultSandbox === "read-only" &&
-    !config.allowWorkspaceWrite &&
-    !config.allowDangerFullAccess;
+    !config.allowWorkspaceWrite;
 
   return {
     readOnlyHint: readOnly,
-    destructiveHint: config.allowWorkspaceWrite || config.allowDangerFullAccess,
+    destructiveHint: config.allowWorkspaceWrite,
     idempotentHint: false,
     openWorldHint: false
   };

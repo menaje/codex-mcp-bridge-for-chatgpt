@@ -212,29 +212,15 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("rejects danger-full-access even when configured as the bridge default", async () => {
+  it("rejects danger-full-access as a bridge configuration", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_ALLOW_DANGER: "1",
-      CODEX_GPT_BRIDGE_DEFAULT_SANDBOX: "danger-full-access"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo"
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain("danger-full-access is not exposed");
-    expect(upstream.calls).toHaveLength(0);
-
-    await close();
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_ROOTS: root,
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access"
+      })
+    ).toThrow(/Invalid sandbox/);
   });
 
   it("sanitizes codex_run before forwarding to upstream", async () => {
@@ -262,7 +248,7 @@ describe("bridge tools", () => {
           prompt: "summarize this repo",
           cwd: realpathSync(root),
           sandbox: "read-only",
-        "approval-policy": "never"
+        "approval-policy": "on-request"
       }
     });
 
@@ -295,7 +281,7 @@ describe("bridge tools", () => {
         prompt: "summarize this repo",
         cwd: realpathSync(root),
         sandbox: "read-only",
-        "approval-policy": "never"
+        "approval-policy": "on-request"
       }
     });
 
@@ -471,7 +457,7 @@ describe("bridge tools", () => {
         prompt: "summarize this repo",
         cwd: realpathSync(root),
         sandbox: "read-only",
-        "approval-policy": "never"
+        "approval-policy": "on-request"
       }
     });
 
@@ -662,6 +648,51 @@ describe("bridge tools", () => {
     expect(result.isError).toBe(true);
     expect(upstream.calls).toHaveLength(1);
 
+    await close();
+  });
+
+  it("rejects prompts above the configured size limit", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const upstream = new FakeUpstream();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root,
+      CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS: "5"
+    });
+    const { client, close } = await connectTestClient(config, upstream);
+
+    const result = await client.callTool({
+      name: "codex_read",
+      arguments: { prompt: "123456" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(upstream.calls).toHaveLength(0);
+    await close();
+  });
+
+  it("limits concurrent jobs for the same allowed root", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const upstream = new DeferredUpstream();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root,
+      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
+    });
+    const { client, close } = await connectTestClient(config, upstream);
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_read", arguments: { prompt: "slow" } })
+    );
+    expect(first.status).toBe("running");
+
+    const second = await client.callTool({ name: "codex_read", arguments: { prompt: "second" } });
+    expect(second.isError).toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+
+    upstream.resolveNext();
+    await waitForCompletedJob(client, first.jobId);
     await close();
   });
 });

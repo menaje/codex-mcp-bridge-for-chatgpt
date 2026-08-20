@@ -1,8 +1,8 @@
 import path from "node:path";
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 
-export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
-export type ApprovalPolicy = "untrusted" | "on-request" | "never";
+export type SandboxMode = "read-only" | "workspace-write";
+export type ApprovalPolicy = "untrusted" | "on-request";
 
 export type BridgeConfig = {
   host: string;
@@ -14,42 +14,45 @@ export type BridgeConfig = {
   allowedRoots: string[];
   defaultSandbox: SandboxMode;
   allowWorkspaceWrite: boolean;
-  allowDangerFullAccess: boolean;
   defaultApprovalPolicy: ApprovalPolicy;
   upstreamTimeoutMs: number;
   fastReturnMs: number;
   secretScan: boolean;
+  maxConcurrentJobs: number;
+  maxPromptChars: number;
+  jobTtlMs: number;
 };
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
-  const host = env.CODEX_GPT_BRIDGE_HOST || "127.0.0.1";
-  const port = parsePort(env.CODEX_GPT_BRIDGE_PORT || "8765");
-  const token = normalizeOptional(env.CODEX_GPT_BRIDGE_TOKEN);
-  const noAuth = parseBool(env.CODEX_GPT_BRIDGE_NO_AUTH);
-  const allowedHosts = parseAllowedHosts(env.CODEX_GPT_BRIDGE_ALLOWED_HOSTS);
-  const allowedRoots = parseAllowedRoots(env.CODEX_GPT_BRIDGE_ROOTS || process.cwd());
-  const defaultSandbox = parseSandbox(env.CODEX_GPT_BRIDGE_DEFAULT_SANDBOX || "read-only");
-  const allowWorkspaceWrite = parseBool(env.CODEX_GPT_BRIDGE_ALLOW_WRITE);
-  const allowDangerFullAccess = parseBool(env.CODEX_GPT_BRIDGE_ALLOW_DANGER);
-  const defaultApprovalPolicy = parseApprovalPolicy(env.CODEX_GPT_BRIDGE_APPROVAL_POLICY || "never");
-  const upstreamTimeoutMs = parsePositiveInt(env.CODEX_GPT_BRIDGE_UPSTREAM_TIMEOUT_MS || "180000");
-  const fastReturnMs = parsePositiveInt(env.CODEX_GPT_BRIDGE_FAST_RETURN_MS || "25000");
-  const secretScan = !parseBool(env.CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN);
+  const read = (name: string): string | undefined =>
+    env[`CODEX_MCP_BRIDGE_${name}`] ?? env[`CODEX_GPT_BRIDGE_${name}`];
+  const host = read("HOST") || "127.0.0.1";
+  const port = parsePort(read("PORT") || "8765");
+  const token = normalizeOptional(read("TOKEN"));
+  const noAuth = parseBool(read("NO_AUTH"));
+  const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
+  const allowedRoots = parseAllowedRoots(read("ROOTS") || process.cwd());
+  const defaultSandbox = parseSandbox(read("DEFAULT_SANDBOX") || "read-only");
+  const allowWorkspaceWrite = parseBool(read("ALLOW_WRITE"));
+  const defaultApprovalPolicy = parseApprovalPolicy(read("APPROVAL_POLICY") || "on-request");
+  const upstreamTimeoutMs = parsePositiveInt(read("UPSTREAM_TIMEOUT_MS") || "180000");
+  const fastReturnMs = parsePositiveInt(read("FAST_RETURN_MS") || "25000");
+  const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
+  const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "2");
+  const maxPromptChars = parsePositiveInt(read("MAX_PROMPT_CHARS") || "50000");
+  const jobTtlMs = parsePositiveInt(read("JOB_TTL_MS") || String(6 * 60 * 60 * 1000));
 
   if (!token && !noAuth) {
-    throw new Error("Set CODEX_GPT_BRIDGE_TOKEN, or set CODEX_GPT_BRIDGE_NO_AUTH=1 for local-only development.");
+    throw new Error("Set CODEX_MCP_BRIDGE_TOKEN, or set CODEX_MCP_BRIDGE_NO_AUTH=1 for local-only development.");
   }
   if (noAuth && !LOCAL_HOSTS.has(host)) {
-    throw new Error("CODEX_GPT_BRIDGE_NO_AUTH=1 is allowed only for local host bindings.");
+    throw new Error("CODEX_MCP_BRIDGE_NO_AUTH=1 is allowed only for local host bindings.");
   }
 
   if (defaultSandbox === "workspace-write" && !allowWorkspaceWrite) {
-    throw new Error("Default sandbox workspace-write requires CODEX_GPT_BRIDGE_ALLOW_WRITE=1.");
-  }
-  if (defaultSandbox === "danger-full-access" && !allowDangerFullAccess) {
-    throw new Error("Default sandbox danger-full-access requires CODEX_GPT_BRIDGE_ALLOW_DANGER=1.");
+    throw new Error("Default sandbox workspace-write requires CODEX_MCP_BRIDGE_ALLOW_WRITE=1.");
   }
 
   return {
@@ -58,21 +61,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     token,
     noAuth,
     allowedHosts,
-    codexCommand: env.CODEX_GPT_BRIDGE_CODEX || "codex",
+    codexCommand: read("CODEX") || "codex",
     allowedRoots,
     defaultSandbox,
     allowWorkspaceWrite,
-    allowDangerFullAccess,
     defaultApprovalPolicy,
     upstreamTimeoutMs,
     fastReturnMs,
-    secretScan
+    secretScan,
+    maxConcurrentJobs,
+    maxPromptChars,
+    jobTtlMs
   };
 }
 
 export function requireAllowedCwd(input: string, allowedRoots: string[]): string {
   if (!input || !path.isAbsolute(input)) {
-    throw new Error("cwd must be an absolute path inside CODEX_GPT_BRIDGE_ROOTS.");
+    throw new Error("cwd must be an absolute path inside CODEX_MCP_BRIDGE_ROOTS.");
   }
 
   const cwd = realpathSync(input);
@@ -90,16 +95,13 @@ export function resolveAllowedCwd(input: string | undefined, allowedRoots: strin
   if (allowedRoots.length === 1) {
     return allowedRoots[0];
   }
-  throw new Error("cwd is required when multiple CODEX_GPT_BRIDGE_ROOTS are configured.");
+  throw new Error("cwd is required when multiple CODEX_MCP_BRIDGE_ROOTS are configured.");
 }
 
 export function enforceSandbox(config: BridgeConfig, requested?: SandboxMode): SandboxMode {
   const sandbox = requested || config.defaultSandbox;
   if (sandbox === "workspace-write" && !config.allowWorkspaceWrite) {
-    throw new Error("workspace-write is disabled. Set CODEX_GPT_BRIDGE_ALLOW_WRITE=1 to allow it.");
-  }
-  if (sandbox === "danger-full-access" && !config.allowDangerFullAccess) {
-    throw new Error("danger-full-access is disabled. Set CODEX_GPT_BRIDGE_ALLOW_DANGER=1 to allow it.");
+    throw new Error("workspace-write is disabled. Set CODEX_MCP_BRIDGE_ALLOW_WRITE=1 to allow it.");
   }
   return sandbox;
 }
@@ -141,7 +143,11 @@ export function findSensitiveFiles(root: string, maxFindings = 20): string[] {
       const fullPath = path.join(dir, entry.name);
       const basename = entry.name;
       const lower = basename.toLowerCase();
-      if (deniedBasenames.has(basename) || deniedExtensions.some((ext) => lower.endsWith(ext))) {
+      if (
+        deniedBasenames.has(lower) ||
+        (lower.startsWith(".env.") && lower !== ".env.example") ||
+        deniedExtensions.some((ext) => lower.endsWith(ext))
+      ) {
         findings.push(fullPath);
         continue;
       }
@@ -212,14 +218,14 @@ function parseBool(raw: string | undefined): boolean {
 }
 
 function parseSandbox(raw: string): SandboxMode {
-  if (raw === "read-only" || raw === "workspace-write" || raw === "danger-full-access") {
+  if (raw === "read-only" || raw === "workspace-write") {
     return raw;
   }
   throw new Error(`Invalid sandbox: ${raw}`);
 }
 
 function parseApprovalPolicy(raw: string): ApprovalPolicy {
-  if (raw === "untrusted" || raw === "on-request" || raw === "never") {
+  if (raw === "untrusted" || raw === "on-request") {
     return raw;
   }
   throw new Error(`Invalid approval policy: ${raw}`);

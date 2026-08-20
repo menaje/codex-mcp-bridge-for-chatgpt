@@ -6,6 +6,7 @@ export type TrackedCodexSession = {
   cwd: string;
   sandbox: SandboxMode;
   createdAt: number;
+  lastUsedAt: number;
 };
 
 export class SessionRegistry {
@@ -33,6 +34,13 @@ export class SessionRegistry {
     return this.sessions.get(threadId);
   }
 
+  touch(threadId: string): void {
+    const session = this.get(threadId);
+    if (session) {
+      session.lastUsedAt = Date.now();
+    }
+  }
+
   size(): number {
     this.prune(Date.now());
     return this.sessions.size;
@@ -40,7 +48,7 @@ export class SessionRegistry {
 
   private prune(now: number): void {
     for (const [threadId, session] of this.sessions) {
-      if (now - session.createdAt > this.ttlMs) {
+      if (now - session.lastUsedAt > this.ttlMs) {
         this.sessions.delete(threadId);
       }
     }

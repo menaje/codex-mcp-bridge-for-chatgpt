@@ -1,51 +1,46 @@
 # Security model
 
-This bridge is intentionally smaller than a general remote-control daemon.
+## Trust boundary
 
-## What ChatGPT can do
+The bridge is designed for a single trusted operator connecting ChatGPT to a narrow local repository through OpenAI Secure MCP Tunnel. It binds to loopback and does not create a public ingress endpoint.
 
-- Ask for bridge policy with `bridge_status`.
-- Start a read-only Codex inspection with `codex_read`.
-- Start a Codex MCP session with `codex_run`.
-- Continue that session with `codex_reply`.
-- Check long-running Codex jobs with `codex_job_status`.
+The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, filesystem permissions, and operating-system isolation are separate layers. No one layer replaces the others.
 
-## What ChatGPT cannot do through this bridge
+## Exposed capabilities
 
-- Run raw shell commands directly.
-- Start a new Codex session from a `cwd` outside `CODEX_GPT_BRIDGE_ROOTS`.
-- Continue arbitrary Codex threads that were not first created through this bridge.
-- Continue tracked Codex threads forever; tracked sessions are in memory, capped at 1000 entries, and expire after 6 hours.
-- Change Codex config through an arbitrary `config` object.
-- Start `codex_read` or `codex_run` when common sensitive files are present under `cwd`, unless secret scanning is explicitly disabled.
-- Use `workspace-write` unless the bridge owner explicitly enables it.
-- Request `danger-full-access` as a per-call ChatGPT option.
+- `bridge_status` returns the active policy and upstream tool availability.
+- `codex_read` always starts Codex with the `read-only` sandbox.
+- `codex_run` can use `workspace-write` only when the owner started a write profile.
+- `codex_reply` accepts only a live thread created through this bridge.
+- `codex_job_status` returns a retained asynchronous result.
 
-## Defaults
+The bridge does not expose raw shell, process-control, arbitrary Codex config, `danger-full-access`, or a general Responses API proxy.
 
-- Host: `127.0.0.1`
-- Port: `8765`
-- Allowed root: current working directory
-- Codex sandbox: `read-only`
-- Approval policy: `never`
+## Enforced defaults
 
-## Public tunnel rule
+- Loopback host binding.
+- Real-path allowlist for working directories.
+- Read-only sandbox.
+- `on-request` approval policy.
+- Two concurrent jobs at most.
+- One active job per working directory.
+- 50,000 characters per prompt.
+- Six-hour session and completed-job retention.
+- Common secret-file filename preflight.
+- Upstream stderr disabled unless explicit local debug mode is enabled.
 
-Set `CODEX_GPT_BRIDGE_TOKEN` unless you are doing explicit local-only development with `CODEX_GPT_BRIDGE_NO_AUTH=1`. `NO_AUTH` is rejected on non-local host bindings. For tunnels, keep the bridge bound to `127.0.0.1` and let the tunnel provide the public HTTPS endpoint.
+## Authentication
 
-Bearer-token auth is not a production ChatGPT Apps auth implementation. If your ChatGPT surface requires protected tools, place an OAuth 2.1 / PKCE proxy in front of this bridge.
+Secure Tunnel mode starts a loopback-only HTTP server with no application-level authentication. The OpenAI-managed tunnel and its organization/workspace permissions are the transport boundary. The bridge rejects no-auth mode on non-loopback host bindings.
 
-Prefer OpenAI Secure MCP Tunnel for regular use. It keeps the local MCP server private and uses an outbound-only `tunnel-client` connection to OpenAI. Cloudflare quick tunnel is acceptable only for short read-only smoke tests because the public URL is unauthenticated in the simple ChatGPT `No Auth` setup.
+When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
 
-Store the tunnel runtime API key outside the repository, for example in macOS
-Keychain. If the OpenAI Platform UI does not expose a narrow `Tunnels Read + Use`
-runtime-key permission, treat any broader Admin key as temporary and rotate it
-when a narrower key is available.
+## Remaining risks
 
-## Remaining risk
+- The allowed-root check constrains the starting directory, not every path Codex may attempt to access.
+- Filename scanning detects common secret files, not secret values embedded in ordinary source files.
+- Write mode allows Codex to change files in the workspace and may execute approved commands.
+- Tool results and retained jobs can contain repository content in process memory.
+- A compromised local user account can access the same files and processes.
 
-Any bridge from ChatGPT to a local coding agent can cause local actions if you enable write mode. Keep the allowed roots narrow, inspect Codex output, and prefer read-only until the task truly needs edits.
-
-`CODEX_GPT_BRIDGE_ROOTS` is not OS-level file isolation. It only limits the starting `cwd` accepted by this bridge. For hard read/write isolation, use a sanitized staging copy, a separate OS user/container, or a Codex permission profile that denies sensitive paths.
-
-The built-in sensitive file preflight only blocks obvious filenames and extensions. For high-risk repositories, create a sanitized staging copy before exposing the path to ChatGPT.
+For sensitive code, expose a sanitized staging copy and run the bridge under a separate OS user, container, or VM with explicit filesystem and network policy.

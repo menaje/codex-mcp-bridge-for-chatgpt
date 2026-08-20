@@ -1,4 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -12,12 +13,12 @@ export function createBridgeMcpServer(
   config: BridgeConfig,
   upstream: CodexUpstream,
   sessions = new SessionRegistry(),
-  jobs = new CodexJobRegistry()
+  jobs = new CodexJobRegistry(config.maxConcurrentJobs, config.jobTtlMs)
 ): McpServer {
   const server = new McpServer(
     {
-      name: "codex-gpt-bridge",
-      title: "Codex GPT Bridge",
+      name: "codex-mcp-bridge",
+      title: "Codex MCP Bridge",
       version: "0.1.0"
     },
     {
@@ -35,7 +36,7 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
     host: config.host
   });
   const sessions = new SessionRegistry();
-  const jobs = new CodexJobRegistry();
+  const jobs = new CodexJobRegistry(config.maxConcurrentJobs, config.jobTtlMs);
 
   app.get(
     ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"],
@@ -50,7 +51,7 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
   app.get("/healthz", (_req: Request, res: Response) => {
     res.json({
       ok: true,
-      name: "codex-gpt-bridge"
+      name: "codex-mcp-bridge"
     });
   });
 
@@ -74,7 +75,11 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
-      console.error("MCP request failed:", error);
+      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+        console.error("MCP request failed:", error);
+      } else {
+        console.error("MCP request failed. Set CODEX_MCP_BRIDGE_DEBUG=1 for local diagnostics.");
+      }
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",
@@ -120,5 +125,10 @@ function isAuthorized(header: string | undefined, config: BridgeConfig): boolean
   if (config.noAuth) {
     return true;
   }
-  return header === `Bearer ${config.token}`;
+  if (!header || !config.token) {
+    return false;
+  }
+  const actual = Buffer.from(header);
+  const expected = Buffer.from(`Bearer ${config.token}`);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
