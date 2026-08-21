@@ -7,16 +7,18 @@ ChatGPT
   -> OpenAI Secure MCP Tunnel
   -> codex-mcp-bridge (loopback HTTP)
   -> codex mcp-server (stdio)
-  -> one explicitly allowed repository
+  -> one or more explicitly allowed working roots
 ```
 
-The official Codex MCP server already provides `codex` and `codex-reply`. This bridge intentionally adds only the controls needed for safer daily use from ChatGPT:
+The official Codex MCP server already provides `codex` and `codex-reply`. This bridge exposes a smaller lifecycle-oriented surface for safer daily use from ChatGPT:
 
-- `bridge_status`: inspect the active policy.
-- `codex_read`: force a read-only Codex session.
-- `codex_run`: start a policy-limited read or write session.
-- `codex_reply`: continue only a thread created through this bridge.
-- `codex_job_status`: retrieve a long-running result.
+- `codex_status`: inspect policy, durable sessions, recent jobs, or one long-running job result.
+- `codex_models`: read the current selectable models and supported reasoning efforts from Codex.
+- `codex_settings`: render an interactive card for saved user preferences and current owner limits.
+- `codex_task`: start or continue a policy-limited Codex session.
+
+The settings card uses one additional app-only action, `codex_update_settings`,
+which ChatGPT's model does not need to invoke directly.
 
 ## Security defaults
 
@@ -24,12 +26,14 @@ The official Codex MCP server already provides `codex` and `codex-reply`. This b
 - Allows one current working directory unless roots are explicitly configured.
 - Uses the `read-only` Codex sandbox.
 - Uses the `on-request` approval policy.
-- Never exposes `danger-full-access`.
-- Blocks workspace writes unless the bridge owner starts a write profile.
+- Does not expose `workspace-write` or `danger-full-access` unless the bridge
+  owner explicitly enables those capabilities.
 - Rejects paths outside the configured real-path roots.
 - Refuses repositories containing common secret-file names unless the owner explicitly disables the preflight.
 - Limits prompt size and concurrent Codex jobs.
 - Suppresses upstream Codex stderr unless local debug logging is enabled.
+- Stores user settings in a private local file and revalidates every saved value
+  against owner-enforced capabilities and limits.
 
 These controls are a policy layer, not OS-level isolation. Use a staging copy, container, VM, or separate OS user when hard isolation is required.
 
@@ -82,6 +86,135 @@ npm run bridge:secure -- --root /absolute/path/to/repository --write
 
 Do not leave a write profile running when it is not needed.
 
+For an approval-gated workflow that stays read-only by default but permits an
+explicit `workspace-write` request:
+
+```bash
+npm run bridge:secure -- --root /absolute/path/to/repository --allow-write
+```
+
+To keep `read-only` as the default while making both mutation sandboxes
+available to an authorized MCP caller:
+
+```bash
+npm run bridge:secure -- --root /absolute/path/to/projects --allow-full-access
+```
+
+`--allow-full-access` does not change the initial adaptive/read-only behavior. It adds
+`workspace-write` and `danger-full-access` to `codex_task` so ChatGPT can select
+one for a concrete user-authorized change or build request and makes the
+`always-full` card strategy available.
+
+### Interactive settings card
+
+Ask ChatGPT to **open the MacBook Air Codex Bridge settings**. It calls
+`codex_settings` and renders an inline card where the bridge user can set:
+
+- access strategy: `read-only`, `adaptive`, or `always-full` when the owner has
+  enabled full access;
+- default Codex model and its supported reasoning effort from the live Codex
+  catalog;
+- default working directory inside the owner allowlist;
+- default session behavior (`auto` or `new`) and automatic-resume window;
+- default task inactivity timeout and active-job limit, within owner maxima.
+
+Saved values are authoritative defaults for later calls. `read-only` forces all
+new work to read-only even if a caller asks for more permission. `adaptive`
+keeps the current GPT-selected behavior. `always-full` forces new work to
+`danger-full-access`; an older session with a different sandbox must be replaced
+with a new compatible session.
+
+The card cannot change allowed roots, capability gates, approval policy, tunnel
+credentials, secret scanning, or process-level hard limits. Settings are global
+to this bridge instance—not per ChatGPT account—because the no-auth private
+tunnel connection does not provide an end-user identity to the bridge. They are
+stored at `~/.codex-mcp-bridge/settings.json` with mode `0600` by default.
+
+### ChatGPT plugin permissions and Codex permissions
+
+ChatGPT's plugin settings provide the four host-level choices shown in the UI:
+always confirm, allow read actions, allow low-risk actions, and allow all
+actions. Those choices control whether ChatGPT asks before invoking the MCP
+tool. They do not directly select a Codex sandbox.
+
+In the default `adaptive` strategy, the `sandbox` passed to `codex_task`
+controls the Codex process itself:
+
+- Omitted or `read-only`: inspect without modifying files.
+- `workspace-write`: mutate within Codex's workspace sandbox.
+- `danger-full-access`: unrestricted local filesystem and network access under
+  the current macOS user.
+
+When ChatGPT plugin permissions are the intended outer approval boundary, the
+bridge can use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` to avoid a second Codex
+approval prompt. Use this only with a trusted, private plugin connection. With
+the plugin set to allow all actions, authorized mutation calls can then run
+without another confirmation. With the plugin set to always confirm, ChatGPT
+still asks before the MCP call.
+
+Call `codex_models` before presenting model or reasoning-effort choices. It
+loads the current catalog with `codex debug models`, filters it to selectable
+entries, and caches the result briefly. Model ids and reasoning-effort values
+are intentionally not hard-coded into the MCP schema, so a normal Codex model
+catalog update does not require a bridge or plugin schema update. The last
+successful catalog is also stored privately so a temporary CLI catalog failure
+after a restart can fall back to a validated stale result.
+
+`codex_task` accepts optional exact `model` and `reasoningEffort` values when
+starting a new session. Set the saved defaults in `codex_settings`; the
+`CODEX_MCP_BRIDGE_DEFAULT_MODEL` and
+`CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` variables seed those values before
+the first save. The bridge validates the pair against the
+current catalog and forwards the effort through Codex's
+`model_reasoning_effort` config. Use `sessionMode: new` to change model or
+effort because continued Codex threads keep their original configuration.
+
+## Session lifecycle
+
+`codex_task` consolidates new and follow-up calls:
+
+- `sessionMode: auto` continues the most recently used compatible
+  session, or starts a new one when no compatible recent session exists.
+- `sessionMode: new` always starts with fresh conversation context.
+- `sessionMode: continue` requires an exact `threadId` returned by
+  `codex_status` or an earlier task result.
+
+When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
+
+Auto selection is scoped to the same working directory, sandbox, and any
+requested/default model and effort. It never reuses a workspace-write session
+or danger-full-access session for a read-only call. The auto-resume window defaults to six hours. Exact
+continuation can use an older persisted thread.
+
+Read-only sessions may run concurrently in the same working directory up to
+the saved active-job limit, which cannot exceed
+`CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`. Mutating jobs (`workspace-write` and
+`danger-full-access`) are serialized per working directory, and turns on one
+Codex thread remain serialized. If auto
+mode finds that its most recent compatible read-only thread is busy, the bridge
+starts a new session instead of rejecting the parallel request. A concurrent
+mutating call in the same directory is rejected with a retryable conflict.
+The owner maximum is a bridge-side admission limit, not a guarantee that the
+ChatGPT host, tunnel, local Codex process, or machine can sustain that many
+simultaneous calls. The secure launcher sets the tunnel's active MCP request and
+control-plane buffer limits to the same value.
+
+An allowed root may contain multiple repositories. Pass the exact repository or
+worktree path as `cwd`; mutating jobs in different directories can run in
+parallel. Git worktree creation and task partitioning remain ordinary
+instructions for ChatGPT/Codex to decide for each job rather than a separate MCP
+management tool.
+
+Session metadata is stored at `~/.codex-mcp-bridge/sessions.json` by default so
+the bridge can resume after a restart. The file contains only thread id, cwd,
+sandbox, model/effort, and timestamps; prompts and results are not written to
+it. Long-running tasks return a `jobId`; retrieve the result with
+`codex_status({ jobId })`. Job state and results are process-memory only, so a
+bridge restart interrupts active jobs and discards retained job results even
+though session metadata remains available. The bridge retains at most 100 jobs
+and one MiB per result by default; oversized results are replaced by a bounded
+completion notice while their session id remains tracked.
+
 ### macOS Keychain
 
 ```bash
@@ -98,14 +231,28 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CODEX_MCP_BRIDGE_ROOTS` | current directory | Comma-separated absolute allowed roots |
-| `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | `read-only` or `workspace-write` |
+| `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access`; the matching capability must be enabled |
+| `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial card strategy: `read-only`, `adaptive`, or `always-full`; the last value requires full-access capability |
 | `CODEX_MCP_BRIDGE_ALLOW_WRITE` | unset | Must be `1` before write mode is accepted |
-| `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `on-request` or `untrusted` |
-| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `2` | Maximum active Codex calls |
+| `CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS` | unset | Must be `1` before danger-full-access is accepted |
+| `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `untrusted`, `on-request`, or `never` |
+| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional default Codex model id; individual initial calls may override it |
+| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional default effort; must be supported by the selected model |
+| `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Time to cache a successful dynamic Codex model catalog |
+| `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Timeout for refreshing the Codex model catalog |
+| `CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE` | `~/.codex-mcp-bridge/models.json` | Private last-successful model catalog fallback |
+| `CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE` | `~/.codex-mcp-bridge/settings.json` | Private durable settings-card state |
+| `CODEX_MCP_BRIDGE_SESSION_STATE_FILE` | `~/.codex-mcp-bridge/sessions.json` | Private durable session-metadata file |
+| `CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE` | `auto` | Initial card default for omitted session mode: `auto` or `new` |
+| `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` | `21600000` | Initial saved idle window for automatic recent-session reuse; explicit continuation is still allowed |
+| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Owner maximum and initial saved active Codex-call limit |
+| `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy Codex MCP worker pool; cannot exceed the active-job limit |
 | `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Maximum prompt length per tool call |
-| `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` | `180000` | Codex MCP call timeout |
+| `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` | `10800000` | Owner maximum and initial saved Codex MCP inactivity timeout, capped at three hours; progress notifications reset it |
 | `CODEX_MCP_BRIDGE_FAST_RETURN_MS` | `25000` | Delay before returning a job ID |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Completed job retention |
+| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Maximum in-memory running/completed job records |
+| `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Maximum retained serialized result size per job |
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
 

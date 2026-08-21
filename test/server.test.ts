@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createHttpServer } from "../src/server.js";
@@ -68,8 +71,7 @@ describe("http server", () => {
 
     const response = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`);
     expect(response.status).toBe(404);
-    expect(response.headers.get("content-type")).toContain("application/json");
-    expect(await response.json()).toMatchObject({ error: "oauth_metadata_not_configured" });
+    expect(await response.text()).toBe("");
   });
 
   it("requires bearer token on /mcp when configured", async () => {
@@ -108,9 +110,10 @@ describe("http server", () => {
 
     const started = parseToolJson(
       await client.callTool({
-        name: "codex_run",
+        name: "codex_task",
         arguments: {
-          prompt: "slow"
+          prompt: "slow",
+          sessionMode: "new"
         }
       })
     );
@@ -127,10 +130,13 @@ describe("http server", () => {
 });
 
 async function start(env: NodeJS.ProcessEnv, upstream: CodexUpstream = new FakeUpstream()): Promise<string> {
+  const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"));
   const config = loadConfig({
     ...env,
     CODEX_GPT_BRIDGE_HOST: "127.0.0.1",
-    CODEX_GPT_BRIDGE_PORT: "1"
+    CODEX_GPT_BRIDGE_PORT: "1",
+    CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(stateDirectory, "settings.json"),
+    CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(stateDirectory, "sessions.json")
   });
   const server = createHttpServer(config, upstream);
   servers.push(server);
@@ -153,7 +159,7 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const status = parseToolJson(
       await client.callTool({
-        name: "codex_job_status",
+        name: "codex_status",
         arguments: {
           jobId
         }

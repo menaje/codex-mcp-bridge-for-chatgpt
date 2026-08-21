@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { createHttpServer } from "./server.js";
-import { CodexStdioUpstream } from "./upstream.js";
+import { CodexUpstreamPool } from "./upstream.js";
 
 const config = loadConfig();
-const upstream = new CodexStdioUpstream(config.codexCommand);
+const upstream = new CodexUpstreamPool(config.codexCommand, config.upstreamPoolSize);
 const server = createHttpServer(config, upstream);
 
 server.listen(config.port, config.host, () => {

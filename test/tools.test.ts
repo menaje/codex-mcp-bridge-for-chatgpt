@@ -5,28 +5,28 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
+import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import { UserSettingsStore } from "../src/userSettings.js";
 
 class FakeUpstream implements CodexUpstream {
   public calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  public timeouts: Array<number | undefined> = [];
+  private nextThread = 1;
 
   async listTools(): Promise<unknown> {
-    return {
-      tools: [{ name: "codex" }, { name: "codex-reply" }]
-    };
+    return { tools: [{ name: "codex" }, { name: "codex-reply" }] };
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
     this.calls.push({ name, args });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ threadId: "thread-1", name, args })
-        }
-      ]
-    };
+    this.timeouts.push(timeoutMs);
+    const threadId =
+      name === "codex-reply" && typeof args.threadId === "string" ? args.threadId : `thread-${this.nextThread++}`;
+    return fakeCodexResult(threadId);
   }
 
   async close(): Promise<void> {}
@@ -37,672 +37,1071 @@ class DeferredUpstream extends FakeUpstream {
 
   override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     this.calls.push({ name, args });
-    return new Promise<ToolResult>((resolve, reject) => {
-      this.pending.push({ resolve, reject });
-    });
+    return new Promise<ToolResult>((resolve, reject) => this.pending.push({ resolve, reject }));
   }
 
-  resolveNext(result: ToolResult = fakeCodexResult()): void {
+  resolveNext(result: ToolResult = fakeCodexResult("thread-1")): void {
     const pending = this.pending.shift();
-    if (!pending) {
-      throw new Error("No pending upstream call.");
-    }
+    if (!pending) throw new Error("No pending upstream call.");
     pending.resolve(result);
   }
 
   rejectNext(error = new Error("upstream failed")): void {
     const pending = this.pending.shift();
-    if (!pending) {
-      throw new Error("No pending upstream call.");
-    }
+    if (!pending) throw new Error("No pending upstream call.");
     pending.reject(error);
   }
 }
 
+class LargeResultUpstream extends FakeUpstream {
+  override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    return {
+      structuredContent: { threadId: "large-thread", content: "x".repeat(2000) },
+      content: [{ type: "text", text: "x".repeat(2000) }]
+    };
+  }
+}
+
+class FakeModelCatalog implements CodexModelCatalogProvider {
+  public calls: Array<{ refresh?: boolean }> = [];
+
+  async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    return {
+      source: "codex-cli",
+      fetchedAt: "2026-08-21T00:00:00.000Z",
+      cached: this.calls.length > 1,
+      stale: false,
+      models: [
+        model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"]),
+        model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"]),
+        model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"])
+      ]
+    };
+  }
+}
+
 describe("bridge tools", () => {
-  it("advertises read-only annotations when write modes are disabled", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
+  it("publishes four model-facing tools plus one app-only settings action", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
     const tools = await client.listTools();
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "codex_models",
+      "codex_settings",
+      "codex_status",
+      "codex_task",
+      "codex_update_settings"
+    ]);
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
-
-    expect(byName.get("bridge_status")?.annotations).toMatchObject({
+    expect(byName.get("codex_status")?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
+      idempotentHint: true
     });
-    expect(byName.get("codex_read")?.annotations).toMatchObject({
+    expect(byName.get("codex_task")?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
+      idempotentHint: false
     });
-    expect(byName.get("codex_run")?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
+    expect(byName.get("codex_settings")?._meta).toMatchObject({
+      ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
+      "openai/outputTemplate": SETTINGS_CARD_URI
     });
-    expect(byName.get("codex_reply")?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    });
-    expect(byName.get("codex_job_status")?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
+    expect(byName.get("codex_update_settings")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private"
     });
 
     await close();
   });
 
-  it("does not advertise Codex execution tools as read-only when write mode is enabled", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_ALLOW_WRITE: "1",
-      CODEX_GPT_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
+  it("serves the self-contained MCP Apps settings card resource", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
-    const tools = await client.listTools();
-    const codexRun = tools.tools.find((tool) => tool.name === "codex_run");
-
-    expect(codexRun?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      openWorldHint: false
+    const resource = await client.readResource({ uri: SETTINGS_CARD_URI });
+    const contents = resource.contents[0] as {
+      mimeType?: string;
+      text?: string;
+      _meta?: Record<string, any>;
+    };
+    expect(contents.mimeType).toBe("text/html;profile=mcp-app");
+    expect(contents.text).toContain("MacBook Air Codex Bridge 설정");
+    expect(contents.text).toContain('request("tools/call"');
+    expect(contents.text).toContain("codex_update_settings");
+    expect(contents.text).not.toContain("localStorage");
+    expect(contents.text).toContain('id="resume-hours" type="number" min="0.0167" step="any" required');
+    expect(contents.text).toContain('id="timeout-minutes" type="number" min="1" step="any" required');
+    expect(contents.text).toContain('id="concurrency" type="number" min="1" step="1" required');
+    expect(contents.text).toContain("const SETTINGS_REQUEST_TIMEOUT_MS = 90000;");
+    expect(contents.text).toContain("if (result && result.isError)");
+    expect(contents.text).toContain("!elements.form.reportValidity()");
+    expect(contents.text).toContain("Number.isSafeInteger(result)");
+    expect(contents.text).not.toContain("view.settings.defaultReasoningEffort = null");
+    expect(contents._meta).toMatchObject({
+      ui: {
+        csp: { connectDomains: [], resourceDomains: [] },
+        domain: "https://web-sandbox.oaiusercontent.com"
+      },
+      "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+      "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
     });
 
     await close();
   });
 
-  it("reports default cwd when only one root is configured", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
+  it("marks codex_task as write-capable only when write policy is enabled", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const tool = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
 
-    const result = await client.callTool({
-      name: "bridge_status",
-      arguments: {}
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    await close();
+  });
+
+  it("reports bridge policy, durable session policy, and default cwd", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max",
+      CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "120000"
     });
-    const status = JSON.parse((result.content as Array<{ text: string }>)[0]?.text);
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
 
-    expect(status.defaultCwd).toBe(realpathSync(root));
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({
+      defaultCwd: realpathSync(root),
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: "max",
+      upstreamTimeoutMs: 10800000,
+      upstreamPoolSize: 4,
+      maxRetainedJobs: 100,
+      maxJobResultBytes: 1048576,
+      maxConcurrentJobs: 30,
+      concurrencyPolicy: {
+        sameWorkingDirectory: {
+          readOnly: "allowed",
+          workspaceWrite: "serialized",
+          dangerFullAccess: "serialized"
+        },
+        sameThread: "serialized"
+      },
+      sessionPolicy: {
+        persistent: false,
+        autoResumeTtlMs: 120000,
+        selection: "most-recent-compatible"
+      }
+    });
+    expect(status.sessions).toEqual([]);
 
     await close();
   });
 
   it("reports null default cwd when multiple roots are configured", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const other = mkdtempSync(path.join(tmpdir(), "bridge-other-"));
-    const upstream = new FakeUpstream();
+    const first = temporaryRoot();
+    const second = temporaryRoot();
     const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: `${root},${other}`
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
 
-    const result = await client.callTool({
-      name: "bridge_status",
-      arguments: {}
-    });
-    const status = JSON.parse((result.content as Array<{ text: string }>)[0]?.text);
-
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status.defaultCwd).toBeNull();
+    await close();
+  });
+
+  it("returns the dynamic model and effort catalog", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
+
+    const result = parseToolJson(
+      await client.callTool({ name: "codex_models", arguments: { refresh: true } })
+    );
+    expect(result.models.map((entry: { id: string }) => entry.id)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.5"
+    ]);
+    expect(catalog.calls).toEqual([{ refresh: true }]);
 
     await close();
   });
 
-  it("exposes only read-only sandbox in the default read-only profile", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+  it("reads and saves validated defaults through the settings-card tools", async () => {
+    const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const settings = new UserSettingsStore(config);
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
 
-    const tools = await client.listTools();
-    const codexRun = tools.tools.find((tool) => tool.name === "codex_run");
-    const inputSchema = codexRun?.inputSchema as
-      | { properties?: { sandbox?: { enum?: string[] } } }
-      | undefined;
-
-    expect(inputSchema?.properties?.sandbox?.enum).toEqual(["read-only"]);
-
-    await close();
-  });
-
-  it("exposes workspace-write only when write mode is enabled", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_ALLOW_WRITE: "1",
-      CODEX_GPT_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const tools = await client.listTools();
-    const codexRun = tools.tools.find((tool) => tool.name === "codex_run");
-    const inputSchema = codexRun?.inputSchema as
-      | { properties?: { sandbox?: { enum?: string[] } } }
-      | undefined;
-
-    expect(inputSchema?.properties?.sandbox?.enum).toEqual(["read-only", "workspace-write"]);
-
-    await close();
-  });
-
-  it("rejects danger-full-access as a bridge configuration", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_ROOTS: root,
-        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access"
-      })
-    ).toThrow(/Invalid sandbox/);
-  });
-
-  it("sanitizes codex_run before forwarding to upstream", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: realpathSync(root)
+    const opened = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      settings: {
+        revision: 0,
+        accessStrategy: "adaptive",
+        defaultModel: "gpt-5.6-sol",
+        defaultReasoningEffort: "max",
+        defaultCwd: realpathSync(root),
+        defaultSessionMode: "auto",
+        taskTimeoutMs: 10800000,
+        maxConcurrentJobs: 30
+      },
+      capabilities: {
+        availableAccessStrategies: ["read-only", "adaptive", "always-full"],
+        allowedRoots: [realpathSync(root)],
+        maxConcurrentJobs: 30,
+        allowDangerFullAccess: true
       }
     });
 
-    expect((result.content as Array<{ type: string }>)[0]?.type).toBe("text");
-    expect(upstream.calls).toHaveLength(1);
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        accessStrategy: "always-full",
+        defaultModel: "gpt-5.6-terra",
+        defaultReasoningEffort: "high",
+        defaultCwd: root,
+        defaultSessionMode: "new",
+        autoResumeTtlMs: 3600000,
+        taskTimeoutMs: 7200000,
+        maxConcurrentJobs: 12
+      }
+    });
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
+      revision: 1,
+      accessStrategy: "always-full",
+      defaultModel: "gpt-5.6-terra",
+      defaultReasoningEffort: "high",
+      defaultSessionMode: "new",
+      autoResumeTtlMs: 3600000,
+      taskTimeoutMs: 7200000,
+      maxConcurrentJobs: 12
+    });
+
+    await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "use saved defaults", sandbox: "read-only" }
+    });
     expect(upstream.calls[0]).toMatchObject({
       name: "codex",
+      args: {
+        cwd: realpathSync(root),
+        sandbox: "danger-full-access",
+        model: "gpt-5.6-terra",
+        config: { model_reasoning_effort: "high" },
+        "approval-policy": "never"
+      }
+    });
+    expect(upstream.timeouts[0]).toBe(7200000);
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({
+      accessStrategy: "always-full",
+      defaultSandbox: "danger-full-access",
+      defaultSessionMode: "new",
+      upstreamTimeoutMs: 7200000,
+      maxConcurrentJobs: 12,
+      settingsPolicy: { revision: 1, scope: "shared-bridge-instance" }
+    });
+    await close();
+  });
+
+  it("rejects stale settings cards and unsupported saved model/effort pairs", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 0, defaultSessionMode: "new" }
+    });
+    const stale = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 0, accessStrategy: "always-full" }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("Settings changed");
+
+    const unsupported = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        defaultModel: "gpt-5.5",
+        defaultReasoningEffort: "max"
+      }
+    });
+    expect(unsupported.isError).toBe(true);
+    expect(JSON.stringify(unsupported)).toContain("does not support reasoning effort");
+    await close();
+  });
+
+  it("exposes only policy-permitted sandbox values", async () => {
+    const root = temporaryRoot();
+    const readClient = await connectTestClient(configFor(root), new FakeUpstream());
+    let schema = (await readClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
+      ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
+    expect(schema.properties?.sandbox?.enum).toEqual(["read-only"]);
+    await readClient.close();
+
+    const writeClient = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      new FakeUpstream()
+    );
+    schema = (await writeClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
+      ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
+    expect(schema.properties?.sandbox?.enum).toEqual(["read-only", "workspace-write"]);
+    await writeClient.close();
+
+    const fullClient = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+        CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1"
+      }),
+      new FakeUpstream()
+    );
+    schema = (await fullClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
+      ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
+    expect(schema.properties?.sandbox?.enum).toEqual([
+      "read-only",
+      "workspace-write",
+      "danger-full-access"
+    ]);
+    await fullClient.close();
+  });
+
+  it("starts a sanitized read-only session by default", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "inspect", sessionMode: "new" }
+    });
+    expect(upstream.calls).toEqual([
+      {
+        name: "codex",
         args: {
-          prompt: "summarize this repo",
+          prompt: "inspect",
           cwd: realpathSync(root),
           sandbox: "read-only",
-        "approval-policy": "on-request"
+          "approval-policy": "on-request"
+        }
       }
-    });
+    ]);
 
     await close();
   });
 
-  it("forces codex_read to use the read-only sandbox", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+  it("permits an explicit workspace-write session only in an enabled profile", async () => {
+    const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_ALLOW_WRITE: "1",
-      CODEX_GPT_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      upstream
+    );
+
+    await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "implement", sessionMode: "new", sandbox: "workspace-write" }
+    });
+    expect(upstream.calls[0]).toMatchObject({ name: "codex", args: { sandbox: "workspace-write" } });
+
+    await close();
+  });
+
+  it("permits danger-full-access while retaining read-only as the omitted default", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+        CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never"
+      }),
+      upstream
+    );
+
+    await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "full task", sessionMode: "new", sandbox: "danger-full-access" }
+    });
+    expect(upstream.calls[0]).toMatchObject({
+      name: "codex",
+      args: { sandbox: "danger-full-access", "approval-policy": "never" }
+    });
+
+    await client.callTool({ name: "codex_task", arguments: { prompt: "inspect", sessionMode: "new" } });
+    expect(upstream.calls[1]).toMatchObject({ args: { sandbox: "read-only" } });
+    await close();
+  });
+
+  it("uses and validates configured or per-call model settings for new sessions", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
     const { client, close } = await connectTestClient(config, upstream);
 
     await client.callTool({
-      name: "codex_read",
+      name: "codex_task",
+      arguments: { prompt: "default", sessionMode: "new" }
+    });
+    await client.callTool({
+      name: "codex_task",
       arguments: {
-        prompt: "summarize this repo",
-        cwd: realpathSync(root)
+        prompt: "override",
+        sessionMode: "new",
+        model: "gpt-5.6-terra",
+        reasoningEffort: "medium"
       }
     });
-
-    expect(upstream.calls).toHaveLength(1);
     expect(upstream.calls[0]).toMatchObject({
-      name: "codex",
-      args: {
-        prompt: "summarize this repo",
-        cwd: realpathSync(root),
-        sandbox: "read-only",
-        "approval-policy": "on-request"
+      args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+    expect(upstream.calls[1]).toMatchObject({
+      args: { model: "gpt-5.6-terra", config: { model_reasoning_effort: "medium" } }
+    });
+
+    const rejected = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "invalid", sessionMode: "new", model: "gpt-5.5", reasoningEffort: "max" }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("does not support reasoning effort");
+    expect(upstream.calls).toHaveLength(2);
+
+    await close();
+  });
+
+  it("auto mode continues the most recently used compatible session", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    await runTask(client, { prompt: "first", sessionMode: "new" });
+    await runTask(client, { prompt: "second", sessionMode: "new" });
+    await runTask(client, { prompt: "follow up" });
+
+    expect(upstream.calls[2]).toEqual({
+      name: "codex-reply",
+      args: { threadId: "thread-2", prompt: "follow up" }
+    });
+    await close();
+  });
+
+  it("auto mode starts new when cwd, sandbox, or model is incompatible", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`,
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol"
+    });
+    const { client, close } = await connectTestClient(config, upstream);
+
+    await runTask(client, { prompt: "first", sessionMode: "new", cwd: first });
+    await runTask(client, { prompt: "other cwd", cwd: second });
+    await runTask(client, { prompt: "write", cwd: first, sandbox: "workspace-write" });
+    await runTask(client, { prompt: "other model", cwd: first, model: "gpt-5.6-terra" });
+
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex", "codex", "codex"]);
+    await close();
+  });
+
+  it("sessionMode=new always starts fresh even when a compatible session exists", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    await runTask(client, { prompt: "first", sessionMode: "new" });
+    await runTask(client, { prompt: "fresh", sessionMode: "new" });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex"]);
+
+    await close();
+  });
+
+  it("continues an exact tracked thread and rejects unknown or conflicting continuation inputs", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    await runTask(client, { prompt: "first", sessionMode: "new" });
+
+    await runTask(client, {
+      prompt: "continue",
+      sessionMode: "continue",
+      threadId: "thread-1"
+    });
+    expect(upstream.calls[1]).toEqual({
+      name: "codex-reply",
+      args: { threadId: "thread-1", prompt: "continue" }
+    });
+
+    const unknown = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "continue", sessionMode: "continue", threadId: "missing" }
+    });
+    expect(unknown.isError).toBe(true);
+
+    const modelChange = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "switch",
+        sessionMode: "continue",
+        threadId: "thread-1",
+        model: "gpt-5.6-terra"
       }
+    });
+    expect(modelChange.isError).toBe(true);
+    expect(JSON.stringify(modelChange)).toContain("cannot change");
+
+    await close();
+  });
+
+  it("requires an explicit write sandbox when continuing a write thread", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      upstream
+    );
+    await runTask(client, {
+      prompt: "write",
+      sessionMode: "new",
+      sandbox: "workspace-write"
+    });
+
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "more", sessionMode: "continue", threadId: "thread-1" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("requires sandbox='workspace-write'");
+
+    await runTask(client, {
+      prompt: "more",
+      sessionMode: "continue",
+      threadId: "thread-1",
+      sandbox: "workspace-write"
+    });
+    expect(upstream.calls[1]?.name).toBe("codex-reply");
+
+    await close();
+  });
+
+  it("requires an explicit danger sandbox when continuing a full-access thread", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }),
+      upstream
+    );
+    await runTask(client, {
+      prompt: "full task",
+      sessionMode: "new",
+      sandbox: "danger-full-access"
+    });
+
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "more", sessionMode: "continue", threadId: "thread-1" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("requires sandbox='danger-full-access'");
+
+    await runTask(client, {
+      prompt: "more",
+      sessionMode: "continue",
+      threadId: "thread-1",
+      sandbox: "danger-full-access"
+    });
+    expect(upstream.calls[1]?.name).toBe("codex-reply");
+
+    await close();
+  });
+
+  it("returns session summaries from codex_status", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    await runTask(client, { prompt: "first", sessionMode: "new" });
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status.sessions).toHaveLength(1);
+    expect(status.sessions[0]).toMatchObject({
+      threadId: "thread-1",
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      autoResumeEligible: true
     });
 
     await close();
   });
 
-  it("fast-returns slow codex_read jobs with a codex_read operation label", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+  it("fast-returns a slow task and retrieves completion through codex_status", async () => {
+    const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_FAST_RETURN_MS: "5"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
 
     const started = parseToolJson(
       await client.callTool({
-        name: "codex_read",
-        arguments: {
-          prompt: "slow read-only repo inspection"
-        }
+        name: "codex_task",
+        arguments: { prompt: "slow", sessionMode: "new" }
       })
     );
-
-    expect(started).toMatchObject({
-      status: "running",
-      operation: "codex_read"
-    });
-
+    expect(started).toMatchObject({ status: "running", operation: "start" });
     upstream.resolveNext();
-    const completed = await waitForCompletedJob(client, started.jobId);
-    expect(completed).toMatchObject({
-      status: "completed",
-      operation: "codex_read"
-    });
 
-    await close();
-  });
-
-  it("fast-returns slow codex_run jobs and later reports completion", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new DeferredUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_FAST_RETURN_MS: "5"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const started = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "slow repo inspection"
-      }
-    });
-    const running = parseToolJson(started);
-
-    expect(running).toMatchObject({
-      status: "running",
-      operation: "codex_run"
-    });
-    expect(typeof running.jobId).toBe("string");
-    expect(upstream.calls).toHaveLength(1);
-
-    const stillRunning = parseToolJson(
-      await client.callTool({
-        name: "codex_job_status",
-        arguments: {
-          jobId: running.jobId
-        }
-      })
-    );
-    expect(stillRunning.status).toBe("running");
-
-    upstream.resolveNext();
-    const completed = await waitForCompletedJob(client, running.jobId);
-    expect(completed).toMatchObject({
-      status: "completed",
-      operation: "codex_run"
-    });
+    const completed = await waitForJobStatus(client, started.jobId, "completed");
+    expect(completed.operation).toBe("start");
     expect(JSON.stringify(completed.result)).toContain("thread-1");
-
-    await client.callTool({
-      name: "codex_reply",
-      arguments: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-    expect(upstream.calls[1]).toEqual({
-      name: "codex-reply",
-      args: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-
     await close();
   });
 
-  it("reports failed slow codex_run jobs", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+  it("reports a failed slow task through codex_status", async () => {
+    const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_FAST_RETURN_MS: "5"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
     const started = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
+    );
+    upstream.rejectNext(new Error("boom"));
+
+    const failed = await waitForJobStatus(client, started.jobId, "failed");
+    expect(failed.error).toContain("boom");
+    await close();
+  });
+
+  it("bounds retained job results without losing the completed session", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "200" }),
+      new LargeResultUpstream()
+    );
+
+    const result = parseToolJson(
       await client.callTool({
-        name: "codex_run",
-        arguments: {
-          prompt: "slow failing inspection"
-        }
+        name: "codex_task",
+        arguments: { prompt: "large", sessionMode: "new" }
       })
     );
-    upstream.rejectNext(new Error("simulated upstream failure"));
-
-    const failed = await waitForFailedJob(client, started.jobId);
-    expect(failed).toMatchObject({
-      status: "failed",
-      operation: "codex_run",
-      error: "simulated upstream failure"
+    expect(result).toMatchObject({
+      status: "completed",
+      resultOmitted: true,
+      maxRetainedBytes: 200,
+      threadId: "large-thread"
     });
 
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status.sessions[0]).toMatchObject({ threadId: "large-thread" });
+    expect(status.jobs[0]).toMatchObject({ status: "completed", resultOmitted: true });
     await close();
   });
 
-  it("rejects unknown codex job ids", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_job_status",
-      arguments: {
-        jobId: "missing-job"
-      }
-    });
-
-    expect(result.isError).toBe(true);
-
-    await close();
-  });
-
-  it("defaults codex_run cwd to the only allowed root", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo"
-      }
-    });
-
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.calls[0]).toMatchObject({
-      name: "codex",
-      args: {
-        prompt: "summarize this repo",
-        cwd: realpathSync(root),
-        sandbox: "read-only",
-        "approval-policy": "on-request"
-      }
-    });
-
-    await close();
-  });
-
-  it("requires codex_run cwd when multiple roots are configured", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const other = mkdtempSync(path.join(tmpdir(), "bridge-other-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: `${root},${other}`
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo"
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain("cwd is required");
-    expect(upstream.calls).toHaveLength(0);
-
-    await close();
-  });
-
-  it("blocks codex_run outside allowed roots", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const other = mkdtempSync(path.join(tmpdir(), "bridge-other-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: other
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(upstream.calls).toHaveLength(0);
-
-    await close();
-  });
-
-  it("blocks codex_run when sensitive-looking files are present", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: root
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(upstream.calls).toHaveLength(0);
-
-    await close();
-  });
-
-  it("can explicitly disable the sensitive file preflight", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root,
-      CODEX_GPT_BRIDGE_DISABLE_SECRET_SCAN: "1"
-    });
-    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
-    const { client, close } = await connectTestClient(config, upstream);
-
-    await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: root
-      }
-    });
-
-    expect(upstream.calls).toHaveLength(1);
-
-    await close();
-  });
-
-  it("forwards codex_reply only for a tracked thread", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: root
-      }
-    });
-
-    await client.callTool({
-      name: "codex_reply",
-      arguments: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-
-    expect(upstream.calls[1]).toEqual({
-      name: "codex-reply",
-      args: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-
-    await close();
-  });
-
-  it("blocks codex_reply for an unknown thread id", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    const result = await client.callTool({
-      name: "codex_reply",
-      arguments: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(upstream.calls).toHaveLength(0);
-
-    await close();
-  });
-
-  it("reruns the sensitive file preflight before codex_reply", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
-    const config = loadConfig({
-      CODEX_GPT_BRIDGE_NO_AUTH: "1",
-      CODEX_GPT_BRIDGE_ROOTS: root
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-
-    await client.callTool({
-      name: "codex_run",
-      arguments: {
-        prompt: "summarize this repo",
-        cwd: root
-      }
-    });
-    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
-
-    const result = await client.callTool({
-      name: "codex_reply",
-      arguments: {
-        threadId: "thread-1",
-        prompt: "continue"
-      }
-    });
-
-    expect(result.isError).toBe(true);
-    expect(upstream.calls).toHaveLength(1);
-
-    await close();
-  });
-
-  it("rejects prompts above the configured size limit", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const upstream = new FakeUpstream();
+  it("requires cwd for multiple roots and rejects paths outside allowed roots", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const outside = temporaryRoot();
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_ROOTS: root,
-      CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS: "5"
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
 
-    const result = await client.callTool({
-      name: "codex_read",
-      arguments: { prompt: "123456" }
+    const missing = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "inspect", sessionMode: "new" }
     });
+    expect(JSON.stringify(missing)).toContain("cwd is required");
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "inspect", sessionMode: "new", cwd: outside }
+    });
+    expect(JSON.stringify(denied)).toContain("outside allowed roots");
+    await close();
+  });
 
+  it("blocks sensitive files on start and rechecks before continuation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    await runTask(client, { prompt: "first", sessionMode: "new" });
+    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
+
+    const continued = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "continue", sessionMode: "continue", threadId: "thread-1" }
+    });
+    expect(continued.isError).toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("can explicitly disable the sensitive-file preflight", async () => {
+    const root = temporaryRoot();
+    writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN: "1" }),
+      upstream
+    );
+
+    await runTask(client, { prompt: "inspect", sessionMode: "new" });
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("rejects oversized prompts", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS: "5" }),
+      upstream
+    );
+
+    const result = await client.callTool({ name: "codex_task", arguments: { prompt: "123456" } });
     expect(result.isError).toBe(true);
     expect(upstream.calls).toHaveLength(0);
     await close();
   });
 
-  it("limits concurrent jobs for the same allowed root", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+  it("caps per-call inactivity timeouts at three hours", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "inspect", timeoutMs: 10800001 }
+    });
+    expect(result.isError).toBe(true);
+    expect(upstream.calls).toHaveLength(0);
+    await close();
+  });
+
+  it("limits total concurrent jobs", async () => {
+    const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const config = loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_ROOTS: root,
-      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
-      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
+      }),
+      upstream
+    );
 
     const first = parseToolJson(
-      await client.callTool({ name: "codex_read", arguments: { prompt: "slow" } })
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
     );
-    expect(first.status).toBe("running");
-
-    const second = await client.callTool({ name: "codex_read", arguments: { prompt: "second" } });
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second", sessionMode: "new" }
+    });
     expect(second.isError).toBe(true);
     expect(upstream.calls).toHaveLength(1);
-
     upstream.resolveNext();
-    await waitForCompletedJob(client, first.jobId);
+    await waitForJobStatus(client, first.jobId, "completed");
+    await close();
+  });
+
+  it("applies the saved concurrency limit below the owner maximum", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
+      CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
+    });
+    const settings = new UserSettingsStore(config);
+    settings.update({ maxConcurrentJobs: 1 });
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
+    );
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second", sessionMode: "new" }
+    });
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("configured limit is 1");
+    upstream.resolveNext();
+    await waitForJobStatus(client, first.jobId, "completed");
+    await close();
+  });
+
+  it("allows thirty concurrent jobs and rejects the thirty-first by default", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "1" }),
+      upstream
+    );
+
+    const started = await Promise.all(
+      Array.from({ length: 30 }, async (_, index) =>
+        parseToolJson(
+          await client.callTool({
+            name: "codex_task",
+            arguments: { prompt: `parallel-${index + 1}`, sessionMode: "new" }
+          })
+        )
+      )
+    );
+    expect(started.every((job) => job.status === "running")).toBe(true);
+    expect(upstream.calls).toHaveLength(30);
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status.jobs).toHaveLength(30);
+
+    const overflow = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "parallel-31", sessionMode: "new" }
+    });
+    expect(overflow.isError).toBe(true);
+    expect(JSON.stringify(overflow)).toContain("configured limit is 30");
+    expect(upstream.calls).toHaveLength(30);
+
+    for (let index = 0; index < 30; index += 1) {
+      upstream.resolveNext(fakeCodexResult(`thread-${index + 1}`));
+    }
+    await Promise.all(started.map((job) => waitForJobStatus(client, job.jobId, "completed")));
+    await close();
+  });
+
+  it("runs new sessions concurrently in the same working directory", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream
+    );
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "first", sessionMode: "new" } })
+    );
+    const second = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "second", sessionMode: "new" } })
+    );
+
+    expect(first.status).toBe("running");
+    expect(second.status).toBe("running");
+    expect(upstream.calls).toHaveLength(2);
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    upstream.resolveNext(fakeCodexResult("thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
+    await close();
+  });
+
+  it("serializes workspace-write jobs in the same working directory", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream
+    );
+
+    const first = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first write", sessionMode: "new", sandbox: "workspace-write" }
+      })
+    );
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second write", sessionMode: "new", sandbox: "workspace-write" }
+    });
+
+    expect(first.status).toBe("running");
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("mutating Codex job is already running");
+    expect(upstream.calls).toHaveLength(1);
+    upstream.resolveNext(fakeCodexResult("write-thread"));
+    await waitForJobStatus(client, first.jobId, "completed");
+    await close();
+  });
+
+  it("serializes danger-full-access jobs in the same working directory", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream
+    );
+
+    const first = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first full", sessionMode: "new", sandbox: "danger-full-access" }
+      })
+    );
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second full", sessionMode: "new", sandbox: "danger-full-access" }
+    });
+
+    expect(first.status).toBe("running");
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("mutating Codex job is already running");
+    upstream.resolveNext(fakeCodexResult("full-thread"));
+    await waitForJobStatus(client, first.jobId, "completed");
+    await close();
+  });
+
+  it("starts a new auto session when the compatible thread is busy", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const sessions = new SessionRegistry();
+    const now = Date.now();
+    sessions.record({
+      threadId: "thread-1",
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      createdAt: now,
+      lastUsedAt: now
+    });
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream,
+      sessions
+    );
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "continue recent" } })
+    );
+    const second = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "parallel work" } })
+    );
+
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex-reply", "codex"]);
+    expect(second.session).toMatchObject({ action: "start", reason: "compatible-session-busy" });
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    upstream.resolveNext(fakeCodexResult("thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
+    await close();
+  });
+
+  it("serializes concurrent turns on the same Codex thread", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const sessions = new SessionRegistry();
+    const now = Date.now();
+    sessions.record({
+      threadId: "thread-1",
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      createdAt: now,
+      lastUsedAt: now
+    });
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream,
+      sessions
+    );
+
+    const first = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first", sessionMode: "continue", threadId: "thread-1" }
+      })
+    );
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second", sessionMode: "continue", threadId: "thread-1" }
+    });
+
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("already running for this Codex thread");
+    expect(upstream.calls).toHaveLength(1);
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, first.jobId, "completed");
     await close();
   });
 });
 
-async function connectTestClient(config: ReturnType<typeof loadConfig>, upstream: CodexUpstream) {
-  const server = createBridgeMcpServer(config, upstream);
-  const client = new Client({
-    name: "test-client",
-    version: "0.0.0"
+function temporaryRoot(): string {
+  return mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+}
+
+function configFor(root: string, extra: NodeJS.ProcessEnv = {}) {
+  return loadConfig({
+    CODEX_MCP_BRIDGE_NO_AUTH: "1",
+    CODEX_MCP_BRIDGE_ROOTS: root,
+    ...extra
   });
+}
+
+async function connectTestClient(
+  config: ReturnType<typeof loadConfig>,
+  upstream: CodexUpstream,
+  sessions?: SessionRegistry,
+  modelCatalog: CodexModelCatalogProvider = new FakeModelCatalog(),
+  userSettings: UserSettingsStore = new UserSettingsStore(config)
+) {
+  const server = createBridgeMcpServer(
+    config,
+    upstream,
+    sessions,
+    undefined,
+    modelCatalog,
+    userSettings
+  );
+  const client = new Client({ name: "test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return {
@@ -714,14 +1113,24 @@ async function connectTestClient(config: ReturnType<typeof loadConfig>, upstream
   };
 }
 
-function fakeCodexResult(): ToolResult {
+async function runTask(client: Client, arguments_: Record<string, unknown>): Promise<unknown> {
+  return client.callTool({ name: "codex_task", arguments: arguments_ });
+}
+
+function fakeCodexResult(threadId: string): ToolResult {
   return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ threadId: "thread-1", content: "done" })
-      }
-    ]
+    structuredContent: { threadId, content: "done" },
+    content: [{ type: "text", text: JSON.stringify({ threadId, content: "done" }) }]
+  };
+}
+
+function model(id: string, defaultEffort: string, efforts: string[]) {
+  return {
+    id,
+    displayName: id,
+    defaultReasoningEffort: defaultEffort,
+    supportedReasoningEfforts: efforts.map((effort) => ({ effort })),
+    supportedInApi: true
   };
 }
 
@@ -730,27 +1139,12 @@ function parseToolJson(result: unknown): Record<string, any> {
   return JSON.parse(content?.[0]?.text || "{}");
 }
 
-async function waitForCompletedJob(client: Client, jobId: string): Promise<Record<string, any>> {
-  return waitForJobStatus(client, jobId, "completed");
-}
-
-async function waitForFailedJob(client: Client, jobId: string): Promise<Record<string, any>> {
-  return waitForJobStatus(client, jobId, "failed");
-}
-
 async function waitForJobStatus(client: Client, jobId: string, expected: string): Promise<Record<string, any>> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     const status = parseToolJson(
-      await client.callTool({
-        name: "codex_job_status",
-        arguments: {
-          jobId
-        }
-      })
+      await client.callTool({ name: "codex_status", arguments: { jobId } })
     );
-    if (status.status === expected) {
-      return status;
-    }
+    if (status.status === expected) return status;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Timed out waiting for job status ${expected}.`);

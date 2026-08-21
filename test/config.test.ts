@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,9 +12,115 @@ describe("config policy", () => {
 
     expect(config.allowedRoots).toEqual([realpathSync(process.cwd())]);
     expect(config.defaultSandbox).toBe("read-only");
+    expect(config.defaultAccessStrategy).toBe("adaptive");
     expect(config.allowWorkspaceWrite).toBe(false);
+    expect(config.allowDangerFullAccess).toBe(false);
     expect(config.defaultApprovalPolicy).toBe("on-request");
-    expect(config.maxConcurrentJobs).toBe(2);
+    expect(config.maxConcurrentJobs).toBe(30);
+    expect(config.defaultModel).toBeUndefined();
+    expect(config.defaultReasoningEffort).toBeUndefined();
+    expect(config.modelCatalogCacheTtlMs).toBe(600000);
+    expect(config.modelCatalogTimeoutMs).toBe(30000);
+    expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
+    expect(config.settingsStateFile).toMatch(/\.codex-mcp-bridge\/settings\.json$/);
+    expect(config.sessionStateFile).toMatch(/\.codex-mcp-bridge\/sessions\.json$/);
+    expect(config.defaultSessionMode).toBe("auto");
+    expect(config.autoResumeTtlMs).toBe(21600000);
+    expect(config.upstreamTimeoutMs).toBe(10800000);
+    expect(config.upstreamPoolSize).toBe(4);
+    expect(config.maxRetainedJobs).toBe(100);
+    expect(config.maxJobResultBytes).toBe(1048576);
+  });
+
+  it("loads optional default Codex model and reasoning effort values", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max",
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS: "120000",
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS: "15000",
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: "/tmp/codex-mcp-bridge-test-models.json",
+      CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: "/tmp/codex-mcp-bridge-test-settings.json",
+      CODEX_MCP_BRIDGE_SESSION_STATE_FILE: "/tmp/codex-mcp-bridge-test-sessions.json",
+      CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "read-only",
+      CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE: "new",
+      CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "900000",
+      CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "7200000",
+      CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3",
+      CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "50",
+      CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "2000000"
+    });
+
+    expect(config.defaultModel).toBe("gpt-5.6-sol");
+    expect(config.defaultReasoningEffort).toBe("max");
+    expect(config.modelCatalogCacheTtlMs).toBe(120000);
+    expect(config.modelCatalogTimeoutMs).toBe(15000);
+    expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
+    expect(config.settingsStateFile).toBe("/tmp/codex-mcp-bridge-test-settings.json");
+    expect(config.sessionStateFile).toBe("/tmp/codex-mcp-bridge-test-sessions.json");
+    expect(config.defaultAccessStrategy).toBe("read-only");
+    expect(config.defaultSessionMode).toBe("new");
+    expect(config.autoResumeTtlMs).toBe(900000);
+    expect(config.upstreamTimeoutMs).toBe(7200000);
+    expect(config.upstreamPoolSize).toBe(3);
+    expect(config.maxRetainedJobs).toBe(50);
+    expect(config.maxJobResultBytes).toBe(2000000);
+  });
+
+  it("requires a default model when a default reasoning effort is configured", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "high"
+      })
+    ).toThrow(/requires CODEX_MCP_BRIDGE_DEFAULT_MODEL/);
+  });
+
+  it("requires an absolute session state file", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_SESSION_STATE_FILE: "relative/sessions.json"
+      })
+    ).toThrow(/absolute path/);
+  });
+
+  it("requires an absolute settings state file", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: "relative/settings.json"
+      })
+    ).toThrow(/absolute path/);
+  });
+
+  it("caps the configured Codex inactivity timeout at three hours", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "10800001"
+      })
+    ).toThrow(/cannot exceed 10800000/);
+  });
+
+  it("does not allow more upstream workers than active jobs", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
+        CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3"
+      })
+    ).toThrow(/UPSTREAM_POOL_SIZE/);
+  });
+
+  it("retains at least enough job records for every active job", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "30",
+        CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "20"
+      })
+    ).toThrow(/MAX_RETAINED_JOBS/);
   });
 
   it("requires token or explicit local no-auth", () => {
@@ -56,35 +162,80 @@ describe("config policy", () => {
 
     expect(enforceSandbox(config, "read-only")).toBe("read-only");
     expect(() => enforceSandbox(config, "workspace-write")).toThrow(/ALLOW_WRITE/);
+    expect(() => enforceSandbox(config, "danger-full-access")).toThrow(/ALLOW_DANGER_FULL_ACCESS/);
     expect(() =>
       loadConfig({
         CODEX_MCP_BRIDGE_NO_AUTH: "1",
         CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access"
       })
-    ).toThrow(/Invalid sandbox/);
+    ).toThrow(/ALLOW_DANGER_FULL_ACCESS/);
+
+    const fullAccess = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never"
+    });
+    expect(enforceSandbox(fullAccess, "danger-full-access")).toBe("danger-full-access");
+    expect(fullAccess.defaultSandbox).toBe("read-only");
+    expect(fullAccess.defaultApprovalPolicy).toBe("never");
   });
 
-  it("finds sensitive-looking files before delegation", () => {
+  it("allows an always-full default strategy only when the owner capability is enabled", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "always-full"
+      })
+    ).toThrow(/ALLOW_DANGER_FULL_ACCESS/);
+
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "always-full"
+    });
+    expect(config.defaultAccessStrategy).toBe("always-full");
+  });
+
+  it("finds sensitive-looking files before delegation", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
     writeFileSync(path.join(root, "server.pem"), "secret\n");
 
-    expect(findSensitiveFiles(root)).toEqual([path.join(root, ".env"), path.join(root, "server.pem")]);
+    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env"), path.join(root, "server.pem")]);
   });
 
-  it("allows a documented .env.example template", () => {
+  it("allows a documented .env.example template", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     writeFileSync(path.join(root, ".env.example"), "TOKEN=replace-me\n");
 
-    expect(findSensitiveFiles(root)).toEqual([]);
+    expect(await findSensitiveFiles(root)).toEqual([]);
   });
 
-  it("blocks sensitive-looking symlink names before delegation", () => {
+  it("fails closed when the working directory itself cannot be scanned", async () => {
+    const rootFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-root-")), "not-a-directory");
+    writeFileSync(rootFile, "plain file\n");
+
+    await expect(findSensitiveFiles(rootFile)).rejects.toThrow(/Could not scan/);
+  });
+
+  it("ignores generated test and build directories", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const vscodeTest = path.join(root, ".vscode-test", "runtime");
+    const swiftBuild = path.join(root, ".build", "checkouts", "fixture");
+    mkdirSync(vscodeTest, { recursive: true });
+    mkdirSync(swiftBuild, { recursive: true });
+    writeFileSync(path.join(vscodeTest, ".npmrc"), "registry=https://registry.npmjs.org\n");
+    writeFileSync(path.join(swiftBuild, "test-pubkey.pem"), "public test fixture\n");
+
+    expect(await findSensitiveFiles(root)).toEqual([]);
+  });
+
+  it("blocks sensitive-looking symlink names before delegation", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const target = path.join(root, "target");
     writeFileSync(target, "TOKEN=secret\n");
     symlinkSync(target, path.join(root, ".env"));
 
-    expect(findSensitiveFiles(root)).toEqual([path.join(root, ".env")]);
+    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env")]);
   });
 });

@@ -56,7 +56,11 @@ function ensurePrerequisites() {
 }
 
 function ensureBuilt() {
-  if (args.noBuild) return;
+  const cliPath = resolve(repoRoot, "dist/cli.js");
+  if (args.noBuild && existsSync(cliPath)) return;
+  if (args.noBuild) {
+    console.log("dist/cli.js is missing; building once before startup.");
+  }
   const result = spawnSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error("Build failed. Run npm run build for details.");
@@ -104,8 +108,27 @@ async function startSecureTunnel() {
     throw new Error("tunnel-client doctor failed. Fix the tunnel or API-key setup first.");
   }
 
-  spawnChild(tunnelClient, ["run", "--profile", profile]);
+  const mcpConcurrency =
+    process.env.MCP_MAX_CONCURRENT_REQUESTS ||
+    process.env.CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS ||
+    "30";
+  const controlPlaneInflight = process.env.CONTROL_PLANE_MAX_INFLIGHT_REQUESTS || mcpConcurrency;
+  const logLevel = process.env.LOG_LEVEL || "warn";
+  spawnChild(tunnelClient, [
+    "run",
+    "--profile",
+    profile,
+    "--mcp.max-concurrent-requests",
+    mcpConcurrency,
+    "--control-plane.max-inflight",
+    controlPlaneInflight,
+    "--log.level",
+    logLevel
+  ]);
   console.log(`Secure MCP Tunnel is running with profile ${profile}.`);
+  console.log(
+    `Tunnel limits: ${mcpConcurrency} active MCP requests, ${controlPlaneInflight} buffered control-plane requests.`
+  );
   console.log(`Select tunnel ${tunnelId} in the ChatGPT developer-mode connection.`);
   await waitForever();
 }
@@ -122,6 +145,13 @@ function startBridge() {
   if (args.write) {
     env.CODEX_MCP_BRIDGE_ALLOW_WRITE = "1";
     env.CODEX_MCP_BRIDGE_DEFAULT_SANDBOX = "workspace-write";
+  } else if (args.allowFullAccess) {
+    env.CODEX_MCP_BRIDGE_ALLOW_WRITE = "1";
+    env.CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS = "1";
+    env.CODEX_MCP_BRIDGE_DEFAULT_SANDBOX = "read-only";
+  } else if (args.allowWrite) {
+    env.CODEX_MCP_BRIDGE_ALLOW_WRITE = "1";
+    env.CODEX_MCP_BRIDGE_DEFAULT_SANDBOX = "read-only";
   } else {
     env.CODEX_MCP_BRIDGE_DEFAULT_SANDBOX = "read-only";
   }
@@ -139,7 +169,16 @@ function spawnChild(command, childArgs, options = {}) {
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   child.on("exit", (code) => {
     children.delete(child);
-    if (code && !shuttingDown) cleanup(code);
+    if (!shuttingDown) {
+      console.error(`${command} exited unexpectedly with code ${code ?? "unknown"}.`);
+      cleanup(typeof code === "number" && code > 0 ? code : 1);
+    }
+  });
+  child.on("error", (error) => {
+    if (!shuttingDown) {
+      console.error(`Could not start ${command}: ${error.message}`);
+      cleanup(1);
+    }
   });
   return child;
 }
@@ -174,6 +213,8 @@ function parseArgs(rawArgs) {
     if (arg === "--help" || arg === "-h") parsed.help = true;
     else if (arg === "--no-build") parsed.noBuild = true;
     else if (arg === "--write") parsed.write = true;
+    else if (arg === "--allow-full-access") parsed.allowFullAccess = true;
+    else if (arg === "--allow-write") parsed.allowWrite = true;
     else if (arg === "--mode") parsed.mode = rawArgs[++index];
     else if (arg === "--root") parsed.root = rawArgs[++index];
     else if (arg === "--port") parsed.port = rawArgs[++index];
@@ -193,6 +234,8 @@ function printHelp() {
 Options:
   --root <path>          Only allowed repository root. Defaults to cwd.
   --write                Enable workspace-write for this process.
+  --allow-write          Keep read-only as the default, but allow explicit workspace-write calls.
+  --allow-full-access    Keep read-only as the default, but allow workspace-write and danger-full-access calls.
   --tunnel-id <id>       OpenAI Secure MCP Tunnel id.
   --profile <name>       tunnel-client profile name.
   --tunnel-client <path> tunnel-client binary path.
@@ -201,9 +244,11 @@ Options:
 }
 
 function cleanup(code = 0) {
+  if (shuttingDown) return;
   shuttingDown = true;
+  process.exitCode = code;
   for (const child of children) child.kill("SIGINT");
-  setTimeout(() => process.exit(code), 200).unref();
+  setTimeout(() => process.exit(code), 200);
 }
 
 function waitForever() {
