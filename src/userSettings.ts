@@ -1,11 +1,13 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { AccessStrategy, BridgeConfig, DefaultSessionMode, SandboxMode } from "./config.js";
+import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
 import { enforceSandbox, requireAllowedCwd } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
+import {
+  isUiLocalePreference,
+  type UiLocalePreference
+} from "./uiI18n.js";
 
-export const MIN_AUTO_RESUME_TTL_MS = 60 * 1000;
-export const MAX_AUTO_RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export type BridgeUserSettings = {
   revision: number;
   updatedAt: string | null;
@@ -13,8 +15,7 @@ export type BridgeUserSettings = {
   defaultModel: string | null;
   defaultReasoningEffort: string | null;
   defaultCwd: string | null;
-  defaultSessionMode: DefaultSessionMode;
-  autoResumeTtlMs: number;
+  uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   completionDeliveryMode: "off" | "card-only" | "auto-handoff";
 };
@@ -41,7 +42,7 @@ export class UserSettingsStore {
   private readonly initial: BridgeUserSettings;
   private settings: BridgeUserSettings;
   private readonly warnings: string[] = [];
-  private retiredTimeoutMigrationPending = false;
+  private retiredSettingsMigrationPending = false;
 
   constructor(
     private readonly config: BridgeConfig,
@@ -57,8 +58,7 @@ export class UserSettingsStore {
       defaultModel: config.defaultModel || null,
       defaultReasoningEffort: config.defaultReasoningEffort || null,
       defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
-      defaultSessionMode: config.defaultSessionMode,
-      autoResumeTtlMs: config.autoResumeTtlMs,
+      uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       completionDeliveryMode: "card-only"
     });
@@ -84,10 +84,6 @@ export class UserSettingsStore {
 
   get loadWarnings(): string[] {
     return [...this.warnings];
-  }
-
-  get maxAutoResumeTtlMs(): number {
-    return Math.max(MAX_AUTO_RESUME_TTL_MS, this.config.autoResumeTtlMs);
   }
 
   update(patch: BridgeUserSettingsPatch, expectedRevision?: number): BridgeUserSettings {
@@ -153,7 +149,7 @@ export class UserSettingsStore {
       throw new Error(`Invalid access strategy: ${String(candidate.accessStrategy)}`);
     }
     if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
-      throw new Error("always-full is unavailable because the bridge owner disabled danger-full-access.");
+      throw new Error("always-full is unavailable because the bridge security policy disables danger-full-access.");
     }
     if (candidate.defaultCwd !== null) {
       candidate.defaultCwd = requireAllowedCwd(candidate.defaultCwd, this.config.allowedRoots);
@@ -163,15 +159,9 @@ export class UserSettingsStore {
     if (!candidate.defaultModel && candidate.defaultReasoningEffort) {
       throw new Error("A default reasoning effort requires a default model.");
     }
-    if (candidate.defaultSessionMode !== "auto" && candidate.defaultSessionMode !== "new") {
-      throw new Error(`Invalid default session mode: ${String(candidate.defaultSessionMode)}`);
+    if (!isUiLocalePreference(candidate.uiLocalePreference)) {
+      throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
-    validateIntegerRange(
-      candidate.autoResumeTtlMs,
-      MIN_AUTO_RESUME_TTL_MS,
-      this.maxAutoResumeTtlMs,
-      "Auto-resume window"
-    );
     validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
     if (
       candidate.completionDeliveryMode !== "off" &&
@@ -194,7 +184,7 @@ export class UserSettingsStore {
       const stored = this.stateStore.getSettings();
       if (stored !== undefined) {
         if (!isRecord(stored)) throw new Error("Invalid bridge settings in the state database.");
-        this.noteRetiredTaskTimeout(stored);
+        this.noteRetiredSettings(stored);
         this.loadCandidate(readSettings(stored, this.stateStore.persistencePath || "state database"));
       }
       this.importLegacyState(stored !== undefined);
@@ -212,7 +202,7 @@ export class UserSettingsStore {
     if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
       throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
     }
-    this.noteRetiredTaskTimeout(parsed.settings);
+    this.noteRetiredSettings(parsed.settings);
     this.loadCandidate(readSettings(parsed.settings, this.stateFile));
   }
 
@@ -233,7 +223,7 @@ export class UserSettingsStore {
         if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
           throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
         }
-        this.noteRetiredTaskTimeout(parsed.settings);
+        this.noteRetiredSettings(parsed.settings);
         this.loadCandidate(readSettings(parsed.settings, this.stateFile as string));
         this.stateStore?.setSettings(this.settings);
       }
@@ -246,7 +236,7 @@ export class UserSettingsStore {
     if (reconciled.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
       reconciled.accessStrategy = "read-only";
       this.warnings.push(
-        "Saved full-access mode was downgraded to read-only because the bridge owner disabled danger-full-access."
+        "Saved full-access mode was downgraded to read-only because the bridge security policy disables danger-full-access."
       );
     }
     if (reconciled.defaultCwd !== null) {
@@ -255,16 +245,16 @@ export class UserSettingsStore {
       } catch {
         reconciled.defaultCwd = this.config.allowedRoots.length === 1 ? this.config.allowedRoots[0] : null;
         this.warnings.push(
-          "Saved working directory was outside the current owner allowlist and was replaced with a safe allowed default."
+          "Saved working directory was outside the currently allowed roots and was replaced with a safe allowed default."
         );
       }
     }
     if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {
       reconciled.maxConcurrentJobs = this.config.maxConcurrentJobs;
-      this.warnings.push("Saved concurrent-job limit was reduced to the current owner maximum.");
+      this.warnings.push("Saved concurrent-job limit was reduced to the current bridge maximum.");
     }
     const changed =
-      this.retiredTimeoutMigrationPending || JSON.stringify(reconciled) !== JSON.stringify(candidate);
+      this.retiredSettingsMigrationPending || JSON.stringify(reconciled) !== JSON.stringify(candidate);
     if (changed) {
       reconciled.revision += 1;
       reconciled.updatedAt = new Date(this.now()).toISOString();
@@ -272,16 +262,27 @@ export class UserSettingsStore {
     this.settings = this.validate(reconciled);
     if (changed) {
       this.persist(this.settings);
-      this.retiredTimeoutMigrationPending = false;
+      this.retiredSettingsMigrationPending = false;
     }
   }
 
-  private noteRetiredTaskTimeout(value: Record<string, unknown>): void {
-    if (!("taskTimeoutMs" in value)) return;
-    this.retiredTimeoutMigrationPending = true;
-    if (!this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
+  private noteRetiredSettings(value: Record<string, unknown>): void {
+    const retired = ["taskTimeoutMs", "defaultSessionMode", "autoResumeTtlMs"].filter(
+      (key) => key in value
+    );
+    if (retired.length === 0 && "uiLocalePreference" in value) return;
+    this.retiredSettingsMigrationPending = true;
+    if ("taskTimeoutMs" in value && !this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
       this.warnings.push(
         "Saved taskTimeoutMs was retired and removed. Codex execution is now unlimited-only."
+      );
+    }
+    if (
+      ("defaultSessionMode" in value || "autoResumeTtlMs" in value) &&
+      !this.warnings.some((warning) => warning.includes("Activity-managed"))
+    ) {
+      this.warnings.push(
+        "Saved defaultSessionMode and autoResumeTtlMs were retired and removed. Session selection is now Activity-managed with no age limit for exact continuation."
       );
     }
   }
@@ -320,7 +321,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     throw new Error(`Invalid ${key} in bridge settings at ${stateFile}.`);
   };
   const accessStrategy = value.accessStrategy;
-  const defaultSessionMode = value.defaultSessionMode;
+  if (value.uiLocalePreference !== undefined && !isUiLocalePreference(value.uiLocalePreference)) {
+    throw new Error(`Invalid uiLocalePreference in bridge settings at ${stateFile}.`);
+  }
   const updatedAt = requiredStringOrNull("updatedAt");
   return {
     revision: requiredNumber("revision"),
@@ -329,8 +332,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     defaultModel: requiredStringOrNull("defaultModel"),
     defaultReasoningEffort: requiredStringOrNull("defaultReasoningEffort"),
     defaultCwd: requiredStringOrNull("defaultCwd"),
-    defaultSessionMode: defaultSessionMode as DefaultSessionMode,
-    autoResumeTtlMs: requiredNumber("autoResumeTtlMs"),
+    uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
+      ? value.uiLocalePreference
+      : "auto",
     maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
     completionDeliveryMode:
       value.completionDeliveryMode === "off" ||

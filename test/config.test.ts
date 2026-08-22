@@ -26,8 +26,8 @@ describe("config policy", () => {
     expect(config.settingsStateFile).toMatch(/\.codex-mcp-bridge\/settings\.json$/);
     expect(config.sessionStateFile).toMatch(/\.codex-mcp-bridge\/sessions\.json$/);
     expect(config.jobStateFile).toMatch(/\.codex-mcp-bridge\/jobs\.json$/);
-    expect(config.defaultSessionMode).toBe("auto");
-    expect(config.autoResumeTtlMs).toBe(21600000);
+    expect(config).not.toHaveProperty("defaultSessionMode");
+    expect(config).not.toHaveProperty("autoResumeTtlMs");
     expect(config.defaultBackend).toBe("mcp-server");
     expect(config.upstreamPoolSize).toBe(4);
     expect(config.maxRetainedJobs).toBe(100);
@@ -69,13 +69,18 @@ describe("config policy", () => {
     expect(config.sessionStateFile).toBe("/tmp/codex-mcp-bridge-test-sessions.json");
     expect(config.jobStateFile).toBe("/tmp/codex-mcp-bridge-test-jobs.json");
     expect(config.defaultAccessStrategy).toBe("read-only");
-    expect(config.defaultSessionMode).toBe("new");
-    expect(config.autoResumeTtlMs).toBe(900000);
+    expect(config).not.toHaveProperty("defaultSessionMode");
+    expect(config).not.toHaveProperty("autoResumeTtlMs");
     expect(config.defaultBackend).toBe("app-server");
     expect(config.upstreamPoolSize).toBe(3);
     expect(config.maxRetainedJobs).toBe(50);
     expect(config.maxJobResultBytes).toBe(2000000);
     expect(config.jobStaleAfterMs).toBe(300000);
+    expect(config.startupWarnings).toEqual([
+      expect.stringContaining("UPSTREAM_TIMEOUT_MS is retired"),
+      expect.stringContaining("DEFAULT_SESSION_MODE is retired"),
+      expect.stringContaining("AUTO_RESUME_TTL_MS is retired")
+    ]);
   });
 
   it("requires a default model when a default reasoning effort is configured", () => {
@@ -141,13 +146,16 @@ describe("config policy", () => {
     })).toThrow(/default Codex backend/);
   });
 
-  it("rejects owner defaults below settings-card minimums", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "59999"
-      })
-    ).toThrow(/cannot be lower than 60000/);
+  it("ignores retired session defaults even when their values are invalid", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE: "invalid",
+      CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "invalid"
+    });
+    expect(config.startupWarnings).toEqual([
+      expect.stringContaining("DEFAULT_SESSION_MODE is retired"),
+      expect.stringContaining("AUTO_RESUME_TTL_MS is retired")
+    ]);
   });
 
   it("does not allow more upstream workers than active jobs", () => {

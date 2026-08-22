@@ -37,7 +37,6 @@ export type SessionRegistryOptions = {
   stateFile?: string;
   stateStore?: BridgeStateStore;
   allowedRoots?: string[];
-  autoResumeTtlMs?: number;
   maxSessions?: number;
   now?: () => number;
 };
@@ -47,7 +46,6 @@ export class SessionRegistry {
   private readonly stateFile?: string;
   private readonly stateStore?: BridgeStateStore;
   private readonly allowedRoots: string[];
-  private readonly autoResumeTtlMs: number;
   private readonly maxSessions: number;
   private readonly now: () => number;
 
@@ -55,7 +53,6 @@ export class SessionRegistry {
     this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.allowedRoots = options.allowedRoots || [];
-    this.autoResumeTtlMs = options.autoResumeTtlMs ?? 6 * 60 * 60 * 1000;
     this.maxSessions = options.maxSessions ?? 1000;
     this.now = options.now || Date.now;
     this.load();
@@ -67,10 +64,6 @@ export class SessionRegistry {
 
   get persistencePath(): string | null {
     return this.stateStore?.persistencePath || this.stateFile || null;
-  }
-
-  get autoResumeWindowMs(): number {
-    return this.autoResumeTtlMs;
   }
 
   record(session: TrackedCodexSession): void {
@@ -137,14 +130,9 @@ export class SessionRegistry {
     if (session) this.sessions.set(threadId, { ...session });
   }
 
-  findCompatible(
-    match: SessionMatch,
-    autoResumeTtlMs = this.autoResumeTtlMs
-  ): TrackedCodexSession[] {
-    const cutoff = this.now() - autoResumeTtlMs;
+  findCompatible(match: SessionMatch): TrackedCodexSession[] {
     return this.list().filter(
       (session) =>
-        session.lastUsedAt >= cutoff &&
         session.scopeId === match.scopeId &&
         session.cwd === match.cwd &&
         session.sandbox === match.sandbox &&

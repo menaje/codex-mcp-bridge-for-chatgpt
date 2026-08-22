@@ -174,16 +174,24 @@ Ask ChatGPT to **open the Codex MCP Bridge for ChatGPT settings**. It calls
 - default Codex model and its supported reasoning effort from the live Codex
   catalog;
 - default working directory inside the owner allowlist;
-- default session behavior (`auto` or `new`) and automatic-resume window;
+- interface language: automatic host-language detection or a fixed supported
+  language;
 - active-job limit and completion delivery (`off`, card-only, or opt-in
   automatic GPT handoff while a card remains mounted).
+
+Session routing is not a global preference. A new Activity starts a new Codex
+thread; a later turn with the exact same `activityId` resumes its one compatible
+attached thread with no age limit. Explicit `new`, exact `continue`, and thread
+adoption remain available per call.
 
 Codex execution is unlimited-only: no task timeout exists in the card, saved
 settings, environment contract, or `codex_task`. Fast return and status/card
 waits remain bounded control-plane operations. Use the Activity card's single
 **Force stop** action when a tracked turn or worker must be ended.
 
-Saved values are authoritative defaults for later calls. `read-only` forces all
+Saved values are authoritative defaults for later calls. A fixed interface
+language overrides the host locale for both Settings and Activity cards;
+`auto` follows the host locale and falls back to English. `read-only` forces all
 new work to read-only even if a caller asks for more permission. `adaptive`
 keeps the current GPT-selected behavior. `always-full` forces new work to
 `danger-full-access`; an older session with a different sandbox must be replaced
@@ -259,15 +267,13 @@ effort because continued Codex threads keep their original configuration.
   Defaults are `other`, `auto`, `none`, and `manual`, so a Codex response cannot
   automatically complete the user's work or change its policy.
 
-- `sessionMode: auto` continues the only compatible session in the conversation
-  scope, or starts a new one when no compatible recent session exists. If
-  several compatible sessions exist, it requires an exact `threadId` instead of
-  guessing.
+- Omitted or `sessionMode: auto` uses Activity-managed selection. A new Activity
+  starts a new thread. An existing Activity resumes only its one compatible
+  attached thread, regardless of age; no compatible thread starts a new one,
+  while several candidates require an exact `threadId` instead of guessing.
 - `sessionMode: new` always starts with fresh conversation context.
 - `sessionMode: continue` requires an exact `threadId` returned by
   `codex_status` or an earlier task result.
-
-When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
 
 Execution delivery is independent of Activity completion:
 
@@ -280,14 +286,14 @@ Execution delivery is independent of Activity completion:
 In every mode, a terminal Codex job is only a child outcome. It does not by
 itself mean the Activity, user request, or verification is complete.
 
-Auto selection requires the same resolved conversation scope, working directory, sandbox, and
-requested/default model and effort. There is no bridge-global
+Activity selection requires the same resolved conversation scope, working
+directory, sandbox, and requested/default model and effort. There is no bridge-global
 "most recent session" fallback, so one ChatGPT conversation cannot
 accidentally auto-resume another conversation's thread. It never reuses a
 workspace-write or danger-full-access session for a read-only call. The
-auto-resume window defaults to six hours. Exact continuation can use an older
-persisted thread only while `resumeAvailability` remains `available` in the
-current worker generation.
+exact Activity association, rather than recency, is authoritative. An older
+attached thread can continue without an age limit only while
+`resumeAvailability` remains `available` in the current worker generation.
 
 An exact thread also remains owned by its scope. Moving it to another
 conversation requires `threadId` plus `adoptThread: true`, and
@@ -308,10 +314,10 @@ that can reach this private bridge still shares the same operator trust boundary
 Sessions may run concurrently in the same working directory up to the saved
 active-job limit, which cannot exceed `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`.
 This includes `workspace-write` and `danger-full-access` jobs. The same
-Codex thread remains serialized, while different threads under one scope can
+Codex thread remains serialized, while different threads under one Activity or scope can
 run concurrently. There is no up-front single/parallel mode: begin with the
-ordinary session and use `sessionMode: new` whenever parallel work becomes
-useful. If the only compatible thread is busy, auto mode asks the caller to wait
+ordinary Activity-managed thread and use `sessionMode: new` whenever parallel work becomes
+useful. If the Activity's only compatible thread is busy, auto mode asks the caller to wait
 or deliberately start another thread. The caller is responsible for
 partitioning overlapping mutations or assigning separate worktrees when
 isolation is needed.
@@ -332,8 +338,8 @@ the bridge can restore routing history after a restart. A `codex mcp-server`
 thread itself belongs to the worker process that created it and cannot be
 continued after that worker or the bridge restarts. Restored rows are therefore
 shown with `resumeAvailability: "unavailable-after-worker-restart"`, excluded
-from automatic selection, and rejected for exact continuation; `auto` starts a
-fresh thread instead. New App Server threads support rich public turn events,
+from Activity selection, and rejected for exact continuation; the Activity
+starts a fresh thread instead. New App Server threads support rich public turn events,
 approval/input responses, steering, and exact turn interruption. Existing MCP
 threads remain pinned to their original backend and are never silently
 migrated. OpenAI currently documents App Server as experimental, so
@@ -466,8 +472,6 @@ product and package name remains **Codex MCP Bridge for ChatGPT**.
 | `CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE` | `~/.codex-mcp-bridge/settings.json` | Legacy settings JSON imported once when present |
 | `CODEX_MCP_BRIDGE_SESSION_STATE_FILE` | `~/.codex-mcp-bridge/sessions.json` | Legacy session JSON imported once when present |
 | `CODEX_MCP_BRIDGE_JOB_STATE_FILE` | `~/.codex-mcp-bridge/jobs.json` | Legacy job JSON imported once when present |
-| `CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE` | `auto` | Initial card default for omitted session mode: `auto` or `new` |
-| `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` | `21600000` | Initial saved idle window for automatic recent-session reuse; explicit continuation is still allowed |
 | `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Owner maximum and initial saved active Codex-call limit |
 | `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy Codex MCP worker pool; cannot exceed the active-job limit |
 | `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | Backend for new threads: stable `mcp-server` or experimental `app-server`; each thread remains sticky |
@@ -479,6 +483,11 @@ product and package name remains **Codex MCP Bridge for ChatGPT**.
 | `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Maximum retained serialized result size per job |
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
+
+`CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE` and
+`CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` are retired and ignored. During migration,
+their presence produces a startup warning but cannot change Activity-managed
+session routing.
 
 These are package defaults. A local launcher or LaunchAgent may deliberately
 override them—for example, an installation may select `app-server` while the

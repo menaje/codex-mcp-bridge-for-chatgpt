@@ -3,9 +3,12 @@ import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import {
+  isUiLocalePreference,
+  resolvePreferredUiLocale,
   resolveUiLocale,
   serializedUiTranslations,
   SUPPORTED_UI_LOCALES,
+  UI_LOCALE_PREFERENCES,
   UI_TRANSLATIONS
 } from "../src/uiI18n.js";
 
@@ -32,9 +35,31 @@ describe("human-facing UI localization", () => {
     for (const locale of SUPPORTED_UI_LOCALES.filter((entry) => entry !== "en")) {
       expect(UI_TRANSLATIONS[locale]["common.loading"]).not.toBe(UI_TRANSLATIONS.en["common.loading"]);
       expect(UI_TRANSLATIONS[locale]["activity.forceStop"]).not.toBe(UI_TRANSLATIONS.en["activity.forceStop"]);
-      expect(UI_TRANSLATIONS[locale]["settings.unlimited"]).not.toBe(UI_TRANSLATIONS.en["settings.unlimited"]);
+      expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
       expect(UI_TRANSLATIONS[locale]["job.interrupted"]).not.toBe(UI_TRANSLATIONS.en["job.interrupted"]);
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).not.toBe(UI_TRANSLATIONS.en["waiting.orchestrator"]);
+    }
+
+    const settingsText = SUPPORTED_UI_LOCALES.flatMap((locale) =>
+      Object.entries(UI_TRANSLATIONS[locale])
+        .filter(([key]) => key.startsWith("settings."))
+        .map(([, value]) => value)
+    ).join("\n");
+    expect(settingsText).not.toMatch(/\boperator\b|운영자|管理者|管理员|管理員|operador|opérateur|Betreiber/i);
+    expect(UI_TRANSLATIONS.ko["settings.reset"]).toBe("기본 설정으로 복원");
+  });
+
+  it("supports automatic host language and fixed saved language preferences", () => {
+    expect(UI_LOCALE_PREFERENCES).toEqual([
+      "auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"
+    ]);
+    expect(isUiLocalePreference("auto")).toBe(true);
+    expect(isUiLocalePreference("ko")).toBe(true);
+    expect(isUiLocalePreference("it")).toBe(false);
+    expect(resolvePreferredUiLocale("auto", "ko-KR")).toBe("ko");
+    expect(resolvePreferredUiLocale("ja", "ko-KR")).toBe("ja");
+    for (const preference of UI_LOCALE_PREFERENCES.filter((entry) => entry !== "auto")) {
+      expect(resolvePreferredUiLocale(preference, "en-US")).toBe(preference);
     }
   });
 
@@ -60,6 +85,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(serialized);
     expect(ACTIVITY_CARD_HTML).toContain(serialized);
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
 
@@ -74,6 +101,8 @@ describe("human-facing UI localization", () => {
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
+    expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
+    expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
     expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
     expect(ACTIVITY_CARD_HTML).toContain('document.createElement("datalist")');
@@ -81,5 +110,6 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",{activityView:true');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
+    expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
   });
 });

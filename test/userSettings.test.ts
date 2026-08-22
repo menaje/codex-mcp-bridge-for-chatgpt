@@ -25,15 +25,14 @@ describe("user settings store", () => {
       defaultModel: "gpt-5.6-sol",
       defaultReasoningEffort: "max",
       defaultCwd: config.allowedRoots[0],
-      defaultSessionMode: "auto",
+      uiLocalePreference: "auto",
       maxConcurrentJobs: 30
     });
 
     const updated = store.update(
       {
         accessStrategy: "always-full",
-        defaultSessionMode: "new",
-        autoResumeTtlMs: 60 * 60 * 1000,
+        uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
         completionDeliveryMode: "auto-handoff"
       },
@@ -43,7 +42,7 @@ describe("user settings store", () => {
       revision: 1,
       updatedAt: "2026-08-21T01:02:03.000Z",
       accessStrategy: "always-full",
-      defaultSessionMode: "new",
+      uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
       completionDeliveryMode: "auto-handoff"
     });
@@ -57,13 +56,13 @@ describe("user settings store", () => {
     expect(restored.current).toMatchObject({
       revision: 1,
       accessStrategy: "always-full",
-      defaultSessionMode: "new",
+      uiLocalePreference: "ko",
       maxConcurrentJobs: 12
     });
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
   });
 
-  it("rejects stale cards and values beyond owner-enforced limits", () => {
+  it("rejects stale cards and values beyond bridge-enforced limits", () => {
     const root = temporaryDirectory("bridge-root-");
     const outside = temporaryDirectory("bridge-outside-");
     const config = loadConfig({
@@ -74,12 +73,15 @@ describe("user settings store", () => {
       CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "60000"
     });
     const store = new UserSettingsStore(config);
-    store.update({ defaultSessionMode: "new" }, 0);
+    store.update({ uiLocalePreference: "ko" }, 0);
 
-    expect(() => store.update({ defaultSessionMode: "auto" }, 0)).toThrow(/Settings changed/);
-    expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/owner disabled/);
+    expect(() => store.update({ uiLocalePreference: "auto" }, 0)).toThrow(/Settings changed/);
+    expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/security policy disables/);
     expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/outside allowed roots/);
     expect(() => store.update({ maxConcurrentJobs: 5 }, 1)).toThrow(/Concurrent job limit/);
+    expect(() =>
+      store.update({ uiLocalePreference: "it" as "ko" }, 1)
+    ).toThrow(/Invalid interface language preference/);
   });
 
   it("forces read-only even when a caller asks for full access", () => {
@@ -114,6 +116,8 @@ describe("user settings store", () => {
     });
     const legacy = JSON.parse(readFileSync(stateFile, "utf8"));
     legacy.settings.taskTimeoutMs = 60000;
+    legacy.settings.defaultSessionMode = "new";
+    legacy.settings.autoResumeTtlMs = 6 * 60 * 60 * 1000;
     writeFileSync(stateFile, JSON.stringify(legacy));
 
     const tightenedConfig = loadConfig({
@@ -136,15 +140,20 @@ describe("user settings store", () => {
       maxConcurrentJobs: 2
     });
     expect(reconciled.current).not.toHaveProperty("taskTimeoutMs");
-    expect(reconciled.loadWarnings).toHaveLength(4);
+    expect(reconciled.current).not.toHaveProperty("defaultSessionMode");
+    expect(reconciled.current).not.toHaveProperty("autoResumeTtlMs");
+    expect(reconciled.loadWarnings).toHaveLength(5);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
-    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the current owner allowlist/);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the currently allowed roots/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/taskTimeoutMs was retired and removed/);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/Activity-managed/);
     const migrated = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(migrated).toMatchObject({
       settings: { revision: 2, accessStrategy: "read-only", maxConcurrentJobs: 2 }
     });
     expect(migrated.settings).not.toHaveProperty("taskTimeoutMs");
+    expect(migrated.settings).not.toHaveProperty("defaultSessionMode");
+    expect(migrated.settings).not.toHaveProperty("autoResumeTtlMs");
   });
 });
 

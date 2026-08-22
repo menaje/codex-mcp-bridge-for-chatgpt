@@ -6,7 +6,6 @@ import { homedir } from "node:os";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
-export type DefaultSessionMode = "auto" | "new";
 export type CodexBackendKind = "mcp-server" | "app-server";
 
 export type BridgeConfig = {
@@ -32,8 +31,6 @@ export type BridgeConfig = {
   settingsStateFile: string;
   sessionStateFile: string;
   jobStateFile: string;
-  defaultSessionMode: DefaultSessionMode;
-  autoResumeTtlMs: number;
   upstreamPoolSize: number;
   fastReturnMs: number;
   secretScan: boolean;
@@ -91,8 +88,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     read("JOB_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "jobs.json"),
     "job state file"
   );
-  const defaultSessionMode = parseDefaultSessionMode(read("DEFAULT_SESSION_MODE") || "auto");
-  const autoResumeTtlMs = parsePositiveInt(read("AUTO_RESUME_TTL_MS") || String(6 * 60 * 60 * 1000));
   const fastReturnMs = parsePositiveInt(read("FAST_RETURN_MS") || "25000");
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "30");
@@ -102,11 +97,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const jobStaleAfterMs = parsePositiveInt(read("JOB_STALE_AFTER_MS") || String(10 * 60 * 1000));
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
-  const startupWarnings = normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))
-    ? [
-        "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution is unlimited-only; use supervised force-stop when needed."
-      ]
-    : [];
+  const startupWarnings: string[] = [];
+  if (normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution is unlimited-only; use supervised force-stop when needed."
+    );
+  }
+  if (normalizeOptional(read("DEFAULT_SESSION_MODE"))) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE is retired and ignored. Session selection is managed by each Activity."
+    );
+  }
+  if (normalizeOptional(read("AUTO_RESUME_TTL_MS"))) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS is retired and ignored. Exact Activity thread continuation has no age limit."
+    );
+  }
 
   if (!token && !noAuth) {
     throw new Error("Set CODEX_MCP_BRIDGE_TOKEN, or set CODEX_MCP_BRIDGE_NO_AUTH=1 for local-only development.");
@@ -130,9 +136,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   }
   if (defaultReasoningEffort && !defaultModel) {
     throw new Error("CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT requires CODEX_MCP_BRIDGE_DEFAULT_MODEL.");
-  }
-  if (autoResumeTtlMs < 60_000) {
-    throw new Error("CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS cannot be lower than 60000.");
   }
   if (upstreamPoolSize > maxConcurrentJobs) {
     throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE cannot exceed CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS.");
@@ -164,8 +167,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     settingsStateFile,
     sessionStateFile,
     jobStateFile,
-    defaultSessionMode,
-    autoResumeTtlMs,
     upstreamPoolSize,
     fastReturnMs,
     secretScan,
@@ -368,13 +369,6 @@ function parseAccessStrategy(raw: string): AccessStrategy {
     return raw;
   }
   throw new Error(`Invalid default access strategy: ${raw}`);
-}
-
-function parseDefaultSessionMode(raw: string): DefaultSessionMode {
-  if (raw === "auto" || raw === "new") {
-    return raw;
-  }
-  throw new Error(`Invalid default session mode: ${raw}`);
 }
 
 function parseBackendKind(raw: string): CodexBackendKind {

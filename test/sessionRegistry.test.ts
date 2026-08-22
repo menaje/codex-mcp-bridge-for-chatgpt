@@ -53,13 +53,10 @@ describe("SessionRegistry", () => {
     });
   });
 
-  it("returns every compatible session inside the auto-resume window", () => {
+  it("returns every compatible session regardless of age", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     let now = 10_000;
-    const sessions = new SessionRegistry({
-      autoResumeTtlMs: 1_000,
-      now: () => now
-    });
+    const sessions = new SessionRegistry({ now: () => now });
     sessions.record(session("older", root, "read-only", "gpt-5.6-sol", "max", 9_200));
     sessions.record(session("newer", root, "read-only", "gpt-5.6-sol", "max", 9_800));
     sessions.record(session("write", root, "workspace-write", "gpt-5.6-sol", "max", 9_900));
@@ -107,9 +104,10 @@ describe("SessionRegistry", () => {
         scopeId: SCOPE_A,
         cwd: root,
         sandbox: "read-only",
-        model: "gpt-5.6-sol"
-      })
-    ).toEqual([]);
+        model: "gpt-5.6-sol",
+        reasoningEffort: "max"
+      }).map((session) => session.threadId)
+    ).toEqual(["newer", "older"]);
     expect(sessions.get("newer")?.threadId).toBe("newer");
   });
 

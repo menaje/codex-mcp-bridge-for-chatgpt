@@ -56,11 +56,14 @@ import type {
 } from "./upstream.js";
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
-  MIN_AUTO_RESUME_TTL_MS,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
   UserSettingsStore
 } from "./userSettings.js";
+import {
+  UI_LOCALE_PREFERENCES,
+  resolvePreferredUiLocale
+} from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 
 type CodexJobStatus =
@@ -98,8 +101,7 @@ const bridgeUserSettingsOutputSchema = z.object({
   defaultModel: z.string().nullable(),
   defaultReasoningEffort: z.string().nullable(),
   defaultCwd: z.string().nullable(),
-  defaultSessionMode: z.enum(["auto", "new"]),
-  autoResumeTtlMs: z.number().int().positive(),
+  uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   completionDeliveryMode: z.enum(["off", "card-only", "auto-handoff"])
 });
@@ -124,8 +126,7 @@ const settingsViewOutputSchema = z.object({
   capabilities: z.object({
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     allowedRoots: z.array(z.string()),
-    minAutoResumeTtlMs: z.number().int().positive(),
-    maxAutoResumeTtlMs: z.number().int().positive(),
+    availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
@@ -151,6 +152,10 @@ type SessionDecision = {
   reason:
     | "explicit-new"
     | "explicit-thread"
+    | "activity-new"
+    | "activity-compatible"
+    | "activity-no-compatible"
+    // Legacy persisted values retained for state compatibility.
     | "recent-compatible"
     | "compatible-session-busy"
     | "no-compatible-session";
@@ -649,7 +654,7 @@ export class CodexJobRegistry {
       running.some((job) => job.selectionKey === input.selectionKey)
     ) {
       throw new Error(
-        "A compatible Codex session is still starting or running in this conversation scope. Wait for it, or use sessionMode='new' to deliberately start parallel work."
+        "A compatible Codex session is still starting or running for this Activity. Wait for it, or use sessionMode='new' to deliberately start parallel work."
       );
     }
     const now = Date.now();
@@ -1620,7 +1625,6 @@ export function registerBridgeTools(
       } catch (error) {
         upstreamError = error instanceof Error ? error.message : String(error);
       }
-      const now = Date.now();
       const preferences = userSettings.current;
       const sessionLimit = args.sessionLimit ?? 10;
       const sessionOffset = args.sessionCursor
@@ -1691,7 +1695,7 @@ export function registerBridgeTools(
         defaultApprovalPolicy: config.defaultApprovalPolicy,
         defaultModel: preferences.defaultModel,
         defaultReasoningEffort: preferences.defaultReasoningEffort,
-        defaultSessionMode: preferences.defaultSessionMode,
+        uiLocalePreference: preferences.uiLocalePreference,
         dynamicModelCatalog: true,
         modelCatalogCacheTtlMs: config.modelCatalogCacheTtlMs,
         fastReturnMs: config.fastReturnMs,
@@ -1734,8 +1738,9 @@ export function registerBridgeTools(
         sessionPolicy: {
           persistent: sessions.persistent,
           persistencePath: sessions.persistencePath,
-          autoResumeTtlMs: preferences.autoResumeTtlMs,
-          selection: "scope-compatible-only-when-unambiguous",
+          selection: "activity-compatible-only-when-unambiguous",
+          implicitNewActivityBehavior: "start-new-thread",
+          exactActivityContinuationAgeLimit: "none",
           scopeIdInput: "host-derived-or-explicit-compatibility",
           hostMetadataKeys: ["openai/organization", "openai/subject", "openai/session"],
           scopeHmacKeyVersion: scopeResolver.keyVersion,
@@ -1745,7 +1750,7 @@ export function registerBridgeTools(
           legacyAutoResume: false,
           scopeIsAuthentication: false,
           mcpThreadLifetime: "active-upstream-worker-generation",
-          restartBehavior: "persist-history-but-start-a-new-thread-on-auto"
+          restartBehavior: "resume-an-exact-available-activity-thread-or-start-new"
         },
         scopeView: args.includeAllScopes
           ? { mode: "all" }
@@ -1784,9 +1789,6 @@ export function registerBridgeTools(
           ...session,
           createdAt: new Date(session.createdAt).toISOString(),
           lastUsedAt: new Date(session.lastUsedAt).toISOString(),
-          autoResumeEligible:
-            now - session.lastUsedAt <= preferences.autoResumeTtlMs &&
-            upstream.canResumeThread?.(session.threadId, session.backendKind) !== false,
           resumeAvailability:
             upstream.canResumeThread?.(session.threadId, session.backendKind) === false
               ? "unavailable-after-worker-restart"
@@ -2307,7 +2309,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved bridge defaults, owner-enforced limits, allowed roots, and current dynamic Codex model/effort catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
+        "Open an interactive settings card and return the saved bridge defaults, bridge-enforced limits, allowed roots, and current dynamic Codex model/effort catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -2341,7 +2343,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate and persist user-configurable bridge defaults. This action is intended for the Codex settings card; owner security capabilities and allowed roots cannot be changed here.",
+        "Validate and persist user-configurable bridge defaults. This action is intended for the Codex settings card; bridge security capabilities and allowed roots cannot be changed here.",
       inputSchema: {
         expectedRevision: z.number().int().min(0).optional(),
         reset: z.boolean().optional(),
@@ -2349,13 +2351,7 @@ export function registerBridgeTools(
         defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
         defaultReasoningEffort: z.string().trim().min(1).max(100).nullable().optional(),
         defaultCwd: z.string().trim().min(1).nullable().optional(),
-        defaultSessionMode: z.enum(["auto", "new"]).optional(),
-        autoResumeTtlMs: z
-          .number()
-          .int()
-          .min(MIN_AUTO_RESUME_TTL_MS)
-          .max(userSettings.maxAutoResumeTtlMs)
-          .optional(),
+        uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
         completionDeliveryMode: z.enum(["off", "card-only", "auto-handoff"]).optional()
       },
@@ -2380,8 +2376,7 @@ export function registerBridgeTools(
         "defaultModel",
         "defaultReasoningEffort",
         "defaultCwd",
-        "defaultSessionMode",
-        "autoResumeTtlMs",
+        "uiLocalePreference",
         "maxConcurrentJobs",
         "completionDeliveryMode"
       ] as const;
@@ -2431,7 +2426,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn inside an Activity in the current ChatGPT conversation scope. Omit activityId to create a new Activity, or pass an exact open Activity from this scope to continue the same user intent across turns or parallel threads. Activity policy is explicit caller input and never comes from Codex output. Generate one UUID requestId per logical turn and reuse it only for exact retries. A scope may acquire any number of Codex threads over time; use sessionMode='new' for deliberate parallel work and exact threadId values for follow-ups once selection is ambiguous. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
+        "Run one Codex turn inside an Activity in the current ChatGPT conversation scope. Omit activityId to create a new Activity and new thread, or pass an exact open Activity to resume its one compatible attached thread without an age limit. Activity policy is explicit caller input and never comes from Codex output. Generate one UUID requestId per logical turn and reuse it only for exact retries. Use sessionMode='new' for deliberate additional parallel threads and exact threadId values once an Activity has multiple candidates. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
@@ -2473,7 +2468,9 @@ export function registerBridgeTools(
         sessionMode: z
           .enum(["auto", "new", "continue"])
           .optional()
-          .describe("Session behavior. Omit it to use the saved auto-or-new default."),
+          .describe(
+            "Session behavior. Omit it for Activity-managed selection: a new Activity starts a new thread, while an existing Activity resumes its one compatible thread regardless of age."
+          ),
         threadId: z
           .string()
           .trim()
@@ -2501,7 +2498,7 @@ export function registerBridgeTools(
     },
     async (args, { _meta }) => {
       const preferences = userSettings.current;
-      const requestedMode = (args.sessionMode || preferences.defaultSessionMode) as SessionMode;
+      const requestedMode = (args.sessionMode || "auto") as SessionMode;
       const scope = scopeResolver.require(_meta as ToolCallMetadata, args.scopeId, "Codex task execution");
       const routing = resolveTaskRouting(args, scope.scopeId);
       const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
@@ -2575,36 +2572,60 @@ export function registerBridgeTools(
         requestedSelection.reasoningEffort
       );
       await enforceSensitiveFilePreflight(config, cwd, "run Codex");
-      const compatible = sessions.findCompatible(
-        {
+      if (!activityRequest.activityId) {
+        return startNewSession({
+          args,
+          routing,
+          requestedMode,
+          reason: "activity-new",
+          config,
+          upstream,
+          sessions,
+          jobs,
+          modelCatalog,
+          preferences,
+          activityRequest,
+          resolved: { cwd, sandbox, selection },
+          preflightDone: true
+        });
+      }
+
+      const activityThreadIds = new Set(
+        jobs
+          .listForActivity(activityRequest.activityId)
+          .map((job) => job.threadId || job.sessionDecision.threadId)
+          .filter((threadId): threadId is string => Boolean(threadId))
+      );
+      const compatible = sessions
+        .findCompatible({
           scopeId: routing.scopeId,
           cwd,
           sandbox,
           ...selection
-        },
-        preferences.autoResumeTtlMs
-      ).filter((session) => upstream.canResumeThread?.(session.threadId, session.backendKind) !== false);
+        })
+        .filter((session) => activityThreadIds.has(session.threadId))
+        .filter((session) => upstream.canResumeThread?.(session.threadId, session.backendKind) !== false);
       if (compatible.length > 1) {
         const candidates = compatible
           .slice(0, 10)
           .map((session) => session.threadId)
           .join(", ");
         throw new Error(
-          `Multiple compatible Codex threads exist in this conversation scope (${candidates}). Call codex_status and retry with an exact threadId, or use sessionMode='new' to start another thread.`
+          `Multiple compatible Codex threads are attached to this Activity (${candidates}). Retry with the exact intended threadId, or use sessionMode='new' to start another thread.`
         );
       }
-      const recent = compatible[0];
-      if (recent && jobs.isThreadActive(recent.threadId)) {
+      const activitySession = compatible[0];
+      if (activitySession && jobs.isThreadActive(activitySession.threadId)) {
         throw new Error(
-          "The compatible Codex thread in this conversation scope is busy. Wait for it, or use sessionMode='new' to start parallel work on another thread."
+          "The compatible Codex thread attached to this Activity is busy. Wait for it, or use sessionMode='new' to start parallel work on another thread."
         );
       }
-      if (recent) {
+      if (activitySession) {
         return continueTrackedSession({
           prompt: args.prompt,
           requestedMode,
-          reason: "recent-compatible",
-          session: recent,
+          reason: "activity-compatible",
+          session: activitySession,
           routing,
           config,
           upstream,
@@ -2622,7 +2643,7 @@ export function registerBridgeTools(
         args,
         routing,
         requestedMode,
-        reason: "no-compatible-session",
+        reason: "activity-no-compatible",
         config,
         upstream,
         sessions,
@@ -3087,7 +3108,7 @@ async function runCodexWithFastReturn(input: {
         requestId: input.routing.requestId,
         requestHash: input.routing.requestHash,
         requestHashVersion: 2,
-        selectionKey: input.selectionKey,
+        selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
         exclusiveKeys: input.exclusiveKeys || [],
         sessionDecision: input.sessionDecision
       },
@@ -3432,6 +3453,7 @@ function buildActivityView(
       activities,
       pendingHandoffs,
       deliveryMode: preferences.completionDeliveryMode,
+      uiLocalePreference: preferences.uiLocalePreference,
       watcherPolicy: {
         mode: "scope-version-long-poll",
         maxWaitMs: MAX_CODEX_STATUS_WAIT_MS,
@@ -3472,6 +3494,7 @@ function activityViewResult(
   view: ReturnType<typeof buildActivityView>,
   locale?: string
 ): ToolResult {
+  const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
   return {
     structuredContent: view.structured,
     content: [
@@ -3502,7 +3525,8 @@ function activityViewResult(
     ],
     _meta: {
       activityDetails: view.privateDetails,
-      "openai/locale": locale || null
+      "openai/locale": effectiveLocale,
+      hostLocale: locale || null
     }
   };
 }
@@ -3590,6 +3614,13 @@ function selectionKeyFor(
       })
     )
     .digest("hex");
+}
+
+function activitySelectionKey(
+  activityId: string,
+  compatibleSelectionKey: string
+): string {
+  return `activity:${activityId}:${compatibleSelectionKey}`;
 }
 
 function scopeIdSchema() {
@@ -3695,8 +3726,7 @@ async function buildSettingsView(
     capabilities: {
       availableAccessStrategies,
       allowedRoots: [...config.allowedRoots],
-      minAutoResumeTtlMs: MIN_AUTO_RESUME_TTL_MS,
-      maxAutoResumeTtlMs: userSettings.maxAutoResumeTtlMs,
+      availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       maxConcurrentJobs: config.maxConcurrentJobs,
       allowWorkspaceWrite: config.allowWorkspaceWrite,
       allowDangerFullAccess: config.allowDangerFullAccess,
@@ -3712,11 +3742,12 @@ async function buildSettingsView(
     },
     warnings: [...config.startupWarnings, ...userSettings.loadWarnings],
     scopeNotice:
-      "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Operator security policy cannot be changed from the card."
+      "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed from the card."
   };
 }
 
 function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
+  const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
   return {
     structuredContent: view,
     content: [
@@ -3736,7 +3767,8 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
       }
     ],
     _meta: {
-      "openai/locale": locale || null
+      "openai/locale": effectiveLocale,
+      hostLocale: locale || null
     }
   };
 }
@@ -4139,6 +4171,9 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
     (action !== "start" && action !== "continue") ||
     (reason !== "explicit-new" &&
       reason !== "explicit-thread" &&
+      reason !== "activity-new" &&
+      reason !== "activity-compatible" &&
+      reason !== "activity-no-compatible" &&
       reason !== "recent-compatible" &&
       reason !== "compatible-session-busy" &&
       reason !== "no-compatible-session") ||

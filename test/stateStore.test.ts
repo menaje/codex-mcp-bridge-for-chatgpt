@@ -85,7 +85,7 @@ describe("BridgeStateStore", () => {
     }));
     await legacyJob.promise;
     const legacySettings = new UserSettingsStore(config, { stateFile: settingsFile });
-    legacySettings.update({ defaultSessionMode: "new" });
+    legacySettings.update({ uiLocalePreference: "ko" });
 
     const store = new BridgeStateStore({ file: databaseFile });
     const importedSessions = new SessionRegistry({
@@ -98,7 +98,7 @@ describe("BridgeStateStore", () => {
 
     expect(importedSessions.get("legacy-thread")).toBeDefined();
     expect(importedJobs.get(legacyJob.jobId)).toMatchObject({ status: "completed" });
-    expect(importedSettings.current).toMatchObject({ revision: 1, defaultSessionMode: "new" });
+    expect(importedSettings.current).toMatchObject({ revision: 1, uiLocalePreference: "ko" });
     expect(store.countSessions()).toBe(1);
     expect(store.countJobs()).toBe(1);
     store.close();

@@ -11,6 +11,8 @@ export const SUPPORTED_UI_LOCALES = [
 ] as const;
 
 export type SupportedUiLocale = (typeof SUPPORTED_UI_LOCALES)[number];
+export const UI_LOCALE_PREFERENCES = ["auto", ...SUPPORTED_UI_LOCALES] as const;
+export type UiLocalePreference = (typeof UI_LOCALE_PREFERENCES)[number];
 
 const ENGLISH = {
   "common.loading": "Loading…",
@@ -25,7 +27,7 @@ const ENGLISH = {
   "settings.access.adaptive": "GPT chooses per task",
   "settings.access.full": "Always full access",
   "settings.access.readOnlyHint": "Every new task is forced to read-only.",
-  "settings.access.adaptiveHint": "GPT may choose read-only, workspace write, or full access within operator policy.",
+  "settings.access.adaptiveHint": "GPT may choose read-only, workspace write, or full access within the allowed limits.",
   "settings.access.fullHint": "Every new task is forced to danger-full-access.",
   "settings.fullWarning": "Full access runs Codex with this macOS user's filesystem and network permissions. Allowed roots limit only the starting directory; they are not OS isolation.",
   "settings.model": "Default model",
@@ -36,28 +38,26 @@ const ENGLISH = {
   "settings.effortDefault": "Model default effort",
   "settings.effortHint": "Only values supported by the selected model are shown.",
   "settings.cwd": "Default working folder",
-  "settings.cwdHint": "Only operator-approved roots can be saved:",
-  "settings.session": "Default session behavior",
-  "settings.session.auto": "Resume one recent compatible session",
-  "settings.session.new": "Always start a new session",
-  "settings.resume": "Auto-resume window (hours)",
+  "settings.cwdHint": "Only allowed working roots can be saved:",
+  "settings.language": "Interface language",
+  "settings.language.auto": "Automatic",
+  "settings.languageHint": "Automatic follows the host application's language.",
   "settings.concurrency": "Maximum concurrent jobs",
   "settings.delivery": "Completion delivery",
   "settings.delivery.off": "Off",
   "settings.delivery.card": "Activity card only",
   "settings.delivery.auto": "Automatic GPT handoff while card is open",
-  "settings.unlimited": "Codex execution has no time limit. Use Force stop from the Activity card when needed.",
   "settings.save": "Save settings",
   "settings.refreshModels": "Refresh model list",
-  "settings.reset": "Restore operator defaults",
+  "settings.reset": "Restore default settings",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.refreshing": "Refreshing…",
   "settings.refreshed": "Model list refreshed.",
   "settings.resetting": "Restoring…",
-  "settings.resetDone": "Operator defaults restored.",
+  "settings.resetDone": "Default settings restored.",
   "settings.invalidResponse": "The settings tool returned an invalid response.",
-  "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Operator security policy cannot be changed here.",
+  "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed here.",
   "activity.title": "Codex activities",
   "activity.running": "Running",
   "activity.attention": "Needs attention",
@@ -103,31 +103,39 @@ type UiTranslationBundle = Record<UiTranslationKey, string>;
 
 const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
   ko: {
+    "settings.language": "인터페이스 언어", "settings.language.auto": "자동", "settings.languageHint": "자동은 호스트 앱의 언어를 따릅니다.",
     "common.loading": "불러오는 중…", "common.refresh": "새로고침", "common.cancel": "취소", "common.confirm": "확인", "common.error": "요청에 실패했습니다.",
-    "settings.title": "Codex Bridge 설정", "settings.scope": "이 브리지 연결을 사용하는 모든 대화에 공유됩니다.", "settings.access": "접근 전략", "settings.access.readOnly": "항상 읽기 전용", "settings.access.adaptive": "GPT가 작업별 판단", "settings.access.full": "항상 전체 접근", "settings.access.readOnlyHint": "모든 새 작업을 읽기 전용으로 고정합니다.", "settings.access.adaptiveHint": "GPT가 운영자 정책 안에서 읽기 전용·작업공간 쓰기·전체 접근을 판단합니다.", "settings.access.fullHint": "모든 새 작업을 danger-full-access로 고정합니다.", "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다.",
-    "settings.model": "기본 모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "설치된 Codex CLI에서 불러옵니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "기본 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.cwd": "기본 작업 폴더", "settings.cwdHint": "운영자가 허용한 루트만 저장할 수 있습니다:", "settings.session": "기본 세션 방식", "settings.session.auto": "최근 호환 세션 하나 자동 연결", "settings.session.new": "항상 새 세션", "settings.resume": "자동 연결 유효시간 (시간)", "settings.concurrency": "최대 동시 작업 수", "settings.delivery": "완료 전달", "settings.delivery.off": "사용 안 함", "settings.delivery.card": "Activity 카드만", "settings.delivery.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.unlimited": "Codex 실행에는 시간 제한이 없습니다. 필요하면 Activity 카드에서 강제 종료하세요.", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "운영자 기본값 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "운영자 기본값을 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 운영자 보안정책은 여기서 변경할 수 없습니다.",
+    "settings.title": "Codex Bridge 설정", "settings.scope": "이 브리지 연결을 사용하는 모든 대화에 공유됩니다.", "settings.access": "접근 전략", "settings.access.readOnly": "항상 읽기 전용", "settings.access.adaptive": "GPT가 작업별 판단", "settings.access.full": "항상 전체 접근", "settings.access.readOnlyHint": "모든 새 작업을 읽기 전용으로 고정합니다.", "settings.access.adaptiveHint": "GPT가 허용된 범위 안에서 읽기 전용·작업공간 쓰기·전체 접근을 판단합니다.", "settings.access.fullHint": "모든 새 작업을 danger-full-access로 고정합니다.", "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다.",
+    "settings.model": "기본 모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "설치된 Codex CLI에서 불러옵니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "기본 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.cwd": "기본 작업 폴더", "settings.cwdHint": "허용된 작업 루트만 저장할 수 있습니다:", "settings.concurrency": "최대 동시 작업 수", "settings.delivery": "완료 전달", "settings.delivery.off": "사용 안 함", "settings.delivery.card": "Activity 카드만", "settings.delivery.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "기본 설정으로 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "기본 설정으로 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 브리지 보안 정책은 여기서 변경할 수 없습니다.",
     "activity.title": "Codex 활동", "activity.running": "진행 중", "activity.attention": "확인 필요", "activity.verification": "검증 대기", "activity.failed": "실패", "activity.empty": "이 대화에는 아직 Activity가 없습니다.", "activity.forceStop": "강제 종료…", "activity.forceConfirmTitle": "Codex를 강제 종료할까요?", "activity.forceConfirm": "추적 중인 정확한 worker process group에 TERM을 보내고 필요하면 KILL로 자동 승격합니다. 같은 worker의 작업이 함께 중단될 수 있고 파일 변경은 되돌리지 않습니다.", "activity.forceStopping": "강제 종료 중…", "activity.forceStopped": "worker 종료를 확인했습니다.", "activity.viewDetails": "상세 보기", "activity.hideDetails": "상세 닫기", "activity.updated": "업데이트", "activity.noSignal": "최근 진행 신호가 없습니다. 프로세스 생존 여부는 알 수 없습니다.", "activity.terminating": "worker 프로세스 종료를 확인 중…", "activity.terminationFailed": "worker 종료를 확인하지 못했습니다.", "activity.unread": "읽지 않은 완료", "activity.manualRefresh": "실시간 갱신을 멈췄습니다. 직접 새로고침하세요.", "activity.partialChanges": "강제 종료는 디스크에 이미 기록된 변경을 되돌리지 않습니다.", "activity.jobs": "작업", "activity.threads": "스레드", "activity.events": "최근 활동", "activity.noEvents": "아직 공개된 진행 이벤트가 없습니다.", "activity.approval": "Codex가 승인을 요청했습니다", "activity.approve": "승인", "activity.decline": "거부", "activity.answer": "답변 보내기", "activity.steer": "진행 중인 turn에 지시 추가", "activity.steerPlaceholder": "이 Codex turn에 추가할 지시…", "activity.orphaned": "브리지가 재시작되어 기존 실행을 더 이상 추적할 수 없습니다.", "activity.workerLost": "추적하던 worker 프로세스가 종료되었습니다.", "activity.inputRequired": "입력 필요"
   },
   ja: {
-    "common.loading": "読み込み中…", "common.refresh": "更新", "common.cancel": "キャンセル", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "このブリッジ接続を使うすべての会話で共有されます。", "settings.access": "アクセス方式", "settings.model": "既定モデル", "settings.effort": "既定エフォート", "settings.cwd": "既定の作業フォルダー", "settings.session": "既定のセッション動作", "settings.resume": "自動再接続の有効時間（時間）", "settings.concurrency": "最大同時ジョブ数", "settings.unlimited": "Codex 実行に時間制限はありません。必要な場合は Activity カードから強制終了してください。", "settings.save": "設定を保存", "settings.refreshModels": "モデル一覧を更新", "settings.reset": "管理者の既定値に戻す", "activity.title": "Codex アクティビティ", "activity.running": "実行中", "activity.attention": "要確認", "activity.verification": "検証待ち", "activity.failed": "失敗", "activity.empty": "この会話にはまだアクティビティがありません。", "activity.forceStop": "強制終了…", "activity.forceConfirmTitle": "Codex を強制終了しますか？", "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。", "activity.forceStopping": "強制終了中…", "activity.viewDetails": "詳細を表示", "activity.hideDetails": "詳細を閉じる"
+    "settings.language": "インターフェース言語", "settings.language.auto": "自動", "settings.languageHint": "自動ではホストアプリの言語に従います。",
+    "common.loading": "読み込み中…", "common.refresh": "更新", "common.cancel": "キャンセル", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "このブリッジ接続を使うすべての会話で共有されます。", "settings.access": "アクセス方式", "settings.model": "既定モデル", "settings.effort": "既定エフォート", "settings.cwd": "既定の作業フォルダー", "settings.concurrency": "最大同時ジョブ数", "settings.save": "設定を保存", "settings.refreshModels": "モデル一覧を更新", "settings.reset": "既定の設定に戻す", "activity.title": "Codex アクティビティ", "activity.running": "実行中", "activity.attention": "要確認", "activity.verification": "検証待ち", "activity.failed": "失敗", "activity.empty": "この会話にはまだアクティビティがありません。", "activity.forceStop": "強制終了…", "activity.forceConfirmTitle": "Codex を強制終了しますか？", "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。", "activity.forceStopping": "強制終了中…", "activity.viewDetails": "詳細を表示", "activity.hideDetails": "詳細を閉じる"
   },
   "zh-Hans": {
-    "common.loading": "正在加载…", "common.refresh": "刷新", "common.cancel": "取消", "common.confirm": "确认", "settings.title": "Codex Bridge 设置", "settings.scope": "由使用此桥接连接的所有对话共享。", "settings.access": "访问策略", "settings.model": "默认模型", "settings.effort": "默认推理强度", "settings.cwd": "默认工作文件夹", "settings.session": "默认会话方式", "settings.resume": "自动恢复有效期（小时）", "settings.concurrency": "最大并发任务数", "settings.unlimited": "Codex 执行没有时间限制。需要时请在 Activity 卡片中强制停止。", "settings.save": "保存设置", "settings.refreshModels": "刷新模型列表", "settings.reset": "恢复管理员默认值", "activity.title": "Codex 活动", "activity.running": "运行中", "activity.attention": "需要处理", "activity.verification": "等待验证", "activity.failed": "失败", "activity.empty": "此对话中还没有活动。", "activity.forceStop": "强制停止…", "activity.forceConfirmTitle": "强制停止 Codex？", "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。", "activity.forceStopping": "正在强制停止…", "activity.viewDetails": "查看详情", "activity.hideDetails": "收起详情"
+    "settings.language": "界面语言", "settings.language.auto": "自动", "settings.languageHint": "自动模式跟随宿主应用的语言。",
+    "common.loading": "正在加载…", "common.refresh": "刷新", "common.cancel": "取消", "common.confirm": "确认", "settings.title": "Codex Bridge 设置", "settings.scope": "由使用此桥接连接的所有对话共享。", "settings.access": "访问策略", "settings.model": "默认模型", "settings.effort": "默认推理强度", "settings.cwd": "默认工作文件夹", "settings.concurrency": "最大并发任务数", "settings.save": "保存设置", "settings.refreshModels": "刷新模型列表", "settings.reset": "恢复默认设置", "activity.title": "Codex 活动", "activity.running": "运行中", "activity.attention": "需要处理", "activity.verification": "等待验证", "activity.failed": "失败", "activity.empty": "此对话中还没有活动。", "activity.forceStop": "强制停止…", "activity.forceConfirmTitle": "强制停止 Codex？", "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。", "activity.forceStopping": "正在强制停止…", "activity.viewDetails": "查看详情", "activity.hideDetails": "收起详情"
   },
   "zh-Hant": {
-    "common.loading": "載入中…", "common.refresh": "重新整理", "common.cancel": "取消", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "由使用此橋接連線的所有對話共用。", "settings.access": "存取策略", "settings.model": "預設模型", "settings.effort": "預設推理強度", "settings.cwd": "預設工作資料夾", "settings.session": "預設工作階段方式", "settings.resume": "自動恢復有效期（小時）", "settings.concurrency": "最大並行工作數", "settings.unlimited": "Codex 執行沒有時間限制。需要時請在 Activity 卡片中強制停止。", "settings.save": "儲存設定", "settings.refreshModels": "重新整理模型清單", "settings.reset": "還原管理員預設值", "activity.title": "Codex 活動", "activity.running": "執行中", "activity.attention": "需要處理", "activity.verification": "等待驗證", "activity.failed": "失敗", "activity.empty": "此對話中尚無活動。", "activity.forceStop": "強制停止…", "activity.forceConfirmTitle": "強制停止 Codex？", "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。", "activity.forceStopping": "正在強制停止…", "activity.viewDetails": "檢視詳細資料", "activity.hideDetails": "隱藏詳細資料"
+    "settings.language": "介面語言", "settings.language.auto": "自動", "settings.languageHint": "自動模式會跟隨主控應用程式的語言。",
+    "common.loading": "載入中…", "common.refresh": "重新整理", "common.cancel": "取消", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "由使用此橋接連線的所有對話共用。", "settings.access": "存取策略", "settings.model": "預設模型", "settings.effort": "預設推理強度", "settings.cwd": "預設工作資料夾", "settings.concurrency": "最大並行工作數", "settings.save": "儲存設定", "settings.refreshModels": "重新整理模型清單", "settings.reset": "還原預設設定", "activity.title": "Codex 活動", "activity.running": "執行中", "activity.attention": "需要處理", "activity.verification": "等待驗證", "activity.failed": "失敗", "activity.empty": "此對話中尚無活動。", "activity.forceStop": "強制停止…", "activity.forceConfirmTitle": "強制停止 Codex？", "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。", "activity.forceStopping": "正在強制停止…", "activity.viewDetails": "檢視詳細資料", "activity.hideDetails": "隱藏詳細資料"
   },
   es: {
-    "common.loading": "Cargando…", "common.refresh": "Actualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configuración de Codex Bridge", "settings.scope": "Compartida por todas las conversaciones que usan este puente.", "settings.access": "Estrategia de acceso", "settings.model": "Modelo predeterminado", "settings.effort": "Esfuerzo predeterminado", "settings.cwd": "Carpeta de trabajo predeterminada", "settings.session": "Sesión predeterminada", "settings.resume": "Ventana de reanudación (horas)", "settings.concurrency": "Máximo de trabajos simultáneos", "settings.unlimited": "La ejecución de Codex no tiene límite de tiempo. Usa Forzar detención en la tarjeta de actividad cuando sea necesario.", "settings.save": "Guardar configuración", "settings.refreshModels": "Actualizar modelos", "settings.reset": "Restaurar valores del operador", "activity.title": "Actividades de Codex", "activity.running": "En curso", "activity.attention": "Requiere atención", "activity.verification": "Listo para verificar", "activity.failed": "Falló", "activity.empty": "Aún no hay actividades en esta conversación.", "activity.forceStop": "Forzar detención…", "activity.forceConfirmTitle": "¿Forzar la detención de Codex?", "activity.forceStopping": "Deteniendo…", "activity.viewDetails": "Ver detalles", "activity.hideDetails": "Ocultar detalles"
+    "settings.language": "Idioma de la interfaz", "settings.language.auto": "Automático", "settings.languageHint": "El modo automático sigue el idioma de la aplicación anfitriona.",
+    "common.loading": "Cargando…", "common.refresh": "Actualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configuración de Codex Bridge", "settings.scope": "Compartida por todas las conversaciones que usan este puente.", "settings.access": "Estrategia de acceso", "settings.model": "Modelo predeterminado", "settings.effort": "Esfuerzo predeterminado", "settings.cwd": "Carpeta de trabajo predeterminada", "settings.concurrency": "Máximo de trabajos simultáneos", "settings.save": "Guardar configuración", "settings.refreshModels": "Actualizar modelos", "settings.reset": "Restaurar configuración predeterminada", "activity.title": "Actividades de Codex", "activity.running": "En curso", "activity.attention": "Requiere atención", "activity.verification": "Listo para verificar", "activity.failed": "Falló", "activity.empty": "Aún no hay actividades en esta conversación.", "activity.forceStop": "Forzar detención…", "activity.forceConfirmTitle": "¿Forzar la detención de Codex?", "activity.forceStopping": "Deteniendo…", "activity.viewDetails": "Ver detalles", "activity.hideDetails": "Ocultar detalles"
   },
   fr: {
-    "common.loading": "Chargement…", "common.refresh": "Actualiser", "common.cancel": "Annuler", "common.confirm": "Confirmer", "settings.title": "Paramètres de Codex Bridge", "settings.scope": "Partagés par toutes les conversations utilisant ce pont.", "settings.access": "Stratégie d’accès", "settings.model": "Modèle par défaut", "settings.effort": "Effort par défaut", "settings.cwd": "Dossier de travail par défaut", "settings.session": "Session par défaut", "settings.resume": "Fenêtre de reprise (heures)", "settings.concurrency": "Nombre maximal de tâches simultanées", "settings.unlimited": "L’exécution de Codex n’a pas de limite de temps. Utilisez Forcer l’arrêt dans la carte d’activité si nécessaire.", "settings.save": "Enregistrer", "settings.refreshModels": "Actualiser les modèles", "settings.reset": "Rétablir les valeurs opérateur", "activity.title": "Activités Codex", "activity.running": "En cours", "activity.attention": "Attention requise", "activity.verification": "Prêt à vérifier", "activity.failed": "Échec", "activity.empty": "Aucune activité dans cette conversation.", "activity.forceStop": "Forcer l’arrêt…", "activity.forceConfirmTitle": "Forcer l’arrêt de Codex ?", "activity.forceStopping": "Arrêt forcé…", "activity.viewDetails": "Voir les détails", "activity.hideDetails": "Masquer les détails"
+    "settings.language": "Langue de l’interface", "settings.language.auto": "Automatique", "settings.languageHint": "Le mode automatique suit la langue de l’application hôte.",
+    "common.loading": "Chargement…", "common.refresh": "Actualiser", "common.cancel": "Annuler", "common.confirm": "Confirmer", "settings.title": "Paramètres de Codex Bridge", "settings.scope": "Partagés par toutes les conversations utilisant ce pont.", "settings.access": "Stratégie d’accès", "settings.model": "Modèle par défaut", "settings.effort": "Effort par défaut", "settings.cwd": "Dossier de travail par défaut", "settings.concurrency": "Nombre maximal de tâches simultanées", "settings.save": "Enregistrer", "settings.refreshModels": "Actualiser les modèles", "settings.reset": "Rétablir les paramètres par défaut", "activity.title": "Activités Codex", "activity.running": "En cours", "activity.attention": "Attention requise", "activity.verification": "Prêt à vérifier", "activity.failed": "Échec", "activity.empty": "Aucune activité dans cette conversation.", "activity.forceStop": "Forcer l’arrêt…", "activity.forceConfirmTitle": "Forcer l’arrêt de Codex ?", "activity.forceStopping": "Arrêt forcé…", "activity.viewDetails": "Voir les détails", "activity.hideDetails": "Masquer les détails"
   },
   de: {
-    "common.loading": "Wird geladen…", "common.refresh": "Aktualisieren", "common.cancel": "Abbrechen", "common.confirm": "Bestätigen", "settings.title": "Codex-Bridge-Einstellungen", "settings.scope": "Für alle Unterhaltungen mit dieser Bridge-Verbindung gemeinsam.", "settings.access": "Zugriffsstrategie", "settings.model": "Standardmodell", "settings.effort": "Standardaufwand", "settings.cwd": "Standard-Arbeitsordner", "settings.session": "Standard-Sitzungsverhalten", "settings.resume": "Wiederaufnahmefenster (Stunden)", "settings.concurrency": "Maximale parallele Jobs", "settings.unlimited": "Codex-Ausführungen haben kein Zeitlimit. Verwenden Sie bei Bedarf Stopp erzwingen in der Activity-Karte.", "settings.save": "Einstellungen speichern", "settings.refreshModels": "Modellliste aktualisieren", "settings.reset": "Betreiber-Standardwerte", "activity.title": "Codex-Aktivitäten", "activity.running": "Läuft", "activity.attention": "Aufmerksamkeit erforderlich", "activity.verification": "Bereit zur Prüfung", "activity.failed": "Fehlgeschlagen", "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.", "activity.forceStop": "Stopp erzwingen…", "activity.forceConfirmTitle": "Codex zwangsweise stoppen?", "activity.forceStopping": "Stopp wird erzwungen…", "activity.viewDetails": "Details anzeigen", "activity.hideDetails": "Details ausblenden"
+    "settings.language": "Oberflächensprache", "settings.language.auto": "Automatisch", "settings.languageHint": "Automatisch folgt der Sprache der Host-Anwendung.",
+    "common.loading": "Wird geladen…", "common.refresh": "Aktualisieren", "common.cancel": "Abbrechen", "common.confirm": "Bestätigen", "settings.title": "Codex-Bridge-Einstellungen", "settings.scope": "Für alle Unterhaltungen mit dieser Bridge-Verbindung gemeinsam.", "settings.access": "Zugriffsstrategie", "settings.model": "Standardmodell", "settings.effort": "Standardaufwand", "settings.cwd": "Standard-Arbeitsordner", "settings.concurrency": "Maximale parallele Jobs", "settings.save": "Einstellungen speichern", "settings.refreshModels": "Modellliste aktualisieren", "settings.reset": "Standardeinstellungen wiederherstellen", "activity.title": "Codex-Aktivitäten", "activity.running": "Läuft", "activity.attention": "Aufmerksamkeit erforderlich", "activity.verification": "Bereit zur Prüfung", "activity.failed": "Fehlgeschlagen", "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.", "activity.forceStop": "Stopp erzwingen…", "activity.forceConfirmTitle": "Codex zwangsweise stoppen?", "activity.forceStopping": "Stopp wird erzwungen…", "activity.viewDetails": "Details anzeigen", "activity.hideDetails": "Details ausblenden"
   },
   pt: {
-    "common.loading": "Carregando…", "common.refresh": "Atualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configurações do Codex Bridge", "settings.scope": "Compartilhadas por todas as conversas que usam esta ponte.", "settings.access": "Estratégia de acesso", "settings.model": "Modelo padrão", "settings.effort": "Esforço padrão", "settings.cwd": "Pasta de trabalho padrão", "settings.session": "Sessão padrão", "settings.resume": "Janela de retomada (horas)", "settings.concurrency": "Máximo de trabalhos simultâneos", "settings.unlimited": "A execução do Codex não tem limite de tempo. Use Forçar parada no cartão de atividade quando necessário.", "settings.save": "Salvar configurações", "settings.refreshModels": "Atualizar modelos", "settings.reset": "Restaurar padrões do operador", "activity.title": "Atividades do Codex", "activity.running": "Em execução", "activity.attention": "Requer atenção", "activity.verification": "Pronto para verificar", "activity.failed": "Falhou", "activity.empty": "Ainda não há atividades nesta conversa.", "activity.forceStop": "Forçar parada…", "activity.forceConfirmTitle": "Forçar a parada do Codex?", "activity.forceStopping": "Forçando parada…", "activity.viewDetails": "Ver detalhes", "activity.hideDetails": "Ocultar detalhes"
+    "settings.language": "Idioma da interface", "settings.language.auto": "Automático", "settings.languageHint": "O modo automático segue o idioma do aplicativo host.",
+    "common.loading": "Carregando…", "common.refresh": "Atualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configurações do Codex Bridge", "settings.scope": "Compartilhadas por todas as conversas que usam esta ponte.", "settings.access": "Estratégia de acesso", "settings.model": "Modelo padrão", "settings.effort": "Esforço padrão", "settings.cwd": "Pasta de trabalho padrão", "settings.concurrency": "Máximo de trabalhos simultâneos", "settings.save": "Salvar configurações", "settings.refreshModels": "Atualizar modelos", "settings.reset": "Restaurar configurações padrão", "activity.title": "Atividades do Codex", "activity.running": "Em execução", "activity.attention": "Requer atenção", "activity.verification": "Pronto para verificar", "activity.failed": "Falhou", "activity.empty": "Ainda não há atividades nesta conversa.", "activity.forceStop": "Forçar parada…", "activity.forceConfirmTitle": "Forçar a parada do Codex?", "activity.forceStopping": "Forçando parada…", "activity.viewDetails": "Ver detalhes", "activity.hideDetails": "Ocultar detalhes"
   }
 };
 
@@ -138,7 +146,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "タスクごとに GPT が選択",
     "settings.access.full": "常にフルアクセス",
     "settings.access.readOnlyHint": "すべての新規タスクを読み取り専用に固定します。",
-    "settings.access.adaptiveHint": "GPT が管理者ポリシーの範囲で読み取り専用、ワークスペース書き込み、フルアクセスを選択できます。",
+    "settings.access.adaptiveHint": "GPT が許可された範囲で読み取り専用、ワークスペース書き込み、フルアクセスを選択できます。",
     "settings.access.fullHint": "すべての新規タスクを danger-full-access に固定します。",
     "settings.fullWarning": "フルアクセスでは、この macOS ユーザーのファイルシステム権限とネットワーク権限で Codex が実行されます。許可ルートは開始フォルダーだけを制限し、OS レベルの隔離ではありません。",
     "settings.modelDefault": "Codex の既定モデル",
@@ -146,9 +154,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "保存済み",
     "settings.effortDefault": "モデルの既定エフォート",
     "settings.effortHint": "選択したモデルが対応する値だけを表示します。",
-    "settings.cwdHint": "管理者が許可したルートだけを保存できます:",
-    "settings.session.auto": "最近の互換セッションを 1 つ再開",
-    "settings.session.new": "常に新しいセッションを開始",
+    "settings.cwdHint": "許可されたルートだけを保存できます:",
+
+
     "settings.delivery": "完了時の通知",
     "settings.delivery.off": "オフ",
     "settings.delivery.card": "Activity カードのみ",
@@ -158,9 +166,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "更新中…",
     "settings.refreshed": "モデル一覧を更新しました。",
     "settings.resetting": "復元中…",
-    "settings.resetDone": "管理者の既定値を復元しました。",
+    "settings.resetDone": "既定の設定を復元しました。",
     "settings.invalidResponse": "設定ツールから無効な応答が返されました。",
-    "settings.sharedNotice": "この設定は ChatGPT アカウント別ではなく、このブリッジインスタンスを使用するすべての会話で共有されます。管理者のセキュリティポリシーはここでは変更できません。",
+    "settings.sharedNotice": "この設定は ChatGPT アカウント別ではなく、このブリッジインスタンスを使用するすべての会話で共有されます。ブリッジのセキュリティポリシーはここでは変更できません。",
     "activity.forceStopped": "worker の終了を確認しました。",
     "activity.updated": "更新日時",
     "activity.noSignal": "最近の進行シグナルがありません。プロセスが動作中かどうかは不明です。",
@@ -189,7 +197,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "由 GPT 按任务选择",
     "settings.access.full": "始终完全访问",
     "settings.access.readOnlyHint": "所有新任务都强制为只读。",
-    "settings.access.adaptiveHint": "GPT 可在管理员策略范围内选择只读、工作区写入或完全访问。",
+    "settings.access.adaptiveHint": "GPT 可在允许的范围内选择只读、工作区写入或完全访问。",
     "settings.access.fullHint": "所有新任务都强制使用 danger-full-access。",
     "settings.fullWarning": "完全访问会使用此 macOS 用户的文件系统和网络权限运行 Codex。允许的根目录只限制起始文件夹，并不提供操作系统隔离。",
     "settings.modelDefault": "Codex 默认模型",
@@ -197,9 +205,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "当前已保存",
     "settings.effortDefault": "模型默认推理强度",
     "settings.effortHint": "仅显示所选模型支持的值。",
-    "settings.cwdHint": "只能保存管理员允许的根目录：",
-    "settings.session.auto": "恢复一个最近的兼容会话",
-    "settings.session.new": "始终启动新会话",
+    "settings.cwdHint": "只能保存允许的根目录：",
+
+
     "settings.delivery": "完成通知",
     "settings.delivery.off": "关闭",
     "settings.delivery.card": "仅 Activity 卡片",
@@ -209,9 +217,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "正在刷新…",
     "settings.refreshed": "模型列表已刷新。",
     "settings.resetting": "正在恢复…",
-    "settings.resetDone": "已恢复管理员默认值。",
+    "settings.resetDone": "已恢复默认设置。",
     "settings.invalidResponse": "设置工具返回了无效响应。",
-    "settings.sharedNotice": "这些设置不会按 ChatGPT 账户保存，而是由使用此桥接实例的所有对话共享。管理员安全策略无法在此更改。",
+    "settings.sharedNotice": "这些设置不会按 ChatGPT 账户保存，而是由使用此桥接实例的所有对话共享。桥接安全策略无法在此更改。",
     "activity.forceStopped": "已确认 worker 终止。",
     "activity.updated": "更新时间",
     "activity.noSignal": "最近没有进度信号；无法确定进程是否仍在运行。",
@@ -240,7 +248,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "由 GPT 依工作選擇",
     "settings.access.full": "一律完整存取",
     "settings.access.readOnlyHint": "所有新工作都強制為唯讀。",
-    "settings.access.adaptiveHint": "GPT 可在管理員政策內選擇唯讀、工作區寫入或完整存取。",
+    "settings.access.adaptiveHint": "GPT 可在允許的範圍內選擇唯讀、工作區寫入或完整存取。",
     "settings.access.fullHint": "所有新工作都強制使用 danger-full-access。",
     "settings.fullWarning": "完整存取會以此 macOS 使用者的檔案系統與網路權限執行 Codex。允許的根目錄只限制起始資料夾，並非作業系統隔離。",
     "settings.modelDefault": "Codex 預設模型",
@@ -248,9 +256,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "目前已儲存",
     "settings.effortDefault": "模型預設推理強度",
     "settings.effortHint": "只顯示所選模型支援的值。",
-    "settings.cwdHint": "只能儲存管理員允許的根目錄：",
-    "settings.session.auto": "恢復一個最近的相容工作階段",
-    "settings.session.new": "一律啟動新工作階段",
+    "settings.cwdHint": "只能儲存允許的根目錄：",
+
+
     "settings.delivery": "完成通知",
     "settings.delivery.off": "關閉",
     "settings.delivery.card": "僅 Activity 卡片",
@@ -260,9 +268,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "重新整理中…",
     "settings.refreshed": "模型清單已重新整理。",
     "settings.resetting": "還原中…",
-    "settings.resetDone": "已還原管理員預設值。",
+    "settings.resetDone": "已還原預設設定。",
     "settings.invalidResponse": "設定工具傳回無效回應。",
-    "settings.sharedNotice": "這些設定不是依 ChatGPT 帳戶儲存，而是由使用此橋接執行個體的所有對話共用。管理員安全政策無法在此變更。",
+    "settings.sharedNotice": "這些設定不是依 ChatGPT 帳戶儲存，而是由使用此橋接執行個體的所有對話共用。橋接安全政策無法在此變更。",
     "activity.forceStopped": "已確認 worker 終止。",
     "activity.updated": "更新時間",
     "activity.noSignal": "最近沒有進度訊號；無法確定程序是否仍在執行。",
@@ -291,7 +299,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "GPT elige por tarea",
     "settings.access.full": "Siempre acceso total",
     "settings.access.readOnlyHint": "Todas las tareas nuevas se fuerzan a solo lectura.",
-    "settings.access.adaptiveHint": "GPT puede elegir solo lectura, escritura en el espacio de trabajo o acceso total dentro de la política del operador.",
+    "settings.access.adaptiveHint": "GPT puede elegir solo lectura, escritura en el espacio de trabajo o acceso total dentro de los límites permitidos.",
     "settings.access.fullHint": "Todas las tareas nuevas se fuerzan a danger-full-access.",
     "settings.fullWarning": "El acceso total ejecuta Codex con los permisos de archivos y red de este usuario de macOS. Las raíces permitidas solo limitan la carpeta inicial; no son aislamiento del sistema operativo.",
     "settings.modelDefault": "Modelo predeterminado de Codex",
@@ -299,9 +307,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "guardado actualmente",
     "settings.effortDefault": "Esfuerzo predeterminado del modelo",
     "settings.effortHint": "Solo se muestran valores compatibles con el modelo seleccionado.",
-    "settings.cwdHint": "Solo pueden guardarse raíces aprobadas por el operador:",
-    "settings.session.auto": "Reanudar una sesión compatible reciente",
-    "settings.session.new": "Iniciar siempre una sesión nueva",
+    "settings.cwdHint": "Solo pueden guardarse raíces permitidas:",
+
+
     "settings.delivery": "Entrega al finalizar",
     "settings.delivery.off": "Desactivada",
     "settings.delivery.card": "Solo tarjeta de Activity",
@@ -311,9 +319,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "Actualizando…",
     "settings.refreshed": "Lista de modelos actualizada.",
     "settings.resetting": "Restaurando…",
-    "settings.resetDone": "Valores del operador restaurados.",
+    "settings.resetDone": "Configuración predeterminada restaurada.",
     "settings.invalidResponse": "La herramienta de configuración devolvió una respuesta no válida.",
-    "settings.sharedNotice": "Esta configuración se comparte entre todas las conversaciones que usan esta instancia del puente; no se guarda por cuenta de ChatGPT. La política de seguridad del operador no puede cambiarse aquí.",
+    "settings.sharedNotice": "Esta configuración se comparte entre todas las conversaciones que usan esta instancia del puente; no se guarda por cuenta de ChatGPT. La política de seguridad del puente no puede cambiarse aquí.",
     "activity.forceConfirm": "Envía TERM al grupo de procesos worker exacto y escala automáticamente a KILL si es necesario. Pueden interrumpirse tareas que compartan worker y los cambios de archivos no se revierten.",
     "activity.forceStopped": "Se confirmó la finalización del worker.",
     "activity.updated": "Actualizado",
@@ -343,7 +351,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "GPT choisit selon la tâche",
     "settings.access.full": "Toujours en accès complet",
     "settings.access.readOnlyHint": "Chaque nouvelle tâche est forcée en lecture seule.",
-    "settings.access.adaptiveHint": "GPT peut choisir la lecture seule, l’écriture dans l’espace de travail ou l’accès complet dans les limites de la politique opérateur.",
+    "settings.access.adaptiveHint": "GPT peut choisir la lecture seule, l’écriture dans l’espace de travail ou l’accès complet dans les limites autorisées.",
     "settings.access.fullHint": "Chaque nouvelle tâche est forcée en danger-full-access.",
     "settings.fullWarning": "L’accès complet exécute Codex avec les autorisations de fichiers et de réseau de cet utilisateur macOS. Les racines autorisées limitent uniquement le dossier de départ et ne constituent pas une isolation du système.",
     "settings.modelDefault": "Modèle Codex par défaut",
@@ -351,9 +359,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "actuellement enregistré",
     "settings.effortDefault": "Effort par défaut du modèle",
     "settings.effortHint": "Seules les valeurs prises en charge par le modèle sélectionné sont affichées.",
-    "settings.cwdHint": "Seules les racines approuvées par l’opérateur peuvent être enregistrées :",
-    "settings.session.auto": "Reprendre une session compatible récente",
-    "settings.session.new": "Toujours démarrer une nouvelle session",
+    "settings.cwdHint": "Seules les racines autorisées peuvent être enregistrées :",
+
+
     "settings.delivery": "Remise à la fin",
     "settings.delivery.off": "Désactivée",
     "settings.delivery.card": "Carte Activity uniquement",
@@ -363,9 +371,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "Actualisation…",
     "settings.refreshed": "Liste des modèles actualisée.",
     "settings.resetting": "Restauration…",
-    "settings.resetDone": "Valeurs opérateur restaurées.",
+    "settings.resetDone": "Paramètres par défaut rétablis.",
     "settings.invalidResponse": "L’outil de paramètres a renvoyé une réponse non valide.",
-    "settings.sharedNotice": "Ces paramètres sont partagés par toutes les conversations utilisant cette instance du pont ; ils ne sont pas enregistrés par compte ChatGPT. La politique de sécurité de l’opérateur ne peut pas être modifiée ici.",
+    "settings.sharedNotice": "Ces paramètres sont partagés par toutes les conversations utilisant cette instance du pont ; ils ne sont pas enregistrés par compte ChatGPT. La politique de sécurité du pont ne peut pas être modifiée ici.",
     "activity.forceConfirm": "Envoie TERM au groupe de processus worker suivi avec précision et passe automatiquement à KILL si nécessaire. Les tâches partageant ce worker peuvent être interrompues et les modifications de fichiers ne sont pas annulées.",
     "activity.forceStopped": "L’arrêt du worker a été confirmé.",
     "activity.updated": "Mis à jour",
@@ -395,7 +403,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "GPT wählt je Aufgabe",
     "settings.access.full": "Immer Vollzugriff",
     "settings.access.readOnlyHint": "Jede neue Aufgabe wird auf schreibgeschützt festgelegt.",
-    "settings.access.adaptiveHint": "GPT kann innerhalb der Betreiberregeln zwischen schreibgeschützt, Workspace-Schreibzugriff und Vollzugriff wählen.",
+    "settings.access.adaptiveHint": "GPT kann innerhalb der zulässigen Grenzen zwischen schreibgeschützt, Workspace-Schreibzugriff und Vollzugriff wählen.",
     "settings.access.fullHint": "Jede neue Aufgabe wird auf danger-full-access festgelegt.",
     "settings.fullWarning": "Vollzugriff führt Codex mit den Datei- und Netzwerkrechten dieses macOS-Benutzers aus. Zulässige Wurzeln begrenzen nur den Startordner und sind keine Betriebssystem-Isolation.",
     "settings.modelDefault": "Codex-Standardmodell",
@@ -403,9 +411,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "derzeit gespeichert",
     "settings.effortDefault": "Standardaufwand des Modells",
     "settings.effortHint": "Es werden nur vom gewählten Modell unterstützte Werte angezeigt.",
-    "settings.cwdHint": "Nur vom Betreiber freigegebene Wurzeln können gespeichert werden:",
-    "settings.session.auto": "Eine kürzlich verwendete kompatible Sitzung fortsetzen",
-    "settings.session.new": "Immer eine neue Sitzung starten",
+    "settings.cwdHint": "Nur zulässige Wurzeln können gespeichert werden:",
+
+
     "settings.delivery": "Abschlussübergabe",
     "settings.delivery.off": "Aus",
     "settings.delivery.card": "Nur Activity-Karte",
@@ -415,9 +423,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "Wird aktualisiert…",
     "settings.refreshed": "Modellliste aktualisiert.",
     "settings.resetting": "Wird wiederhergestellt…",
-    "settings.resetDone": "Betreiber-Standardwerte wiederhergestellt.",
+    "settings.resetDone": "Standardeinstellungen wiederhergestellt.",
     "settings.invalidResponse": "Das Einstellungswerkzeug hat eine ungültige Antwort zurückgegeben.",
-    "settings.sharedNotice": "Diese Einstellungen werden von allen Unterhaltungen gemeinsam genutzt, die diese Bridge-Instanz verwenden; sie werden nicht pro ChatGPT-Konto gespeichert. Die Sicherheitsrichtlinie des Betreibers kann hier nicht geändert werden.",
+    "settings.sharedNotice": "Diese Einstellungen werden von allen Unterhaltungen gemeinsam genutzt, die diese Bridge-Instanz verwenden; sie werden nicht pro ChatGPT-Konto gespeichert. Die Sicherheitsrichtlinie der Bridge kann hier nicht geändert werden.",
     "activity.forceConfirm": "Sendet TERM an die exakt erfasste worker-Prozessgruppe und eskaliert bei Bedarf automatisch zu KILL. Jobs auf demselben worker können unterbrochen werden; Dateiänderungen werden nicht zurückgesetzt.",
     "activity.forceStopped": "Die Beendigung des workers wurde bestätigt.",
     "activity.updated": "Aktualisiert",
@@ -447,7 +455,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.access.adaptive": "GPT escolhe por tarefa",
     "settings.access.full": "Sempre acesso total",
     "settings.access.readOnlyHint": "Todas as novas tarefas são forçadas a somente leitura.",
-    "settings.access.adaptiveHint": "O GPT pode escolher somente leitura, escrita no espaço de trabalho ou acesso total dentro da política do operador.",
+    "settings.access.adaptiveHint": "O GPT pode escolher somente leitura, escrita no espaço de trabalho ou acesso total dentro dos limites permitidos.",
     "settings.access.fullHint": "Todas as novas tarefas são forçadas a danger-full-access.",
     "settings.fullWarning": "O acesso total executa o Codex com as permissões de arquivos e rede deste usuário do macOS. As raízes permitidas limitam apenas a pasta inicial; não são isolamento do sistema operacional.",
     "settings.modelDefault": "Modelo padrão do Codex",
@@ -455,9 +463,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "salvo atualmente",
     "settings.effortDefault": "Esforço padrão do modelo",
     "settings.effortHint": "Somente valores compatíveis com o modelo selecionado são exibidos.",
-    "settings.cwdHint": "Somente raízes aprovadas pelo operador podem ser salvas:",
-    "settings.session.auto": "Retomar uma sessão compatível recente",
-    "settings.session.new": "Sempre iniciar uma nova sessão",
+    "settings.cwdHint": "Somente raízes permitidas podem ser salvas:",
+
+
     "settings.delivery": "Entrega ao concluir",
     "settings.delivery.off": "Desativada",
     "settings.delivery.card": "Somente cartão de Activity",
@@ -467,9 +475,9 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.refreshing": "Atualizando…",
     "settings.refreshed": "Lista de modelos atualizada.",
     "settings.resetting": "Restaurando…",
-    "settings.resetDone": "Padrões do operador restaurados.",
+    "settings.resetDone": "Configurações padrão restauradas.",
     "settings.invalidResponse": "A ferramenta de configurações retornou uma resposta inválida.",
-    "settings.sharedNotice": "Estas configurações são compartilhadas por todas as conversas que usam esta instância da ponte; não são salvas por conta do ChatGPT. A política de segurança do operador não pode ser alterada aqui.",
+    "settings.sharedNotice": "Estas configurações são compartilhadas por todas as conversas que usam esta instância da ponte; não são salvas por conta do ChatGPT. A política de segurança da ponte não pode ser alterada aqui.",
     "activity.forceConfirm": "Envia TERM ao grupo de processos worker rastreado com exatidão e escala automaticamente para KILL quando necessário. Tarefas que compartilham o worker podem ser interrompidas e as alterações em arquivos não são revertidas.",
     "activity.forceStopped": "A finalização do worker foi confirmada.",
     "activity.updated": "Atualizado",
@@ -576,6 +584,17 @@ export function resolveUiLocale(input?: string | null): SupportedUiLocale {
   if (locale === "de" || locale.startsWith("de-")) return "de";
   if (locale === "pt" || locale.startsWith("pt-")) return "pt";
   return "en";
+}
+
+export function isUiLocalePreference(value: unknown): value is UiLocalePreference {
+  return typeof value === "string" && (UI_LOCALE_PREFERENCES as readonly string[]).includes(value);
+}
+
+export function resolvePreferredUiLocale(
+  preference: UiLocalePreference,
+  hostLocale?: string | null
+): SupportedUiLocale {
+  return preference === "auto" ? resolveUiLocale(hostLocale) : preference;
 }
 
 export function serializedUiTranslations(): string {

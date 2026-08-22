@@ -50,7 +50,8 @@ the network as the current macOS user.
   transitions. Existing Activity policy cannot be changed through `codex_task`,
   and Codex output is never treated as transition authority.
 - 50,000 characters per prompt.
-- Six-hour automatic session-resume window and completed-job retention.
+- Activity-bound compatible-thread selection with no age limit, plus bounded
+  completed-job retention.
 - Durable sessions, bridge preferences, jobs, bounded results, Activities,
   append-only Activity/job events, scope versions, bridge generations, and a
   completion outbox stored in one user-private transactional SQLite database
@@ -140,7 +141,7 @@ because the private no-auth tunnel does not supply per-user identity.
   `handoffBatchId` and never embeds raw Codex output.
 - Codex MCP thread context is worker-process local. Persisted session metadata
   remains visible after restart, but those rows are marked unavailable and are
-  not resumed; auto mode starts a fresh thread. New App Server threads use a
+  not resumed; the Activity starts a fresh thread. New App Server threads use a
   separate sticky backend with rich public events, approval/input handling,
   steering, and exact turn interruption. OpenAI currently documents the App
   Server interface as experimental, so it is not represented as a production

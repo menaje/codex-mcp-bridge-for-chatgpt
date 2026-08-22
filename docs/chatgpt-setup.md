@@ -75,13 +75,14 @@ initial `adaptive` setting keeps omitted sandboxes read-only. A saved
 
 Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The
 `codex_settings` result renders an inline card for access strategy, dynamic
-model/effort defaults, working directory, session behavior, auto-resume window,
-concurrency, and completion delivery. Codex job execution is unlimited-only;
+model/effort defaults, working directory, interface language, concurrency, and
+completion delivery. Codex job execution is unlimited-only;
 there is no task-timeout field or per-call timeout. The save button calls the
 app-only update action; the server validates the complete request and stores it privately.
-The card selects English, Korean, Japanese, Simplified or Traditional Chinese,
-Spanish, French, German, or Portuguese from the host locale and falls back to
-English when that locale is unsupported.
+The language preference can be automatic or fixed to English, Korean, Japanese,
+Simplified or Traditional Chinese, Spanish, French, German, or Portuguese.
+Automatic mode follows the host locale and falls back to English; a fixed value
+overrides the host locale for both Settings and Activity cards.
 
 The access choices are:
 
@@ -124,9 +125,11 @@ per-job polling. A host without MCP Apps can still use
 The pull timeout leaves the unlimited Codex execution running. Do not treat
 `running` as a final completion response unless the user explicitly requested
 start-only/background behavior. After `completed`, inspect the returned result
-and verify the actual artifacts and relevant tests before reporting completion. Omit session mode to
-use the saved `auto` or `new` default, and use `continue` with an exact
-`threadId` when selecting a specific persisted session. Do not decide in
+and verify the actual artifacts and relevant tests before reporting completion.
+Omit session mode for Activity-managed routing: a new Activity starts a new
+thread, while an existing Activity resumes its one compatible attached thread
+without an age limit. Use `continue` with an exact `threadId` when selecting a
+specific persisted session. Do not decide in
 advance whether the conversation will be single-threaded or parallel. When
 parallel work becomes useful, start another thread at that moment with
 `sessionMode: new` and keep its returned `threadId` under the same derived
@@ -178,25 +181,19 @@ page lengths. The
 server-derived `scopeView.source` is `host-metadata`; raw host identifiers are
 not persisted. `includeAllScopes: true` is rejected for ordinary ChatGPT calls
 and is reserved for a trusted compatibility/admin host without session metadata.
-Auto mode selects a compatible session only when it
-is the sole compatible candidate for the same scope, cwd,
-sandbox, model, and effort inside the saved auto-resume window. With several
-compatible sessions it returns an ambiguity error so ChatGPT can inspect the
-scope and retry with the intended exact `threadId`. A copied or branched
+Auto mode selects a compatible session only when it is the sole compatible
+thread already attached to the exact Activity and matches the same scope, cwd,
+sandbox, model, and effort. Age is not a selection criterion. With several
+compatible Activity threads it returns an ambiguity error so ChatGPT can
+inspect the Activity and retry with the intended exact `threadId`. A copied or branched
 ChatGPT conversation is isolated only when the host supplies a different
 `openai/session` value. Moving an existing thread across scopes requires its
 exact `threadId` and `adoptThread: true` after explicit user intent.
 
-For a cross-surface deployment, compare the opaque `scopeView.scopeId` returned
-by `codex_status` from the same chat on macOS, iOS, and web, then compare it with
-a new chat. The same host tuple must produce the same scope and a different
-host session must produce a different scope. This diagnostic compares only the
-derived identifier; raw host metadata is never persisted or returned.
-
 The status entry `resumeAvailability: "available"` means the thread is still
 bound to its active Codex MCP worker. After the bridge or worker restarts,
 persisted history is retained but the entry becomes
-`"unavailable-after-worker-restart"`; auto mode starts a fresh thread and exact
+`"unavailable-after-worker-restart"`; the Activity starts a fresh thread and exact
 continuation is rejected instead of sending a misleading reply to a new worker.
 
 The same Codex thread is serialized. Different threads in the same scope can
@@ -218,8 +215,9 @@ transactional completion-outbox rows. Existing jobs become one-job legacy
 Activities with manual completion and no automatic handoff, so a completed
 Codex turn is not presented as a completed user task. Current calls can create,
 attach, seal, complete, cancel, abandon, and verify Activities. The localized
-Activity card supports English, Korean, Japanese, Simplified/Traditional
-Chinese, Spanish, French, German, and Portuguese from the host locale. A
+Activity card supports automatic host-locale selection or the same saved fixed
+English, Korean, Japanese, Simplified/Traditional Chinese, Spanish, French,
+German, and Portuguese preference as the Settings card. A
 transactional outbox leases and acknowledges one whole completion batch per
 mounted card and never copies raw Codex output into that prompt. A stable batch
 id is included so a retry can be recognized if host message delivery succeeds
