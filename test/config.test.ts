@@ -28,6 +28,7 @@ describe("config policy", () => {
     expect(config.jobStateFile).toMatch(/\.codex-mcp-bridge\/jobs\.json$/);
     expect(config).not.toHaveProperty("defaultSessionMode");
     expect(config).not.toHaveProperty("autoResumeTtlMs");
+    expect(config).not.toHaveProperty("fastReturnMs");
     expect(config.defaultBackend).toBe("mcp-server");
     expect(config.upstreamPoolSize).toBe(4);
     expect(config.maxRetainedJobs).toBe(100);
@@ -136,6 +137,17 @@ describe("config policy", () => {
     expect(config).not.toHaveProperty("upstreamTimeoutMs");
     expect(config.startupWarnings).toEqual([
       expect.stringContaining("retired and ignored")
+    ]);
+  });
+
+  it("ignores the retired fast-return threshold with a migration warning", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "25000"
+    });
+    expect(config).not.toHaveProperty("fastReturnMs");
+    expect(config.startupWarnings).toEqual([
+      expect.stringContaining("FAST_RETURN_MS is retired and ignored")
     ]);
   });
 

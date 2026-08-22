@@ -56,6 +56,8 @@ import type {
 } from "./upstream.js";
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
+  ACTIVITY_CARD_VISIBILITIES,
+  COMPLETION_HANDOFF_MODES,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
   UserSettingsStore
@@ -103,7 +105,8 @@ const bridgeUserSettingsOutputSchema = z.object({
   defaultCwd: z.string().nullable(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
-  completionDeliveryMode: z.enum(["off", "card-only", "auto-handoff"])
+  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
+  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
 
 const catalogModelOutputSchema = z.object({
@@ -127,6 +130,8 @@ const settingsViewOutputSchema = z.object({
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     allowedRoots: z.array(z.string()),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
+    availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
+    availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
@@ -662,7 +667,7 @@ export class CodexJobRegistry {
       ...input,
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
-      executionMode: input.executionMode || "auto",
+      executionMode: input.executionMode || "background",
       backendKind: input.backendKind || "mcp-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
@@ -1554,7 +1559,7 @@ export function registerBridgeTools(
           ? await jobs.wait(args.jobId, args.waitFor, args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS)
           : undefined;
         const job = wait?.job || initial;
-        return textResult(formatJobStatus(job, jobs.staleThresholdMs, wait));
+        return textResult(formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current));
       }
       if (args.activityId) {
         if (!scopeId && !args.includeAllScopes) {
@@ -1568,7 +1573,7 @@ export function registerBridgeTools(
         return textResult({
           activity: formatActivitySummary(activity),
           threads: [...new Set(childJobs.map((job) => job.threadId).filter(Boolean))],
-          jobs: childJobs.map((job) => formatJobStatus(job, jobs.staleThresholdMs)),
+          jobs: childJobs.map((job) => formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current)),
           events: jobs.listActivityEvents(activity.activityId).slice(-100),
           uiRequired: false
         });
@@ -1603,7 +1608,7 @@ export function registerBridgeTools(
             : null,
           activities: activities.map(formatActivitySummary),
           jobs: relatedJobs.map((job) => ({
-            ...formatJobStatus(job, jobs.staleThresholdMs),
+            ...formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current),
             events: jobs.listJobEvents(job.jobId).slice(-100)
           })),
           turns: relatedJobs.map((job) => ({
@@ -1698,8 +1703,9 @@ export function registerBridgeTools(
         uiLocalePreference: preferences.uiLocalePreference,
         dynamicModelCatalog: true,
         modelCatalogCacheTtlMs: config.modelCatalogCacheTtlMs,
-        fastReturnMs: config.fastReturnMs,
         codexExecutionDeadline: "none",
+        activityCardVisibility: preferences.activityCardVisibility,
+        completionHandoff: preferences.completionHandoff,
         defaultBackend: config.defaultBackend,
         upstreamPoolSize: config.upstreamPoolSize,
         maxConcurrentJobs: preferences.maxConcurrentJobs,
@@ -1813,7 +1819,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description:
-        "Render or refresh the Activity view for the current ChatGPT conversation. One scope-wide bounded watch replaces per-job polling. Use it once when codex_task returns an asynchronous job; the mounted card then watches authoritative Activity/job versions itself.",
+        "Render or refresh the Activity view for the current ChatGPT conversation. One scope-wide bounded watch replaces per-job polling. Call it exactly once when codex_task returns bridgeActivity.shouldRenderActivityCard=true, or whenever the user explicitly asks to see Activities. The mounted card then watches authoritative Activity/job versions itself. This presentation tool does not change foreground/background execution, Codex threads, conversation continuity, or completion policy.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
@@ -2020,7 +2026,7 @@ export function registerBridgeTools(
         expectedVersion: args.expectedVersion,
         acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
       });
-      return textResult(formatJobStatus(cancelled, jobs.staleThresholdMs));
+      return textResult(formatJobStatus(cancelled, jobs.staleThresholdMs, undefined, userSettings.current));
     }
   );
 
@@ -2140,7 +2146,7 @@ export function registerBridgeTools(
         return textResult({
           action: args.action,
           activityId: existing.activityId,
-          job: formatJobStatus(updated, jobs.staleThresholdMs),
+          job: formatJobStatus(updated, jobs.staleThresholdMs, undefined, userSettings.current),
           promptOrAnswersPersisted: false,
           steeringScope: args.action === "steer" ? "active-codex-turn-only" : undefined
         });
@@ -2353,7 +2359,8 @@ export function registerBridgeTools(
         defaultCwd: z.string().trim().min(1).nullable().optional(),
         uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
-        completionDeliveryMode: z.enum(["off", "card-only", "auto-handoff"]).optional()
+        activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
+        completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
       },
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -2378,7 +2385,8 @@ export function registerBridgeTools(
         "defaultCwd",
         "uiLocalePreference",
         "maxConcurrentJobs",
-        "completionDeliveryMode"
+        "activityCardVisibility",
+        "completionHandoff"
       ] as const;
       if (args.reset) {
         if (settingKeys.some((key) => args[key] !== undefined)) {
@@ -2426,7 +2434,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn inside an Activity in the current ChatGPT conversation scope. Omit activityId to create a new Activity and new thread, or pass an exact open Activity to resume its one compatible attached thread without an age limit. Activity policy is explicit caller input and never comes from Codex output. Generate one UUID requestId per logical turn and reuse it only for exact retries. Use sessionMode='new' for deliberate additional parallel threads and exact threadId values once an Activity has multiple candidates. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
+        "Run one Codex turn inside an Activity in the current ChatGPT conversation scope. Omit activityId to create a new Activity and new thread, or pass an exact open Activity to resume its one compatible attached thread without an age limit. Background returns a tracked job immediately; foreground waits for the terminal Codex result. Card visibility is an independent saved preference. When bridgeActivity.shouldRenderActivityCard is true, call codex_activity exactly once; the mounted card watches progress without repeated status polling. Activity policy is explicit caller input and never comes from Codex output. Generate one UUID requestId per logical turn and reuse it only for exact retries. Use sessionMode='new' for deliberate additional parallel threads and exact threadId values once an Activity has multiple candidates. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
@@ -2455,7 +2463,7 @@ export function registerBridgeTools(
           .enum(ACTIVITY_EXECUTION_MODES)
           .optional()
           .describe(
-            "Per-turn delivery mode: foreground waits for terminal, background returns immediately, and auto uses the bridge fast-return threshold."
+            "Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."
           ),
         handoffPolicy: z
           .enum(ACTIVITY_HANDOFF_POLICIES)
@@ -2502,7 +2510,7 @@ export function registerBridgeTools(
       const scope = scopeResolver.require(_meta as ToolCallMetadata, args.scopeId, "Codex task execution");
       const routing = resolveTaskRouting(args, scope.scopeId);
       const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
-      if (replay) return resultForJob(replay, config.jobStaleAfterMs);
+      if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences);
       const activityRequest = validateActivityTaskRequest(args, jobs, routing.scopeId);
 
       if (args.adoptThread && !args.threadId) {
@@ -2876,7 +2884,7 @@ async function startNewSession(input: {
     action: "start",
     reason: input.reason
   };
-  return runCodexWithFastReturn({
+  return runCodex({
     jobs: input.jobs,
     config: input.config,
     preferences: input.preferences,
@@ -3020,7 +3028,7 @@ async function continueTrackedSession(input: {
     reason: input.reason,
     threadId: input.session.threadId
   };
-  return runCodexWithFastReturn({
+  return runCodex({
     jobs: input.jobs,
     config: input.config,
     preferences: input.preferences,
@@ -3060,7 +3068,7 @@ async function continueTrackedSession(input: {
   });
 }
 
-async function runCodexWithFastReturn(input: {
+async function runCodex(input: {
   jobs: CodexJobRegistry;
   config: BridgeConfig;
   preferences: BridgeUserSettings;
@@ -3118,24 +3126,21 @@ async function runCodexWithFastReturn(input: {
       input.rejectIfSelectionActive
     );
   });
-  const state = job.executionMode === "background"
-    ? "running" as const
-    : job.executionMode === "foreground"
-      ? await job.promise.then(() => "settled" as const)
-      : await Promise.race([
-          job.promise.then(() => "settled" as const),
-          delay(input.config.fastReturnMs).then(() => "running" as const)
-        ]);
-  if (state === "running") {
-    return textResult(formatJobStatus(job, input.config.jobStaleAfterMs));
+  if (job.executionMode === "background") {
+    return textResult(formatJobStatus(job, input.config.jobStaleAfterMs, undefined, input.preferences));
   }
-  if (job.status === "completed" && job.result) return forwardResult(job.result, job);
+  await job.promise;
+  if (job.status === "completed" && job.result) return forwardResult(job.result, job, input.preferences);
   throw new Error(job.error || "Codex job failed.");
 }
 
-function resultForJob(job: CodexJob, staleAfterMs: number): ToolResult {
-  if (job.status === "completed" && job.result) return forwardResult(job.result, job);
-  return textResult(formatJobStatus(job, staleAfterMs));
+function resultForJob(
+  job: CodexJob,
+  staleAfterMs: number,
+  preferences: BridgeUserSettings
+): ToolResult {
+  if (job.status === "completed" && job.result) return forwardResult(job.result, job, preferences);
+  return textResult(formatJobStatus(job, staleAfterMs, undefined, preferences));
 }
 
 type PageCursorKind = "sessions" | "jobs" | "activities";
@@ -3185,9 +3190,11 @@ function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number 
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
-  wait?: CodexJobWaitResult
+  wait?: CodexJobWaitResult,
+  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
+  const activityTracking = activityCardRenderHint(job.executionMode, preferences);
   const common = {
     status: job.status,
     terminal: isTerminalActivityJobStatus(job.status),
@@ -3205,6 +3212,17 @@ function formatJobStatus(
     scopeId: job.scopeId,
     requestId: job.requestId,
     session: job.sessionDecision,
+    bridgeSession: {
+      ...job.sessionDecision,
+      scopeId: job.scopeId,
+      requestId: job.requestId
+    },
+    bridgeActivity: {
+      activityId: job.activityId,
+      jobId: job.jobId,
+      executionMode: job.executionMode,
+      ...activityTracking
+    },
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
     cancelRequestedAt: job.cancelRequestedAt ? new Date(job.cancelRequestedAt).toISOString() : null,
@@ -3217,6 +3235,7 @@ function formatJobStatus(
         }
       : null,
     ageMs: Math.max(0, Date.now() - job.createdAt),
+    activityTracking,
     ...activity,
     ...(wait
       ? {
@@ -3230,22 +3249,28 @@ function formatJobStatus(
       : {})
   };
   if (isActiveActivityJobStatus(job.status)) {
+    const trackingAction = activityTracking.shouldRenderActivityCard
+      ? {
+          nextAction: {
+            tool: "codex_activity",
+            arguments: { activityId: job.activityId },
+            callOnce: true
+          }
+        }
+      : {
+          nextCheck: {
+            tool: "codex_status",
+            arguments: {
+              scopeId: job.scopeId,
+              jobId: job.jobId,
+              waitFor: "terminal",
+              waitMs: DEFAULT_CODEX_STATUS_WAIT_MS
+            }
+          }
+        };
     return {
       ...common,
-      nextCheck: {
-        tool: "codex_status",
-        arguments: {
-          scopeId: job.scopeId,
-          jobId: job.jobId,
-          waitFor: "terminal",
-          waitMs: DEFAULT_CODEX_STATUS_WAIT_MS
-        }
-      },
-      activityTracking: {
-        statusTool: "codex_status",
-        plannedRenderTool: "codex_activity",
-        renderToolAvailable: true
-      },
+      ...trackingAction,
       message:
         job.status === "terminating"
           ? "The bridge is force-stopping the exact Codex worker process group. The job remains active until process exit is confirmed."
@@ -3253,7 +3278,9 @@ function formatJobStatus(
             ? "The bridge could not confirm worker-process termination. Refresh authoritative state and retry force-stop; the job is not marked cancelled."
             : activity.health === "no-progress-observed"
           ? "No MCP progress event has been observed within the configured window. Process liveness is unknown; inspect actual work evidence, wait, or explicitly cancel the job."
-          : "Codex is still running. For outcome-oriented work, keep the request open and wait through codex_status; do not report completion yet."
+          : activityTracking.shouldRenderActivityCard
+            ? "Codex is running in the background. Render codex_activity exactly once now; its mounted watcher tracks progress without repeated status polling."
+            : "Codex is running in the background. Automatic card display is disabled for this turn; use one bounded codex_status wait when authoritative follow-up is needed."
     };
   }
   if (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") {
@@ -3275,6 +3302,24 @@ function formatJobStatus(
     resultOmitted: job.resultOmitted || false,
     message:
       "Codex reached a completed state. Inspect the result and verify the requested outcome and relevant artifacts before reporting completion."
+  };
+}
+
+function activityCardRenderHint(
+  executionMode: ActivityExecutionMode,
+  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">
+) {
+  const visibility = preferences?.activityCardVisibility || "always";
+  const shouldRenderActivityCard =
+    visibility === "always" || (visibility === "background-only" && executionMode === "background");
+  return {
+    statusTool: "codex_status",
+    plannedRenderTool: "codex_activity",
+    renderToolAvailable: true,
+    explicitRenderAllowed: true,
+    activityCardVisibility: visibility,
+    shouldRenderActivityCard,
+    renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
   };
 }
 
@@ -3432,7 +3477,7 @@ function buildActivityView(
     ).length,
     failed: activities.filter((activity) => activity.jobs.some((job) => job.status === "failed")).length
   };
-  const pendingHandoffs = preferences.completionDeliveryMode === "off"
+  const pendingHandoffs = preferences.completionHandoff !== "auto-handoff"
     ? []
     : jobs.listPendingCompletionOutbox(scopeId, 20).map((record) => ({
         outboxId: record.outboxId,
@@ -3452,7 +3497,8 @@ function buildActivityView(
       aggregates,
       activities,
       pendingHandoffs,
-      deliveryMode: preferences.completionDeliveryMode,
+      completionHandoff: preferences.completionHandoff,
+      activityCardVisibility: preferences.activityCardVisibility,
       uiLocalePreference: preferences.uiLocalePreference,
       watcherPolicy: {
         mode: "scope-version-long-poll",
@@ -3589,10 +3635,6 @@ function formatJobActivity(
   };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function threadExclusiveKey(threadId: string): string {
   return `thread:${threadId}`;
 }
@@ -3727,6 +3769,8 @@ async function buildSettingsView(
       availableAccessStrategies,
       allowedRoots: [...config.allowedRoots],
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
+      availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
+      availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
       maxConcurrentJobs: config.maxConcurrentJobs,
       allowWorkspaceWrite: config.allowWorkspaceWrite,
       allowDangerFullAccess: config.allowDangerFullAccess,
@@ -4057,7 +4101,7 @@ function readPersistedJob(
   const executionMode =
     value.executionMode === "foreground" || value.executionMode === "background"
       ? value.executionMode
-      : "auto";
+      : "background";
   const backendKind =
     typeof value.backendKind === "string" && value.backendKind ? value.backendKind : "mcp-server";
   const trackingState = readTrackingState(value.trackingState) ||
@@ -4345,7 +4389,11 @@ function codexToolAnnotations(config: BridgeConfig) {
   };
 }
 
-function forwardResult(result: ToolResult, job: CodexJob): ToolResult {
+function forwardResult(
+  result: ToolResult,
+  job: CodexJob,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+): ToolResult {
   const forwarded = Array.isArray(result.content) ? result : textResult(result);
   const structured = isRecord((forwarded as { structuredContent?: unknown }).structuredContent)
     ? (forwarded as { structuredContent: Record<string, unknown> }).structuredContent
@@ -4363,7 +4411,8 @@ function forwardResult(result: ToolResult, job: CodexJob): ToolResult {
       bridgeActivity: {
         activityId: job.activityId,
         jobId: job.jobId,
-        executionMode: job.executionMode
+        executionMode: job.executionMode,
+        ...activityCardRenderHint(job.executionMode, preferences)
       }
     }
   };

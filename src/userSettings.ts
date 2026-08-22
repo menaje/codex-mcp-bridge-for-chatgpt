@@ -8,6 +8,12 @@ import {
   type UiLocalePreference
 } from "./uiI18n.js";
 
+export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
+export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
+export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
+export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
+export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
+
 export type BridgeUserSettings = {
   revision: number;
   updatedAt: string | null;
@@ -17,7 +23,8 @@ export type BridgeUserSettings = {
   defaultCwd: string | null;
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
-  completionDeliveryMode: "off" | "card-only" | "auto-handoff";
+  activityCardVisibility: ActivityCardVisibility;
+  completionHandoff: CompletionHandoffMode;
 };
 
 export type BridgeUserSettingsPatch = Partial<
@@ -60,7 +67,8 @@ export class UserSettingsStore {
       defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
-      completionDeliveryMode: "card-only"
+      activityCardVisibility: "always",
+      completionHandoff: "off"
     });
     this.settings = { ...this.initial };
     this.load();
@@ -134,9 +142,7 @@ export class UserSettingsStore {
 
   private assertRevision(expectedRevision: number | undefined): void {
     if (expectedRevision !== undefined && expectedRevision !== this.settings.revision) {
-      throw new Error(
-        `Settings changed after this card was opened (expected revision ${expectedRevision}, current ${this.settings.revision}). Refresh the settings card and try again.`
-      );
+      throw new Error(`${SETTINGS_REVISION_CONFLICT}: Settings changed after this card was opened.`);
     }
   }
 
@@ -163,12 +169,14 @@ export class UserSettingsStore {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
     validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
-    if (
-      candidate.completionDeliveryMode !== "off" &&
-      candidate.completionDeliveryMode !== "card-only" &&
-      candidate.completionDeliveryMode !== "auto-handoff"
-    ) {
-      throw new Error(`Invalid completion delivery mode: ${String(candidate.completionDeliveryMode)}`);
+    if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
+      throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
+    }
+    if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
+      throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
+    }
+    if (candidate.activityCardVisibility === "never" && candidate.completionHandoff === "auto-handoff") {
+      throw new Error("Automatic GPT handoff requires the Activity card to be visible.");
     }
     if (!Number.isInteger(candidate.revision) || candidate.revision < 0) {
       throw new Error("Invalid settings revision.");
@@ -267,10 +275,15 @@ export class UserSettingsStore {
   }
 
   private noteRetiredSettings(value: Record<string, unknown>): void {
-    const retired = ["taskTimeoutMs", "defaultSessionMode", "autoResumeTtlMs"].filter(
+    const retired = ["taskTimeoutMs", "defaultSessionMode", "autoResumeTtlMs", "completionDeliveryMode"].filter(
       (key) => key in value
     );
-    if (retired.length === 0 && "uiLocalePreference" in value) return;
+    if (
+      retired.length === 0 &&
+      "uiLocalePreference" in value &&
+      "activityCardVisibility" in value &&
+      "completionHandoff" in value
+    ) return;
     this.retiredSettingsMigrationPending = true;
     if ("taskTimeoutMs" in value && !this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
       this.warnings.push(
@@ -283,6 +296,14 @@ export class UserSettingsStore {
     ) {
       this.warnings.push(
         "Saved defaultSessionMode and autoResumeTtlMs were retired and removed. Session selection is now Activity-managed with no age limit for exact continuation."
+      );
+    }
+    if (
+      "completionDeliveryMode" in value &&
+      !this.warnings.some((warning) => warning.includes("completionDeliveryMode"))
+    ) {
+      this.warnings.push(
+        "Saved completionDeliveryMode was migrated to independent Activity card visibility and completion handoff settings."
       );
     }
   }
@@ -336,12 +357,18 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
       ? value.uiLocalePreference
       : "auto",
     maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
-    completionDeliveryMode:
-      value.completionDeliveryMode === "off" ||
-      value.completionDeliveryMode === "auto-handoff" ||
-      value.completionDeliveryMode === "card-only"
-        ? value.completionDeliveryMode
-        : "card-only"
+    activityCardVisibility:
+      value.activityCardVisibility === "always" ||
+      value.activityCardVisibility === "background-only" ||
+      value.activityCardVisibility === "never"
+        ? value.activityCardVisibility
+        : "always",
+    completionHandoff:
+      value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
+        ? value.completionHandoff
+        : value.completionDeliveryMode === "auto-handoff"
+          ? "auto-handoff"
+          : "off"
   };
 }
 

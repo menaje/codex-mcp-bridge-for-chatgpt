@@ -121,8 +121,7 @@ describe("http server", () => {
     const upstream = new DeferredUpstream();
     const baseUrl = await start(
       {
-        CODEX_GPT_BRIDGE_NO_AUTH: "1",
-        CODEX_GPT_BRIDGE_FAST_RETURN_MS: "5"
+        CODEX_GPT_BRIDGE_NO_AUTH: "1"
       },
       upstream
     );
@@ -186,7 +185,8 @@ describe("http server", () => {
       arguments: {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         prompt: "derive scope",
-        sessionMode: "new"
+        sessionMode: "new",
+        executionMode: "foreground"
       },
       _meta: metadata
     });
@@ -234,6 +234,7 @@ describe("http server", () => {
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         prompt: "persist Activity",
         sessionMode: "new",
+        executionMode: "foreground",
         activityTitle: "Persistent Activity",
         activityKind: "review",
         handoffPolicy: "none",

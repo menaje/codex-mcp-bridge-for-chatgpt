@@ -40,7 +40,7 @@ describe("BridgeStateStore", () => {
       expect.objectContaining({
         ...job("job-committed", "request-committed"),
         activityId: expect.any(String),
-        executionMode: "auto",
+        executionMode: "background",
         backendKind: "mcp-server",
         terminalVersion: 1
       })

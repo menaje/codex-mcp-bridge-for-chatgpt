@@ -6,7 +6,7 @@ export const ACTIVITY_KINDS = [
   "other"
 ] as const;
 
-export const ACTIVITY_EXECUTION_MODES = ["auto", "foreground", "background"] as const;
+export const ACTIVITY_EXECUTION_MODES = ["foreground", "background"] as const;
 export const ACTIVITY_HANDOFF_POLICIES = ["none", "notify", "verify"] as const;
 export const ACTIVITY_COMPLETION_TRIGGERS = ["manual", "sealed-jobs-terminal"] as const;
 export const ACTIVITY_LIFECYCLES = [

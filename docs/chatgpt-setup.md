@@ -76,9 +76,15 @@ initial `adaptive` setting keeps omitted sandboxes read-only. A saved
 Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The
 `codex_settings` result renders an inline card for access strategy, dynamic
 model/effort defaults, working directory, interface language, concurrency, and
-completion delivery. Codex job execution is unlimited-only;
+independent Activity-card visibility and completion handoff. Card visibility is
+`always`, `background-only`, or `never`; completion handoff is `off` or
+`auto-handoff`, and the latter requires a visible card. The default is to show
+cards and keep automatic handoff off. Codex job execution is unlimited-only;
 there is no task-timeout field or per-call timeout. The save button calls the
 app-only update action; the server validates the complete request and stores it privately.
+The revision used to reject stale saves remains internal and is not shown in
+the card. A stale card automatically reloads the latest values before asking the
+user to review and save again.
 The language preference can be automatic or fixed to English, Korean, Japanese,
 Simplified or Traditional Chinese, Spanish, French, German, or Portuguese.
 Automatic mode follows the host locale and falls back to English; a fixed value
@@ -117,8 +123,9 @@ Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
 prompt. ChatGPT must omit `scopeId`; the bridge derives it from host-provided
 anonymous conversation metadata. ChatGPT generates a fresh UUID `requestId` for
 each logical task turn. The same `requestId` is reused only for a retry with
-identical arguments. If the task returns a `jobId`, call `codex_activity` once
-to render the mounted Activity card. The card uses one scope-wide bounded
+identical arguments. Follow `bridgeActivity.shouldRenderActivityCard`: when it
+is true, call `codex_activity` exactly once to render the mounted Activity card.
+The card uses one scope-wide bounded
 `codex_status` watcher, backoff, and manual fallback; do not run fixed-interval
 per-job polling. A host without MCP Apps can still use
 `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` as a bounded pull.
@@ -139,9 +146,14 @@ reuse one explicit compatibility `scopeId`.
 
 Omit `activityId` for the first turn of one user intent, then preserve the
 returned `activityId` for every related follow-up or parallel Codex turn.
-`executionMode: foreground` waits in the current tool call,
-`executionMode: background` returns immediately, and `auto` uses the configured
-fast-return threshold. These delivery modes do not define completion. The safe
+`executionMode: foreground` waits in the current tool call, while
+`executionMode: background` returns immediately and is the omitted default. The
+retired `auto`/fast-return mode is no longer accepted. These response modes do
+not define completion. Activity-card visibility is a separate saved presentation
+preference and does not affect the GPT–Codex conversation or thread. An already
+mounted card observes foreground work live; a first foreground card may render
+after the blocking result when the host cannot mount it mid-call. Explicit user
+requests can render the card even when automatic display is disabled. The safe
 Activity defaults are `kind=other`, `handoffPolicy=none`, and
 `completionTrigger=manual`; a terminal Codex job therefore waits for GPT/user
 judgment unless the Activity is explicitly sealed under a terminal-barrier

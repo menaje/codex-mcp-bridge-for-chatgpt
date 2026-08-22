@@ -176,8 +176,12 @@ Ask ChatGPT to **open the Codex MCP Bridge for ChatGPT settings**. It calls
 - default working directory inside the owner allowlist;
 - interface language: automatic host-language detection or a fixed supported
   language;
-- active-job limit and completion delivery (`off`, card-only, or opt-in
-  automatic GPT handoff while a card remains mounted).
+- active-job limit;
+- Activity-card visibility (`always`, `background-only`, or `never`), independent
+  of Codex execution mode; and
+- completion handoff (`off` or opt-in automatic GPT handoff while a card remains
+  mounted). Automatic handoff is unavailable when automatic card display is
+  disabled.
 
 Session routing is not a global preference. A new Activity starts a new Codex
 thread; a later turn with the exact same `activityId` resumes its one compatible
@@ -185,9 +189,11 @@ attached thread with no age limit. Explicit `new`, exact `continue`, and thread
 adoption remain available per call.
 
 Codex execution is unlimited-only: no task timeout exists in the card, saved
-settings, environment contract, or `codex_task`. Fast return and status/card
-waits remain bounded control-plane operations. Use the Activity card's single
-**Force stop** action when a tracked turn or worker must be ended.
+settings, environment contract, or `codex_task`. Background calls return a
+tracked job immediately; only status/card waits remain bounded control-plane
+operations. Use the Activity card's single **Force stop** action when a tracked
+turn or worker must be ended. The settings revision remains an internal
+optimistic-concurrency token and is not displayed in the card.
 
 Saved values are authoritative defaults for later calls. A fixed interface
 language overrides the host locale for both Settings and Activity cards;
@@ -264,7 +270,7 @@ effort because continued Codex threads keep their original configuration.
   policy fields cannot be smuggled into an attachment call.
 - A new Activity accepts an optional sanitized `activityTitle` (120 characters),
   `activityKind`, `executionMode`, `handoffPolicy`, and `completionTrigger`.
-  Defaults are `other`, `auto`, `none`, and `manual`, so a Codex response cannot
+  Defaults are `other`, `background`, `none`, and `manual`, so a Codex response cannot
   automatically complete the user's work or change its policy.
 
 - Omitted or `sessionMode: auto` uses Activity-managed selection. A new Activity
@@ -280,8 +286,15 @@ Execution delivery is independent of Activity completion:
 - `executionMode: foreground` keeps the current tool call open until the Codex
   turn reaches a terminal state or the host/bridge connection ends.
 - `executionMode: background` returns the `activityId` and `jobId` immediately.
-- `executionMode: auto` returns the normal result when it finishes inside
-  `fastReturnMs`; otherwise it returns a tracked background job.
+- Omitting `executionMode` defaults to `background`. The retired `auto` mode and
+  25-second fast-return threshold are no longer part of the tool contract.
+
+Card presentation is configured separately. `always` asks ChatGPT to render the
+Activity card for foreground and background turns, `background-only` only for
+background turns, and `never` suppresses automatic rendering. An explicit user
+request may still open `codex_activity` in every mode. A previously mounted card
+can observe foreground work live; on hosts that cannot mount the first widget
+during a blocking call, the first foreground card appears after the result.
 
 In every mode, a terminal Codex job is only a child outcome. It does not by
 itself mean the Activity, user request, or verification is complete.
@@ -349,7 +362,7 @@ not written to them. Existing `sessions.json` records are imported once;
 pre-scope records are migrated to a quarantined
 legacy scope that is never auto-selected; older task-lane records are collapsed
 into ordinary sessions under their existing scope. Legacy sessions require an
-exact thread handoff. Long-running tasks return a `jobId`; retrieve the result with
+exact thread handoff. Background tasks return a `jobId` immediately; retrieve the result with
 `codex_status({ jobId })` in ChatGPT, or use
 `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` to hold one
 bounded status call until completion, failure, interruption, or the wait
@@ -376,7 +389,7 @@ scope-wide change versions, bridge process generations, and an idempotent
 completion outbox. Existing schema-v1 jobs are migrated atomically into one-job
 legacy Activities without changing their scope, request-deduplication key, or
 thread relation. Current `codex_task` calls create an Activity or attach to an
-exact open Activity with safe defaults: `kind=other`, `executionMode=auto`,
+exact open Activity with safe defaults: `kind=other`, `executionMode=background`,
 `handoffPolicy=none`, and `completionTrigger=manual`. Consequently, a terminal
 Codex turn does not by itself mark a user Activity completed or enqueue an
 automatic handoff.
@@ -422,6 +435,12 @@ GPT handoff. The stable `handoffBatchId` lets the conversation recognize a
 retry if the host accepted the message but the delivery acknowledgement was
 lost; an external UI message and a local SQLite commit cannot be made one
 distributed exactly-once transaction.
+
+The default card preference is `always`, while completion handoff defaults to
+`off`. Card rendering never changes execution mode, Activity/thread continuity,
+or whether a Codex turn is considered complete. Legacy `auto` execution rows
+are normalized to `background`; legacy completion delivery maps to the two new
+independent settings during startup.
 
 For a user request that asks for a finished outcome, a running `jobId` is only
 an intermediate response. The plugin instructions tell ChatGPT to wait for a
@@ -476,7 +495,6 @@ product and package name remains **Codex MCP Bridge for ChatGPT**.
 | `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy Codex MCP worker pool; cannot exceed the active-job limit |
 | `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | Backend for new threads: stable `mcp-server` or experimental `app-server`; each thread remains sticky |
 | `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Maximum prompt length per tool call |
-| `CODEX_MCP_BRIDGE_FAST_RETURN_MS` | `25000` | Delay before returning a job ID |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Completed job retention |
 | `CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS` | `600000` | No-progress interval before a running job is labeled no-progress-observed; this does not establish process liveness |
 | `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Maximum running/terminal job records retained in memory and durable state |
@@ -488,6 +506,10 @@ product and package name remains **Codex MCP Bridge for ChatGPT**.
 `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` are retired and ignored. During migration,
 their presence produces a startup warning but cannot change Activity-managed
 session routing.
+
+`CODEX_MCP_BRIDGE_FAST_RETURN_MS` is also retired and ignored for one migration
+release. Its presence produces a startup warning; use explicit `foreground` or
+`background` execution instead.
 
 These are package defaults. A local launcher or LaunchAgent may deliberately
 override them—for example, an installation may select `app-server` while the

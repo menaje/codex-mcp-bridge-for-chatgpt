@@ -221,7 +221,7 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
     expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
       activityKind: { enum: ["discussion", "investigation", "review", "implementation", "other"] },
-      executionMode: { enum: ["auto", "foreground", "background"] },
+      executionMode: { enum: ["foreground", "background"] },
       handoffPolicy: { enum: ["none", "notify", "verify"] },
       completionTrigger: { enum: ["manual", "sealed-jobs-terminal"] }
     });
@@ -242,7 +242,9 @@ describe("bridge tools", () => {
     expect(byName.get("codex_update_settings")?.inputSchema.properties).toMatchObject({
       uiLocalePreference: {
         enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
-      }
+      },
+      activityCardVisibility: { enum: ["always", "background-only", "never"] },
+      completionHandoff: { enum: ["off", "auto-handoff"] }
     });
     expect(byName.get("codex_update_settings")?.inputSchema.properties)
       .not.toHaveProperty("defaultSessionMode");
@@ -403,12 +405,15 @@ describe("bridge tools", () => {
         defaultCwd: realpathSync(root),
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
-        completionDeliveryMode: "card-only"
+        activityCardVisibility: "always",
+        completionHandoff: "off"
       },
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
         allowedRoots: [realpathSync(root)],
         availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
+        availableActivityCardVisibilities: ["always", "background-only", "never"],
+        availableCompletionHandoffs: ["off", "auto-handoff"],
         maxConcurrentJobs: 30,
         allowDangerFullAccess: true
       }
@@ -424,7 +429,8 @@ describe("bridge tools", () => {
         defaultCwd: root,
         uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
-        completionDeliveryMode: "auto-handoff"
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
       }
     });
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
@@ -434,7 +440,8 @@ describe("bridge tools", () => {
       defaultReasoningEffort: "high",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
-      completionDeliveryMode: "auto-handoff"
+      activityCardVisibility: "background-only",
+      completionHandoff: "auto-handoff"
     });
 
     const localizedSettings = await client.callTool({
@@ -480,6 +487,7 @@ describe("bridge tools", () => {
       maxConcurrentJobs: 12,
       settingsPolicy: { revision: 1, scope: "shared-bridge-instance" }
     });
+    expect(status).not.toHaveProperty("fastReturnMs");
     await close();
   });
 
@@ -497,7 +505,9 @@ describe("bridge tools", () => {
       arguments: { expectedRevision: 0, accessStrategy: "always-full" }
     });
     expect(stale.isError).toBe(true);
-    expect(JSON.stringify(stale)).toContain("Settings changed");
+    expect(JSON.stringify(stale)).toContain("SETTINGS_REVISION_CONFLICT");
+    expect(JSON.stringify(stale)).not.toContain("expected revision");
+    expect(JSON.stringify(stale)).not.toContain("current revision");
 
     const unsupported = await client.callTool({
       name: "codex_update_settings",
@@ -509,6 +519,84 @@ describe("bridge tools", () => {
     });
     expect(unsupported.isError).toBe(true);
     expect(JSON.stringify(unsupported)).toContain("does not support reasoning effort");
+    await close();
+  });
+
+  it("keeps Activity card visibility independent from foreground/background execution", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+
+    const alwaysForeground = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "discuss with a visible card",
+        sessionMode: "new",
+        activityKind: "discussion",
+        executionMode: "foreground"
+      }
+    });
+    expect((alwaysForeground as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        bridgeActivity: {
+          executionMode: "foreground",
+          activityCardVisibility: "always",
+          shouldRenderActivityCard: true,
+          renderTiming: "after-result-or-existing-mounted-card"
+        }
+      });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 0, activityCardVisibility: "background-only" }
+    });
+    const backgroundOnlyForeground = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "foreground without automatic card", sessionMode: "new", executionMode: "foreground" }
+    });
+    expect((backgroundOnlyForeground as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ bridgeActivity: { shouldRenderActivityCard: false } });
+
+    const backgroundOnlyBackground = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "background with automatic card", sessionMode: "new" }
+    }));
+    expect(backgroundOnlyBackground).toMatchObject({
+      status: "running",
+      executionMode: "background",
+      bridgeActivity: {
+        activityCardVisibility: "background-only",
+        shouldRenderActivityCard: true,
+        renderTiming: "immediate"
+      }
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, activityCardVisibility: "never", completionHandoff: "off" }
+    });
+    const neverBackground = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "background without automatic card", sessionMode: "new" }
+    }));
+    expect(neverBackground.bridgeActivity).toMatchObject({
+      activityCardVisibility: "never",
+      shouldRenderActivityCard: false,
+      explicitRenderAllowed: true
+    });
+    const explicitCard = await client.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect((explicitCard as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ activityCardVisibility: "never", activities: expect.any(Array) });
+
+    const impossible = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 2, completionHandoff: "auto-handoff" }
+    });
+    expect(impossible.isError).toBe(true);
+    expect(JSON.stringify(impossible)).toContain("requires the Activity card");
     await close();
   });
 
@@ -1048,7 +1136,8 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new"
+        sessionMode: "new",
+        executionMode: "foreground"
       },
       _meta: metadataA
     });
@@ -1063,7 +1152,8 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new"
+        sessionMode: "new",
+        executionMode: "foreground"
       },
       _meta: metadataA
     });
@@ -1076,6 +1166,7 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         prompt: "continue derived scope",
+        executionMode: "foreground",
         activityId: (started as { structuredContent?: Record<string, any> }).structuredContent
           ?.bridgeActivity?.activityId
       },
@@ -1164,7 +1255,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { rawCallTool, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const metadata = { "openai/session": "cancel-session" };
@@ -1280,7 +1371,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const requestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -1291,7 +1382,7 @@ describe("bridge tools", () => {
       sessionMode: "new",
       activityTitle: "Deduplicated Activity",
       activityKind: "investigation" as const,
-      executionMode: "auto" as const
+      executionMode: "background" as const
     };
 
     const first = parseToolJson(
@@ -1325,7 +1416,12 @@ describe("bridge tools", () => {
     ).toMatchObject({
       threadId: "deduped-thread",
       bridgeSession: { scopeId: SCOPE_A, requestId },
-      bridgeActivity: { activityId: first.activityId, jobId: first.jobId, executionMode: "auto" }
+      bridgeActivity: {
+        activityId: first.activityId,
+        jobId: first.jobId,
+        executionMode: "background",
+        shouldRenderActivityCard: true
+      }
     });
     expect(upstream.calls).toHaveLength(1);
     await close();
@@ -1353,9 +1449,17 @@ describe("bridge tools", () => {
     settings.update({ uiLocalePreference: "ko" }, 0);
     const retry = await rawCallTool({ name: "codex_task", arguments: arguments_ });
 
-    expect((retry as { structuredContent?: Record<string, any> }).structuredContent).toEqual(
-      (first as { structuredContent?: Record<string, any> }).structuredContent
-    );
+    const firstStructured = (first as { structuredContent?: Record<string, any> }).structuredContent!;
+    const retryStructured = (retry as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(retryStructured.bridgeActivity).toMatchObject({
+      activityId: firstStructured.bridgeActivity.activityId,
+      jobId: firstStructured.bridgeActivity.jobId,
+      executionMode: "background"
+    });
+    expect(retryStructured.bridgeSession).toMatchObject({
+      scopeId: SCOPE_A,
+      requestId: arguments_.requestId
+    });
     expect(upstream.calls).toHaveLength(1);
     await close();
   });
@@ -1563,7 +1667,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(await client.callTool({
@@ -1629,7 +1733,16 @@ describe("bridge tools", () => {
 
   it("leases one Activity completion batch to only one mounted card", async () => {
     const root = temporaryRoot();
-    const { client, rawCallTool, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    settings.update({ completionHandoff: "auto-handoff" });
+    const { client, rawCallTool, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
     const createNotifyActivity = async (prompt: string, title: string) => {
       const result = await client.callTool({
         name: "codex_task",
@@ -1868,21 +1981,32 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("fast-returns a slow task and retrieves completion through codex_status", async () => {
+  it("returns a background task immediately and retrieves completion through codex_status", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
 
     const started = parseToolJson(
-      await client.callTool({
+      await Promise.race([
+        client.callTool({
         name: "codex_task",
         arguments: { prompt: "slow", sessionMode: "new" }
-      })
+        }),
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(() => reject(new Error("Background codex_task did not return immediately.")), 500)
+        )
+      ])
     );
-    expect(started).toMatchObject({ status: "running", operation: "start" });
+    expect(started).toMatchObject({
+      status: "running",
+      operation: "start",
+      executionMode: "background",
+      nextAction: { tool: "codex_activity", callOnce: true },
+      bridgeActivity: { shouldRenderActivityCard: true }
+    });
     upstream.resolveNext();
 
     const completed = await waitForJobStatus(client, started.jobId, "completed");
@@ -1895,7 +2019,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -1921,7 +2045,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -1956,7 +2080,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS: "1"
       }),
       upstream
@@ -1985,7 +2108,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -2025,7 +2148,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, jobs, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
         CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
       }),
@@ -2101,7 +2223,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -2124,7 +2246,7 @@ describe("bridge tools", () => {
     const result = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "large", sessionMode: "new" }
+        arguments: { prompt: "large", sessionMode: "new", executionMode: "foreground" }
       })
     );
     expect(result).toMatchObject({
@@ -2171,7 +2293,7 @@ describe("bridge tools", () => {
 
     const restarted = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "start after restart" }
+      arguments: { prompt: "start after restart", executionMode: "foreground" }
     });
     expect(restarted.isError).not.toBe(true);
     expect((restarted as { structuredContent?: Record<string, any> }).structuredContent?.bridgeSession)
@@ -2267,7 +2389,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
       }),
       upstream
@@ -2291,7 +2412,6 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const config = configFor(root, {
-      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
       CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
     });
@@ -2323,7 +2443,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "1" }),
+      configFor(root),
       upstream
     );
 
@@ -2365,7 +2485,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2402,7 +2521,6 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2447,7 +2565,6 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2491,7 +2608,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2539,7 +2655,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2568,7 +2683,6 @@ describe("bridge tools", () => {
     const sessions = new SessionRegistry();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream,
@@ -2623,7 +2737,7 @@ describe("bridge tools", () => {
       lastUsedAt: now
     });
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream,
       sessions
     );
@@ -2736,7 +2850,10 @@ async function connectTestClient(
 }
 
 async function runTask(client: Client, arguments_: Record<string, unknown>): Promise<unknown> {
-  return client.callTool({ name: "codex_task", arguments: arguments_ });
+  return client.callTool({
+    name: "codex_task",
+    arguments: { executionMode: "foreground", ...arguments_ }
+  });
 }
 
 function taskActivityId(result: unknown): string {

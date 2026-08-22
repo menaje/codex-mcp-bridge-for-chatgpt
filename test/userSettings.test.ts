@@ -26,7 +26,9 @@ describe("user settings store", () => {
       defaultReasoningEffort: "max",
       defaultCwd: config.allowedRoots[0],
       uiLocalePreference: "auto",
-      maxConcurrentJobs: 30
+      maxConcurrentJobs: 30,
+      activityCardVisibility: "always",
+      completionHandoff: "off"
     });
 
     const updated = store.update(
@@ -34,7 +36,8 @@ describe("user settings store", () => {
         accessStrategy: "always-full",
         uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
-        completionDeliveryMode: "auto-handoff"
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
       },
       0
     );
@@ -44,7 +47,8 @@ describe("user settings store", () => {
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
-      completionDeliveryMode: "auto-handoff"
+      activityCardVisibility: "background-only",
+      completionHandoff: "auto-handoff"
     });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
@@ -57,7 +61,9 @@ describe("user settings store", () => {
       revision: 1,
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
-      maxConcurrentJobs: 12
+      maxConcurrentJobs: 12,
+      activityCardVisibility: "background-only",
+      completionHandoff: "auto-handoff"
     });
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
   });
@@ -75,13 +81,52 @@ describe("user settings store", () => {
     const store = new UserSettingsStore(config);
     store.update({ uiLocalePreference: "ko" }, 0);
 
-    expect(() => store.update({ uiLocalePreference: "auto" }, 0)).toThrow(/Settings changed/);
+    expect(() => store.update({ uiLocalePreference: "auto" }, 0)).toThrow(/SETTINGS_REVISION_CONFLICT/);
     expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/security policy disables/);
     expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/outside allowed roots/);
     expect(() => store.update({ maxConcurrentJobs: 5 }, 1)).toThrow(/Concurrent job limit/);
     expect(() =>
       store.update({ uiLocalePreference: "it" as "ko" }, 1)
     ).toThrow(/Invalid interface language preference/);
+    expect(() =>
+      store.update({ activityCardVisibility: "never", completionHandoff: "auto-handoff" }, 1)
+    ).toThrow(/requires the Activity card/);
+  });
+
+  it("migrates legacy completion delivery into independent card and handoff settings", () => {
+    const root = temporaryDirectory("bridge-root-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root
+    });
+    writeFileSync(stateFile, JSON.stringify({
+      version: 1,
+      settings: {
+        revision: 4,
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        accessStrategy: "adaptive",
+        defaultModel: null,
+        defaultReasoningEffort: null,
+        defaultCwd: root,
+        uiLocalePreference: "auto",
+        maxConcurrentJobs: 30,
+        completionDeliveryMode: "auto-handoff"
+      }
+    }));
+
+    const migrated = new UserSettingsStore(config, { stateFile });
+    expect(migrated.current).toMatchObject({
+      revision: 5,
+      activityCardVisibility: "always",
+      completionHandoff: "auto-handoff"
+    });
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).not.toHaveProperty(
+      "completionDeliveryMode"
+    );
+    expect(migrated.loadWarnings).toEqual([
+      expect.stringContaining("completionDeliveryMode was migrated")
+    ]);
   });
 
   it("forces read-only even when a caller asks for full access", () => {

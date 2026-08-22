@@ -64,8 +64,9 @@ the network as the current macOS user.
 - Four lazy backend workers with generation-safe connection retirement,
   per-thread backend/worker affinity, and no task-execution deadline.
 - Unlimited-only Codex turns: elapsed time and missing progress never create a
-  terminal state. Fast return, Activity/status long-poll, model catalog, tunnel,
-  and database waits remain bounded control-plane operations.
+  terminal state. Background calls return immediately; Activity/status
+  long-poll, model catalog, tunnel, and database waits remain bounded
+  control-plane operations.
 - One user-visible force-stop action with exact worker generation/process-group
   validation, TERM→KILL escalation, collateral confirmation, and terminal state
   only after exit evidence. `termination-failed` remains an active slot.

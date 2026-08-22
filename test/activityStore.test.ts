@@ -46,7 +46,7 @@ describe("Activity SQLite state", () => {
     expect(job).toMatchObject({
       activityId: activity.activityId,
       threadId: "legacy-thread",
-      executionMode: "auto",
+      executionMode: "background",
       backendKind: "mcp-server",
       terminalVersion: 1
     });
@@ -77,6 +77,27 @@ describe("Activity SQLite state", () => {
     expect(marker.value).toBe("1");
     expect(activityTable).toBeUndefined();
     database.close();
+  });
+
+  it("normalizes legacy schema-v3 auto execution rows to background", () => {
+    const file = stateFile();
+    const initial = new BridgeStateStore({ file });
+    initial.createActivity({ activityId: ACTIVITY_A, scopeId: SCOPE_A, executionMode: "background" });
+    initial.upsertJob(job("legacy-auto-job", "legacy-auto-request", ACTIVITY_A, "running", 10));
+    initial.close();
+
+    const database = new Database(file);
+    database.prepare("UPDATE activities SET execution_mode = 'auto' WHERE activity_id = ?").run(ACTIVITY_A);
+    database.prepare("UPDATE jobs SET execution_mode = 'auto' WHERE job_id = ?").run("legacy-auto-job");
+    database.close();
+
+    const migrated = new BridgeStateStore({ file });
+    expect(migrated.getActivity(ACTIVITY_A)).toMatchObject({ executionMode: "background" });
+    expect(migrated.listJobs()).toEqual([
+      expect.objectContaining({ jobId: "legacy-auto-job", executionMode: "background" })
+    ]);
+    expect(migrated.getMeta("legacy_auto_execution_mode_migrated_at")).toBeTruthy();
+    migrated.close();
   });
 
   it("keeps a default Activity open when its Codex turn reaches terminal state", () => {
@@ -480,7 +501,7 @@ function job(
     activityId,
     status,
     updatedAt,
-    executionMode: "auto" as const,
+    executionMode: "background" as const,
     backendKind: "mcp-server"
   };
 }

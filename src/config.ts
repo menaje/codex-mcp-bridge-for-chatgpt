@@ -32,7 +32,6 @@ export type BridgeConfig = {
   sessionStateFile: string;
   jobStateFile: string;
   upstreamPoolSize: number;
-  fastReturnMs: number;
   secretScan: boolean;
   maxConcurrentJobs: number;
   maxPromptChars: number;
@@ -88,7 +87,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     read("JOB_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "jobs.json"),
     "job state file"
   );
-  const fastReturnMs = parsePositiveInt(read("FAST_RETURN_MS") || "25000");
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "30");
   const upstreamPoolSize = parsePositiveInt(read("UPSTREAM_POOL_SIZE") || String(Math.min(4, maxConcurrentJobs)));
@@ -98,6 +96,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  if (normalizeOptional(read("FAST_RETURN_MS"))) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
+    );
+  }
   if (normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))) {
     startupWarnings.push(
       "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution is unlimited-only; use supervised force-stop when needed."
@@ -168,7 +171,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     sessionStateFile,
     jobStateFile,
     upstreamPoolSize,
-    fastReturnMs,
     secretScan,
     maxConcurrentJobs,
     maxPromptChars,

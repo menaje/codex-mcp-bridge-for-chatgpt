@@ -208,6 +208,7 @@ export class BridgeStateStore {
       if (existingVersion === undefined) this.setMeta("schema_version", "1");
       if ((existingVersion || "1") === "1") this.migrateV1ToV2();
       if (this.getMeta("schema_version") === "2") this.migrateV2ToV3();
+      this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
     } catch (error) {
@@ -396,7 +397,7 @@ export class BridgeStateStore {
     const activityId = normalizeUuid(input.activityId || randomUUID(), "activityId");
     const scopeId = normalizeUuid(input.scopeId, "scopeId");
     const kind = input.kind || "other";
-    const executionMode = input.executionMode || "auto";
+    const executionMode = input.executionMode || "background";
     const handoffPolicy = input.handoffPolicy || "none";
     const completionTrigger = input.completionTrigger || "manual";
     assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
@@ -1170,7 +1171,7 @@ export class BridgeStateStore {
           scopeId: row.scope_id,
           title: `Legacy Codex job ${row.job_id.slice(0, 8)}`,
           kind: "other",
-          executionMode: "auto",
+          executionMode: "background",
           handoffPolicy: "none",
           completionTrigger: "manual",
           legacy: true,
@@ -1183,7 +1184,7 @@ export class BridgeStateStore {
           ...parsed,
           activityId,
           threadId,
-          executionMode: "auto",
+          executionMode: "background",
           backendKind: "mcp-server",
           terminalVersion
         };
@@ -1193,7 +1194,7 @@ export class BridgeStateStore {
               job_id, scope_id, request_id, activity_id, thread_id, status, execution_mode,
               backend_kind, bridge_instance_id, worker_id, worker_generation,
               upstream_request_id, terminal_version, updated_at, archived_at, payload
-            ) VALUES (?, ?, ?, ?, ?, ?, 'auto', 'mcp-server', NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'background', 'mcp-server', NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
           `)
           .run(
             row.job_id,
@@ -1332,6 +1333,20 @@ export class BridgeStateStore {
     });
   }
 
+  private normalizeLegacyExecutionModes(): void {
+    this.transaction(() => {
+      const activityChanges = this.database
+        .prepare("UPDATE activities SET execution_mode = 'background' WHERE execution_mode = 'auto'")
+        .run().changes;
+      const jobChanges = this.database
+        .prepare("UPDATE jobs SET execution_mode = 'background' WHERE execution_mode = 'auto'")
+        .run().changes;
+      if (activityChanges > 0 || jobChanges > 0 || !this.getMeta("legacy_auto_execution_mode_migrated_at")) {
+        this.setMeta("legacy_auto_execution_mode_migrated_at", new Date().toISOString());
+      }
+    });
+  }
+
   private upsertJobInternal(job: JobRowInput): void {
     if (!valueIsOneOf(ACTIVITY_JOB_STATUSES, job.status)) {
       throw new Error(`Invalid Codex job status for Activity storage: ${job.status}.`);
@@ -1341,10 +1356,7 @@ export class BridgeStateStore {
       "job activityId"
     );
     const scopeId = normalizeUuid(job.scopeId, "job scopeId");
-    const executionMode = job.executionMode || "auto";
-    if (!valueIsOneOf(ACTIVITY_EXECUTION_MODES, executionMode)) {
-      throw new Error(`Invalid Activity execution mode: ${executionMode}.`);
-    }
+    const executionMode = normalizeActivityExecutionMode(job.executionMode || "background");
     const previous = this.database
       .prepare(`
         SELECT scope_id, activity_id, thread_id, status, backend_kind, bridge_instance_id,
@@ -1854,7 +1866,7 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     ...payload,
     activityId: row.activity_id,
     threadId: row.thread_id || undefined,
-    executionMode: row.execution_mode,
+    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     backendKind: row.backend_kind,
     bridgeInstanceId: row.bridge_instance_id || undefined,
     workerId: row.worker_id || undefined,
@@ -1864,10 +1876,15 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
   };
 }
 
+function normalizeActivityExecutionMode(value: unknown): ActivityExecutionMode {
+  if (value === "auto") return "background";
+  if (valueIsOneOf(ACTIVITY_EXECUTION_MODES, value)) return value;
+  throw new Error(`Invalid Activity execution mode: ${String(value)}.`);
+}
+
 function readActivityRow(row: ActivityStorageRow): BridgeActivity {
   if (
     !valueIsOneOf(ACTIVITY_KINDS, row.kind) ||
-    !valueIsOneOf(ACTIVITY_EXECUTION_MODES, row.execution_mode) ||
     !valueIsOneOf(ACTIVITY_HANDOFF_POLICIES, row.handoff_policy) ||
     !valueIsOneOf(ACTIVITY_COMPLETION_TRIGGERS, row.completion_trigger) ||
     !valueIsOneOf(ACTIVITY_LIFECYCLES, row.lifecycle) ||
@@ -1881,7 +1898,7 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
     scopeId: row.scope_id,
     title: row.title,
     kind: row.kind,
-    executionMode: row.execution_mode,
+    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     handoffPolicy: row.handoff_policy,
     completionTrigger: row.completion_trigger,
     lifecycle: row.lifecycle,

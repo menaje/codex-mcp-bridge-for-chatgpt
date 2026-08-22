@@ -36,6 +36,12 @@ describe("human-facing UI localization", () => {
       expect(UI_TRANSLATIONS[locale]["common.loading"]).not.toBe(UI_TRANSLATIONS.en["common.loading"]);
       expect(UI_TRANSLATIONS[locale]["activity.forceStop"]).not.toBe(UI_TRANSLATIONS.en["activity.forceStop"]);
       expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
+      expect(UI_TRANSLATIONS[locale]["settings.cardVisibility"]).not.toBe(
+        UI_TRANSLATIONS.en["settings.cardVisibility"]
+      );
+      expect(UI_TRANSLATIONS[locale]["settings.conflict"]).not.toBe(
+        UI_TRANSLATIONS.en["settings.conflict"]
+      );
       expect(UI_TRANSLATIONS[locale]["job.interrupted"]).not.toBe(UI_TRANSLATIONS.en["job.interrupted"]);
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).not.toBe(UI_TRANSLATIONS.en["waiting.orchestrator"]);
     }
@@ -87,6 +93,10 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
+    expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
+    expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
+    expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
 
