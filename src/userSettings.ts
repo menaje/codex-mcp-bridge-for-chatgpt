@@ -6,8 +6,6 @@ import type { BridgeStateStore } from "./stateStore.js";
 
 export const MIN_AUTO_RESUME_TTL_MS = 60 * 1000;
 export const MAX_AUTO_RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-export const MIN_TASK_TIMEOUT_MS = 1000;
-
 export type BridgeUserSettings = {
   revision: number;
   updatedAt: string | null;
@@ -17,8 +15,8 @@ export type BridgeUserSettings = {
   defaultCwd: string | null;
   defaultSessionMode: DefaultSessionMode;
   autoResumeTtlMs: number;
-  taskTimeoutMs: number;
   maxConcurrentJobs: number;
+  completionDeliveryMode: "off" | "card-only" | "auto-handoff";
 };
 
 export type BridgeUserSettingsPatch = Partial<
@@ -43,6 +41,7 @@ export class UserSettingsStore {
   private readonly initial: BridgeUserSettings;
   private settings: BridgeUserSettings;
   private readonly warnings: string[] = [];
+  private retiredTimeoutMigrationPending = false;
 
   constructor(
     private readonly config: BridgeConfig,
@@ -60,8 +59,8 @@ export class UserSettingsStore {
       defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
       defaultSessionMode: config.defaultSessionMode,
       autoResumeTtlMs: config.autoResumeTtlMs,
-      taskTimeoutMs: config.upstreamTimeoutMs,
-      maxConcurrentJobs: config.maxConcurrentJobs
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      completionDeliveryMode: "card-only"
     });
     this.settings = { ...this.initial };
     this.load();
@@ -173,13 +172,14 @@ export class UserSettingsStore {
       this.maxAutoResumeTtlMs,
       "Auto-resume window"
     );
-    validateIntegerRange(
-      candidate.taskTimeoutMs,
-      MIN_TASK_TIMEOUT_MS,
-      this.config.upstreamTimeoutMs,
-      "Task timeout"
-    );
     validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
+    if (
+      candidate.completionDeliveryMode !== "off" &&
+      candidate.completionDeliveryMode !== "card-only" &&
+      candidate.completionDeliveryMode !== "auto-handoff"
+    ) {
+      throw new Error(`Invalid completion delivery mode: ${String(candidate.completionDeliveryMode)}`);
+    }
     if (!Number.isInteger(candidate.revision) || candidate.revision < 0) {
       throw new Error("Invalid settings revision.");
     }
@@ -194,6 +194,7 @@ export class UserSettingsStore {
       const stored = this.stateStore.getSettings();
       if (stored !== undefined) {
         if (!isRecord(stored)) throw new Error("Invalid bridge settings in the state database.");
+        this.noteRetiredTaskTimeout(stored);
         this.loadCandidate(readSettings(stored, this.stateStore.persistencePath || "state database"));
       }
       this.importLegacyState(stored !== undefined);
@@ -211,6 +212,7 @@ export class UserSettingsStore {
     if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
       throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
     }
+    this.noteRetiredTaskTimeout(parsed.settings);
     this.loadCandidate(readSettings(parsed.settings, this.stateFile));
   }
 
@@ -231,6 +233,7 @@ export class UserSettingsStore {
         if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
           throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
         }
+        this.noteRetiredTaskTimeout(parsed.settings);
         this.loadCandidate(readSettings(parsed.settings, this.stateFile as string));
         this.stateStore?.setSettings(this.settings);
       }
@@ -256,21 +259,31 @@ export class UserSettingsStore {
         );
       }
     }
-    if (reconciled.taskTimeoutMs > this.config.upstreamTimeoutMs) {
-      reconciled.taskTimeoutMs = this.config.upstreamTimeoutMs;
-      this.warnings.push("Saved task timeout was reduced to the current owner maximum.");
-    }
     if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {
       reconciled.maxConcurrentJobs = this.config.maxConcurrentJobs;
       this.warnings.push("Saved concurrent-job limit was reduced to the current owner maximum.");
     }
-    const changed = JSON.stringify(reconciled) !== JSON.stringify(candidate);
+    const changed =
+      this.retiredTimeoutMigrationPending || JSON.stringify(reconciled) !== JSON.stringify(candidate);
     if (changed) {
       reconciled.revision += 1;
       reconciled.updatedAt = new Date(this.now()).toISOString();
     }
     this.settings = this.validate(reconciled);
-    if (changed) this.persist(this.settings);
+    if (changed) {
+      this.persist(this.settings);
+      this.retiredTimeoutMigrationPending = false;
+    }
+  }
+
+  private noteRetiredTaskTimeout(value: Record<string, unknown>): void {
+    if (!("taskTimeoutMs" in value)) return;
+    this.retiredTimeoutMigrationPending = true;
+    if (!this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
+      this.warnings.push(
+        "Saved taskTimeoutMs was retired and removed. Codex execution is now unlimited-only."
+      );
+    }
   }
 
   private persist(settings: BridgeUserSettings): void {
@@ -318,8 +331,13 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     defaultCwd: requiredStringOrNull("defaultCwd"),
     defaultSessionMode: defaultSessionMode as DefaultSessionMode,
     autoResumeTtlMs: requiredNumber("autoResumeTtlMs"),
-    taskTimeoutMs: requiredNumber("taskTimeoutMs"),
-    maxConcurrentJobs: requiredNumber("maxConcurrentJobs")
+    maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
+    completionDeliveryMode:
+      value.completionDeliveryMode === "off" ||
+      value.completionDeliveryMode === "auto-handoff" ||
+      value.completionDeliveryMode === "card-only"
+        ? value.completionDeliveryMode
+        : "card-only"
   };
 }
 

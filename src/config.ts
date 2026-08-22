@@ -7,8 +7,7 @@ export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
 export type DefaultSessionMode = "auto" | "new";
-
-export const MAX_CODEX_TASK_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+export type CodexBackendKind = "mcp-server" | "app-server";
 
 export type BridgeConfig = {
   host: string;
@@ -17,6 +16,7 @@ export type BridgeConfig = {
   noAuth: boolean;
   allowedHosts?: string[];
   codexCommand: string;
+  defaultBackend: CodexBackendKind;
   allowedRoots: string[];
   defaultSandbox: SandboxMode;
   defaultAccessStrategy: AccessStrategy;
@@ -34,7 +34,6 @@ export type BridgeConfig = {
   jobStateFile: string;
   defaultSessionMode: DefaultSessionMode;
   autoResumeTtlMs: number;
-  upstreamTimeoutMs: number;
   upstreamPoolSize: number;
   fastReturnMs: number;
   secretScan: boolean;
@@ -44,6 +43,7 @@ export type BridgeConfig = {
   jobStaleAfterMs: number;
   maxRetainedJobs: number;
   maxJobResultBytes: number;
+  startupWarnings: string[];
 };
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -56,6 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const token = normalizeOptional(read("TOKEN"));
   const noAuth = parseBool(read("NO_AUTH"));
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
+  const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "mcp-server");
   const allowedRoots = parseAllowedRoots(read("ROOTS") || process.cwd());
   const defaultSandbox = parseSandbox(read("DEFAULT_SANDBOX") || "read-only");
   const defaultAccessStrategy = parseAccessStrategy(read("DEFAULT_ACCESS_STRATEGY") || "adaptive");
@@ -92,11 +93,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   );
   const defaultSessionMode = parseDefaultSessionMode(read("DEFAULT_SESSION_MODE") || "auto");
   const autoResumeTtlMs = parsePositiveInt(read("AUTO_RESUME_TTL_MS") || String(6 * 60 * 60 * 1000));
-  const upstreamTimeoutMs = parsePositiveIntAtMost(
-    read("UPSTREAM_TIMEOUT_MS") || String(MAX_CODEX_TASK_TIMEOUT_MS),
-    MAX_CODEX_TASK_TIMEOUT_MS,
-    "upstream timeout"
-  );
   const fastReturnMs = parsePositiveInt(read("FAST_RETURN_MS") || "25000");
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "30");
@@ -106,6 +102,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const jobStaleAfterMs = parsePositiveInt(read("JOB_STALE_AFTER_MS") || String(10 * 60 * 1000));
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
+  const startupWarnings = normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))
+    ? [
+        "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution is unlimited-only; use supervised force-stop when needed."
+      ]
+    : [];
 
   if (!token && !noAuth) {
     throw new Error("Set CODEX_MCP_BRIDGE_TOKEN, or set CODEX_MCP_BRIDGE_NO_AUTH=1 for local-only development.");
@@ -133,9 +134,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   if (autoResumeTtlMs < 60_000) {
     throw new Error("CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS cannot be lower than 60000.");
   }
-  if (upstreamTimeoutMs < 1_000) {
-    throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS cannot be lower than 1000.");
-  }
   if (upstreamPoolSize > maxConcurrentJobs) {
     throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE cannot exceed CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS.");
   }
@@ -150,6 +148,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     noAuth,
     allowedHosts,
     codexCommand: read("CODEX") || "codex",
+    defaultBackend,
     allowedRoots,
     defaultSandbox,
     defaultAccessStrategy,
@@ -167,7 +166,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     jobStateFile,
     defaultSessionMode,
     autoResumeTtlMs,
-    upstreamTimeoutMs,
     upstreamPoolSize,
     fastReturnMs,
     secretScan,
@@ -176,7 +174,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     jobTtlMs,
     jobStaleAfterMs,
     maxRetainedJobs,
-    maxJobResultBytes
+    maxJobResultBytes,
+    startupWarnings
   };
 }
 
@@ -376,6 +375,11 @@ function parseDefaultSessionMode(raw: string): DefaultSessionMode {
     return raw;
   }
   throw new Error(`Invalid default session mode: ${raw}`);
+}
+
+function parseBackendKind(raw: string): CodexBackendKind {
+  if (raw === "mcp-server" || raw === "app-server") return raw;
+  throw new Error(`Invalid default Codex backend: ${raw}`);
 }
 
 function normalizeOptional(raw: string | undefined): string | undefined {

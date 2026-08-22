@@ -12,6 +12,7 @@ export const ACTIVITY_COMPLETION_TRIGGERS = ["manual", "sealed-jobs-terminal"] a
 export const ACTIVITY_LIFECYCLES = [
   "open",
   "sealed",
+  "terminating",
   "completed",
   "cancelled",
   "abandoned"
@@ -32,6 +33,8 @@ export const ACTIVITY_VERIFICATION_STATES = [
 ] as const;
 export const ACTIVITY_JOB_STATUSES = [
   "running",
+  "terminating",
+  "termination-failed",
   "completed",
   "failed",
   "interrupted",
@@ -104,7 +107,15 @@ export const EMPTY_ACTIVITY_JOB_COUNTS: ActivityJobCounts = Object.freeze({
   terminal: 0
 });
 
-export function isTerminalActivityJobStatus(status: string): status is Exclude<ActivityJobStatus, "running"> {
+export function isActiveActivityJobStatus(
+  status: string
+): status is Extract<ActivityJobStatus, "running" | "terminating" | "termination-failed"> {
+  return status === "running" || status === "terminating" || status === "termination-failed";
+}
+
+export function isTerminalActivityJobStatus(
+  status: string
+): status is Exclude<ActivityJobStatus, "running" | "terminating" | "termination-failed"> {
   return status === "completed" || status === "failed" || status === "interrupted" || status === "cancelled";
 }
 

@@ -26,14 +26,15 @@ describe("CodexStdioUpstream", () => {
       transport: { async close() {} }
     }));
 
-    await upstream.callTool("progress", {}, 1234, (update) => progress.push(update));
+    await upstream.callTool("progress", {}, (update) => progress.push(update));
 
-    expect(observedOptions).toMatchObject({ timeout: 1234, resetTimeoutOnProgress: true });
+    expect(observedOptions).toMatchObject({ resetTimeoutOnProgress: true });
+    expect(observedOptions).not.toHaveProperty("timeout");
     expect(progress).toEqual([{ progress: 2, total: 5, message: "working" }]);
     await upstream.close();
   });
 
-  it("keeps the current connection after an isolated request timeout", async () => {
+  it("retires a connection after a transport-level request failure", async () => {
     let factoryCalls = 0;
     let clientCloses = 0;
     const factory: CodexConnectionFactory = async () => {
@@ -54,15 +55,15 @@ describe("CodexStdioUpstream", () => {
     };
     const upstream = new CodexStdioUpstream("codex", factory);
 
-    await expect(upstream.callTool("timeout", {}, 10)).rejects.toMatchObject({ code: -32001 });
-    await expect(upstream.callTool("next", {}, 10)).resolves.toMatchObject({
+    await expect(upstream.callTool("timeout", {})).rejects.toMatchObject({ code: -32001 });
+    await expect(upstream.callTool("next", {})).resolves.toMatchObject({
       structuredContent: { threadId: "same-connection" }
     });
-    expect(factoryCalls).toBe(1);
-    expect(clientCloses).toBe(0);
+    expect(factoryCalls).toBe(2);
+    expect(clientCloses).toBe(1);
 
     await upstream.close();
-    expect(clientCloses).toBe(1);
+    expect(clientCloses).toBe(2);
   });
 
   it("retires a failed connection without closing it under unrelated in-flight calls", async () => {
@@ -88,12 +89,12 @@ describe("CodexStdioUpstream", () => {
     };
     const upstream = new CodexStdioUpstream("codex", factory);
 
-    const slowCall = upstream.callTool("slow", {}, 1000);
-    const failedCall = upstream.callTool("fail", {}, 1000);
+    const slowCall = upstream.callTool("slow", {});
+    const failedCall = upstream.callTool("fail", {});
     await expect(failedCall).rejects.toThrow("transport failed");
     expect(clientCloses).toEqual([]);
 
-    await expect(upstream.callTool("next", {}, 1000)).resolves.toMatchObject({
+    await expect(upstream.callTool("next", {})).resolves.toMatchObject({
       structuredContent: { threadId: "generation-2" }
     });
     expect(factoryCalls).toBe(2);
@@ -157,8 +158,8 @@ describe("CodexStdioUpstream", () => {
       transport: { async close() {} }
     }));
 
-    const first = pool.callTool("first", {}, 1000);
-    const second = pool.callTool("second", {}, 1000);
+    const first = pool.callTool("first", {});
+    const second = pool.callTool("second", {});
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toEqual([["first"], ["second"]]);
 
@@ -193,8 +194,8 @@ describe("CodexStdioUpstream", () => {
       transport: { async close() {} }
     }));
 
-    const first = pool.callTool("codex", { prompt: "first" }, 1000);
-    const second = pool.callTool("codex", { prompt: "second" }, 1000);
+    const first = pool.callTool("codex", { prompt: "first" });
+    const second = pool.callTool("codex", { prompt: "second" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     starts[0]!.resolve(result("thread-0"));
     starts[1]!.resolve(result("thread-1"));
@@ -203,10 +204,10 @@ describe("CodexStdioUpstream", () => {
     expect(pool.canResumeThread("thread-0")).toBe(true);
     expect(pool.canResumeThread("thread-1")).toBe(true);
     await expect(
-      pool.callTool("codex-reply", { threadId: "thread-1", prompt: "continue second" }, 1000)
+      pool.callTool("codex-reply", { threadId: "thread-1", prompt: "continue second" })
     ).resolves.toMatchObject({ structuredContent: { threadId: "thread-1" } });
     await expect(
-      pool.callTool("codex-reply", { threadId: "thread-0", prompt: "continue first" }, 1000)
+      pool.callTool("codex-reply", { threadId: "thread-0", prompt: "continue first" })
     ).resolves.toMatchObject({ structuredContent: { threadId: "thread-0" } });
     expect(calls[0]?.at(-1)).toMatchObject({ name: "codex-reply", threadId: "thread-0" });
     expect(calls[1]?.at(-1)).toMatchObject({ name: "codex-reply", threadId: "thread-1" });
@@ -229,7 +230,7 @@ describe("CodexStdioUpstream", () => {
 
     expect(pool.canResumeThread("persisted-thread")).toBe(false);
     await expect(
-      pool.callTool("codex-reply", { threadId: "persisted-thread", prompt: "continue" }, 1000)
+      pool.callTool("codex-reply", { threadId: "persisted-thread", prompt: "continue" })
     ).rejects.toThrow(/not available in the active MCP worker generation/);
     await pool.close();
   });

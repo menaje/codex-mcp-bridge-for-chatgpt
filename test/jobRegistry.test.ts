@@ -1,10 +1,10 @@
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
 import { LEGACY_SCOPE_ID } from "../src/sessionRegistry.js";
-import type { ToolResult } from "../src/upstream.js";
+import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -24,7 +24,7 @@ describe("CodexJobRegistry persistence", () => {
       status: "completed",
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
@@ -119,7 +119,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -141,7 +141,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {
@@ -165,6 +165,232 @@ describe("CodexJobRegistry persistence", () => {
       result: { structuredContent: { threadId: "newer-thread" } }
     });
     expect(restored.get(original.jobId)).toBeUndefined();
+  });
+
+  it("cancels a scope watcher promptly and releases its widget lease", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const controller = new AbortController();
+    const version = registry.getScopeVersion(SCOPE_A);
+    const pending = registry.waitForScopeVersion(
+      SCOPE_A,
+      version,
+      10_000,
+      "widget-a",
+      controller.signal
+    );
+
+    controller.abort();
+    await expect(pending).rejects.toThrow(/cancelled by the host/);
+    await expect(
+      registry.waitForScopeVersion(SCOPE_A, version, 1, "widget-a")
+    ).resolves.toMatchObject({ changed: false, timedOut: true });
+  });
+
+  it("keeps watcher admission separate from all 30 active Codex job slots", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    for (let index = 0; index < 30; index += 1) {
+      registry.start(
+        {
+          ...jobInput(root),
+          requestId: `request-${index}`,
+          requestHash: String(index).padStart(64, "0")
+        },
+        async () => new Promise<ToolResult>(() => undefined)
+      );
+    }
+    expect(registry.runningCount()).toBe(30);
+    expect(() =>
+      registry.start(
+        {
+          ...jobInput(root),
+          requestId: "request-over-limit",
+          requestHash: "f".repeat(64)
+        },
+        async () => result("never")
+      )
+    ).toThrow(/configured limit is 30/);
+
+    const controller = new AbortController();
+    const version = registry.getScopeVersion(SCOPE_A);
+    const watch = registry.waitForScopeVersion(
+      SCOPE_A,
+      version,
+      10_000,
+      "widget-load-test",
+      controller.signal
+    );
+    controller.abort();
+    await expect(watch).rejects.toThrow(/cancelled by the host/);
+  });
+
+  it("enforces independent per-scope and global watcher fairness limits", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const controllers = Array.from({ length: 8 }, () => new AbortController());
+    const scopeB = "22222222-2222-4222-8222-222222222222";
+    const watches = controllers.slice(0, 4).map((controller, index) =>
+      registry
+        .waitForScopeVersion(SCOPE_A, registry.getScopeVersion(SCOPE_A), 10_000, `widget-${index}`, controller.signal)
+        .catch((error: unknown) => error)
+    );
+
+    await expect(
+      registry.waitForScopeVersion(SCOPE_A, registry.getScopeVersion(SCOPE_A), 10, "widget-extra-a")
+    ).rejects.toThrow(/per-scope watcher limit is 4/);
+    watches.push(...controllers.slice(4).map((controller, offset) =>
+      registry
+        .waitForScopeVersion(scopeB, registry.getScopeVersion(scopeB), 10_000, `widget-${offset + 4}`, controller.signal)
+        .catch((error: unknown) => error)
+    ));
+    await expect(
+      registry.waitForScopeVersion(
+        "33333333-3333-4333-8333-333333333333",
+        0,
+        10,
+        "widget-global-extra"
+      )
+    ).rejects.toThrow(/watcher limit is 8/);
+
+    for (const controller of controllers) controller.abort();
+    await Promise.all(watches);
+  });
+
+  it("restores a terminal result that arrives while an unconfirmed force-stop is pending", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    let resolveRun!: (value: ToolResult) => void;
+    const runResult = new Promise<ToolResult>((resolve) => {
+      resolveRun = resolve;
+    });
+    const upstream: CodexUpstream = {
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      async forceTerminateWorker() {
+        resolveRun(result("naturally-completed"));
+        await Promise.resolve();
+        throw new Error("process exit was not confirmed");
+      }
+    };
+    registry.attachUpstream(upstream);
+    const job = registry.start(jobInput(root), async (_progress, assigned) => {
+      assigned({
+        backendKind: "mcp-server",
+        workerId: "worker-race",
+        workerGeneration: 7,
+        workerPid: 700,
+        processGroupId: 700
+      });
+      return runResult;
+    });
+
+    await Promise.resolve();
+    await registry.cancel(job.jobId);
+    await job.promise;
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "completed",
+      result: { structuredContent: { threadId: "naturally-completed" } }
+    });
+    expect(registry.runningCount()).toBe(0);
+  });
+
+  it("keeps a termination-failed job active when no terminal evidence exists", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      async forceTerminateWorker() { throw new Error("still alive"); }
+    });
+    const job = registry.start(jobInput(root), async (_progress, assigned) => {
+      assigned({
+        backendKind: "mcp-server",
+        workerId: "worker-live",
+        workerGeneration: 8,
+        workerPid: 800,
+        processGroupId: 800
+      });
+      return new Promise<ToolResult>(() => undefined);
+    });
+
+    await Promise.resolve();
+    await expect(registry.cancel(job.jobId)).resolves.toMatchObject({ status: "termination-failed" });
+    expect(registry.runningCount()).toBe(1);
+    expect(registry.get(job.jobId)?.error).toContain("still alive");
+  });
+
+  it("keeps a no-progress job tracked beyond three hours and accepts its late result", async () => {
+    vi.useFakeTimers();
+    try {
+      const root = temporaryRoot();
+      const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+      let resolveRun!: (value: ToolResult) => void;
+      const running = new Promise<ToolResult>((resolve) => {
+        resolveRun = resolve;
+      });
+      const job = registry.start(jobInput(root), async () => running);
+
+      await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1_000 + 1);
+      expect(registry.get(job.jobId)).toMatchObject({ status: "running" });
+      expect(registry.runningCount()).toBe(1);
+
+      resolveRun(result("late-thread"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({
+        status: "completed",
+        result: { structuredContent: { threadId: "late-thread" } }
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("redacts retained results and failures before persistence", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const completed = registry.start(jobInput(root), async () => ({
+      _meta: { authorization: "Bearer top-secret-value" },
+      content: [
+        {
+          type: "text",
+          text: `token=sk-proj-supersecret123456 path=${path.join(root, "src", "secret.ts")}`
+        }
+      ],
+      structuredContent: {
+        threadId: "redacted-thread",
+        apiKey: "sk-proj-anothersecret123456",
+        cwd: path.join(root, "nested")
+      }
+    } as ToolResult));
+    await completed.promise;
+    const retained = JSON.stringify(registry.get(completed.jobId)?.result);
+    expect(retained).not.toContain("top-secret-value");
+    expect(retained).not.toContain("supersecret");
+    expect(retained).not.toContain(root);
+    expect(retained).not.toContain('"_meta"');
+    expect(retained).toContain("[REDACTED");
+    expect(retained).toContain(path.basename(root));
+
+    const failed = registry.start(
+      {
+        ...jobInput(root),
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        requestHash: "b".repeat(64)
+      },
+      async () => {
+        throw new Error(`Bearer abcdefghijklmnop at ${path.join(root, "private", "token.txt")}`);
+      }
+    );
+    await failed.promise;
+    const failure = registry.get(failed.jobId)?.error || "";
+    expect(failure).toContain("Bearer [REDACTED]");
+    expect(failure).not.toContain("abcdefghijklmnop");
+    expect(failure).not.toContain(root);
+    expect(readFileSync(stateFile, "utf8")).not.toContain("supersecret");
   });
 });
 

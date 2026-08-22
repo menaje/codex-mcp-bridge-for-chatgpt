@@ -74,6 +74,7 @@ describe("BridgeStateStore", () => {
       scopeId: SCOPE_A,
       cwd: root,
       sandbox: "read-only",
+      backendKind: "mcp-server",
       createdAt: 1,
       lastUsedAt: 2
     });

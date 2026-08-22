@@ -31,7 +31,7 @@ describe("Activity SQLite state", () => {
     const [activity] = store.listActivities(SCOPE_A);
     const [job] = store.listJobs() as Array<Record<string, unknown>>;
 
-    expect(store.schemaVersion).toBe(2);
+    expect(store.schemaVersion).toBe(3);
     expect(activity).toMatchObject({
       scopeId: SCOPE_A,
       title: "Legacy Codex job legacy-j",
@@ -407,13 +407,25 @@ describe("Activity SQLite state", () => {
         requestHashVersion: 2,
         selectionKey: "restart-test",
         exclusiveKeys: [],
+        backendKind: "app-server",
         sessionDecision: {
           requestedMode: "new",
           action: "start",
           reason: "explicit-new"
         }
       },
-      async () => new Promise<ToolResult>(() => undefined)
+      async (_progress, assigned) => {
+        assigned({
+          backendKind: "app-server",
+          workerId: "app-0",
+          workerGeneration: 3,
+          workerPid: 300,
+          processGroupId: 300,
+          upstreamRequestId: "turn-before-restart",
+          threadId: "app-thread-before-restart"
+        });
+        return new Promise<ToolResult>(() => undefined);
+      }
     );
     await Promise.resolve();
     const firstInstance = first.bridgeInstanceId;
@@ -432,7 +444,11 @@ describe("Activity SQLite state", () => {
     ]);
     expect(secondRegistry.get(running.jobId)).toMatchObject({
       status: "interrupted",
-      bridgeInstanceId: firstInstance
+      bridgeInstanceId: firstInstance,
+      backendKind: "app-server",
+      threadId: "app-thread-before-restart",
+      upstreamRequestId: "turn-before-restart",
+      trackingState: "orphaned"
     });
     expect(second.getActivity(running.activityId)).toMatchObject({
       lifecycle: "open",

@@ -1,24 +1,83 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CallToolResult, Progress } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolResultSchema,
+  InitializeResultSchema,
+  LATEST_PROTOCOL_VERSION,
+  ListToolsResultSchema,
+  SUPPORTED_PROTOCOL_VERSIONS
+} from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import type { CodexBackendKind } from "./config.js";
+import {
+  JsonRpcProcess,
+  type JsonRpcProcessIdentity,
+  type JsonRpcTerminationResult
+} from "./jsonRpcProcess.js";
 
 export type ToolResult = CallToolResult;
 
+export type CodexPublicEvent = {
+  eventId: string;
+  type:
+    | "agent-message"
+    | "plan"
+    | "command"
+    | "file-change"
+    | "approval-required"
+    | "input-required"
+    | "turn";
+  phase: "started" | "updated" | "completed" | "waiting";
+  createdAt: number;
+  summary: string;
+  details?: Record<string, unknown>;
+};
+
+export type CodexProgress = Progress & { event?: CodexPublicEvent };
+
+export type CodexPendingInteraction = {
+  interactionId: string;
+  kind: "command-approval" | "file-approval" | "permission-approval" | "user-input";
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  summary: string;
+  questions?: Array<{
+    id: string;
+    header: string;
+    question: string;
+    isSecret: boolean;
+    options?: Array<{ label: string; description: string }>;
+  }>;
+};
+
+export type UpstreamWorkerAssignment = {
+  backendKind: "mcp-server" | "app-server";
+  workerId: string;
+  workerGeneration: number;
+  workerPid?: number;
+  processGroupId?: number;
+  upstreamRequestId?: string;
+  threadId?: string;
+};
+
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
-  /**
-   * Whether a Codex thread is still bound to a live upstream worker in this
-   * bridge process. `undefined` means the upstream cannot determine it.
-   */
-  canResumeThread?(threadId: string): boolean | undefined;
+  canResumeThread?(threadId: string, backendKind?: CodexBackendKind): boolean | undefined;
   callTool(
     name: string,
     args: Record<string, unknown>,
-    timeoutMs: number,
-    onProgress?: (progress: Progress) => void,
-    signal?: AbortSignal
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult>;
+  forceTerminateWorker?(
+    assignment: UpstreamWorkerAssignment,
+    graceMs?: number
+  ): Promise<JsonRpcTerminationResult>;
+  respondToInteraction?(
+    interactionId: string,
+    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+  ): Promise<void>;
+  steerThread?(threadId: string, prompt: string): Promise<{ turnId: string }>;
   close(): Promise<void>;
 };
 
@@ -28,8 +87,6 @@ export type CodexMcpClient = {
     input: { name: string; arguments: Record<string, unknown> },
     resultSchema?: undefined,
     options?: {
-      timeout: number;
-      signal?: AbortSignal;
       resetTimeoutOnProgress: boolean;
       onprogress?: (progress: Progress) => void;
     }
@@ -38,6 +95,8 @@ export type CodexMcpClient = {
 };
 
 export type CodexMcpTransport = {
+  readonly identity?: JsonRpcProcessIdentity;
+  forceTerminate?(graceMs?: number): Promise<JsonRpcTerminationResult>;
   close(): Promise<void>;
 };
 
@@ -51,6 +110,7 @@ type ManagedConnection = {
   transport: CodexMcpTransport;
   activeCalls: number;
   retired: boolean;
+  generation: number;
   closePromise?: Promise<void>;
 };
 
@@ -59,10 +119,12 @@ export class CodexStdioUpstream implements CodexUpstream {
   private connecting?: Promise<ManagedConnection>;
   private readonly connections = new Set<ManagedConnection>();
   private closing = false;
+  private nextGeneration = 1;
 
   constructor(
     private readonly codexCommand: string,
-    private readonly connectionFactory?: CodexConnectionFactory
+    private readonly connectionFactory?: CodexConnectionFactory,
+    private readonly workerId = "mcp-0"
   ) {}
 
   async listTools(): Promise<unknown> {
@@ -72,25 +134,45 @@ export class CodexStdioUpstream implements CodexUpstream {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    timeoutMs: number,
-    onProgress?: (progress: Progress) => void,
-    signal?: AbortSignal
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
-    return this.withConnection((client) =>
-      client.callTool(
-        {
-          name,
-          arguments: args
-        },
+    return this.withConnection((client, connection) => {
+      onAssigned?.(this.assignmentFor(connection));
+      return client.callTool(
+        { name, arguments: args },
         undefined,
-        {
-          timeout: timeoutMs,
-          signal,
-          resetTimeoutOnProgress: true,
-          onprogress: onProgress
-        }
-      )
+        { resetTimeoutOnProgress: true, onprogress: onProgress }
+      );
+    });
+  }
+
+  async forceTerminateWorker(
+    assignment: UpstreamWorkerAssignment,
+    graceMs = 1_500
+  ): Promise<JsonRpcTerminationResult> {
+    if (assignment.workerId !== this.workerId) {
+      throw new Error(`Worker identity mismatch: expected ${this.workerId}, received ${assignment.workerId}.`);
+    }
+    const connection = [...this.connections].find(
+      (candidate) => candidate.generation === assignment.workerGeneration
     );
+    if (!connection) throw new Error("The selected Codex worker generation is no longer active.");
+    const identity = connection.transport.identity;
+    if (!identity || !connection.transport.forceTerminate) {
+      throw new Error("The selected Codex worker does not expose supervised process identity.");
+    }
+    if (
+      (assignment.workerPid !== undefined && assignment.workerPid !== identity.pid) ||
+      (assignment.processGroupId !== undefined && assignment.processGroupId !== identity.processGroupId)
+    ) {
+      throw new Error("The selected Codex worker process identity changed; refresh status before force-stopping it.");
+    }
+    connection.retired = true;
+    if (this.current === connection) this.current = undefined;
+    const result = await connection.transport.forceTerminate(graceMs);
+    if (result.exited) await this.closeConnection(connection, true);
+    return result;
   }
 
   async close(): Promise<void> {
@@ -109,22 +191,32 @@ export class CodexStdioUpstream implements CodexUpstream {
     await Promise.all([...this.connections].map((connection) => this.closeConnection(connection, true)));
   }
 
-  private async withConnection<T>(operation: (client: CodexMcpClient) => Promise<T>): Promise<T> {
+  private assignmentFor(connection: ManagedConnection): UpstreamWorkerAssignment {
+    const identity = connection.transport.identity;
+    return {
+      backendKind: "mcp-server",
+      workerId: this.workerId,
+      workerGeneration: connection.generation,
+      ...(identity ? { workerPid: identity.pid } : {}),
+      ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
+        ? { processGroupId: identity.processGroupId }
+        : {})
+    };
+  }
+
+  private async withConnection<T>(
+    operation: (client: CodexMcpClient, connection: ManagedConnection) => Promise<T>
+  ): Promise<T> {
     const connection = await this.getConnection();
     connection.activeCalls += 1;
     try {
-      return await operation(connection.client);
+      return await operation(connection.client, connection);
     } catch (error) {
-      // A request timeout is cancelled independently by the MCP SDK. For other
-      // failures, retire this generation for future calls without closing it
-      // underneath unrelated calls that are still in flight.
-      if (!isRequestTimeout(error)) this.retire(connection);
+      this.retire(connection);
       throw error;
     } finally {
       connection.activeCalls -= 1;
-      if (connection.retired && connection.activeCalls === 0) {
-        await this.closeConnection(connection);
-      }
+      if (connection.retired && connection.activeCalls === 0) await this.closeConnection(connection);
     }
   }
 
@@ -135,9 +227,7 @@ export class CodexStdioUpstream implements CodexUpstream {
 
   private async getConnection(): Promise<ManagedConnection> {
     if (this.closing) throw new Error("Codex MCP upstream is closed.");
-    if (this.current && !this.current.retired) {
-      return this.current;
-    }
+    if (this.current && !this.current.retired) return this.current;
     if (!this.connecting) {
       this.connecting = this.createConnection().then(async (connection) => {
         this.connections.add(connection);
@@ -159,48 +249,29 @@ export class CodexStdioUpstream implements CodexUpstream {
   }
 
   private async createConnection(): Promise<ManagedConnection> {
+    const generation = this.nextGeneration++;
     const connection = this.connectionFactory
       ? await this.connectionFactory()
-      : await this.createStdioConnection();
-    return {
-      ...connection,
-      activeCalls: 0,
-      retired: false
-    };
+      : await this.createStdioConnection(generation);
+    return { ...connection, activeCalls: 0, retired: false, generation };
   }
 
-  private async createStdioConnection(): Promise<{
+  private async createStdioConnection(generation: number): Promise<{
     client: CodexMcpClient;
     transport: CodexMcpTransport;
   }> {
-    const transport = new StdioClientTransport({
+    const rpc = new JsonRpcProcess({
       command: this.codexCommand,
       args: ["mcp-server"],
-      stderr: "pipe"
+      debugLabel: `codex-mcp:${this.workerId}:g${generation}`
     });
-    transport.stderr?.on("data", (chunk) => {
-      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
-        process.stderr.write(`[codex-mcp] ${chunk.toString()}`);
-      }
-    });
-
-    const client = new Client(
-      {
-        name: "codex-mcp-bridge",
-        version: BRIDGE_BUILD_INFO.version
-      },
-      {
-        capabilities: {}
-      }
-    );
+    const transport = new ProcessMcpTransport(rpc);
+    const client = new ProcessMcpClient(rpc);
     try {
-      await client.connect(transport);
-      return {
-        client: client as unknown as CodexMcpClient,
-        transport
-      };
+      await client.initialize();
+      return { client, transport };
     } catch (error) {
-      await Promise.allSettled([client.close(), transport.close()]);
+      await transport.close();
       throw error;
     }
   }
@@ -237,7 +308,7 @@ export class CodexUpstreamPool implements CodexUpstream {
       throw new Error("Codex upstream pool size must be a positive integer.");
     }
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
-      upstream: new CodexStdioUpstream(codexCommand, connectionFactoryForWorker?.(index)),
+      upstream: new CodexStdioUpstream(codexCommand, connectionFactoryForWorker?.(index), `mcp-${index}`),
       activeCalls: 0,
       index
     }));
@@ -250,9 +321,8 @@ export class CodexUpstreamPool implements CodexUpstream {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    timeoutMs: number,
-    onProgress?: (progress: Progress) => void,
-    signal?: AbortSignal
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
     const requestedThreadId =
       name === "codex-reply" && typeof args.threadId === "string" && args.threadId
@@ -272,7 +342,7 @@ export class CodexUpstreamPool implements CodexUpstream {
       const result = await this.withWorker(
         (upstream, worker) => {
           selectedWorker = worker;
-          return upstream.callTool(name, args, timeoutMs, onProgress, signal);
+          return upstream.callTool(name, args, onProgress, onAssigned);
         },
         boundWorker
       );
@@ -282,11 +352,20 @@ export class CodexUpstreamPool implements CodexUpstream {
       }
       return result;
     } catch (error) {
-      if (selectedWorker && !isRequestTimeout(error)) {
-        this.forgetWorkerThreads(selectedWorker.index);
-      }
+      if (selectedWorker) this.forgetWorkerThreads(selectedWorker.index);
       throw error;
     }
+  }
+
+  async forceTerminateWorker(
+    assignment: UpstreamWorkerAssignment,
+    graceMs?: number
+  ): Promise<JsonRpcTerminationResult> {
+    const worker = this.workers.find((candidate) => `mcp-${candidate.index}` === assignment.workerId);
+    if (!worker) throw new Error("The selected Codex worker is not part of this bridge pool.");
+    const result = await worker.upstream.forceTerminateWorker(assignment, graceMs);
+    if (result.exited) this.forgetWorkerThreads(worker.index);
+    return result;
   }
 
   canResumeThread(threadId: string): boolean {
@@ -325,6 +404,74 @@ export class CodexUpstreamPool implements CodexUpstream {
   }
 }
 
+class ProcessMcpClient implements CodexMcpClient {
+  private protocolVersion?: string;
+
+  constructor(private readonly rpc: JsonRpcProcess) {}
+
+  async initialize(): Promise<void> {
+    const raw = await this.rpc.request(
+      "initialize",
+      {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "codex-mcp-bridge", version: BRIDGE_BUILD_INFO.version }
+      },
+      { timeoutMs: 30_000 }
+    );
+    const result = InitializeResultSchema.parse(raw);
+    if (!SUPPORTED_PROTOCOL_VERSIONS.includes(result.protocolVersion)) {
+      throw new Error(`Unsupported Codex MCP protocol version: ${result.protocolVersion}.`);
+    }
+    this.protocolVersion = result.protocolVersion;
+    await this.rpc.notify("notifications/initialized");
+  }
+
+  async listTools(): Promise<unknown> {
+    this.assertInitialized();
+    return ListToolsResultSchema.parse(await this.rpc.request("tools/list", {}, { timeoutMs: 30_000 }));
+  }
+
+  async callTool(
+    input: { name: string; arguments: Record<string, unknown> },
+    _resultSchema?: undefined,
+    options?: { resetTimeoutOnProgress: boolean; onprogress?: (progress: Progress) => void }
+  ): Promise<ToolResult> {
+    this.assertInitialized();
+    const result = await this.rpc.request("tools/call", input, {
+      progress: true,
+      onProgress: (value) => {
+        if (options?.onprogress && isProgress(value)) options.onprogress(value);
+      }
+    });
+    return CallToolResultSchema.parse(result);
+  }
+
+  async close(): Promise<void> {
+    // The transport owns the supervised process lifetime.
+  }
+
+  private assertInitialized(): void {
+    if (!this.protocolVersion) throw new Error("Codex MCP client is not initialized.");
+  }
+}
+
+class ProcessMcpTransport implements CodexMcpTransport {
+  constructor(private readonly rpc: JsonRpcProcess) {}
+
+  get identity(): JsonRpcProcessIdentity | undefined {
+    return this.rpc.identity;
+  }
+
+  forceTerminate(graceMs?: number): Promise<JsonRpcTerminationResult> {
+    return this.rpc.forceTerminate(graceMs);
+  }
+
+  close(): Promise<void> {
+    return this.rpc.close();
+  }
+}
+
 function readResultThreadId(result: ToolResult): string | undefined {
   const structured = result.structuredContent;
   if (!structured || typeof structured !== "object" || Array.isArray(structured)) return undefined;
@@ -332,6 +479,6 @@ function readResultThreadId(result: ToolResult): string | undefined {
   return typeof threadId === "string" && threadId ? threadId : undefined;
 }
 
-function isRequestTimeout(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === -32001;
+function isProgress(value: unknown): value is Progress {
+  return typeof value === "object" && value !== null && typeof (value as Record<string, unknown>).progress === "number";
 }

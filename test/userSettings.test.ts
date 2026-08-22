@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -34,8 +34,8 @@ describe("user settings store", () => {
         accessStrategy: "always-full",
         defaultSessionMode: "new",
         autoResumeTtlMs: 60 * 60 * 1000,
-        taskTimeoutMs: 2 * 60 * 60 * 1000,
-        maxConcurrentJobs: 12
+        maxConcurrentJobs: 12,
+        completionDeliveryMode: "auto-handoff"
       },
       0
     );
@@ -44,7 +44,8 @@ describe("user settings store", () => {
       updatedAt: "2026-08-21T01:02:03.000Z",
       accessStrategy: "always-full",
       defaultSessionMode: "new",
-      maxConcurrentJobs: 12
+      maxConcurrentJobs: 12,
+      completionDeliveryMode: "auto-handoff"
     });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
@@ -78,7 +79,6 @@ describe("user settings store", () => {
     expect(() => store.update({ defaultSessionMode: "auto" }, 0)).toThrow(/Settings changed/);
     expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/owner disabled/);
     expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/outside allowed roots/);
-    expect(() => store.update({ taskTimeoutMs: 60001 }, 1)).toThrow(/Task timeout/);
     expect(() => store.update({ maxConcurrentJobs: 5 }, 1)).toThrow(/Concurrent job limit/);
   });
 
@@ -110,9 +110,11 @@ describe("user settings store", () => {
     const oldStore = new UserSettingsStore(oldConfig, { stateFile });
     oldStore.update({
       accessStrategy: "always-full",
-      taskTimeoutMs: 60000,
       maxConcurrentJobs: 4
     });
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8"));
+    legacy.settings.taskTimeoutMs = 60000;
+    writeFileSync(stateFile, JSON.stringify(legacy));
 
     const tightenedConfig = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
@@ -131,15 +133,18 @@ describe("user settings store", () => {
       updatedAt: "2026-08-22T00:00:00.000Z",
       accessStrategy: "read-only",
       defaultCwd: tightenedConfig.allowedRoots[0],
-      taskTimeoutMs: 30000,
       maxConcurrentJobs: 2
     });
+    expect(reconciled.current).not.toHaveProperty("taskTimeoutMs");
     expect(reconciled.loadWarnings).toHaveLength(4);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the current owner allowlist/);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
-      settings: { revision: 2, accessStrategy: "read-only", taskTimeoutMs: 30000, maxConcurrentJobs: 2 }
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/taskTimeoutMs was retired and removed/);
+    const migrated = JSON.parse(readFileSync(stateFile, "utf8"));
+    expect(migrated).toMatchObject({
+      settings: { revision: 2, accessStrategy: "read-only", maxConcurrentJobs: 2 }
     });
+    expect(migrated.settings).not.toHaveProperty("taskTimeoutMs");
   });
 });
 

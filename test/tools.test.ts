@@ -11,7 +11,12 @@ import { createBridgeMcpServer } from "../src/server.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
 import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
 import { CodexJobRegistry } from "../src/tools.js";
-import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import type {
+  CodexProgress,
+  CodexUpstream,
+  ToolResult,
+  UpstreamWorkerAssignment
+} from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
@@ -21,16 +26,14 @@ let requestSequence = 0;
 
 class FakeUpstream implements CodexUpstream {
   public calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  public timeouts: Array<number | undefined> = [];
   private nextThread = 1;
 
   async listTools(): Promise<unknown> {
     return { tools: [{ name: "codex" }, { name: "codex-reply" }] };
   }
 
-  async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     this.calls.push({ name, args });
-    this.timeouts.push(timeoutMs);
     const threadId =
       name === "codex-reply" && typeof args.threadId === "string" ? args.threadId : `thread-${this.nextThread++}`;
     return fakeCodexResult(threadId);
@@ -44,34 +47,40 @@ class DeferredUpstream extends FakeUpstream {
   private pending: Array<{
     resolve: (result: ToolResult) => void;
     reject: (error: Error) => void;
-    onProgress?: (progress: Progress) => void;
-    signal?: AbortSignal;
-    onAbort?: () => void;
+    onProgress?: (progress: CodexProgress) => void;
   }> = [];
 
   override async callTool(
     name: string,
     args: Record<string, unknown>,
-    _timeoutMs?: number,
-    onProgress?: (progress: Progress) => void,
-    signal?: AbortSignal
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
     this.calls.push({ name, args });
-    return new Promise<ToolResult>((resolve, reject) => {
-      const entry: (typeof this.pending)[number] = { resolve, reject, onProgress, signal };
-      entry.onAbort = () => {
-        this.aborts += 1;
-        const index = this.pending.indexOf(entry);
-        if (index >= 0) this.pending.splice(index, 1);
-        reject(new Error("upstream request aborted"));
-      };
-      if (signal?.aborted) {
-        entry.onAbort();
-        return;
-      }
-      signal?.addEventListener("abort", entry.onAbort, { once: true });
-      this.pending.push(entry);
+    onAssigned?.({
+      backendKind: "mcp-server",
+      workerId: "fake-0",
+      workerGeneration: 1,
+      workerPid: 999_001,
+      processGroupId: 999_001
     });
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+    });
+  }
+
+  async forceTerminateWorker() {
+    this.aborts += 1;
+    for (const pending of this.pending.splice(0)) pending.reject(new Error("worker force-stopped"));
+    return {
+      pid: 999_001,
+      processGroupId: 999_001,
+      exited: true,
+      escalated: false,
+      signal: "SIGTERM" as const,
+      mode: "process-group" as const,
+      workerExited: true
+    };
   }
 
   progressNext(progress: Progress): void {
@@ -83,15 +92,51 @@ class DeferredUpstream extends FakeUpstream {
   resolveNext(result: ToolResult = fakeCodexResult("thread-1")): void {
     const pending = this.pending.shift();
     if (!pending) throw new Error("No pending upstream call.");
-    pending.signal?.removeEventListener("abort", pending.onAbort as () => void);
     pending.resolve(result);
   }
 
   rejectNext(error = new Error("upstream failed")): void {
     const pending = this.pending.shift();
     if (!pending) throw new Error("No pending upstream call.");
-    pending.signal?.removeEventListener("abort", pending.onAbort as () => void);
     pending.reject(error);
+  }
+}
+
+class MultiTurnAppUpstream extends FakeUpstream {
+  public forceCalls: UpstreamWorkerAssignment[] = [];
+  private nextTurn = 1;
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    _onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    const turn = this.nextTurn++;
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: "app-shared-0",
+      workerGeneration: 4,
+      workerPid: 4400,
+      processGroupId: 4400,
+      upstreamRequestId: `app-turn-${turn}`,
+      threadId: `app-thread-${turn}`
+    });
+    return new Promise<ToolResult>(() => undefined);
+  }
+
+  async forceTerminateWorker(assignment: UpstreamWorkerAssignment) {
+    this.forceCalls.push(assignment);
+    return {
+      pid: 4400,
+      processGroupId: 4400,
+      exited: true,
+      escalated: false,
+      signal: "SIGTERM" as const,
+      mode: "turn-interrupt" as const,
+      workerExited: false
+    };
   }
 }
 
@@ -135,12 +180,14 @@ class FakeModelCatalog implements CodexModelCatalogProvider {
 }
 
 describe("bridge tools", () => {
-  it("publishes six model-facing tools plus one app-only settings action", async () => {
+  it("publishes the consolidated Activity, settings, and Codex tools", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "codex_activity",
+      "codex_activity_handoff",
       "codex_activity_update",
       "codex_cancel",
       "codex_models",
@@ -207,15 +254,15 @@ describe("bridge tools", () => {
       _meta?: Record<string, any>;
     };
     expect(contents.mimeType).toBe("text/html;profile=mcp-app");
-    expect(contents.text).toContain("MacBook Air Codex Bridge 설정");
-    expect(contents.text).toContain('request("tools/call"');
+    expect(contents.text).toContain("Codex Bridge 설정");
+    expect(contents.text).toContain("window.openai.callTool");
     expect(contents.text).toContain("codex_update_settings");
     expect(contents.text).not.toContain("localStorage");
     expect(contents.text).toContain('id="resume-hours" type="number" min="0.0167" step="any" required');
-    expect(contents.text).toContain('id="timeout-minutes" type="number" min="1" step="any" required');
+    expect(contents.text).not.toContain('id="timeout-minutes"');
     expect(contents.text).toContain('id="concurrency" type="number" min="1" step="1" required');
-    expect(contents.text).toContain("const SETTINGS_REQUEST_TIMEOUT_MS = 90000;");
-    expect(contents.text).toContain("if (result && result.isError)");
+    expect(contents.text).toContain("const REQUEST_TIMEOUT_MS = 90000;");
+    expect(contents.text).toContain("result&&result.isError");
     expect(contents.text).toContain("!elements.form.reportValidity()");
     expect(contents.text).toContain("Number.isSafeInteger(result)");
     expect(contents.text).not.toContain("view.settings.defaultReasoningEffort = null");
@@ -258,7 +305,7 @@ describe("bridge tools", () => {
       defaultCwd: realpathSync(root),
       defaultModel: "gpt-5.6-sol",
       defaultReasoningEffort: "max",
-      upstreamTimeoutMs: 10800000,
+      codexExecutionDeadline: "none",
       upstreamPoolSize: 4,
       maxRetainedJobs: 100,
       maxJobResultBytes: 1048576,
@@ -344,8 +391,8 @@ describe("bridge tools", () => {
         defaultReasoningEffort: "max",
         defaultCwd: realpathSync(root),
         defaultSessionMode: "auto",
-        taskTimeoutMs: 10800000,
-        maxConcurrentJobs: 30
+        maxConcurrentJobs: 30,
+        completionDeliveryMode: "card-only"
       },
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
@@ -365,8 +412,8 @@ describe("bridge tools", () => {
         defaultCwd: root,
         defaultSessionMode: "new",
         autoResumeTtlMs: 3600000,
-        taskTimeoutMs: 7200000,
-        maxConcurrentJobs: 12
+        maxConcurrentJobs: 12,
+        completionDeliveryMode: "auto-handoff"
       }
     });
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
@@ -376,8 +423,8 @@ describe("bridge tools", () => {
       defaultReasoningEffort: "high",
       defaultSessionMode: "new",
       autoResumeTtlMs: 3600000,
-      taskTimeoutMs: 7200000,
-      maxConcurrentJobs: 12
+      maxConcurrentJobs: 12,
+      completionDeliveryMode: "auto-handoff"
     });
 
     await client.callTool({
@@ -394,14 +441,13 @@ describe("bridge tools", () => {
         "approval-policy": "never"
       }
     });
-    expect(upstream.timeouts[0]).toBe(7200000);
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
       accessStrategy: "always-full",
       defaultSandbox: "danger-full-access",
       defaultSessionMode: "new",
-      upstreamTimeoutMs: 7200000,
+      codexExecutionDeadline: "none",
       maxConcurrentJobs: 12,
       settingsPolicy: { revision: 1, scope: "shared-bridge-instance" }
     });
@@ -519,7 +565,7 @@ describe("bridge tools", () => {
       activityTracking: {
         statusTool: "codex_status",
         plannedRenderTool: "codex_activity",
-        renderToolAvailable: false
+        renderToolAvailable: true
       }
     });
     expect(first.activityId).toMatch(SCOPE_ID_PATTERN);
@@ -764,6 +810,68 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("interrupts every exact App Server turn in one Activity even when they share a worker", async () => {
+    const root = temporaryRoot();
+    const upstream = new MultiTurnAppUpstream();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
+        CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
+      }),
+      upstream
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "first app turn",
+        sessionMode: "new",
+        executionMode: "background",
+        activityTitle: "Parallel App turns"
+      }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "second app turn",
+        sessionMode: "new",
+        executionMode: "background",
+        activityId: first.activityId
+      }
+    }));
+    const affected = [first.jobId, second.jobId].sort();
+    const turnDetail = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { threadId: "app-thread-1" }
+    }));
+    expect(turnDetail).toMatchObject({
+      session: null,
+      turns: [expect.objectContaining({ jobId: first.jobId, turnId: "app-turn-1", status: "running" })]
+    });
+
+    const stopped = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        action: "cancel",
+        acknowledgeAffectedJobIds: affected
+      }
+    }));
+
+    expect(upstream.forceCalls.map((call) => call.upstreamRequestId).sort()).toEqual([
+      "app-turn-1",
+      "app-turn-2"
+    ]);
+    expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled" });
+    expect(jobs.get(second.jobId)).toMatchObject({ status: "cancelled" });
+    expect(stopped).toMatchObject({
+      activity: { lifecycle: "cancelled", counts: { cancelled: 2, running: 0 } },
+      cancelledJobIds: expect.arrayContaining(affected),
+      collateralJobIds: []
+    });
+    await close();
+  });
+
   it("permits an explicit workspace-write session only in an enabled profile", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -856,7 +964,7 @@ describe("bridge tools", () => {
 
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "follow up" }
+      args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "mcp-server" }
     });
     await close();
   });
@@ -1098,11 +1206,19 @@ describe("bridge tools", () => {
     expect(upstream.calls.slice(2)).toEqual([
       {
         name: "codex-reply",
-        args: { threadId: "thread-1", prompt: "refine plan" }
+        args: {
+          threadId: "thread-1",
+          prompt: "refine plan",
+          _bridgeBackendKind: "mcp-server"
+        }
       },
       {
         name: "codex-reply",
-        args: { threadId: "thread-2", prompt: "continue build" }
+        args: {
+          threadId: "thread-2",
+          prompt: "continue build",
+          _bridgeBackendKind: "mcp-server"
+        }
       }
     ]);
     await close();
@@ -1307,14 +1423,22 @@ describe("bridge tools", () => {
         arguments: { scopeId: SCOPE_A, sessionLimit: 10, jobLimit: 2 }
       })
     );
+    expect(firstPage.pagination.sessions.nextCursor).toEqual(expect.any(String));
+    expect(firstPage.pagination.jobs.nextCursor).toEqual(expect.any(String));
     const secondPage = parseToolJson(
       await client.callTool({
         name: "codex_status",
-        arguments: { scopeId: SCOPE_A, sessionLimit: 10, sessionOffset: 10, jobLimit: 2, jobOffset: 2 }
+        arguments: {
+          scopeId: SCOPE_A,
+          sessionLimit: 10,
+          sessionCursor: firstPage.pagination.sessions.nextCursor,
+          jobLimit: 2,
+          jobCursor: firstPage.pagination.jobs.nextCursor
+        }
       })
     );
 
-    expect(firstPage.scopeCounts).toEqual({ sessions: 14, jobs: 3, runningJobs: 0 });
+    expect(firstPage.scopeCounts).toEqual({ sessions: 14, activities: 3, jobs: 3, runningJobs: 0 });
     expect(firstPage.sessions).toHaveLength(10);
     expect(firstPage.jobs).toHaveLength(2);
     expect(firstPage.pagination).toMatchObject({
@@ -1327,6 +1451,209 @@ describe("bridge tools", () => {
       sessions: { offset: 10, returned: 4, total: 14, hasMore: false, nextOffset: null },
       jobs: { offset: 2, returned: 1, total: 3, hasMore: false, nextOffset: null }
     });
+    const malformed = await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId: SCOPE_A, sessionCursor: "not-a-valid-cursor" }
+    });
+    expect(malformed.isError).toBe(true);
+    expect(JSON.stringify(malformed)).toContain("Invalid or mismatched sessions pagination cursor");
+    await close();
+  });
+
+  it("reuses one thread across separate Activities and returns exact thread turns", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const firstResult = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "first intent", sessionMode: "new", activityTitle: "First Activity" }
+    });
+    const first = (firstResult as { structuredContent?: Record<string, any> }).structuredContent
+      ?.bridgeActivity;
+    const secondResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "reuse the thread for a separate intent",
+        sessionMode: "continue",
+        threadId: "thread-1",
+        activityTitle: "Second Activity"
+      }
+    });
+    const second = (secondResult as { structuredContent?: Record<string, any> }).structuredContent
+      ?.bridgeActivity;
+    expect(first.activityId).not.toBe(second.activityId);
+
+    const detail = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { threadId: "thread-1" }
+    }));
+    expect(detail.activities.map((activity: { activityId: string }) => activity.activityId).sort()).toEqual(
+      [first.activityId, second.activityId].sort()
+    );
+    expect(detail.jobs).toHaveLength(2);
+    expect(detail.turns).toEqual([
+      expect.objectContaining({ jobId: first.jobId, turnId: null, status: "completed" }),
+      expect.objectContaining({ jobId: second.jobId, turnId: null, status: "completed" })
+    ]);
+    await close();
+  });
+
+  it("uses codex_status as the card data/watch API and keeps private paths relative", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "watch this Activity",
+        sessionMode: "new",
+        executionMode: "background",
+        activityTitle: "Watched Activity"
+      }
+    }));
+    const rendered = await client.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A },
+      _meta: { "openai/locale": "ko-KR", "openai/widgetSessionId": "widget-render" }
+    });
+    const initial = (rendered as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(initial.activities).toEqual([
+      expect.objectContaining({ activityId: started.activityId, lifecycle: "open" })
+    ]);
+    expect((rendered as { _meta?: Record<string, any> })._meta).toMatchObject({
+      "openai/locale": "ko-KR"
+    });
+    const privateJson = JSON.stringify((rendered as { _meta?: Record<string, any> })._meta?.activityDetails);
+    expect(privateJson).not.toContain(root);
+    expect(privateJson).toContain(path.basename(root));
+
+    const watchPromise = client.callTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        afterVersion: initial.scopeVersion,
+        waitFor: "change",
+        waitMs: 1_000
+      },
+      _meta: { "openai/widgetSessionId": "widget-watch" }
+    });
+    await Promise.resolve();
+    upstream.progressNext({
+      progress: 1,
+      total: 2,
+      message: "public progress",
+      event: {
+        eventId: "public-progress-1",
+        type: "turn",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: "Public progress"
+      }
+    } as Progress);
+    const watched = await watchPromise;
+    const next = (watched as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(next.scopeVersion).toBeGreaterThan(initial.scopeVersion);
+    expect(next.wait).toMatchObject({ changed: true, timedOut: false });
+    expect(next.activities[0].jobs[0]).toMatchObject({ status: "running", progressObserved: true });
+
+    upstream.resolveNext(fakeCodexResult("watched-thread"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
+  it("leases one Activity completion batch to only one mounted card", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const createNotifyActivity = async (prompt: string, title: string) => {
+      const result = await client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt,
+          sessionMode: "new",
+          activityTitle: title,
+          handoffPolicy: "notify",
+          completionTrigger: "sealed-jobs-terminal"
+        }
+      });
+      const activity = (result as { structuredContent?: Record<string, any> }).structuredContent
+        ?.bridgeActivity;
+      await client.callTool({
+        name: "codex_activity_update",
+        arguments: { activityId: activity.activityId, action: "seal" }
+      });
+      return activity;
+    };
+    const started = await createNotifyActivity(
+      "notification payload must not be copied",
+      "Notify once"
+    );
+    const secondActivity = await createNotifyActivity("second private payload", "Notify twice");
+    const view = await client.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const pending = (view as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs;
+    expect(pending).toEqual(expect.arrayContaining([
+      expect.objectContaining({ activityId: started.activityId, channel: "notify" }),
+      expect.objectContaining({ activityId: secondActivity.activityId, channel: "notify" })
+    ]));
+    const outboxIds = pending.map((event: Record<string, any>) => event.outboxId);
+
+    const first = parseToolJson(await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      _meta: { "openai/widgetSessionId": "widget-one" }
+    }));
+    const second = parseToolJson(await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      _meta: { "openai/widgetSessionId": "widget-two" }
+    }));
+    expect(first).toMatchObject({
+      claimed: true,
+      origin: "activity-handoff",
+      handoffDepth: 1,
+      handoffBatchId: expect.stringMatching(/^handoff-/),
+      events: expect.arrayContaining([
+        expect.objectContaining({ outboxId: outboxIds[0] }),
+        expect.objectContaining({ outboxId: outboxIds[1] })
+      ])
+    });
+    expect(second).toMatchObject({ claimed: false, handoffDepth: 0, events: [] });
+    expect(JSON.stringify(first)).not.toContain("notification payload must not be copied");
+
+    const failedBatch = await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: {
+        scopeId: SCOPE_A,
+        action: "delivered-batch",
+        outboxIds: [outboxIds[0], 999_999_999]
+      },
+      _meta: { "openai/widgetSessionId": "widget-one" }
+    });
+    expect(failedBatch.isError).toBe(true);
+    await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds },
+      _meta: { "openai/widgetSessionId": "widget-one" }
+    });
+    const reclaimed = parseToolJson(await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      _meta: { "openai/widgetSessionId": "widget-two" }
+    }));
+    expect(reclaimed.events).toHaveLength(2);
+    await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds },
+      _meta: { "openai/widgetSessionId": "widget-two" }
+    });
+    const after = await client.callTool({ name: "codex_activity", arguments: { scopeId: SCOPE_A } });
+    expect((after as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs).toEqual([]);
     await close();
   });
 
@@ -1376,7 +1703,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "continue" }
+      args: { threadId: "thread-1", prompt: "continue", _bridgeBackendKind: "mcp-server" }
     });
 
     const unknown = await client.callTool({
@@ -1552,7 +1879,7 @@ describe("bridge tools", () => {
     expect(changed).toMatchObject({
       status: "running",
       terminal: false,
-      version: 2,
+      version: 3,
       progressObserved: true,
       lastProgress: { progress: 3, total: 10, message: "editing files" },
       wait: { waitFor: "change", timedOut: false, changed: true }
@@ -1627,6 +1954,65 @@ describe("bridge tools", () => {
       })
     );
     expect(repeated.status).toBe("cancelled");
+    expect(upstream.aborts).toBe(1);
+    await close();
+  });
+
+  it("requires stale-version and shared-worker confirmation before atomic force-stop reconcile", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
+        CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
+      }),
+      upstream
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "target", sessionMode: "new", executionMode: "background" }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "collateral", sessionMode: "new", executionMode: "background" }
+    }));
+    await Promise.resolve();
+    const current = jobs.get(first.jobId)!;
+
+    const stale = await client.callTool({
+      name: "codex_cancel",
+      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version - 1 }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("version changed");
+    expect(upstream.aborts).toBe(0);
+
+    const unconfirmed = await client.callTool({
+      name: "codex_cancel",
+      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version }
+    });
+    expect(unconfirmed.isError).toBe(true);
+    expect(JSON.stringify(unconfirmed)).toContain("acknowledgeAffectedJobIds");
+    expect(upstream.aborts).toBe(0);
+
+    const affected = [first.jobId, second.jobId].sort();
+    const stopped = parseToolJson(await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: first.jobId,
+        expectedVersion: current.version,
+        acknowledgeAffectedJobIds: affected
+      }
+    }));
+    expect(stopped).toMatchObject({ status: "cancelled", processLiveness: "worker-lost" });
+    expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled", trackingState: "worker-lost" });
+    expect(jobs.get(second.jobId)).toMatchObject({
+      status: "interrupted",
+      trackingState: "worker-lost",
+      error: expect.stringContaining(`force-stopped job ${first.jobId}`)
+    });
     expect(upstream.aborts).toBe(1);
     await close();
   });
@@ -1800,7 +2186,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("caps per-call inactivity timeouts at three hours", async () => {
+  it("does not expose or apply a Codex execution timeout", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
@@ -1809,8 +2195,9 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "inspect", timeoutMs: 10800001 }
     });
-    expect(result.isError).toBe(true);
-    expect(upstream.calls).toHaveLength(0);
+    expect(result.isError).not.toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]?.args).not.toHaveProperty("timeoutMs");
     await close();
   });
 

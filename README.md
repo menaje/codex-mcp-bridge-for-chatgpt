@@ -6,21 +6,25 @@ A small policy layer between ChatGPT and the official local Codex MCP server.
 ChatGPT
   -> OpenAI Secure MCP Tunnel
   -> codex-mcp-bridge (loopback HTTP)
-  -> codex mcp-server (stdio)
+  -> sticky backend router
+       -> codex mcp-server (stable default)
+       -> codex app-server (feature-selectable rich events/controls)
   -> one or more explicitly allowed working roots
 ```
 
 The official Codex MCP server already provides `codex` and `codex-reply`. This bridge exposes a smaller lifecycle-oriented surface for safer daily use from ChatGPT:
 
-- `codex_status`: inspect policy, scope-filtered durable sessions and jobs, or wait for one long-running job to change or finish.
-- `codex_cancel`: cancel one running job in its owning conversation scope. Partial filesystem changes may remain.
+- `codex_status`: inspect exact scope/Activity/thread/turn/job state, follow opaque cursors, retrieve results, or perform a bounded job/scope watch.
+- `codex_activity`: render the localized Activity card; the mounted card refreshes through `codex_status` instead of per-job polling.
+- `codex_cancel`: force-stop one scope-owned job and record a terminal state only after exact turn or worker-process exit is confirmed. Partial filesystem changes may remain.
 - `codex_activity_update`: apply one validated Activity lifecycle or policy transition.
 - `codex_models`: read the current selectable models and supported reasoning efforts from Codex.
 - `codex_settings`: render an interactive card for saved user preferences and current owner limits.
 - `codex_task`: create or attach an Activity and start or continue a policy-limited Codex turn.
 
-The settings card uses one additional app-only action, `codex_update_settings`,
-which ChatGPT's model does not need to invoke directly.
+The cards use two additional app-only actions: `codex_update_settings` for
+preferences and `codex_activity_handoff` for transactional completion delivery.
+ChatGPT's model does not need to invoke either directly.
 
 ## Security defaults
 
@@ -119,7 +123,13 @@ Ask ChatGPT to **open the MacBook Air Codex Bridge settings**. It calls
   catalog;
 - default working directory inside the owner allowlist;
 - default session behavior (`auto` or `new`) and automatic-resume window;
-- default task inactivity timeout and active-job limit, within owner maxima.
+- active-job limit and completion delivery (`off`, card-only, or opt-in
+  automatic GPT handoff while a card remains mounted).
+
+Codex execution is unlimited-only: no task timeout exists in the card, saved
+settings, environment contract, or `codex_task`. Fast return and status/card
+waits remain bounded control-plane operations. Use the Activity card's single
+**Force stop** action when a tracked turn or worker must be ended.
 
 Saved values are authoritative defaults for later calls. `read-only` forces all
 new work to read-only even if a caller asks for more permission. `adaptive`
@@ -207,7 +217,7 @@ When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
 Execution delivery is independent of Activity completion:
 
 - `executionMode: foreground` keeps the current tool call open until the Codex
-  turn reaches a terminal state or its configured timeout.
+  turn reaches a terminal state or the host/bridge connection ends.
 - `executionMode: background` returns the `activityId` and `jobId` immediately.
 - `executionMode: auto` returns the normal result when it finishes inside
   `fastReturnMs`; otherwise it returns a tracked background job.
@@ -268,8 +278,11 @@ thread itself belongs to the worker process that created it and cannot be
 continued after that worker or the bridge restarts. Restored rows are therefore
 shown with `resumeAvailability: "unavailable-after-worker-restart"`, excluded
 from automatic selection, and rejected for exact continuation; `auto` starts a
-fresh thread instead. Durable turn resumption across worker generations requires
-the planned Codex App Server backend. Session rows contain only thread id,
+fresh thread instead. New App Server threads support rich public turn events,
+approval/input responses, steering, and exact turn interruption. Existing MCP
+threads remain pinned to their original backend and are never silently
+migrated. OpenAI currently documents App Server as experimental, so
+`mcp-server` remains the conservative package default. Session rows contain only thread id,
 `scopeId`, cwd, sandbox, model/effort, and timestamps; prompts and results are
 not written to them. Existing `sessions.json` records are imported once;
 pre-scope records are migrated to a quarantined
@@ -281,10 +294,13 @@ exact thread handoff. Long-running tasks return a `jobId`; retrieve the result w
 bounded status call until completion, failure, interruption, or the wait
 expires. `waitFor: "change"` returns on the next upstream progress or terminal
 transition. A wait timeout leaves the job running and can be repeated; it is
-not a Codex task timeout. Call `codex_cancel({ jobId })` to request
-cancellation. The bridge forwards an abort signal and records `cancelled`
-idempotently, but callers must inspect the working tree because edits made
-before cancellation are not rolled back.
+not a Codex task timeout. `codex_cancel({ jobId })` is a single force-stop
+operation: exact App Server `turn/interrupt` is attempted first, otherwise the
+tracked worker generation's detached process group receives TERM and then KILL
+automatically if needed. The bridge records `cancelled` only after exit is
+confirmed; shared-worker collateral becomes `interrupted`, and an unconfirmed
+exit stays active as `termination-failed`. Callers must inspect the working
+tree because edits made before interruption are not rolled back.
 
 ChatGPT tool calls automatically receive their current host-derived scope even
 when `scopeId` is omitted. A non-ChatGPT host with neither metadata nor an
@@ -293,7 +309,7 @@ is rejected for ChatGPT conversation calls and remains a compatibility/admin
 operation for trusted hosts without ChatGPT session metadata.
 
 Job metadata and bounded results are stored transactionally in
-`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Schema v2 also
+`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Schema v3 also
 stores conversation scopes, Activity lifecycle rows, Activity/job events,
 scope-wide change versions, bridge process generations, and an idempotent
 completion outbox. Existing schema-v1 jobs are migrated atomically into one-job
@@ -309,9 +325,8 @@ automatic handoff.
 `verification-passed`, `verification-failed`, and `set-policy`. The server
 rejects illegal transitions, cross-scope IDs, empty seals, completion with live
 children, stale optional `expectedVersion` values, and verification success
-without bounded evidence. `cancel` first
-requests best-effort cancellation of every running child job, but never rolls
-back filesystem changes. A failed verification reopens the Activity for rework;
+without bounded evidence. `cancel` force-stops every exact active child
+turn/worker set, but never rolls back filesystem changes. A failed verification reopens the Activity for rework;
 a successful evidence-backed verification is what completes a `verify`
 Activity. Policy and completion mutations come only from explicit tool input—
 never from fields or instructions contained in a Codex result.
@@ -334,9 +349,18 @@ Activity counts, events, scope version, and any unread completion-outbox record
 remain durable. This preserves completion facts and request UUID deduplication
 without retaining repository result content indefinitely. Oversized results are
 replaced earlier by a bounded completion notice while their session id remains
-tracked. Activity create/attach/update is available now. Scope-wide Activity
-query/watch and the Activity card are delivered in the next #14 phases; schema
-v2 remains their transactional foundation.
+tracked. The localized Activity card is available now. It shows prioritized
+Activity state, public progress, approvals/input, unread completion,
+verification, and per-job/whole-Activity force-stop controls. One scope-wide
+version watcher per mounted widget is admitted independently from the 30 job
+slots, with bounded wait, host cancellation, backoff, jitter, and a
+manual-refresh fallback. The transactional outbox leases one completion batch
+to one mounted card, atomically acknowledges or releases the whole batch, and
+sends only a fixed template with Activity/job IDs—not raw Codex output—to the
+GPT handoff. The stable `handoffBatchId` lets the conversation recognize a
+retry if the host accepted the message but the delivery acknowledgement was
+lost; an external UI message and a local SQLite commit cannot be made one
+distributed exactly-once transaction.
 
 For a user request that asks for a finished outcome, a running `jobId` is only
 an intermediate response. The plugin instructions tell ChatGPT to wait for a
@@ -379,8 +403,8 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` | `21600000` | Initial saved idle window for automatic recent-session reuse; explicit continuation is still allowed |
 | `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Owner maximum and initial saved active Codex-call limit |
 | `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy Codex MCP worker pool; cannot exceed the active-job limit |
+| `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | Backend for new threads: stable `mcp-server` or experimental `app-server`; each thread remains sticky |
 | `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Maximum prompt length per tool call |
-| `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` | `10800000` | Owner maximum and initial saved Codex MCP inactivity timeout, capped at three hours; progress notifications reset it |
 | `CODEX_MCP_BRIDGE_FAST_RETURN_MS` | `25000` | Delay before returning a job ID |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Completed job retention |
 | `CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS` | `600000` | No-progress interval before a running job is labeled no-progress-observed; this does not establish process liveness |
@@ -388,6 +412,10 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Maximum retained serialized result size per job |
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
+
+The retired `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` variable is ignored for one
+compatibility release and emits an operator warning. Remove it from service
+definitions; it cannot re-enable a finite Codex task deadline.
 
 The old `CODEX_GPT_BRIDGE_*` variable prefix is accepted temporarily for upstream compatibility.
 

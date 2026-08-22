@@ -136,9 +136,9 @@ describe("http server", () => {
       backend: "sqlite",
       persistencePath: expect.stringMatching(/state\.sqlite$/),
       transactional: true,
-      schemaVersion: 2,
+      schemaVersion: 3,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v2-activity-tools",
+      activityFoundation: "schema-v3-activity-manager",
       activityPersistent: true
     });
 

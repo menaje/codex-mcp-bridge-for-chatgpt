@@ -11,8 +11,13 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_status` returns policy plus scope-filtered metadata-only session
   summaries and retained asynchronous results. An explicit operator-audit flag
   can return all scopes.
-- `codex_cancel` forwards cancellation to one scope-owned running job; partial
+- `codex_activity` renders a scope-filtered localized Activity card. Its private
+  metadata remains bounded and redacted; it is not a secret store.
+- `codex_cancel` force-stops one scope-owned running job through exact App
+  Server turn interruption or the tracked worker process group; partial
   filesystem changes are not rolled back.
+- `codex_activity_update` performs server-validated Activity transitions,
+  including whole-Activity force-stop and evidence-backed verification.
 - `codex_models` returns the current selectable Codex model catalog.
 - `codex_settings` returns owner limits and renders the settings card.
 - `codex_update_settings` is app-only and persists validated preferences.
@@ -52,12 +57,19 @@ the network as the current macOS user.
   with mode `0600`; job terminal state, Activity derived state, scope version,
   and outbox insertion commit atomically, and previously running entries become
   `interrupted` after restart.
-- Saved preferences are safely reduced when owner capabilities, roots, timeout,
-  or concurrency limits become narrower, with warnings exposed in status/card.
+- Saved preferences are safely reduced when owner capabilities, roots, or
+  concurrency limits become narrower, with warnings exposed in status/card.
 - Asynchronous, in-flight-deduplicated common secret-file filename preflight.
-- Four lazy Codex MCP workers with generation-safe connection retirement and
-  per-thread worker affinity.
-- Three-hour maximum inactivity timeout.
+- Four lazy backend workers with generation-safe connection retirement,
+  per-thread backend/worker affinity, and no task-execution deadline.
+- Unlimited-only Codex turns: elapsed time and missing progress never create a
+  terminal state. Fast return, Activity/status long-poll, model catalog, tunnel,
+  and database waits remain bounded control-plane operations.
+- One user-visible force-stop action with exact worker generation/process-group
+  validation, TERM→KILL escalation, collateral confirmation, and terminal state
+  only after exit evidence. `termination-failed` remains an active slot.
+- Eight Activity watchers globally and four per conversation scope, admitted
+  separately from the thirty job slots; duplicate mounted-widget leases are rejected.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
   unknown; it does not automatically cancel a job.
 - At most 100 retained jobs and one MiB per retained job result by default.
@@ -115,20 +127,31 @@ because the private no-auth tunnel does not supply per-user identity.
 - Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
   cannot independently prove that a particular call received fresh user approval.
 - `codex_activity_update` is stateful and includes a destructive `cancel` action.
-  The server validates scope and lifecycle and cancels current child jobs best
-  effort, but cannot undo commands or file edits already performed. Verification
+  The server validates scope/lifecycle, exact job versions, worker generations,
+  and collateral acknowledgement, but cannot undo commands or file edits already performed. Verification
   evidence is bounded metadata supplied by the caller; it is an audit reference,
   not cryptographic proof that a test or artifact belongs only to that Activity.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
   can still affect the subset of calls assigned to that worker.
+- Completion outbox claim/delivery state is transactional inside SQLite, but a
+  ChatGPT `ui/message` side effect and the later local acknowledgement cannot be
+  committed atomically across systems. A lost acknowledgement can therefore
+  produce an at-least-once retry; the fixed prompt carries a stable bounded
+  `handoffBatchId` and never embeds raw Codex output.
 - Codex MCP thread context is worker-process local. Persisted session metadata
   remains visible after restart, but those rows are marked unavailable and are
-  not resumed; auto mode starts a fresh thread. Cross-generation context resume
-  requires a future App Server backend.
+  not resumed; auto mode starts a fresh thread. New App Server threads use a
+  separate sticky backend with rich public events, approval/input handling,
+  steering, and exact turn interruption. OpenAI currently documents the App
+  Server interface as experimental, so it is not represented as a production
+  stability guarantee.
 - Tool results and retained jobs can contain repository content. They are
-  bounded in memory and persisted to the private state database until their
-  retention window expires; local backup and filesystem-access policies should
-  treat that database and its SQLite sidecars as source-sensitive.
+  stripped of result `_meta`, token/password/key patterns, and configured-root
+  absolute prefixes, then bounded in memory and persisted to the private state
+  database until their retention window expires. Redaction is defense in depth,
+  not a proof that arbitrary source text contains no secret; local backup and
+  filesystem-access policies should treat that database and its SQLite sidecars
+  as source-sensitive.
 - The 30-job setting is a bridge admission limit. The MCP host, tunnel, Codex,
   account, and machine can impose lower practical limits.
 - Persisted session rows contain scope routing labels, thread ids, and local

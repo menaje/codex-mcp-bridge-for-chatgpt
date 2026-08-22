@@ -28,11 +28,12 @@ describe("config policy", () => {
     expect(config.jobStateFile).toMatch(/\.codex-mcp-bridge\/jobs\.json$/);
     expect(config.defaultSessionMode).toBe("auto");
     expect(config.autoResumeTtlMs).toBe(21600000);
-    expect(config.upstreamTimeoutMs).toBe(10800000);
+    expect(config.defaultBackend).toBe("mcp-server");
     expect(config.upstreamPoolSize).toBe(4);
     expect(config.maxRetainedJobs).toBe(100);
     expect(config.maxJobResultBytes).toBe(1048576);
     expect(config.jobStaleAfterMs).toBe(600000);
+    expect(config.startupWarnings).toEqual([]);
   });
 
   it("loads optional default Codex model and reasoning effort values", () => {
@@ -51,6 +52,7 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE: "new",
       CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "900000",
       CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "7200000",
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3",
       CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "50",
       CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "2000000",
@@ -69,7 +71,7 @@ describe("config policy", () => {
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config.defaultSessionMode).toBe("new");
     expect(config.autoResumeTtlMs).toBe(900000);
-    expect(config.upstreamTimeoutMs).toBe(7200000);
+    expect(config.defaultBackend).toBe("app-server");
     expect(config.upstreamPoolSize).toBe(3);
     expect(config.maxRetainedJobs).toBe(50);
     expect(config.maxJobResultBytes).toBe(2000000);
@@ -121,13 +123,22 @@ describe("config policy", () => {
     ).toThrow(/absolute path/);
   });
 
-  it("caps the configured Codex inactivity timeout at three hours", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "10800001"
-      })
-    ).toThrow(/cannot exceed 10800000/);
+  it("ignores the retired task-timeout environment value", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "10800001"
+    });
+    expect(config).not.toHaveProperty("upstreamTimeoutMs");
+    expect(config.startupWarnings).toEqual([
+      expect.stringContaining("retired and ignored")
+    ]);
+  });
+
+  it("rejects an unknown default Codex backend", () => {
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "unknown"
+    })).toThrow(/default Codex backend/);
   });
 
   it("rejects owner defaults below settings-card minimums", () => {
@@ -137,12 +148,6 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "59999"
       })
     ).toThrow(/cannot be lower than 60000/);
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "999"
-      })
-    ).toThrow(/cannot be lower than 1000/);
   });
 
   it("does not allow more upstream workers than active jobs", () => {

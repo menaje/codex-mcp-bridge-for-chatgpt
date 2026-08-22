@@ -3,11 +3,19 @@ import { loadConfig } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { createHttpServer } from "./server.js";
 import { CodexUpstreamPool } from "./upstream.js";
+import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
+import { CodexBackendRouter } from "./upstreamRouter.js";
 
 const config = loadConfig();
-const upstream = new CodexUpstreamPool(config.codexCommand, config.upstreamPoolSize);
+const upstream = new CodexBackendRouter(
+  config.defaultBackend,
+  new CodexUpstreamPool(config.codexCommand, config.upstreamPoolSize),
+  new CodexAppServerUpstreamPool(config.codexCommand, config.upstreamPoolSize)
+);
 const server = createHttpServer(config, upstream);
 let shuttingDown = false;
+
+for (const warning of config.startupWarnings) console.warn(`warning: ${warning}`);
 
 server.listen(config.port, config.host, () => {
   const authHint = config.token && !config.noAuth ? "Bearer token required" : "no auth";

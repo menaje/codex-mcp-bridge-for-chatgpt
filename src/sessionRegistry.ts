@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { SandboxMode } from "./config.js";
+import type { CodexBackendKind, SandboxMode } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { ToolResult } from "./upstream.js";
 
@@ -15,6 +15,7 @@ export type TrackedCodexSession = {
   sandbox: SandboxMode;
   model?: string;
   reasoningEffort?: string;
+  backendKind: CodexBackendKind;
   createdAt: number;
   lastUsedAt: number;
 };
@@ -28,7 +29,7 @@ export type SessionMatch = {
 };
 
 type PersistedSessionState = {
-  version: 3;
+  version: 4;
   sessions: TrackedCodexSession[];
 };
 
@@ -178,7 +179,7 @@ export class SessionRegistry {
     if (this.stateStore) {
       const stored = this.stateStore.listSessions();
       const sessions = stored
-        .map((session) => readPersistedSession(session, 3))
+        .map((session) => readPersistedSession(session, 4))
         .filter((session): session is TrackedCodexSession => Boolean(session))
         .filter((session) => this.isAllowedCwd(session.cwd))
         .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
@@ -203,12 +204,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
     const sessions = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -218,7 +219,7 @@ export class SessionRegistry {
     for (const session of sessions) {
       this.sessions.set(session.threadId, session);
     }
-    if (stateVersion !== 3) this.persist();
+    if (stateVersion !== 4) this.persist();
   }
 
   private importLegacyState(): void {
@@ -235,12 +236,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
     const imported = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -264,7 +265,7 @@ export class SessionRegistry {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSessionState = {
-      version: 3,
+      version: 4,
       sessions: this.list()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -315,10 +316,11 @@ export function extractThreadId(result: ToolResult): string | undefined {
   return undefined;
 }
 
-function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3): TrackedCodexSession | undefined {
+function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
   const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
+  const backendKind = stateVersion >= 4 ? value.backendKind : "mcp-server";
   if (
     typeof value.threadId !== "string" ||
     !value.threadId ||
@@ -330,6 +332,7 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3): TrackedC
     (sandbox !== "read-only" && sandbox !== "workspace-write" && sandbox !== "danger-full-access") ||
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.lastUsedAt) ||
+    (backendKind !== "mcp-server" && backendKind !== "app-server") ||
     !isOptionalString(value.model) ||
     !isOptionalString(value.reasoningEffort)
   ) {
@@ -342,6 +345,7 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3): TrackedC
     sandbox,
     model: value.model,
     reasoningEffort: value.reasoningEffort,
+    backendKind,
     createdAt: value.createdAt,
     lastUsedAt: value.lastUsedAt
   };

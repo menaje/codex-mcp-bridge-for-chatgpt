@@ -19,6 +19,7 @@ describe("SessionRegistry", () => {
       sandbox: "read-only",
       model: "gpt-5.6-sol",
       reasoningEffort: "max",
+      backendKind: "app-server",
       createdAt: 100,
       lastUsedAt: 200
     });
@@ -34,7 +35,8 @@ describe("SessionRegistry", () => {
       cwd: root,
       sandbox: "read-only",
       model: "gpt-5.6-sol",
-      reasoningEffort: "max"
+      reasoningEffort: "max",
+      backendKind: "app-server"
     });
   });
 
@@ -199,7 +201,8 @@ describe("SessionRegistry", () => {
     expect(sessions.get("legacy-thread")).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 3 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
   });
 
   it("migrates version 2 task lanes into ordinary sessions under one scope", () => {
@@ -226,7 +229,8 @@ describe("SessionRegistry", () => {
     const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
     expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
     expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 3 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
   });
 });
 
@@ -246,6 +250,7 @@ function session(
     sandbox,
     model,
     reasoningEffort,
+    backendKind: "mcp-server" as const,
     createdAt: lastUsedAt,
     lastUsedAt
   };

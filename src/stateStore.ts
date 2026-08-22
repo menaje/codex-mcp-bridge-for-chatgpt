@@ -12,6 +12,7 @@ import {
   ACTIVITY_VERIFICATION_STATES,
   ACTIVITY_WAITING_ON,
   deriveActivityBarrier,
+  isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
   valueIsOneOf,
   type ActivityCompletionTrigger,
@@ -24,7 +25,7 @@ import {
   type BridgeActivity
 } from "./activity.js";
 
-const CURRENT_SCHEMA_VERSION = "2";
+const CURRENT_SCHEMA_VERSION = "3";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type SessionRowInput = {
@@ -195,6 +196,7 @@ export class BridgeStateStore {
     if (
       existingVersion !== undefined &&
       existingVersion !== "1" &&
+      existingVersion !== "2" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -205,6 +207,7 @@ export class BridgeStateStore {
       this.createV1Schema();
       if (existingVersion === undefined) this.setMeta("schema_version", "1");
       if ((existingVersion || "1") === "1") this.migrateV1ToV2();
+      if (this.getMeta("schema_version") === "2") this.migrateV2ToV3();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
     } catch (error) {
@@ -443,6 +446,13 @@ export class BridgeStateStore {
     return (rows as ActivityStorageRow[]).map(readActivityRow);
   }
 
+  countActivities(scopeId?: string): number {
+    const row = scopeId
+      ? this.database.prepare("SELECT COUNT(*) AS count FROM activities WHERE scope_id = ?").get(scopeId)
+      : this.database.prepare("SELECT COUNT(*) AS count FROM activities").get();
+    return Number((row as { count?: number } | undefined)?.count || 0);
+  }
+
   setActivityPolicy(
     activityId: string,
     policy: {
@@ -578,6 +588,37 @@ export class BridgeStateStore {
         { reason: normalizeOptionalBoundedText(reason, 2_000) || null },
         now
       );
+    });
+  }
+
+  beginActivityTermination(activityId: string, reason?: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "terminating");
+      if (activity.lifecycle === "terminating") return activity;
+      if (activity.counts.running === 0) {
+        throw new Error("Cannot terminate an Activity that has no active child jobs.");
+      }
+      const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET lifecycle = 'terminating', waiting_on = 'codex',
+                 version = version + 1, updated_at = ?
+           WHERE activity_id = ?
+        `)
+        .run(now, activityId);
+      this.insertActivityEvent({
+        activityId,
+        scopeId: activity.scopeId,
+        scopeVersion,
+        eventType: "activity-terminating",
+        createdAt: now,
+        payload: {
+          reason: normalizeOptionalBoundedText(reason, 2_000) || null,
+          partialFilesystemChangesMayRemain: true
+        }
+      });
+      return this.requireActivity(activityId);
     });
   }
 
@@ -746,27 +787,135 @@ export class BridgeStateStore {
     }));
   }
 
+  recordJobTelemetryEvent(
+    jobId: string,
+    eventType: string,
+    payload: unknown,
+    createdAt = Date.now(),
+    waitingOn?: "codex" | "user"
+  ): number {
+    return this.transaction(() => {
+      const row = this.database
+        .prepare(`
+          SELECT job_id, activity_id, scope_id, status
+            FROM jobs
+           WHERE job_id = ? AND archived_at IS NULL
+        `)
+        .get(jobId) as
+        | { job_id: string; activity_id: string; scope_id: string; status: string }
+        | undefined;
+      if (!row) throw new Error("Cannot attach telemetry to an unknown Codex job.");
+      const scopeVersion = this.nextScopeVersion(row.scope_id, createdAt);
+      this.insertJobEvent({
+        jobId: row.job_id,
+        activityId: row.activity_id,
+        scopeId: row.scope_id,
+        scopeVersion,
+        eventType: normalizeEventType(eventType),
+        status: row.status,
+        createdAt,
+        payload
+      });
+      if (waitingOn) {
+        this.database
+          .prepare(`
+            UPDATE activities
+               SET waiting_on = ?, updated_at = ?, version = version + 1
+             WHERE activity_id = ? AND lifecycle IN ('open','sealed','terminating')
+          `)
+          .run(waitingOn, createdAt, row.activity_id);
+        this.insertActivityEvent({
+          activityId: row.activity_id,
+          scopeId: row.scope_id,
+          scopeVersion,
+          eventType: waitingOn === "user" ? "activity-waiting-user" : "activity-waiting-codex",
+          createdAt,
+          payload: { jobId: row.job_id }
+        });
+      }
+      return scopeVersion;
+    });
+  }
+
   listCompletionOutbox(activityId?: string): CompletionOutboxRecord[] {
     const rows = activityId
       ? this.database
           .prepare("SELECT * FROM completion_outbox WHERE activity_id = ? ORDER BY outbox_id ASC")
           .all(activityId)
       : this.database.prepare("SELECT * FROM completion_outbox ORDER BY outbox_id ASC").all();
-    return (rows as Array<Record<string, unknown>>).map((row) => ({
-      outboxId: Number(row.outbox_id),
-      activityId: String(row.activity_id),
-      scopeId: String(row.scope_id),
-      completionVersion: Number(row.completion_version),
-      channel: row.channel as "notify" | "verify",
-      payload: parsePayload({ payload: String(row.payload) }, "completion outbox"),
-      attemptCount: Number(row.attempt_count),
-      nextAttemptAt: optionalNumber(row.next_attempt_at),
-      leaseOwner: optionalString(row.lease_owner),
-      leaseExpiresAt: optionalNumber(row.lease_expires_at),
-      deliveredAt: optionalNumber(row.delivered_at),
-      acknowledgedAt: optionalNumber(row.acknowledged_at),
-      createdAt: Number(row.created_at)
-    }));
+    return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  listPendingCompletionOutbox(scopeId: string, limit = 20): CompletionOutboxRecord[] {
+    const rows = this.database
+      .prepare(`
+        SELECT * FROM completion_outbox
+         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         ORDER BY created_at ASC LIMIT ?
+      `)
+      .all(scopeId, Math.max(0, Math.min(100, limit)));
+    return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  claimCompletionOutbox(
+    outboxId: number,
+    scopeId: string,
+    leaseOwner: string,
+    leaseMs = 60_000,
+    now = Date.now()
+  ): CompletionOutboxRecord | undefined {
+    return this.transaction(() => {
+      const result = this.database
+        .prepare(`
+          UPDATE completion_outbox
+             SET lease_owner = ?, lease_expires_at = ?, attempt_count = attempt_count + 1
+           WHERE outbox_id = ? AND scope_id = ?
+             AND delivered_at IS NULL AND acknowledged_at IS NULL
+             AND (lease_owner IS NULL OR lease_expires_at <= ? OR lease_owner = ?)
+        `)
+        .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, leaseOwner);
+      if (result.changes !== 1) return undefined;
+      const row = this.database
+        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .get(outboxId) as Record<string, unknown> | undefined;
+      return row ? readCompletionOutboxRow(row) : undefined;
+    });
+  }
+
+  markCompletionOutboxDelivered(
+    outboxId: number,
+    scopeId: string,
+    leaseOwner: string,
+    now = Date.now()
+  ): CompletionOutboxRecord {
+    return this.transaction(() => {
+      const result = this.database
+        .prepare(`
+          UPDATE completion_outbox
+             SET delivered_at = COALESCE(delivered_at, ?), lease_owner = NULL, lease_expires_at = NULL
+           WHERE outbox_id = ? AND scope_id = ? AND (lease_owner = ? OR delivered_at IS NOT NULL)
+        `)
+        .run(now, outboxId, scopeId, leaseOwner);
+      if (result.changes !== 1) throw new Error("Completion handoff lease is missing or owned by another widget.");
+      const row = this.database
+        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .get(outboxId) as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Unknown completion handoff event.");
+      return readCompletionOutboxRow(row);
+    });
+  }
+
+  releaseCompletionOutbox(
+    outboxId: number,
+    scopeId: string,
+    leaseOwner: string
+  ): void {
+    this.database
+      .prepare(`
+        UPDATE completion_outbox SET lease_owner = NULL, lease_expires_at = NULL
+         WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ? AND delivered_at IS NULL
+      `)
+      .run(outboxId, scopeId, leaseOwner);
   }
 
   listBridgeInstances(): BridgeInstanceRecord[] {
@@ -1078,9 +1227,89 @@ export class BridgeStateStore {
         });
       }
       this.database.exec("DROP TABLE jobs_v1");
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "2");
       this.setMeta("schema_v2_migrated_at", new Date(now).toISOString());
     });
+  }
+
+  private migrateV2ToV3(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE activities_v3 (
+            activity_id TEXT PRIMARY KEY,
+            scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+            title TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('discussion','investigation','review','implementation','other')),
+            execution_mode TEXT NOT NULL CHECK(execution_mode IN ('auto','foreground','background')),
+            handoff_policy TEXT NOT NULL CHECK(handoff_policy IN ('none','notify','verify')),
+            completion_trigger TEXT NOT NULL CHECK(completion_trigger IN ('manual','sealed-jobs-terminal')),
+            lifecycle TEXT NOT NULL CHECK(lifecycle IN ('open','sealed','terminating','completed','cancelled','abandoned')),
+            waiting_on TEXT NOT NULL CHECK(waiting_on IN ('none','codex','orchestrator','user','verification')),
+            verification TEXT NOT NULL CHECK(verification IN ('not-required','pending','verifying','verified','failed')),
+            version INTEGER NOT NULL CHECK(version >= 1),
+            completion_version INTEGER NOT NULL DEFAULT 0 CHECK(completion_version >= 0),
+            legacy INTEGER NOT NULL DEFAULT 0 CHECK(legacy IN (0,1)),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            sealed_at INTEGER,
+            completed_at INTEGER,
+            total_jobs INTEGER NOT NULL DEFAULT 0 CHECK(total_jobs >= 0),
+            running_jobs INTEGER NOT NULL DEFAULT 0 CHECK(running_jobs >= 0),
+            completed_jobs INTEGER NOT NULL DEFAULT 0 CHECK(completed_jobs >= 0),
+            failed_jobs INTEGER NOT NULL DEFAULT 0 CHECK(failed_jobs >= 0),
+            interrupted_jobs INTEGER NOT NULL DEFAULT 0 CHECK(interrupted_jobs >= 0),
+            cancelled_jobs INTEGER NOT NULL DEFAULT 0 CHECK(cancelled_jobs >= 0),
+            terminal_jobs INTEGER NOT NULL DEFAULT 0 CHECK(terminal_jobs >= 0)
+          ) STRICT;
+          INSERT INTO activities_v3 SELECT * FROM activities;
+          DROP TABLE activities;
+          ALTER TABLE activities_v3 RENAME TO activities;
+          CREATE INDEX activities_scope_recent ON activities(scope_id, updated_at DESC);
+          CREATE INDEX activities_scope_attention
+            ON activities(scope_id, waiting_on, verification, updated_at DESC);
+
+          CREATE TABLE jobs_v3 (
+            job_id TEXT PRIMARY KEY,
+            scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+            request_id TEXT NOT NULL,
+            activity_id TEXT NOT NULL REFERENCES activities(activity_id) ON DELETE RESTRICT,
+            thread_id TEXT,
+            status TEXT NOT NULL CHECK(status IN (
+              'running','terminating','termination-failed','completed','failed','interrupted','cancelled'
+            )),
+            execution_mode TEXT NOT NULL CHECK(execution_mode IN ('auto','foreground','background')),
+            backend_kind TEXT NOT NULL,
+            bridge_instance_id TEXT,
+            worker_id TEXT,
+            worker_generation INTEGER,
+            upstream_request_id TEXT,
+            terminal_version INTEGER,
+            updated_at INTEGER NOT NULL,
+            archived_at INTEGER,
+            payload TEXT NOT NULL,
+            UNIQUE(scope_id, request_id)
+          ) STRICT;
+          INSERT INTO jobs_v3 SELECT * FROM jobs;
+          DROP TABLE jobs;
+          ALTER TABLE jobs_v3 RENAME TO jobs;
+          CREATE INDEX jobs_scope_recent ON jobs(scope_id, updated_at DESC);
+          CREATE INDEX jobs_status_recent ON jobs(status, updated_at DESC);
+          CREATE INDEX jobs_activity_recent ON jobs(activity_id, updated_at DESC);
+          CREATE INDEX jobs_thread_recent ON jobs(thread_id, updated_at DESC);
+        `);
+        const now = Date.now();
+        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_v3_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+    const violations = this.database.pragma("foreign_key_check") as unknown[];
+    if (violations.length > 0) {
+      throw new Error("Bridge state schema v3 migration produced foreign-key violations.");
+    }
   }
 
   private registerBridgeInstance(): void {
@@ -1099,7 +1328,7 @@ export class BridgeStateStore {
             instance_id, started_at, stopped_at, termination_reason, process_id, payload
           ) VALUES (?, ?, NULL, NULL, ?, ?)
         `)
-        .run(this.currentInstanceId, now, process.pid, JSON.stringify({ schemaVersion: 2 }));
+        .run(this.currentInstanceId, now, process.pid, JSON.stringify({ schemaVersion: 3 }));
     });
   }
 
@@ -1344,12 +1573,12 @@ export class BridgeStateStore {
     const row = this.database
       .prepare(`
         SELECT COUNT(*) AS total,
-               SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+               SUM(CASE WHEN status IN ('running','terminating','termination-failed') THEN 1 ELSE 0 END) AS running,
                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
                SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) AS interrupted,
                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-               SUM(CASE WHEN status <> 'running' THEN 1 ELSE 0 END) AS terminal
+               SUM(CASE WHEN status IN ('completed','failed','interrupted','cancelled') THEN 1 ELSE 0 END) AS terminal
           FROM jobs WHERE activity_id = ?
       `)
       .get(activityId) as Record<string, number | null>;
@@ -1759,6 +1988,32 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
+function normalizeEventType(value: string): string {
+  const normalized = value.trim().slice(0, 120);
+  if (!normalized || !/^[a-z0-9][a-z0-9._:-]*$/i.test(normalized)) {
+    throw new Error("Invalid job telemetry event type.");
+  }
+  return normalized;
+}
+
+function readCompletionOutboxRow(row: Record<string, unknown>): CompletionOutboxRecord {
+  return {
+    outboxId: Number(row.outbox_id),
+    activityId: String(row.activity_id),
+    scopeId: String(row.scope_id),
+    completionVersion: Number(row.completion_version),
+    channel: row.channel as "notify" | "verify",
+    payload: parsePayload({ payload: String(row.payload) }, "completion outbox"),
+    attemptCount: Number(row.attempt_count),
+    nextAttemptAt: optionalNumber(row.next_attempt_at),
+    leaseOwner: optionalString(row.lease_owner),
+    leaseExpiresAt: optionalNumber(row.lease_expires_at),
+    deliveredAt: optionalNumber(row.delivered_at),
+    acknowledgedAt: optionalNumber(row.acknowledged_at),
+    createdAt: Number(row.created_at)
+  };
+}
+
 export function legacyActivityIdForJob(jobId: string): string {
   const digest = createHash("sha256").update(`legacy-activity\0${jobId}`).digest("hex").split("");
   digest[12] = "8";
@@ -1770,12 +2025,12 @@ export function legacyActivityIdForJob(jobId: string): string {
 function countsForSingleStatus(status: string | undefined): ActivityJobCounts {
   return {
     total: status ? 1 : 0,
-    running: status === "running" ? 1 : 0,
+    running: status && isActiveActivityJobStatus(status) ? 1 : 0,
     completed: status === "completed" ? 1 : 0,
     failed: status === "failed" ? 1 : 0,
     interrupted: status === "interrupted" ? 1 : 0,
     cancelled: status === "cancelled" ? 1 : 0,
-    terminal: status && status !== "running" ? 1 : 0
+    terminal: status && isTerminalActivityJobStatus(status) ? 1 : 0
   };
 }
 
