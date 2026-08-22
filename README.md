@@ -62,6 +62,23 @@ npm ci
 npm run check
 ```
 
+## Development and releases
+
+Use `dev` as the working branch. Pushes to `dev` and pull-request updates do
+not start GitHub Actions. The single workflow runs only after a change reaches
+`main`, where it performs the full build, test, and production dependency audit.
+
+Before merging a release into `main`, update the package version on `dev`:
+
+```bash
+npm version patch --no-git-tag-version
+```
+
+Use `minor` or `major` instead of `patch` when appropriate. After the `main`
+checks pass, the workflow creates `v<package-version>` with generated notes,
+the npm package tarball, and its SHA-256 checksum. If that version already has
+a GitHub Release, the release job succeeds without replacing or duplicating it.
+
 ## Local smoke test
 
 Local mode never creates a public endpoint:
