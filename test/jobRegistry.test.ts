@@ -24,7 +24,7 @@ describe("CodexJobRegistry persistence", () => {
       status: "completed",
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
@@ -119,7 +119,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -141,7 +141,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {

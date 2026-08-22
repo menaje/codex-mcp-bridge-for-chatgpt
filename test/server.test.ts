@@ -135,7 +135,10 @@ describe("http server", () => {
     expect(policy.stateStorage).toMatchObject({
       backend: "sqlite",
       persistencePath: expect.stringMatching(/state\.sqlite$/),
-      transactional: true
+      transactional: true,
+      schemaVersion: 2,
+      bridgeInstanceId: expect.any(String),
+      activityFoundation: "schema-v2-compatibility-activities"
     });
 
     const started = parseToolJson(

@@ -273,17 +273,36 @@ is rejected for ChatGPT conversation calls and remains a compatibility/admin
 operation for trusted hosts without ChatGPT session metadata.
 
 Job metadata and bounded results are stored transactionally in
-`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Completed and
-failed results remain retrievable across bridge restarts. A job that was still
-running when the bridge stopped is changed to `interrupted` at startup because
-the new process cannot safely claim the former upstream request. While a job is
-live, upstream MCP progress updates refresh `lastProgressAt`. No observed
-progress for ten minutes produces `health: "no-progress-observed"` together
-with `processLiveness: "unknown"`; absence of an MCP progress event is not proof
-that Codex stopped, so callers should inspect actual work evidence before
-waiting longer or cancelling. The bridge retains at most 100 jobs
-for six hours and one MiB per result by default; oversized results are replaced
-by a bounded completion notice while their session id remains tracked.
+`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Schema v2 also
+stores conversation scopes, Activity lifecycle rows, Activity/job events,
+scope-wide change versions, bridge process generations, and an idempotent
+completion outbox. Existing schema-v1 jobs are migrated atomically into one-job
+legacy Activities without changing their scope, request-deduplication key, or
+thread relation. New job-only calls use the same compatibility Activity with
+safe defaults: `kind=other`, `executionMode=auto`, `handoffPolicy=none`, and
+`completionTrigger=manual`. Consequently, a terminal Codex turn does not by
+itself mark a user Activity completed or enqueue an automatic handoff.
+
+Completed and failed results remain retrievable across bridge restarts. A job
+that was still running when the bridge stopped is changed to `interrupted` at
+startup because the new process cannot safely claim the former upstream
+request; its Activity records the interruption and waits for orchestrator
+judgment instead of reporting success. While a job is live, upstream MCP
+progress updates refresh `lastProgressAt`. No observed progress for ten minutes
+produces `health: "no-progress-observed"` together with
+`processLiveness: "unknown"`; absence of an MCP progress event is not proof that
+Codex stopped, so callers should inspect actual work evidence before waiting
+longer or cancelling.
+
+The in-memory/status view retains at most 100 jobs for six hours and one MiB per
+result by default. When that result-retention window expires, the result body is
+removed from the active registry while a minimal archived job summary,
+Activity counts, events, scope version, and any unread completion-outbox record
+remain durable. This preserves completion facts and request UUID deduplication
+without retaining repository result content indefinitely. Oversized results are
+replaced earlier by a bounded completion notice while their session id remains
+tracked. Activity create/attach/update tools and the Activity card are delivered
+in later #14 phases; schema v2 is their transactional foundation.
 
 For a user request that asks for a finished outcome, a running `jobId` is only
 an intermediate response. The plugin instructions tell ChatGPT to wait for a

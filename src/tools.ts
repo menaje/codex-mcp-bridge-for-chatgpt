@@ -4,6 +4,7 @@ import path from "node:path";
 import * as z from "zod/v4";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import type { ActivityExecutionMode } from "./activity.js";
 import type { BridgeConfig, SandboxMode } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
@@ -27,7 +28,7 @@ import {
 } from "./sessionRegistry.js";
 import { registerSettingsCardResource, SETTINGS_CARD_URI } from "./settingsCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
-import type { BridgeStateStore } from "./stateStore.js";
+import { legacyActivityIdForJob, type BridgeStateStore } from "./stateStore.js";
 import type { CodexUpstream, ToolResult } from "./upstream.js";
 import {
   MIN_AUTO_RESUME_TTL_MS,
@@ -122,6 +123,15 @@ type CodexRouting = {
 
 type CodexJob = {
   jobId: string;
+  activityId: string;
+  threadId?: string;
+  executionMode: ActivityExecutionMode;
+  backendKind: string;
+  bridgeInstanceId?: string;
+  workerId?: string;
+  workerGeneration?: number;
+  upstreamRequestId?: string;
+  terminalVersion?: number;
   operation: CodexJobOperation;
   createdAt: number;
   updatedAt: number;
@@ -150,7 +160,7 @@ type CodexJob = {
 type PersistedCodexJob = Omit<CodexJob, "promise" | "abortController">;
 
 type PersistedCodexJobState = {
-  version: 4;
+  version: 5;
   jobs: PersistedCodexJob[];
 };
 
@@ -205,6 +215,14 @@ export class CodexJobRegistry {
 
   get persistencePath(): string | null {
     return this.stateStore?.persistencePath || this.stateFile || null;
+  }
+
+  get persistenceSchemaVersion(): number | null {
+    return this.stateStore?.schemaVersion || null;
+  }
+
+  get bridgeInstanceId(): string | null {
+    return this.stateStore?.bridgeInstanceId || null;
   }
 
   get staleThresholdMs(): number {
@@ -269,6 +287,15 @@ export class CodexJobRegistry {
     input: Omit<
       CodexJob,
       | "jobId"
+      | "activityId"
+      | "threadId"
+      | "executionMode"
+      | "backendKind"
+      | "bridgeInstanceId"
+      | "workerId"
+      | "workerGeneration"
+      | "upstreamRequestId"
+      | "terminalVersion"
       | "createdAt"
       | "updatedAt"
       | "lastProgressAt"
@@ -317,6 +344,11 @@ export class CodexJobRegistry {
     const abortController = new AbortController();
     const job: CodexJob = {
       ...input,
+      activityId: randomUUID(),
+      threadId: input.sessionDecision.threadId,
+      executionMode: "auto",
+      backendKind: "mcp-server",
+      bridgeInstanceId: this.stateStore?.bridgeInstanceId,
       requestHashVersion: input.requestHashVersion || 2,
       jobId: randomUUID(),
       createdAt: now,
@@ -345,6 +377,7 @@ export class CodexJobRegistry {
         try {
           const finish = () => {
             undo = onComplete?.(result) || undefined;
+            job.threadId = job.sessionDecision.threadId;
             job.status = "completed";
             job.result = retained.result;
             job.resultBytes = retained.originalBytes;
@@ -496,7 +529,7 @@ export class CodexJobRegistry {
   private load(): void {
     if (this.stateStore) {
       const stored = this.stateStore.listJobs();
-      const changed = this.loadJobs(stored, 4);
+      const changed = this.loadJobs(stored, 5);
       if (changed || this.jobs.size !== stored.length) {
         this.stateStore.replaceJobs(this.persistedJobs());
       }
@@ -518,20 +551,20 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
 
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
     const changed = this.loadJobs(parsed.jobs, stateVersion);
-    if (changed || stateVersion !== 4) this.persist();
+    if (changed || stateVersion !== 5) this.persist();
   }
 
-  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4): boolean {
+  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5): boolean {
     const now = Date.now();
-    let changed = stateVersion !== 4;
+    let changed = stateVersion !== 5;
     const valid = values
       .map((job) => readPersistedJob(job, stateVersion))
       .filter((job): job is PersistedCodexJob => Boolean(job))
@@ -592,12 +625,12 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
     const existing = new Set(this.jobs.keys());
     const candidates = parsed.jobs.filter((value) => {
       const id = isRecord(value) && typeof value.jobId === "string" ? value.jobId : undefined;
@@ -622,7 +655,7 @@ export class CodexJobRegistry {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedCodexJobState = {
-      version: 4,
+      version: 5,
       jobs: this.persistedJobs()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
@@ -876,7 +909,13 @@ export function registerBridgeTools(
         stateStorage: {
           backend: persistenceBackend,
           persistencePath: sharedPersistencePath,
-          transactional: persistenceBackend === "sqlite"
+          transactional: persistenceBackend === "sqlite",
+          schemaVersion: jobs.persistenceSchemaVersion,
+          bridgeInstanceId: jobs.bridgeInstanceId,
+          activityFoundation:
+            jobs.persistenceSchemaVersion === 2
+              ? "schema-v2-compatibility-activities"
+              : "unavailable"
         },
         jobPolicy: {
           persistent: jobs.persistent,
@@ -2034,8 +2073,12 @@ function sanitizeProgress(progress: Progress): Progress {
   };
 }
 
-function readPersistedJob(value: unknown, stateVersion: 1 | 2 | 3 | 4): PersistedCodexJob | undefined {
+function readPersistedJob(
+  value: unknown,
+  stateVersion: 1 | 2 | 3 | 4 | 5
+): PersistedCodexJob | undefined {
   if (!isRecord(value)) return undefined;
+  const jobId = typeof value.jobId === "string" && value.jobId ? value.jobId : undefined;
   const operation = value.operation;
   const sandbox = value.sandbox;
   const status = value.status;
@@ -2046,10 +2089,22 @@ function readPersistedJob(value: unknown, stateVersion: 1 | 2 | 3 | 4): Persiste
   const requestHash = stateVersion === 1
     ? createHash("sha256").update(String(requestId)).digest("hex")
     : value.requestHash;
-  const requestHashVersion = stateVersion === 4 ? value.requestHashVersion : 1;
+  const requestHashVersion = stateVersion >= 4 ? value.requestHashVersion : 1;
+  const activityId =
+    typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
+      ? value.activityId.toLowerCase()
+      : jobId
+        ? legacyActivityIdForJob(jobId)
+        : undefined;
+  const executionMode =
+    value.executionMode === "foreground" || value.executionMode === "background"
+      ? value.executionMode
+      : "auto";
+  const backendKind =
+    typeof value.backendKind === "string" && value.backendKind ? value.backendKind : "mcp-server";
   if (
-    typeof value.jobId !== "string" ||
-    !value.jobId ||
+    !jobId ||
+    !activityId ||
     (operation !== "start" && operation !== "continue") ||
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.updatedAt) ||
@@ -2080,13 +2135,28 @@ function readPersistedJob(value: unknown, stateVersion: 1 | 2 | 3 | 4): Persiste
     !isOptionalBoolean(value.resultOmitted) ||
     !isOptionalFiniteNumber(value.cancelRequestedAt) ||
     !isOptionalString(value.error) ||
+    !isOptionalString(value.threadId) ||
+    !isOptionalString(value.bridgeInstanceId) ||
+    !isOptionalString(value.workerId) ||
+    !isOptionalInteger(value.workerGeneration) ||
+    !isOptionalString(value.upstreamRequestId) ||
+    !isOptionalPositiveInteger(value.terminalVersion) ||
     (value.result !== undefined && !isRecord(value.result)) ||
     (value.lastProgress !== undefined && !lastProgress)
   ) {
     return undefined;
   }
   return {
-    jobId: value.jobId,
+    jobId,
+    activityId,
+    threadId: value.threadId || sessionDecision.threadId,
+    executionMode,
+    backendKind,
+    bridgeInstanceId: value.bridgeInstanceId,
+    workerId: value.workerId,
+    workerGeneration: value.workerGeneration,
+    upstreamRequestId: value.upstreamRequestId,
+    terminalVersion: value.terminalVersion,
     operation,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
@@ -2164,6 +2234,14 @@ function isOptionalFiniteNumber(value: unknown): value is number | undefined {
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalInteger(value: unknown): value is number | undefined {
+  return value === undefined || Number.isInteger(value);
+}
+
+function isOptionalPositiveInteger(value: unknown): value is number | undefined {
+  return value === undefined || (Number.isInteger(value) && (value as number) >= 1);
 }
 
 function isOptionalString(value: unknown): value is string | undefined {

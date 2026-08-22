@@ -43,9 +43,11 @@ the network as the current macOS user.
   UUIDs for retained-job retry deduplication.
 - 50,000 characters per prompt.
 - Six-hour automatic session-resume window and completed-job retention.
-- Durable sessions, bridge preferences, jobs, and bounded results stored in one
-  user-private transactional SQLite database with mode `0600`; cross-registry
-  completion changes commit atomically, and previously running entries become
+- Durable sessions, bridge preferences, jobs, bounded results, Activities,
+  append-only Activity/job events, scope versions, bridge generations, and a
+  completion outbox stored in one user-private transactional SQLite database
+  with mode `0600`; job terminal state, Activity derived state, scope version,
+  and outbox insertion commit atomically, and previously running entries become
   `interrupted` after restart.
 - Saved preferences are safely reduced when owner capabilities, roots, timeout,
   or concurrency limits become narrower, with warnings exposed in status/card.
@@ -99,9 +101,10 @@ because the private no-auth tunnel does not supply per-user identity.
 - Concurrent mutation jobs in the same working directory can overwrite each
   other's changes or interfere through shared build artifacts unless the caller
   partitions the work or assigns separate worktrees.
-- Request deduplication lasts only while the retained job record exists. After
-  expiry or operator removal of the state database, replay protection for an old
-  request UUID no longer exists.
+- Result-body retention and request deduplication are separate. After the active
+  job/result window expires, a redacted archived job summary keeps the scope and
+  request UUID reserved; replay protection is lost only after operator removal
+  or replacement of the state database.
 - Host-provided `openai/session`, `openai/subject`, and `openai/organization`
   metadata is suitable for correlation, not authorization. Missing metadata
   falls back to an explicit caller-managed UUID; changes in the host identity
@@ -130,6 +133,11 @@ because the private no-auth tunnel does not supply per-user identity.
   messages, errors, and bounded Codex results. Results can include repository
   content even though the job record does not separately store the submitted
   prompt.
+- Activity and event rows contain sanitized titles, opaque scope/job/thread
+  relations, state transitions, aggregate counts, and bounded handoff metadata.
+  Raw prompts and private reasoning are not Activity event or outbox fields.
+  Archived job rows retain deduplication and terminal facts but replace their
+  original payload/result with a minimal summary.
 - Persisted settings contain local paths and user defaults. They contain no
   tunnel credential, prompt, or result, but every user of the same private
   bridge connection shares them.

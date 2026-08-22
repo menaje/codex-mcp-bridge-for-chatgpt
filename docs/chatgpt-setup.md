@@ -173,6 +173,13 @@ authentication credentials.
 
 Recent job state and bounded results are persisted in the same private SQLite
 database as settings and session metadata. Legacy JSON files are imported once.
+The database schema also groups every retained job into an Activity and records
+job/Activity events, scope change versions, bridge process generations, and
+transactional completion-outbox rows. Existing jobs become one-job legacy
+Activities with manual completion and no automatic handoff, so a completed
+Codex turn is not presented as a completed user task. The Activity-facing tools
+and card are added in later #14 phases; no extra ChatGPT input is required for
+this storage migration.
 On bridge startup, any
 record that had remained `running` is reported as `interrupted`; it is not left
 indefinitely running. Live upstream progress refreshes `lastProgressAt`, while

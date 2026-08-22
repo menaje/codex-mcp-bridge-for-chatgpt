@@ -36,7 +36,15 @@ describe("BridgeStateStore", () => {
 
     const reopened = new BridgeStateStore({ file });
     expect(reopened.listSessions()).toEqual([session("thread-committed")]);
-    expect(reopened.listJobs()).toEqual([job("job-committed", "request-committed")]);
+    expect(reopened.listJobs()).toEqual([
+      expect.objectContaining({
+        ...job("job-committed", "request-committed"),
+        activityId: expect.any(String),
+        executionMode: "auto",
+        backendKind: "mcp-server",
+        terminalVersion: 1
+      })
+    ]);
     reopened.close();
   });
 
