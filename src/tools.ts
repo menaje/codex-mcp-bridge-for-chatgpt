@@ -26,6 +26,7 @@ import {
   SessionRegistry
 } from "./sessionRegistry.js";
 import { registerSettingsCardResource, SETTINGS_CARD_URI } from "./settingsCard.js";
+import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { CodexUpstream, ToolResult } from "./upstream.js";
 import {
@@ -706,7 +707,8 @@ export function registerBridgeTools(
   sessions: SessionRegistry,
   jobs: CodexJobRegistry,
   modelCatalog: CodexModelCatalogProvider,
-  userSettings: UserSettingsStore
+  userSettings: UserSettingsStore,
+  scopeResolver: ScopeResolver
 ): void {
   registerSettingsCardResource(server);
 
@@ -715,15 +717,17 @@ export function registerBridgeTools(
     {
       title: "Codex Bridge Status",
       description:
-        "Read bridge policy plus Codex sessions and jobs for one ChatGPT conversation scope. Reuse the same scopeId that was sent to codex_task. Pass a jobId to retrieve or wait for one long-running result. Omit scopeId only for policy-only status, or set includeAllScopes only when the user explicitly requests a bridge-wide operator audit.",
+        "Read bridge policy plus Codex sessions and jobs for the current ChatGPT conversation. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for MCP hosts that do not provide it. Pass a jobId to retrieve or wait for one long-running result. A bridge-wide audit is available only to compatibility/admin hosts without ChatGPT session metadata.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
-          .describe("Conversation-scope UUID used by codex_task. It filters session and job details."),
+          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
         includeAllScopes: z
           .boolean()
           .optional()
-          .describe("Operator audit view across every scope. Use only when the user explicitly requests it."),
+          .describe(
+            "Compatibility/admin audit across every scope. Unavailable to ordinary ChatGPT conversation calls."
+          ),
         jobId: z.string().trim().min(1).optional().describe("Optional job id returned by codex_task."),
         waitFor: z
           .enum(["change", "terminal"])
@@ -764,8 +768,13 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args) => {
-      if (args.scopeId && args.includeAllScopes) {
+    async (args, { _meta }) => {
+      const scopeResolution = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      const scopeId = scopeResolution?.scopeId;
+      if (scopeResolution?.source === "host-metadata" && args.includeAllScopes) {
+        throw new Error("A ChatGPT conversation scope cannot request the bridge-wide audit view.");
+      }
+      if (scopeId && args.includeAllScopes) {
         throw new Error("scopeId and includeAllScopes cannot be used together.");
       }
       if ((args.waitFor || args.waitMs) && !args.jobId) {
@@ -775,12 +784,14 @@ export function registerBridgeTools(
         throw new Error("waitMs requires waitFor='change' or waitFor='terminal'.");
       }
       if (args.jobId) {
-        if (!args.scopeId && !args.includeAllScopes) {
-          throw new Error("A scopeId is required to read a job unless includeAllScopes is explicitly requested.");
+        if (!scopeId && !args.includeAllScopes) {
+          throw new Error(
+            "Job lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId."
+          );
         }
         const initial = jobs.get(args.jobId);
         if (!initial) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
-        if (!args.includeAllScopes && initial.scopeId !== args.scopeId) {
+        if (!args.includeAllScopes && initial.scopeId !== scopeId) {
           throw new Error("The requested Codex job belongs to another conversation scope.");
         }
         const wait = args.waitFor
@@ -805,28 +816,28 @@ export function registerBridgeTools(
       const jobOffset = args.jobOffset ?? 0;
       const visibleSessions = args.includeAllScopes
         ? sessions.list(sessionLimit, sessionOffset)
-        : args.scopeId
-          ? sessions.listForScope(args.scopeId, sessionLimit, sessionOffset)
+        : scopeId
+          ? sessions.listForScope(scopeId, sessionLimit, sessionOffset)
           : [];
       const visibleJobs = args.includeAllScopes
         ? jobs.list(jobLimit, jobOffset)
-        : args.scopeId
-          ? jobs.listForScope(args.scopeId, jobLimit, jobOffset)
+        : scopeId
+          ? jobs.listForScope(scopeId, jobLimit, jobOffset)
           : [];
       const scopedSessionCount = args.includeAllScopes
         ? sessions.size()
-        : args.scopeId
-          ? sessions.sizeForScope(args.scopeId)
+        : scopeId
+          ? sessions.sizeForScope(scopeId)
           : 0;
       const scopedJobCount = args.includeAllScopes
         ? jobs.size
-        : args.scopeId
-          ? jobs.sizeForScope(args.scopeId)
+        : scopeId
+          ? jobs.sizeForScope(scopeId)
           : 0;
       const scopedRunningCount = args.includeAllScopes
         ? jobs.runningCount()
-        : args.scopeId
-          ? jobs.runningCount(args.scopeId)
+        : scopeId
+          ? jobs.runningCount(scopeId)
           : 0;
       const persistencePaths = [sessions.persistencePath, jobs.persistencePath, userSettings.persistencePath];
       const sharedPersistencePath =
@@ -892,7 +903,11 @@ export function registerBridgeTools(
           persistencePath: sessions.persistencePath,
           autoResumeTtlMs: preferences.autoResumeTtlMs,
           selection: "scope-compatible-only-when-unambiguous",
-          scopeIdRequiredForTasks: true,
+          scopeIdInput: "host-derived-or-explicit-compatibility",
+          hostMetadataKeys: ["openai/organization", "openai/subject", "openai/session"],
+          scopeHmacKeyVersion: scopeResolver.keyVersion,
+          scopeHmacRotation: scopeResolver.rotationPolicy,
+          rawHostIdentifiersPersisted: false,
           legacyScopeId: LEGACY_SCOPE_ID,
           legacyAutoResume: false,
           scopeIsAuthentication: false,
@@ -901,9 +916,18 @@ export function registerBridgeTools(
         },
         scopeView: args.includeAllScopes
           ? { mode: "all" }
-          : args.scopeId
-            ? { mode: "scoped", scopeId: args.scopeId }
-            : { mode: "policy-only", scopeIdRequiredForDetails: true },
+          : scopeResolution
+            ? {
+                mode: "scoped",
+                scopeId,
+                source: scopeResolution.source,
+                keyVersion: scopeResolution.keyVersion,
+                explicitInputIgnored: scopeResolution.explicitInputIgnored
+              }
+            : {
+                mode: "policy-only",
+                hostMetadataOrCompatibilityScopeRequiredForDetails: true
+              },
         scopeCounts: {
           sessions: scopedSessionCount,
           jobs: scopedJobCount,
@@ -946,9 +970,11 @@ export function registerBridgeTools(
     {
       title: "Cancel Codex Job",
       description:
-        "Cancel one running Codex job in the current ChatGPT conversation scope. Cancellation is idempotent, but partial filesystem changes made before cancellation may remain and must be inspected.",
+        "Cancel one running Codex job in the current ChatGPT conversation scope. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for other MCP hosts. Cancellation is idempotent, but partial filesystem changes made before cancellation may remain and must be inspected.",
       inputSchema: {
-        scopeId: scopeIdSchema().describe("Conversation scope that owns the job."),
+        scopeId: scopeIdSchema()
+          .optional()
+          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
         jobId: z.string().trim().min(1).describe("Running job id returned by codex_task.")
       },
       annotations: {
@@ -958,10 +984,15 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args) => {
+    async (args, { _meta }) => {
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Codex job cancellation"
+      );
       const existing = jobs.get(args.jobId);
       if (!existing) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
-      if (existing.scopeId !== args.scopeId) {
+      if (existing.scopeId !== scope.scopeId) {
         throw new Error("The requested Codex job belongs to another conversation scope.");
       }
       return textResult(formatJobStatus(jobs.cancel(args.jobId), jobs.staleThresholdMs));
@@ -1135,11 +1166,11 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run Codex inside one explicit ChatGPT conversation scope. Generate a fresh UUID scopeId once per ChatGPT conversation and reuse it; use a new scope after copying or branching a chat unless the user requests a handoff. Generate one UUID requestId per logical turn and reuse it for retries. A scope may acquire any number of Codex threads over time: use sessionMode='new' when parallel work becomes useful, and use exact threadId values for follow-ups once multiple compatible threads exist. Auto resumes only when the compatible thread inside the scope is unambiguous. Cross-scope continuation requires an exact threadId plus adoptThread=true and explicit user intent.",
+        "Run Codex inside the current ChatGPT conversation scope, derived by the bridge from host metadata. Do not generate scopeId in ChatGPT; scopeId is only a compatibility input for other MCP hosts. Generate one UUID requestId per logical turn and reuse it for retries. A scope may acquire any number of Codex threads over time: use sessionMode='new' when parallel work becomes useful, and use exact threadId values for follow-ups once multiple compatible threads exist. Auto resumes only when the compatible thread inside the scope is unambiguous. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
       inputSchema: {
-        scopeId: scopeIdSchema().describe(
-          "Stable UUID for this ChatGPT conversation. Generate once per chat and reuse on every Codex bridge call."
-        ),
+        scopeId: scopeIdSchema()
+          .optional()
+          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
         requestId: scopeIdSchema().describe(
           "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
         ),
@@ -1180,10 +1211,11 @@ export function registerBridgeTools(
       },
       annotations: codexToolAnnotations(config)
     },
-    async (args) => {
+    async (args, { _meta }) => {
       const preferences = userSettings.current;
       const requestedMode = (args.sessionMode || preferences.defaultSessionMode) as SessionMode;
-      const routing = resolveTaskRouting(args);
+      const scope = scopeResolver.require(_meta as ToolCallMetadata, args.scopeId, "Codex task execution");
+      const routing = resolveTaskRouting(args, scope.scopeId);
       const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
       if (replay) return resultForJob(replay, config.jobStaleAfterMs);
 
@@ -1266,7 +1298,7 @@ export function registerBridgeTools(
           .map((session) => session.threadId)
           .join(", ");
         throw new Error(
-          `Multiple compatible Codex threads exist in this conversation scope (${candidates}). Call codex_status with scopeId and retry with an exact threadId, or use sessionMode='new' to start another thread.`
+          `Multiple compatible Codex threads exist in this conversation scope (${candidates}). Call codex_status and retry with an exact threadId, or use sessionMode='new' to start another thread.`
         );
       }
       const recent = compatible[0];
@@ -1314,7 +1346,7 @@ export function registerBridgeTools(
 }
 
 type CodexTaskArgs = {
-  scopeId: string;
+  scopeId?: string;
   requestId: string;
   prompt: string;
   sessionMode?: SessionMode;
@@ -1794,11 +1826,11 @@ function reasoningEffortSchema() {
     .describe("Optional effort for a new session. Call codex_models to discover supported values.");
 }
 
-function resolveTaskRouting(args: CodexTaskArgs): CodexRouting {
+function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting {
   const requestHash = createHash("sha256")
     .update(
       JSON.stringify({
-        scopeId: args.scopeId,
+        scopeId,
         sessionMode: args.sessionMode || null,
         prompt: args.prompt,
         threadId: args.threadId || null,
@@ -1812,7 +1844,7 @@ function resolveTaskRouting(args: CodexTaskArgs): CodexRouting {
     )
     .digest("hex");
   return {
-    scopeId: args.scopeId,
+    scopeId,
     requestId: args.requestId,
     requestHash
   };

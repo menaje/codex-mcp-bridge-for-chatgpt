@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
-import { SessionRegistry } from "../src/sessionRegistry.js";
+import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
 import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
@@ -165,8 +165,10 @@ describe("bridge tools", () => {
       idempotentHint: false
     });
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["scopeId", "requestId", "prompt"])
+      required: expect.arrayContaining(["requestId", "prompt"])
     });
+    expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
+      .not.toContain("scopeId");
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
@@ -592,6 +594,171 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("derives and isolates ChatGPT scopes from host metadata without a model-provided scopeId", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const metadataA = {
+      "openai/organization": "anonymous-org",
+      "openai/subject": "anonymous-user",
+      "openai/session": "chat-session-a"
+    };
+    const metadataB = { ...metadataA, "openai/session": "chat-session-b" };
+
+    const started = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        prompt: "start derived scope",
+        sessionMode: "new"
+      },
+      _meta: metadataA
+    });
+    const derivedScope = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeSession?.scopeId;
+    expect(derivedScope).toMatch(SCOPE_ID_PATTERN);
+    expect(derivedScope).not.toBe(SCOPE_A);
+
+    const retriedWithIgnoredInput = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        prompt: "start derived scope",
+        sessionMode: "new"
+      },
+      _meta: metadataA
+    });
+    expect((retriedWithIgnoredInput as { structuredContent?: Record<string, any> }).structuredContent)
+      .toEqual((started as { structuredContent?: Record<string, any> }).structuredContent);
+    expect(upstream.calls).toHaveLength(1);
+
+    const continued = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        prompt: "continue derived scope"
+      },
+      _meta: metadataA
+    });
+    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        bridgeSession: {
+          scopeId: derivedScope,
+          action: "continue",
+          threadId: "thread-1"
+        }
+      });
+
+    const statusA = parseToolJson(
+      await rawCallTool({ name: "codex_status", arguments: {}, _meta: metadataA })
+    );
+    const statusB = parseToolJson(
+      await rawCallTool({ name: "codex_status", arguments: {}, _meta: metadataB })
+    );
+    const explicitIgnored = parseToolJson(
+      await rawCallTool({
+        name: "codex_status",
+        arguments: { scopeId: SCOPE_B },
+        _meta: metadataA
+      })
+    );
+    const deniedAudit = await rawCallTool({
+      name: "codex_status",
+      arguments: { includeAllScopes: true },
+      _meta: metadataA
+    });
+
+    expect(statusA.scopeView).toEqual({
+      mode: "scoped",
+      scopeId: derivedScope,
+      source: "host-metadata",
+      keyVersion: 1,
+      explicitInputIgnored: false
+    });
+    expect(statusA.scopeCounts).toMatchObject({ sessions: 1, jobs: 2 });
+    expect(statusB.scopeCounts).toMatchObject({ sessions: 0, jobs: 0 });
+    expect(explicitIgnored.scopeView).toMatchObject({
+      scopeId: derivedScope,
+      source: "host-metadata",
+      explicitInputIgnored: true
+    });
+    expect(deniedAudit.isError).toBe(true);
+    expect(JSON.stringify(deniedAudit)).toContain("cannot request the bridge-wide audit view");
+    expect(JSON.stringify(statusA)).not.toContain("chat-session-a");
+    expect(JSON.stringify(statusA)).not.toContain("anonymous-user");
+    expect(JSON.stringify(statusA)).not.toContain("anonymous-org");
+    await close();
+  });
+
+  it("requires an explicit compatibility scope only when host metadata is absent", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+
+    const missing = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        prompt: "missing scope"
+      }
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing)).toContain("explicit compatibility scopeId");
+
+    const compatible = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "abababab-abab-4aba-8aba-abababababab",
+        prompt: "compatibility scope",
+        sessionMode: "new"
+      }
+    });
+    expect((compatible as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ bridgeSession: { scopeId: SCOPE_A } });
+    await close();
+  });
+
+  it("uses the same host-derived scope for job cancellation", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { rawCallTool, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const metadata = { "openai/session": "cancel-session" };
+    const started = parseToolJson(
+      await rawCallTool({
+        name: "codex_task",
+        arguments: {
+          requestId: "acacacac-acac-4aca-8aca-acacacacacac",
+          prompt: "cancel derived job",
+          sessionMode: "new"
+        },
+        _meta: metadata
+      })
+    );
+
+    const denied = await rawCallTool({
+      name: "codex_cancel",
+      arguments: { jobId: started.jobId },
+      _meta: { "openai/session": "another-cancel-session" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("another conversation scope");
+
+    const cancelled = parseToolJson(
+      await rawCallTool({
+        name: "codex_cancel",
+        arguments: { jobId: started.jobId },
+        _meta: metadata
+      })
+    );
+    expect(cancelled.status).toBe("cancelled");
+    await close();
+  });
+
   it("normalizes UUID casing before routing sessions", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -799,7 +966,10 @@ describe("bridge tools", () => {
       "thread-2"
     ]);
     expect(policyOnly).toMatchObject({
-      scopeView: { mode: "policy-only", scopeIdRequiredForDetails: true },
+      scopeView: {
+        mode: "policy-only",
+        hostMetadataOrCompatibilityScopeRequiredForDetails: true
+      },
       sessions: [],
       jobs: []
     });
@@ -1770,7 +1940,14 @@ async function connectTestClient(
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   const rawCallTool = client.callTool.bind(client);
   Object.defineProperty(client, "callTool", {
-    value: (request: { name: string; arguments?: Record<string, unknown> }, ...rest: unknown[]) => {
+    value: (
+      request: {
+        name: string;
+        arguments?: Record<string, unknown>;
+        _meta?: Record<string, unknown>;
+      },
+      ...rest: unknown[]
+    ) => {
       const arguments_ = request.arguments || {};
       if (request.name === "codex_task") {
         return rawCallTool(

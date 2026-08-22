@@ -175,9 +175,11 @@ effort because continued Codex threads keep their original configuration.
 
 `codex_task` consolidates new and follow-up calls:
 
-- `scopeId` is required. ChatGPT generates one UUID for a conversation and
-  reuses it for every bridge call in that conversation. A copied or branched
-  conversation gets a new UUID unless the user explicitly requests a handoff.
+- In ChatGPT, omit `scopeId`. The bridge derives a stable opaque UUID from the
+  host-provided anonymous organization, subject, and conversation session tuple
+  using a private HMAC key. A copied or branched conversation receives a new
+  host session automatically. MCP hosts without ChatGPT session metadata must
+  provide and reuse an explicit compatibility `scopeId` instead.
 - `requestId` is required. ChatGPT generates one UUID for each logical task
   call and reuses that exact value only when retrying the same arguments. The
   bridge returns the existing job/result for a duplicate and rejects reuse with
@@ -193,7 +195,7 @@ effort because continued Codex threads keep their original configuration.
 
 When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
 
-Auto selection requires the same `scopeId`, working directory, sandbox, and
+Auto selection requires the same resolved conversation scope, working directory, sandbox, and
 requested/default model and effort. There is no bridge-global
 "most recent session" fallback, so one ChatGPT conversation cannot
 accidentally auto-resume another conversation's thread. It never reuses a
@@ -204,9 +206,19 @@ current worker generation.
 
 An exact thread also remains owned by its scope. Moving it to another
 conversation requires `threadId` plus `adoptThread: true`, and
-should be done only after the user explicitly requests that handoff. Scope UUIDs
-are routing labels, not authentication credentials; every caller that can reach
-this private bridge still shares the same operator trust boundary.
+should be done only after the user explicitly requests that handoff. When host
+metadata is present, it is authoritative and any input `scopeId` is ignored.
+Raw host identifiers are never stored; only the HMAC-derived UUID is persisted.
+The version-1 HMAC key is generated once in the private state database. It is
+not rotated automatically because changing it without a scope-alias migration
+would disconnect existing session/job history; key rotation therefore requires
+an explicit state migration or a deliberate state reset.
+Pre-upgrade model-generated scopes are not automatically merged into a derived
+scope, because trusting a caller-provided migration target would defeat the new
+isolation boundary. Their retained history remains available to a trusted
+compatibility/admin audit until normal retention removes it.
+Scope UUIDs remain routing labels, not authentication credentials; every caller
+that can reach this private bridge still shares the same operator trust boundary.
 
 Sessions may run concurrently in the same working directory up to the saved
 active-job limit, which cannot exceed `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`.
@@ -244,19 +256,21 @@ pre-scope records are migrated to a quarantined
 legacy scope that is never auto-selected; older task-lane records are collapsed
 into ordinary sessions under their existing scope. Legacy sessions require an
 exact thread handoff. Long-running tasks return a `jobId`; retrieve the result with
-`codex_status({ scopeId, jobId })`, or use
-`codex_status({ scopeId, jobId, waitFor: "terminal", waitMs: 55000 })` to hold one
+`codex_status({ jobId })` in ChatGPT, or use
+`codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` to hold one
 bounded status call until completion, failure, interruption, or the wait
 expires. `waitFor: "change"` returns on the next upstream progress or terminal
 transition. A wait timeout leaves the job running and can be repeated; it is
-not a Codex task timeout. Call `codex_cancel({ scopeId, jobId })` to request
+not a Codex task timeout. Call `codex_cancel({ jobId })` to request
 cancellation. The bridge forwards an abort signal and records `cancelled`
 idempotently, but callers must inspect the working tree because edits made
 before cancellation are not rolled back.
 
-Without `scopeId`, `codex_status` returns policy only and omits session/job
-details. `includeAllScopes: true` provides a bridge-wide operator audit and
-should be used only for an explicit request to inspect all conversations.
+ChatGPT tool calls automatically receive their current host-derived scope even
+when `scopeId` is omitted. A non-ChatGPT host with neither metadata nor an
+explicit compatibility scope receives policy-only status. `includeAllScopes`
+is rejected for ChatGPT conversation calls and remains a compatibility/admin
+operation for trusted hosts without ChatGPT session metadata.
 
 Job metadata and bounded results are stored transactionally in
 `~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Completed and

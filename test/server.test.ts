@@ -48,7 +48,22 @@ class DeferredUpstream extends FakeUpstream {
   }
 }
 
-const servers: Array<{ close: () => void }> = [];
+class ThreadUpstream extends FakeUpstream {
+  private nextThread = 1;
+
+  override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const threadId =
+      name === "codex-reply" && typeof args.threadId === "string"
+        ? args.threadId
+        : `http-thread-${this.nextThread++}`;
+    return {
+      content: [{ type: "text", text: "done" }],
+      structuredContent: { threadId, content: "done" }
+    };
+  }
+}
+
+const servers: Array<ReturnType<typeof createHttpServer>> = [];
 
 afterEach(() => {
   for (const server of servers.splice(0)) {
@@ -144,10 +159,64 @@ describe("http server", () => {
 
     await client.close();
   });
+
+  it("keeps a host-derived scope stable across stateless requests and bridge restarts", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-derived-scope-state-"));
+    const metadata = {
+      "openai/organization": "http-org",
+      "openai/subject": "http-subject",
+      "openai/session": "http-session"
+    };
+    const firstUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new ThreadUpstream(),
+      stateDirectory
+    );
+    const firstClient = new Client({ name: "http-derived-client", version: "0.0.0" });
+    await firstClient.connect(new StreamableHTTPClientTransport(new URL(`${firstUrl}/mcp`)));
+    const started = await firstClient.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        prompt: "derive scope",
+        sessionMode: "new"
+      },
+      _meta: metadata
+    });
+    const scopeId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeSession?.scopeId;
+    expect(scopeId).toMatch(/^[0-9a-f-]{36}$/);
+    await firstClient.close();
+    await stopLastServer();
+
+    const secondUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new ThreadUpstream(),
+      stateDirectory
+    );
+    const secondClient = new Client({ name: "http-derived-client", version: "0.0.0" });
+    await secondClient.connect(new StreamableHTTPClientTransport(new URL(`${secondUrl}/mcp`)));
+    const restored = parseToolJson(
+      await secondClient.callTool({ name: "codex_status", arguments: {}, _meta: metadata })
+    );
+    expect(restored.scopeView).toMatchObject({
+      mode: "scoped",
+      scopeId,
+      source: "host-metadata"
+    });
+    expect(restored.scopeCounts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(JSON.stringify(restored)).not.toContain("http-session");
+    expect(JSON.stringify(restored)).not.toContain("http-subject");
+    expect(JSON.stringify(restored)).not.toContain("http-org");
+    await secondClient.close();
+  });
 });
 
-async function start(env: NodeJS.ProcessEnv, upstream: CodexUpstream = new FakeUpstream()): Promise<string> {
-  const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"));
+async function start(
+  env: NodeJS.ProcessEnv,
+  upstream: CodexUpstream = new FakeUpstream(),
+  stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"))
+): Promise<string> {
   const config = loadConfig({
     ...env,
     CODEX_GPT_BRIDGE_HOST: "127.0.0.1",
@@ -167,6 +236,14 @@ async function start(env: NodeJS.ProcessEnv, upstream: CodexUpstream = new FakeU
     throw new Error("Expected TCP server address");
   }
   return `http://127.0.0.1:${address.port}`;
+}
+
+async function stopLastServer(): Promise<void> {
+  const server = servers.pop();
+  if (!server) throw new Error("Expected a running HTTP test server.");
+  await new Promise<void>((resolve, reject) => {
+    server.close((error?: Error) => (error ? reject(error) : resolve()));
+  });
 }
 
 function parseToolJson(result: unknown): Record<string, any> {

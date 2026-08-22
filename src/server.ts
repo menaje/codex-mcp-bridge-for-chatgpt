@@ -10,6 +10,7 @@ import { CodexCliModelCatalog, type CodexModelCatalogProvider } from "./modelCat
 import type { CodexUpstream } from "./upstream.js";
 import { CodexJobRegistry, registerBridgeTools } from "./tools.js";
 import { SessionRegistry } from "./sessionRegistry.js";
+import { ScopeResolver } from "./scopeResolver.js";
 import { BridgeStateStore } from "./stateStore.js";
 import { UserSettingsStore } from "./userSettings.js";
 
@@ -37,7 +38,8 @@ export function createBridgeMcpServer(
     undefined,
     config.modelCatalogStateFile
   ),
-  userSettings = new UserSettingsStore(config)
+  userSettings = new UserSettingsStore(config),
+  scopeResolver = new ScopeResolver()
 ): McpServer {
   const server = new McpServer(
     {
@@ -47,10 +49,10 @@ export function createBridgeMcpServer(
     },
     {
       instructions:
-        "Use codex_settings for saved bridge defaults and codex_models for the live model/effort catalog. Before the first codex_task in each ChatGPT conversation, generate one fresh UUID scopeId and reuse it for every Codex bridge call in that conversation. A copied or branched ChatGPT conversation must use a new scopeId unless the user explicitly requests a handoff. For every logical codex_task turn, generate a fresh UUID requestId and reuse that exact requestId on retries; never reuse it for different arguments. Do not decide in advance whether a conversation is single-threaded or parallel. Start normally; whenever parallel work becomes useful, call codex_task with sessionMode='new' to add another Codex thread under the same scopeId. The same Codex thread is serialized, while different threads in the same scope may run in parallel even in the same cwd. Auto mode continues only when exactly one recent compatible thread exists in the scope. If none exists it starts one; if the only compatible session is starting or busy, wait or deliberately start a new thread; if multiple compatible threads exist, call codex_status with scopeId and retry with the exact intended threadId instead of guessing. Keep each returned threadId and jobId associated with the current scope. Never use the legacy scope for auto selection. A persisted MCP thread with resumeAvailability unavailable-after-worker-restart is history only: do not explicitly continue it; auto starts a new thread because MCP thread context is worker-process local. Set adoptThread=true only with an exact available threadId after the user explicitly requests a cross-chat handoff. Pass scopeId to codex_status so it returns only that conversation's sessions and jobs; follow its pagination metadata when the scope has more records, and use includeAllScopes only for an explicit bridge-wide operator audit. Scope IDs route conversations but are not authentication credentials. Omit ordinary task overrides to use saved defaults; the saved access strategy remains authoritative. Jobs may mutate the same cwd concurrently, so partition overlapping work or request separate worktrees when needed. A running jobId is intermediate, not completion: for an outcome request, keep the turn open and call codex_status with the same scopeId, waitFor='terminal', and bounded waitMs until terminal. Then inspect the result and verify artifacts, diff/status, and relevant tests; continue the exact thread for corrections. A no-progress-observed health value means only that no MCP progress event arrived; process liveness remains unknown, so inspect actual work evidence before deciding whether to wait or call codex_cancel. Cancellation can leave partial filesystem changes. Return a running jobId immediately only for explicit start-only/background requests. Do not request secrets or unrelated broad system access."
+        "Use codex_settings for saved bridge defaults and codex_models for the live model/effort catalog. In ChatGPT, omit scopeId: the bridge derives an opaque conversation scope from host metadata and a copied or branched chat receives its own host session. Only if a non-ChatGPT MCP host returns a missing-metadata error, generate one compatibility UUID scopeId and reuse it there. For every logical codex_task turn, generate a fresh UUID requestId and reuse that exact requestId on retries; never reuse it for different arguments. Do not decide in advance whether a conversation is single-threaded or parallel. Start normally; whenever parallel work becomes useful, call codex_task with sessionMode='new' to add another Codex thread under the current scope. The same Codex thread is serialized, while different threads in the same scope may run in parallel even in the same cwd. Auto mode continues only when exactly one recent compatible thread exists in the scope. If none exists it starts one; if the only compatible session is starting or busy, wait or deliberately start a new thread; if multiple compatible threads exist, call codex_status and retry with the exact intended threadId instead of guessing. Keep each returned threadId and jobId associated with the current scope. Never use the legacy scope for auto selection. A persisted MCP thread with resumeAvailability unavailable-after-worker-restart is history only: do not explicitly continue it; auto starts a new thread because MCP thread context is worker-process local. Set adoptThread=true only with an exact available threadId after the user explicitly requests a cross-chat handoff. In ChatGPT, omit scopeId from codex_status and codex_cancel too; the server applies the same host-derived scope. Follow status pagination when the scope has more records. Bridge-wide all-scope audit is unavailable to ordinary ChatGPT conversation tools. Scope IDs route conversations but are not authentication credentials. Omit ordinary task overrides to use saved defaults; the saved access strategy remains authoritative. Jobs may mutate the same cwd concurrently, so partition overlapping work or request separate worktrees when needed. A running jobId is intermediate, not completion: for an outcome request, keep the turn open and call codex_status with jobId, waitFor='terminal', and bounded waitMs until terminal. Then inspect the result and verify artifacts, diff/status, and relevant tests; continue the exact thread for corrections. A no-progress-observed health value means only that no MCP progress event arrived; process liveness remains unknown, so inspect actual work evidence before deciding whether to wait or call codex_cancel. Cancellation can leave partial filesystem changes. Return a running jobId immediately only for explicit start-only/background requests. Do not request secrets or unrelated broad system access."
     }
   );
-  registerBridgeTools(server, config, upstream, sessions, jobs, modelCatalog, userSettings);
+  registerBridgeTools(server, config, upstream, sessions, jobs, modelCatalog, userSettings, scopeResolver);
   return server;
 }
 
@@ -90,6 +92,7 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
     stateFile: config.settingsStateFile,
     stateStore
   });
+  const scopeResolver = new ScopeResolver({ stateStore });
 
   app.get(
     ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"],
@@ -117,7 +120,15 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
   });
 
   app.post("/mcp", async (req: Request, res: Response) => {
-    const server = createBridgeMcpServer(config, upstream, sessions, jobs, modelCatalog, userSettings);
+    const server = createBridgeMcpServer(
+      config,
+      upstream,
+      sessions,
+      jobs,
+      modelCatalog,
+      userSettings,
+      scopeResolver
+    );
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined
     });

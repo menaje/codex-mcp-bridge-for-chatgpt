@@ -38,8 +38,9 @@ the network as the current macOS user.
 - Different Codex threads under the same conversation scope may run
   concurrently in the same working directory; parallelism is created on demand
   rather than configured on the scope in advance.
-- Required conversation-scope UUIDs for automatic session routing and required
-  request UUIDs for retained-job retry deduplication.
+- HMAC-derived ChatGPT conversation scopes for automatic session routing,
+  explicit UUID fallback for hosts without ChatGPT metadata, and required request
+  UUIDs for retained-job retry deduplication.
 - 50,000 characters per prompt.
 - Six-hour automatic session-resume window and completed-job retention.
 - Durable sessions, bridge preferences, jobs, and bounded results stored in one
@@ -64,9 +65,16 @@ Secure Tunnel mode starts a loopback-only HTTP server with no application-level 
 When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
 
 Conversation `scopeId` values are routing labels, not identities or secrets.
-They prevent accidental automatic reuse between ChatGPT conversations, but a
-caller with bridge access can request the bridge-wide audit view or explicitly
-adopt a known thread. Do not treat scope filtering as authorization.
+ChatGPT calls derive them from the anonymous organization/subject/session tuple;
+raw identifiers are not stored, and a model-provided scope cannot override the
+host-derived value. A compatibility/admin caller without ChatGPT session
+metadata can still use explicit scopes or the bridge-wide audit view. Do not
+treat scope filtering as authorization.
+
+The HMAC key is versioned and stored in the private SQLite metadata table. The
+bridge does not rotate it automatically: safe rotation requires a scope-alias
+migration so existing history remains reachable. Deleting or replacing the key
+without migration is a deliberate scope reset.
 
 ## Plugin approval boundary
 
@@ -94,10 +102,10 @@ because the private no-auth tunnel does not supply per-user identity.
 - Request deduplication lasts only while the retained job record exists. After
   expiry or operator removal of the state database, replay protection for an old
   request UUID no longer exists.
-- The bridge receives no trusted ChatGPT conversation identifier. Correct
-  scope reuse—and choosing a new scope after copying or branching a chat—relies
-  on the MCP host/model following the tool contract; the server can validate a
-  UUID but cannot prove which chat it represents.
+- Host-provided `openai/session`, `openai/subject`, and `openai/organization`
+  metadata is suitable for correlation, not authorization. Missing metadata
+  falls back to an explicit caller-managed UUID; changes in the host identity
+  tuple or loss/rotation of the locally persisted HMAC key produce a new scope.
 - Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
   cannot independently prove that a particular call received fresh user approval.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
@@ -116,6 +124,8 @@ because the private no-auth tunnel does not supply per-user identity.
   working-directory paths, but not prompts or results. Pre-scope records are
   migrated into a legacy scope that automatic selection ignores; obsolete v2
   task-lane labels are discarded during migration.
+- Bridge metadata contains the conversation-scope HMAC key. Protect database
+  files and backups even though the raw host identifiers are not stored.
 - Persisted job rows contain local paths, lifecycle metadata, progress
   messages, errors, and bounded Codex results. Results can include repository
   content even though the job record does not separately store the submitted

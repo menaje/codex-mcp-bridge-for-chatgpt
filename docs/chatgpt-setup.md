@@ -104,13 +104,13 @@ Ask ChatGPT to call `codex_status`. Confirm:
 - `build.id` matches the current `/healthz` build id.
 
 Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
-prompt. ChatGPT must generate one UUID `scopeId` for the current conversation,
-reuse it for later calls in that conversation, and generate a fresh UUID
-`requestId` for each logical task turn. The same `requestId` is reused only for
-a retry with identical arguments. If the task returns a `jobId`, pass that exact
-value and the same `scopeId` to `codex_status`. For a request that should be
+prompt. ChatGPT must omit `scopeId`; the bridge derives it from host-provided
+anonymous conversation metadata. ChatGPT generates a fresh UUID `requestId` for
+each logical task turn. The same `requestId` is reused only for a retry with
+identical arguments. If the task returns a `jobId`, pass that exact value to
+`codex_status`. For a request that should be
 managed through completion, call
-`codex_status({ scopeId, jobId, waitFor: "terminal", waitMs: 55000 })`; repeat a bounded
+`codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })`; repeat a bounded
 wait only when it returns a still-running timeout. Use `waitFor: "change"` when
 the next progress update itself is relevant. Do not treat `running` as a final
 completion response unless the user explicitly requested start-only/background
@@ -120,7 +120,16 @@ use the saved `auto` or `new` default, and use `continue` with an exact
 `threadId` when selecting a specific persisted session. Do not decide in
 advance whether the conversation will be single-threaded or parallel. When
 parallel work becomes useful, start another thread at that moment with
-`sessionMode: new` and keep its returned `threadId` under the same `scopeId`.
+`sessionMode: new` and keep its returned `threadId` under the same derived
+conversation scope.
+MCP hosts that do not send `openai/session` metadata must instead generate and
+reuse one explicit compatibility `scopeId`.
+
+After upgrading from model-generated scopes, the first metadata-derived call
+starts a new isolated scope. The bridge does not automatically merge an old
+caller-provided scope because that would allow scope reassignment without a
+trusted mapping. Run upgrades only when no job is active; retained legacy
+history remains visible through a trusted compatibility/admin audit.
 
 To choose a model or reasoning effort, ask ChatGPT to call `codex_models` first.
 The returned list comes from the installed Codex CLI and includes only currently
@@ -129,17 +138,19 @@ pass the selected `model` and `reasoningEffort` to a new `codex_task` session.
 If both are omitted, the saved card defaults are used. Model or effort
 changes require `sessionMode: new`.
 
-`codex_status({ scopeId })` lists only that conversation's recent persisted
+`codex_status({})` lists only the current ChatGPT conversation's recent persisted
 sessions and jobs, without submitted prompt bodies. Follow the returned
 `pagination.sessions` and `pagination.jobs` metadata when `hasMore` is true;
-the reported `scopeCounts` are totals for that scope, not page lengths. Omitting `scopeId`
-returns policy only; `includeAllScopes: true` is reserved for an explicit
-bridge-wide operator audit. Auto mode selects a compatible session only when it
+the reported `scopeCounts` are totals for that scope, not page lengths. The
+server-derived `scopeView.source` is `host-metadata`; raw host identifiers are
+not persisted. `includeAllScopes: true` is rejected for ordinary ChatGPT calls
+and is reserved for a trusted compatibility/admin host without session metadata.
+Auto mode selects a compatible session only when it
 is the sole compatible candidate for the same scope, cwd,
 sandbox, model, and effort inside the saved auto-resume window. With several
 compatible sessions it returns an ambiguity error so ChatGPT can inspect the
 scope and retry with the intended exact `threadId`. A copied or branched
-ChatGPT conversation must use a new scope UUID. Moving an existing thread
+ChatGPT conversation receives a new host session automatically. Moving an existing thread
 across scopes requires its exact `threadId` and `adoptThread: true` after
 explicit user intent.
 
@@ -168,7 +179,7 @@ indefinitely running. Live upstream progress refreshes `lastProgressAt`, while
 `health: "no-progress-observed"` and `processLiveness: "unknown"` mean only
 that no progress notification was observed inside the configured interval.
 Check the repository/worktree and Codex result evidence before deciding that
-such a job actually stopped. Use `codex_cancel({ scopeId, jobId })` only when
+such a job actually stopped. In ChatGPT, use `codex_cancel({ jobId })` only when
 cancellation is intended; it may leave partial filesystem changes.
 
 ## 6. Troubleshooting
