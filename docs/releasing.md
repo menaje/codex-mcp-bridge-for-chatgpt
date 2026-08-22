@@ -8,6 +8,14 @@ globally installed schema utility.
 
 ## Canonical fields
 
+Current public identity:
+
+| Kind | Value |
+| --- | --- |
+| Product | `Codex MCP Bridge for ChatGPT` |
+| GitHub repository | `menaje/codex-mcp-bridge-for-chatgpt` |
+| npm package | `codex-mcp-bridge-for-chatgpt` |
+
 The manifest controls:
 
 - public display name and description;
@@ -17,8 +25,11 @@ The manifest controls:
 - SemVer version, tag prefix, stable/prerelease channel, and release title;
 - generated release-note policy and the required npm tarball/checksum assets.
 
-The following runtime compatibility identifiers deliberately remain
-`codex-mcp-bridge` and are not release-name fields:
+### Legacy runtime namespace
+
+The following compatibility identifiers deliberately retain the bare
+`codex-mcp-bridge` namespace and are not current product, repository, or npm
+package names:
 
 - the installed executable;
 - the `CODEX_MCP_BRIDGE_*` environment prefix;
@@ -73,5 +84,7 @@ Only a push to `main` starts `.github/workflows/ci.yml`. The workflow:
 5. verifies npm produced the exact manifest-derived archive name;
 6. creates that GitHub Release with the archive and its SHA-256 checksum.
 
-Development pushes stay on `dev`. Merge `dev` into `main` only when the
-manifest version and release policy are ready to publish.
+Development pushes stay on `dev`. Never merge, fast-forward, cherry-pick, or
+push development work to `main` unless the user explicitly instructs that
+specific promotion. When instructed, first confirm that the manifest version
+and release policy are ready to publish.

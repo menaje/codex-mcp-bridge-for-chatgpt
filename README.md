@@ -2,6 +2,10 @@
 
 A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.
 
+- Repository: `menaje/codex-mcp-bridge-for-chatgpt`
+- npm package: `codex-mcp-bridge-for-chatgpt`
+- Product name: **Codex MCP Bridge for ChatGPT**
+
 ```text
 ChatGPT
   -> OpenAI Secure MCP Tunnel
@@ -66,8 +70,10 @@ npm run check
 ## Development and releases
 
 Use `dev` as the working branch. Pushes to `dev` and pull-request updates do
-not start GitHub Actions. The single workflow runs only after a change reaches
-`main`, where it performs the full build, test, and production dependency audit.
+not start GitHub Actions. Never merge, fast-forward, cherry-pick, or push
+development work to `main` without an explicit user instruction to do so. The
+single workflow runs only after an explicitly approved change reaches `main`,
+where it performs the full build, test, and production dependency audit.
 
 [`release-manifest.json`](release-manifest.json) is the canonical source for the
 product name, npm package and binary names, Node/npm toolchain, GitHub
@@ -94,12 +100,19 @@ manifest-derived tag, title, npm package tarball, and SHA-256 checksum. An
 existing release is never replaced or duplicated. See
 [docs/releasing.md](docs/releasing.md) for the complete contract.
 
-The public repository and npm package use the `-for-chatgpt` suffix. The
-`codex-mcp-bridge` executable, `CODEX_MCP_BRIDGE_*` environment variables,
-`~/.codex-mcp-bridge` state directory, keychain service names, tunnel profile,
-and MCP App resource URIs intentionally retain their original runtime identity.
-Changing those compatibility identifiers would disconnect existing local
-deployments, credentials, state, or mounted cards.
+### Current name and legacy runtime namespace
+
+The current product, repository, and npm package names always include
+**for ChatGPT**. A bare `codex-mcp-bridge` string in a command or path does not
+refer to the current product or repository name. It is the legacy local runtime
+namespace retained for existing installations only.
+
+That compatibility namespace currently covers the `codex-mcp-bridge`
+executable alias, `CODEX_MCP_BRIDGE_*` environment variables,
+`~/.codex-mcp-bridge` state directory, Keychain service keys, tunnel profile,
+and MCP App resource URIs. Changing it requires a separate migration of local
+services, credentials, state, and cached UI resources; a repository rename
+alone must not silently perform that migration.
 
 ## Local smoke test
 
@@ -413,6 +426,9 @@ requests.
 
 ### macOS Keychain
 
+The service strings below are legacy runtime keys used by existing
+installations; they are not the repository or product name.
+
 ```bash
 security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-api-key" -w "<runtime-key>" -U
 security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-tunnel-id" -w "tunnel_..." -U
@@ -423,6 +439,9 @@ CODEX_MCP_BRIDGE_ROOT=/absolute/path/to/repository npm run bridge:secure:keychai
 Use `bridge:secure:write:keychain` only for an intentional write session.
 
 ## Configuration
+
+`CODEX_MCP_BRIDGE_*` is the stable legacy configuration namespace. The current
+product and package name remains **Codex MCP Bridge for ChatGPT**.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -470,7 +489,8 @@ The retired `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` variable is ignored for one
 compatibility release and emits an operator warning. Remove it from service
 definitions; it cannot re-enable a finite Codex task deadline.
 
-The old `CODEX_GPT_BRIDGE_*` variable prefix is accepted temporarily for upstream compatibility.
+The deprecated pre-fork `CODEX_GPT_BRIDGE_*` variable prefix is accepted only
+as a temporary compatibility fallback.
 
 `npm run build` validates the release manifest, then writes a source fingerprint and version record to
 `dist/build-info.json`. The launcher verifies that fingerprint even with
@@ -484,4 +504,5 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md).
 
 ## Upstream
 
-This repository is derived from [DeepCogNeural/codex-gpt-bridge](https://github.com/DeepCogNeural/codex-gpt-bridge) under the MIT License. See [UPSTREAM.md](UPSTREAM.md) for the scope of this fork.
+Historical upstream attribution and the original third-party repository name
+are isolated in [UPSTREAM.md](UPSTREAM.md); they are not names for this project.
