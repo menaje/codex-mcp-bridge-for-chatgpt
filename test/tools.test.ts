@@ -1491,6 +1491,15 @@ describe("bridge tools", () => {
       [first.activityId, second.activityId].sort()
     );
     expect(detail.jobs).toHaveLength(2);
+    const firstJobDetail = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { jobId: first.jobId }
+    }));
+    expect(firstJobDetail).toMatchObject({
+      jobId: first.jobId,
+      threadId: "thread-1",
+      session: { threadId: "thread-1" }
+    });
     expect(detail.turns).toEqual([
       expect.objectContaining({ jobId: first.jobId, turnId: null, status: "completed" }),
       expect.objectContaining({ jobId: second.jobId, turnId: null, status: "completed" })
