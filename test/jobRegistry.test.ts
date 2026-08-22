@@ -48,6 +48,44 @@ describe("CodexJobRegistry persistence", () => {
     });
   });
 
+  it("treats resolved MCP error results as failed jobs", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start(jobInput(root), async () => ({
+      isError: true,
+      content: [{ type: "text", text: "Session not found for thread_id: stale-thread" }]
+    }));
+
+    await job.promise;
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "failed",
+      error: "Session not found for thread_id: stale-thread"
+    });
+    expect(registry.get(job.jobId)?.result).toBeUndefined();
+  });
+
+  it("repairs legacy completed jobs whose retained MCP result is an error", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start(jobInput(root), async () => result("thread-before-repair"));
+    await job.promise;
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    state.jobs[0].result = {
+      isError: true,
+      content: [{ type: "text", text: "Session not found for thread_id: thread-before-repair" }]
+    };
+    writeFileSync(stateFile, JSON.stringify(state));
+
+    const restored = persistentRegistry(root, stateFile);
+    expect(restored.get(job.jobId)).toMatchObject({
+      status: "failed",
+      error: "Session not found for thread_id: thread-before-repair"
+    });
+    expect(restored.get(job.jobId)?.result).toBeUndefined();
+  });
+
   it("drops persisted jobs whose cwd is outside the configured roots", async () => {
     const firstRoot = temporaryRoot();
     const secondRoot = temporaryRoot();

@@ -167,6 +167,72 @@ describe("CodexStdioUpstream", () => {
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     await pool.close();
   });
+
+  it("routes every reply back to the worker that created its thread", async () => {
+    const starts = [deferred<ToolResult>(), deferred<ToolResult>()];
+    const calls: Array<Array<{ name: string; threadId?: unknown }>> = [[], []];
+    const pool = new CodexUpstreamPool("codex", 2, (index) => async () => ({
+      client: {
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool(input) {
+          calls[index]?.push({ name: input.name, threadId: input.arguments.threadId });
+          if (input.name === "codex") return starts[index]!.promise;
+          const expected = `thread-${index}`;
+          if (input.arguments.threadId !== expected) {
+            return {
+              isError: true,
+              content: [{ type: "text", text: `Session not found: ${String(input.arguments.threadId)}` }]
+            };
+          }
+          return result(expected);
+        },
+        async close() {}
+      },
+      transport: { async close() {} }
+    }));
+
+    const first = pool.callTool("codex", { prompt: "first" }, 1000);
+    const second = pool.callTool("codex", { prompt: "second" }, 1000);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    starts[0]!.resolve(result("thread-0"));
+    starts[1]!.resolve(result("thread-1"));
+    await Promise.all([first, second]);
+
+    expect(pool.canResumeThread("thread-0")).toBe(true);
+    expect(pool.canResumeThread("thread-1")).toBe(true);
+    await expect(
+      pool.callTool("codex-reply", { threadId: "thread-1", prompt: "continue second" }, 1000)
+    ).resolves.toMatchObject({ structuredContent: { threadId: "thread-1" } });
+    await expect(
+      pool.callTool("codex-reply", { threadId: "thread-0", prompt: "continue first" }, 1000)
+    ).resolves.toMatchObject({ structuredContent: { threadId: "thread-0" } });
+    expect(calls[0]?.at(-1)).toMatchObject({ name: "codex-reply", threadId: "thread-0" });
+    expect(calls[1]?.at(-1)).toMatchObject({ name: "codex-reply", threadId: "thread-1" });
+    await pool.close();
+  });
+
+  it("refuses a persisted thread that has no binding in the active worker generation", async () => {
+    const pool = new CodexUpstreamPool("codex", 1, () => async () => ({
+      client: {
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool() {
+          return result("unused");
+        },
+        async close() {}
+      },
+      transport: { async close() {} }
+    }));
+
+    expect(pool.canResumeThread("persisted-thread")).toBe(false);
+    await expect(
+      pool.callTool("codex-reply", { threadId: "persisted-thread", prompt: "continue" }, 1000)
+    ).rejects.toThrow(/not available in the active MCP worker generation/);
+    await pool.close();
+  });
 });
 
 function result(threadId: string): ToolResult {

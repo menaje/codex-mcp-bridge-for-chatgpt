@@ -143,6 +143,12 @@ ChatGPT conversation must use a new scope UUID. Moving an existing thread
 across scopes requires its exact `threadId` and `adoptThread: true` after
 explicit user intent.
 
+The status entry `resumeAvailability: "available"` means the thread is still
+bound to its active Codex MCP worker. After the bridge or worker restarts,
+persisted history is retained but the entry becomes
+`"unavailable-after-worker-restart"`; auto mode starts a fresh thread and exact
+continuation is rejected instead of sending a misleading reply to a new worker.
+
 The same Codex thread is serialized. Different threads in the same scope can
 run concurrently in one cwd, including workspace-write and danger-full-access
 calls. If the only compatible thread is busy, ChatGPT must wait or deliberately

@@ -199,7 +199,8 @@ requested/default model and effort. There is no bridge-global
 accidentally auto-resume another conversation's thread. It never reuses a
 workspace-write or danger-full-access session for a read-only call. The
 auto-resume window defaults to six hours. Exact continuation can use an older
-persisted thread.
+persisted thread only while `resumeAvailability` remains `available` in the
+current worker generation.
 
 An exact thread also remains owned by its scope. Moving it to another
 conversation requires `threadId` plus `adoptThread: true`, and
@@ -217,6 +218,8 @@ useful. If the only compatible thread is busy, auto mode asks the caller to wait
 or deliberately start another thread. The caller is responsible for
 partitioning overlapping mutations or assigning separate worktrees when
 isolation is needed.
+Each new thread is pinned to the Codex MCP worker that created it, so a later
+reply is routed back to that same worker even when other pool workers are idle.
 The owner maximum is a bridge-side admission limit, not a guarantee that the
 ChatGPT host, tunnel, local Codex process, or machine can sustain that many
 simultaneous calls. The secure launcher sets the tunnel's active MCP request and
@@ -228,7 +231,13 @@ ordinary instructions for ChatGPT/Codex to decide for each job rather than a
 separate MCP management tool.
 
 Session metadata is stored in `~/.codex-mcp-bridge/state.sqlite` by default so
-the bridge can resume after a restart. Session rows contain only thread id,
+the bridge can restore routing history after a restart. A `codex mcp-server`
+thread itself belongs to the worker process that created it and cannot be
+continued after that worker or the bridge restarts. Restored rows are therefore
+shown with `resumeAvailability: "unavailable-after-worker-restart"`, excluded
+from automatic selection, and rejected for exact continuation; `auto` starts a
+fresh thread instead. Durable turn resumption across worker generations requires
+the planned Codex App Server backend. Session rows contain only thread id,
 `scopeId`, cwd, sandbox, model/effort, and timestamps; prompts and results are
 not written to them. Existing `sessions.json` records are imported once;
 pre-scope records are migrated to a quarantined

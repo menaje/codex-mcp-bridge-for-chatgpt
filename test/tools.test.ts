@@ -104,6 +104,16 @@ class LargeResultUpstream extends FakeUpstream {
   }
 }
 
+class RestartAwareUpstream extends FakeUpstream {
+  constructor(private readonly unavailableThreads: Set<string>) {
+    super();
+  }
+
+  canResumeThread(threadId: string): boolean {
+    return !this.unavailableThreads.has(threadId);
+  }
+}
+
 class FakeModelCatalog implements CodexModelCatalogProvider {
   public calls: Array<{ refresh?: boolean }> = [];
 
@@ -1215,6 +1225,47 @@ describe("bridge tools", () => {
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status.sessions[0]).toMatchObject({ threadId: "large-thread" });
     expect(status.jobs[0]).toMatchObject({ status: "completed", resultOmitted: true });
+    await close();
+  });
+
+  it("does not auto-resume a persisted thread from an unavailable worker generation", async () => {
+    const root = temporaryRoot();
+    const sessions = new SessionRegistry();
+    const now = Date.now();
+    sessions.record({
+      threadId: "stale-thread",
+      scopeId: SCOPE_A,
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      createdAt: now,
+      lastUsedAt: now
+    });
+    const upstream = new RestartAwareUpstream(new Set(["stale-thread"]));
+    const { client, close } = await connectTestClient(configFor(root), upstream, sessions);
+
+    const before = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(before.sessions[0]).toMatchObject({
+      threadId: "stale-thread",
+      autoResumeEligible: false,
+      resumeAvailability: "unavailable-after-worker-restart"
+    });
+
+    const explicit = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "continue stale", sessionMode: "continue", threadId: "stale-thread" }
+    });
+    expect(explicit.isError).toBe(true);
+    expect(JSON.stringify(explicit)).toContain("earlier MCP worker generation");
+    expect(upstream.calls).toHaveLength(0);
+
+    const restarted = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "start after restart" }
+    });
+    expect(restarted.isError).not.toBe(true);
+    expect((restarted as { structuredContent?: Record<string, any> }).structuredContent?.bridgeSession)
+      .toMatchObject({ action: "start", reason: "no-compatible-session", threadId: "thread-1" });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex"]);
     await close();
   });
 

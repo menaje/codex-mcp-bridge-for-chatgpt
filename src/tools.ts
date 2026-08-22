@@ -338,6 +338,7 @@ export class CodexJobRegistry {
       .then((result) => {
         job.abortController = undefined;
         if (job.status === "cancelled") return;
+        if (result.isError) throw new Error(toolResultErrorMessage(result));
         const retained = retainBoundedResult(result, this.maxResultBytes, job.sessionDecision);
         let undo: (() => void) | undefined;
         try {
@@ -557,6 +558,15 @@ export class CodexJobRegistry {
       if (job.status === "running") {
         job.status = "interrupted";
         job.error = "The bridge restarted before this Codex job reached a terminal state.";
+        job.updatedAt = now;
+        job.version += 1;
+        changed = true;
+      } else if (job.status === "completed" && job.result?.isError) {
+        job.status = "failed";
+        job.error = toolResultErrorMessage(job.result);
+        job.result = undefined;
+        job.resultBytes = undefined;
+        job.resultOmitted = undefined;
         job.updatedAt = now;
         job.version += 1;
         changed = true;
@@ -885,7 +895,9 @@ export function registerBridgeTools(
           scopeIdRequiredForTasks: true,
           legacyScopeId: LEGACY_SCOPE_ID,
           legacyAutoResume: false,
-          scopeIsAuthentication: false
+          scopeIsAuthentication: false,
+          mcpThreadLifetime: "active-upstream-worker-generation",
+          restartBehavior: "persist-history-but-start-a-new-thread-on-auto"
         },
         scopeView: args.includeAllScopes
           ? { mode: "all" }
@@ -912,7 +924,15 @@ export function registerBridgeTools(
           ...session,
           createdAt: new Date(session.createdAt).toISOString(),
           lastUsedAt: new Date(session.lastUsedAt).toISOString(),
-          autoResumeEligible: now - session.lastUsedAt <= preferences.autoResumeTtlMs
+          autoResumeEligible:
+            now - session.lastUsedAt <= preferences.autoResumeTtlMs &&
+            upstream.canResumeThread?.(session.threadId) !== false,
+          resumeAvailability:
+            upstream.canResumeThread?.(session.threadId) === false
+              ? "unavailable-after-worker-restart"
+              : upstream.canResumeThread?.(session.threadId) === true
+                ? "available"
+                : "unknown"
         })),
         jobs: visibleJobs.map((job) => formatJobSummary(job, jobs.staleThresholdMs)),
         upstreamTools,
@@ -1239,7 +1259,7 @@ export function registerBridgeTools(
           ...selection
         },
         preferences.autoResumeTtlMs
-      );
+      ).filter((session) => upstream.canResumeThread?.(session.threadId) !== false);
       if (compatible.length > 1) {
         const candidates = compatible
           .slice(0, 10)
@@ -1394,6 +1414,11 @@ async function continueSession(input: {
   const session = input.sessions.get(input.args.threadId || "");
   if (!session) {
     throw new Error("Unknown Codex thread id. Use codex_status to select a persisted session, or start a new codex_task.");
+  }
+  if (input.upstream.canResumeThread?.(session.threadId) === false) {
+    throw new Error(
+      "The selected Codex thread belongs to an earlier MCP worker generation and cannot be resumed. Use sessionMode='new' to start a new thread."
+    );
   }
   if (input.args.model || input.args.reasoningEffort) {
     throw new Error("Model and reasoning effort cannot change on a continued thread. Use sessionMode='new'.");
@@ -2111,6 +2136,16 @@ function isOptionalBoolean(value: unknown): value is boolean | undefined {
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+function toolResultErrorMessage(result: ToolResult): string {
+  for (const item of Array.isArray(result.content) ? result.content : []) {
+    if (isRecord(item) && item.type === "text" && typeof item.text === "string") {
+      const message = item.text.trim();
+      if (message) return message.slice(0, 4_000);
+    }
+  }
+  return "Codex upstream returned an error tool result.";
 }
 
 function retainBoundedResult(

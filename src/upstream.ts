@@ -7,6 +7,11 @@ export type ToolResult = CallToolResult;
 
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
+  /**
+   * Whether a Codex thread is still bound to a live upstream worker in this
+   * bridge process. `undefined` means the upstream cannot determine it.
+   */
+  canResumeThread?(threadId: string): boolean | undefined;
   callTool(
     name: string,
     args: Record<string, unknown>,
@@ -221,6 +226,7 @@ type UpstreamWorker = {
 
 export class CodexUpstreamPool implements CodexUpstream {
   private readonly workers: UpstreamWorker[];
+  private readonly threadWorkers = new Map<string, number>();
 
   constructor(
     codexCommand: string,
@@ -248,27 +254,82 @@ export class CodexUpstreamPool implements CodexUpstream {
     onProgress?: (progress: Progress) => void,
     signal?: AbortSignal
   ): Promise<ToolResult> {
-    return this.withWorker((upstream) => upstream.callTool(name, args, timeoutMs, onProgress, signal));
+    const requestedThreadId =
+      name === "codex-reply" && typeof args.threadId === "string" && args.threadId
+        ? args.threadId
+        : undefined;
+    const boundWorker = requestedThreadId
+      ? this.workers[this.threadWorkers.get(requestedThreadId) ?? -1]
+      : undefined;
+    if (requestedThreadId && !boundWorker) {
+      throw new Error(
+        `Codex thread ${requestedThreadId} is not available in the active MCP worker generation. Start a new session instead.`
+      );
+    }
+
+    let selectedWorker: UpstreamWorker | undefined;
+    try {
+      const result = await this.withWorker(
+        (upstream, worker) => {
+          selectedWorker = worker;
+          return upstream.callTool(name, args, timeoutMs, onProgress, signal);
+        },
+        boundWorker
+      );
+      if (name === "codex" && !result.isError && selectedWorker) {
+        const createdThreadId = readResultThreadId(result);
+        if (createdThreadId) this.threadWorkers.set(createdThreadId, selectedWorker.index);
+      }
+      return result;
+    } catch (error) {
+      if (selectedWorker && !isRequestTimeout(error)) {
+        this.forgetWorkerThreads(selectedWorker.index);
+      }
+      throw error;
+    }
+  }
+
+  canResumeThread(threadId: string): boolean {
+    return this.threadWorkers.has(threadId);
   }
 
   async close(): Promise<void> {
+    this.threadWorkers.clear();
     await Promise.all(this.workers.map((worker) => worker.upstream.close()));
   }
 
-  private async withWorker<T>(operation: (upstream: CodexStdioUpstream) => Promise<T>): Promise<T> {
-    const worker = this.workers.reduce((selected, candidate) =>
-      candidate.activeCalls < selected.activeCalls ||
-      (candidate.activeCalls === selected.activeCalls && candidate.index < selected.index)
-        ? candidate
-        : selected
-    );
+  private async withWorker<T>(
+    operation: (upstream: CodexStdioUpstream, worker: UpstreamWorker) => Promise<T>,
+    preferredWorker?: UpstreamWorker
+  ): Promise<T> {
+    const worker =
+      preferredWorker ||
+      this.workers.reduce((selected, candidate) =>
+        candidate.activeCalls < selected.activeCalls ||
+        (candidate.activeCalls === selected.activeCalls && candidate.index < selected.index)
+          ? candidate
+          : selected
+      );
     worker.activeCalls += 1;
     try {
-      return await operation(worker.upstream);
+      return await operation(worker.upstream, worker);
     } finally {
       worker.activeCalls -= 1;
     }
   }
+
+  private forgetWorkerThreads(workerIndex: number): void {
+    for (const [threadId, index] of this.threadWorkers) {
+      if (index === workerIndex) this.threadWorkers.delete(threadId);
+    }
+  }
+}
+
+function readResultThreadId(result: ToolResult): string | undefined {
+  const structured = result.structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return undefined;
+  const threadId = (structured as Record<string, unknown>).threadId;
+  return typeof threadId === "string" && threadId ? threadId : undefined;
 }
 
 function isRequestTimeout(error: unknown): boolean {

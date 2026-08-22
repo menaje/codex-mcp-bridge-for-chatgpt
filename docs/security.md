@@ -49,7 +49,8 @@ the network as the current macOS user.
 - Saved preferences are safely reduced when owner capabilities, roots, timeout,
   or concurrency limits become narrower, with warnings exposed in status/card.
 - Asynchronous, in-flight-deduplicated common secret-file filename preflight.
-- Four lazy Codex MCP workers with generation-safe connection retirement.
+- Four lazy Codex MCP workers with generation-safe connection retirement and
+  per-thread worker affinity.
 - Three-hour maximum inactivity timeout.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
   unknown; it does not automatically cancel a job.
@@ -101,6 +102,10 @@ because the private no-auth tunnel does not supply per-user identity.
   cannot independently prove that a particular call received fresh user approval.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
   can still affect the subset of calls assigned to that worker.
+- Codex MCP thread context is worker-process local. Persisted session metadata
+  remains visible after restart, but those rows are marked unavailable and are
+  not resumed; auto mode starts a fresh thread. Cross-generation context resume
+  requires a future App Server backend.
 - Tool results and retained jobs can contain repository content. They are
   bounded in memory and persisted to the private state database until their
   retention window expires; local backup and filesystem-access policies should
