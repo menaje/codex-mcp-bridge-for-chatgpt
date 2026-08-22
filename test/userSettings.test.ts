@@ -94,6 +94,53 @@ describe("user settings store", () => {
 
     expect(store.resolveSandbox("danger-full-access")).toBe("read-only");
   });
+
+  it("safely reconciles saved preferences when owner capabilities and limits tighten", () => {
+    const oldRoot = temporaryDirectory("bridge-old-root-");
+    const newRoot = temporaryDirectory("bridge-new-root-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const oldConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: oldRoot,
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "60000",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "4",
+      CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "4"
+    });
+    const oldStore = new UserSettingsStore(oldConfig, { stateFile });
+    oldStore.update({
+      accessStrategy: "always-full",
+      taskTimeoutMs: 60000,
+      maxConcurrentJobs: 4
+    });
+
+    const tightenedConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: newRoot,
+      CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "30000",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
+      CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
+    });
+    const reconciled = new UserSettingsStore(tightenedConfig, {
+      stateFile,
+      now: () => Date.parse("2026-08-22T00:00:00Z")
+    });
+
+    expect(reconciled.current).toMatchObject({
+      revision: 2,
+      updatedAt: "2026-08-22T00:00:00.000Z",
+      accessStrategy: "read-only",
+      defaultCwd: tightenedConfig.allowedRoots[0],
+      taskTimeoutMs: 30000,
+      maxConcurrentJobs: 2
+    });
+    expect(reconciled.loadWarnings).toHaveLength(4);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the current owner allowlist/);
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
+      settings: { revision: 2, accessStrategy: "read-only", taskTimeoutMs: 30000, maxConcurrentJobs: 2 }
+    });
+  });
 });
 
 function temporaryDirectory(prefix: string): string {

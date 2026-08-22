@@ -8,6 +8,31 @@ import {
 } from "../src/upstream.js";
 
 describe("CodexStdioUpstream", () => {
+  it("forwards MCP progress notifications to the job observer", async () => {
+    let observedOptions: Record<string, unknown> | undefined;
+    const progress: Array<{ progress: number; total?: number; message?: string }> = [];
+    const upstream = new CodexStdioUpstream("codex", async () => ({
+      client: {
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool(_input, _schema, options) {
+          observedOptions = options;
+          options?.onprogress?.({ progress: 2, total: 5, message: "working" });
+          return result("progress-thread");
+        },
+        async close() {}
+      },
+      transport: { async close() {} }
+    }));
+
+    await upstream.callTool("progress", {}, 1234, (update) => progress.push(update));
+
+    expect(observedOptions).toMatchObject({ timeout: 1234, resetTimeoutOnProgress: true });
+    expect(progress).toEqual([{ progress: 2, total: 5, message: "working" }]);
+    await upstream.close();
+  });
+
   it("keeps the current connection after an isolated request timeout", async () => {
     let factoryCalls = 0;
     let clientCloses = 0;

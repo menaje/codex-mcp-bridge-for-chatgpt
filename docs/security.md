@@ -8,7 +8,11 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 
 ## Exposed capabilities
 
-- `codex_status` returns policy, metadata-only session summaries, and retained asynchronous results.
+- `codex_status` returns policy plus scope-filtered metadata-only session
+  summaries and retained asynchronous results. An explicit operator-audit flag
+  can return all scopes.
+- `codex_cancel` forwards cancellation to one scope-owned running job; partial
+  filesystem changes are not rolled back.
 - `codex_models` returns the current selectable Codex model catalog.
 - `codex_settings` returns owner limits and renders the settings card.
 - `codex_update_settings` is app-only and persists validated preferences.
@@ -28,17 +32,27 @@ the network as the current macOS user.
 - Read-only sandbox.
 - `on-request` approval policy.
 - Thirty concurrent jobs at most.
-- Concurrent read-only sessions are allowed in one working directory.
-- All mutating jobs are serialized per working directory.
+- Concurrent sessions are allowed in one working directory, including mutating jobs.
+- Overlapping mutations are coordinated by the caller or isolated with worktrees.
 - One active job per Codex thread.
+- Different Codex threads under the same conversation scope may run
+  concurrently in the same working directory; parallelism is created on demand
+  rather than configured on the scope in advance.
+- Required conversation-scope UUIDs for automatic session routing and required
+  request UUIDs for retained-job retry deduplication.
 - 50,000 characters per prompt.
 - Six-hour automatic session-resume window and completed-job retention.
-- Durable session metadata stored in a user-private file with mode `0600`.
-- Durable bridge preferences stored in a separate user-private file with mode
-  `0600`, revision checks, and owner-limit validation.
+- Durable sessions, bridge preferences, jobs, and bounded results stored in one
+  user-private transactional SQLite database with mode `0600`; cross-registry
+  completion changes commit atomically, and previously running entries become
+  `interrupted` after restart.
+- Saved preferences are safely reduced when owner capabilities, roots, timeout,
+  or concurrency limits become narrower, with warnings exposed in status/card.
 - Asynchronous, in-flight-deduplicated common secret-file filename preflight.
 - Four lazy Codex MCP workers with generation-safe connection retirement.
 - Three-hour maximum inactivity timeout.
+- Ten-minute `no-progress-observed` threshold with process liveness explicitly
+  unknown; it does not automatically cancel a job.
 - At most 100 retained jobs and one MiB per retained job result by default.
 - Upstream stderr disabled unless explicit local debug mode is enabled.
 
@@ -47,6 +61,11 @@ the network as the current macOS user.
 Secure Tunnel mode starts a loopback-only HTTP server with no application-level authentication. The OpenAI-managed tunnel and its organization/workspace permissions are the transport boundary. The bridge rejects no-auth mode on non-loopback host bindings.
 
 When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
+
+Conversation `scopeId` values are routing labels, not identities or secrets.
+They prevent accidental automatic reuse between ChatGPT conversations, but a
+caller with bridge access can request the bridge-wide audit view or explicitly
+adopt a known thread. Do not treat scope filtering as authorization.
 
 ## Plugin approval boundary
 
@@ -68,15 +87,34 @@ because the private no-auth tunnel does not supply per-user identity.
 - Filename scanning detects common secret files, not secret values embedded in ordinary source files.
 - Mutation modes allow Codex to change files and may execute commands. Danger
   mode is not limited to the configured workspace.
+- Concurrent mutation jobs in the same working directory can overwrite each
+  other's changes or interfere through shared build artifacts unless the caller
+  partitions the work or assigns separate worktrees.
+- Request deduplication lasts only while the retained job record exists. After
+  expiry or operator removal of the state database, replay protection for an old
+  request UUID no longer exists.
+- The bridge receives no trusted ChatGPT conversation identifier. Correct
+  scope reuse—and choosing a new scope after copying or branching a chat—relies
+  on the MCP host/model following the tool contract; the server can validate a
+  UUID but cannot prove which chat it represents.
 - Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
   cannot independently prove that a particular call received fresh user approval.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
   can still affect the subset of calls assigned to that worker.
-- Tool results and retained jobs can contain repository content in process memory;
-  they are bounded but still lost on bridge restart.
+- Tool results and retained jobs can contain repository content. They are
+  bounded in memory and persisted to the private state database until their
+  retention window expires; local backup and filesystem-access policies should
+  treat that database and its SQLite sidecars as source-sensitive.
 - The 30-job setting is a bridge admission limit. The MCP host, tunnel, Codex,
   account, and machine can impose lower practical limits.
-- Persisted session state contains thread ids and local working-directory paths, but not prompts or results.
+- Persisted session rows contain scope routing labels, thread ids, and local
+  working-directory paths, but not prompts or results. Pre-scope records are
+  migrated into a legacy scope that automatic selection ignores; obsolete v2
+  task-lane labels are discarded during migration.
+- Persisted job rows contain local paths, lifecycle metadata, progress
+  messages, errors, and bounded Codex results. Results can include repository
+  content even though the job record does not separately store the submitted
+  prompt.
 - Persisted settings contain local paths and user defaults. They contain no
   tunnel credential, prompt, or result, but every user of the same private
   bridge connection shares them.

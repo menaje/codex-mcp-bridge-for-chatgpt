@@ -1,10 +1,16 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { SandboxMode } from "./config.js";
+import type { BridgeStateStore } from "./stateStore.js";
 import type { ToolResult } from "./upstream.js";
+
+export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
+export const SCOPE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type TrackedCodexSession = {
   threadId: string;
+  scopeId: string;
   cwd: string;
   sandbox: SandboxMode;
   model?: string;
@@ -14,6 +20,7 @@ export type TrackedCodexSession = {
 };
 
 export type SessionMatch = {
+  scopeId: string;
   cwd: string;
   sandbox: SandboxMode;
   model?: string;
@@ -21,12 +28,13 @@ export type SessionMatch = {
 };
 
 type PersistedSessionState = {
-  version: 1;
+  version: 3;
   sessions: TrackedCodexSession[];
 };
 
 export type SessionRegistryOptions = {
   stateFile?: string;
+  stateStore?: BridgeStateStore;
   allowedRoots?: string[];
   autoResumeTtlMs?: number;
   maxSessions?: number;
@@ -36,6 +44,7 @@ export type SessionRegistryOptions = {
 export class SessionRegistry {
   private readonly sessions = new Map<string, TrackedCodexSession>();
   private readonly stateFile?: string;
+  private readonly stateStore?: BridgeStateStore;
   private readonly allowedRoots: string[];
   private readonly autoResumeTtlMs: number;
   private readonly maxSessions: number;
@@ -43,6 +52,7 @@ export class SessionRegistry {
 
   constructor(options: SessionRegistryOptions = {}) {
     this.stateFile = options.stateFile;
+    this.stateStore = options.stateStore;
     this.allowedRoots = options.allowedRoots || [];
     this.autoResumeTtlMs = options.autoResumeTtlMs ?? 6 * 60 * 60 * 1000;
     this.maxSessions = options.maxSessions ?? 1000;
@@ -51,11 +61,11 @@ export class SessionRegistry {
   }
 
   get persistent(): boolean {
-    return Boolean(this.stateFile);
+    return Boolean(this.stateStore?.persistent || this.stateFile);
   }
 
   get persistencePath(): string | null {
-    return this.stateFile || null;
+    return this.stateStore?.persistencePath || this.stateFile || null;
   }
 
   get autoResumeWindowMs(): number {
@@ -63,39 +73,78 @@ export class SessionRegistry {
   }
 
   record(session: TrackedCodexSession): void {
+    const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
     this.sessions.delete(session.threadId);
     this.sessions.set(session.threadId, {
       ...session,
       createdAt: existing?.createdAt ?? session.createdAt
     });
-    this.enforceLimit();
-    this.persist();
+    const removed = this.enforceLimit();
+    try {
+      this.persistSession(this.sessions.get(session.threadId) || session, removed);
+    } catch (error) {
+      this.sessions.clear();
+      for (const [threadId, value] of snapshot) this.sessions.set(threadId, value);
+      throw error;
+    }
   }
 
   get(threadId: string): TrackedCodexSession | undefined {
-    return this.sessions.get(threadId);
+    const session = this.sessions.get(threadId);
+    return session ? { ...session } : undefined;
   }
 
   touch(threadId: string): void {
     const session = this.sessions.get(threadId);
     if (!session) return;
-    this.sessions.delete(threadId);
-    this.sessions.set(threadId, {
+    const updated = {
       ...session,
       lastUsedAt: this.now()
-    });
-    this.persist();
+    };
+    this.sessions.delete(threadId);
+    this.sessions.set(threadId, updated);
+    try {
+      this.persistSession(updated);
+    } catch (error) {
+      this.restoreInMemory(threadId, session);
+      throw error;
+    }
   }
 
-  findMostRecentCompatible(
+  adopt(threadId: string, scopeId: string): TrackedCodexSession | undefined {
+    const session = this.sessions.get(threadId);
+    if (!session) return undefined;
+    const adopted = {
+      ...session,
+      scopeId,
+      lastUsedAt: this.now()
+    };
+    this.sessions.delete(threadId);
+    this.sessions.set(threadId, adopted);
+    try {
+      this.persistSession(adopted);
+    } catch (error) {
+      this.restoreInMemory(threadId, session);
+      throw error;
+    }
+    return { ...adopted };
+  }
+
+  restoreInMemory(threadId: string, session?: TrackedCodexSession): void {
+    this.sessions.delete(threadId);
+    if (session) this.sessions.set(threadId, { ...session });
+  }
+
+  findCompatible(
     match: SessionMatch,
     autoResumeTtlMs = this.autoResumeTtlMs
-  ): TrackedCodexSession | undefined {
+  ): TrackedCodexSession[] {
     const cutoff = this.now() - autoResumeTtlMs;
-    return this.list().find(
+    return this.list().filter(
       (session) =>
         session.lastUsedAt >= cutoff &&
+        session.scopeId === match.scopeId &&
         session.cwd === match.cwd &&
         session.sandbox === match.sandbox &&
         session.model === match.model &&
@@ -103,19 +152,46 @@ export class SessionRegistry {
     );
   }
 
-  list(limit = this.maxSessions): TrackedCodexSession[] {
+  list(limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
     return [...this.sessions.values()]
       .reverse()
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
-      .slice(0, Math.max(0, limit))
+      .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit))
       .map((session) => ({ ...session }));
+  }
+
+  listForScope(scopeId: string, limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
+    return this.list(this.maxSessions)
+      .filter((session) => session.scopeId === scopeId)
+      .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
   }
 
   size(): number {
     return this.sessions.size;
   }
 
+  sizeForScope(scopeId: string): number {
+    return [...this.sessions.values()].filter((session) => session.scopeId === scopeId).length;
+  }
+
   private load(): void {
+    if (this.stateStore) {
+      const stored = this.stateStore.listSessions();
+      const sessions = stored
+        .map((session) => readPersistedSession(session, 3))
+        .filter((session): session is TrackedCodexSession => Boolean(session))
+        .filter((session) => this.isAllowedCwd(session.cwd))
+        .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
+        .slice(-this.maxSessions);
+      for (const session of sessions) this.sessions.set(session.threadId, session);
+      if (sessions.length !== stored.length) this.stateStore.replaceSessions(this.list());
+      this.importLegacyState();
+      return;
+    }
+    this.loadJsonState();
+  }
+
+  private loadJsonState(): void {
     if (!this.stateFile || !existsSync(this.stateFile)) return;
     let parsed: unknown;
     try {
@@ -125,11 +201,16 @@ export class SessionRegistry {
         `Could not read Codex session state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
-    if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.sessions)) {
+    if (
+      !isRecord(parsed) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) ||
+      !Array.isArray(parsed.sessions)
+    ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
+    const stateVersion = parsed.version as 1 | 2 | 3;
     const sessions = parsed.sessions
-      .map(readPersistedSession)
+      .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
       .filter((session) => this.isAllowedCwd(session.cwd))
       .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
@@ -137,15 +218,53 @@ export class SessionRegistry {
     for (const session of sessions) {
       this.sessions.set(session.threadId, session);
     }
+    if (stateVersion !== 3) this.persist();
+  }
+
+  private importLegacyState(): void {
+    if (!this.stateStore || !this.stateFile || !existsSync(this.stateFile)) return;
+    const marker = `legacy_sessions_imported:${this.stateFile}`;
+    if (this.stateStore.getMeta(marker)) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
+    } catch (error) {
+      throw new Error(
+        `Could not read Codex session state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (
+      !isRecord(parsed) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3) ||
+      !Array.isArray(parsed.sessions)
+    ) {
+      throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
+    }
+    const stateVersion = parsed.version as 1 | 2 | 3;
+    const imported = parsed.sessions
+      .map((session) => readPersistedSession(session, stateVersion))
+      .filter((session): session is TrackedCodexSession => Boolean(session))
+      .filter((session) => this.isAllowedCwd(session.cwd))
+      .filter((session) => !this.sessions.has(session.threadId));
+    this.stateStore.transaction(() => {
+      for (const session of imported) this.sessions.set(session.threadId, session);
+      this.enforceLimit();
+      this.stateStore?.replaceSessions(this.list());
+      this.stateStore?.setMeta(marker, new Date().toISOString());
+    });
   }
 
   private persist(): void {
+    if (this.stateStore) {
+      this.stateStore.replaceSessions(this.list());
+      return;
+    }
     if (!this.stateFile) return;
     const directory = path.dirname(this.stateFile);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSessionState = {
-      version: 1,
+      version: 3,
       sessions: this.list()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -153,12 +272,26 @@ export class SessionRegistry {
     chmodSync(this.stateFile, 0o600);
   }
 
-  private enforceLimit(): void {
+  private persistSession(session: TrackedCodexSession, removed: string[] = []): void {
+    if (!this.stateStore) {
+      this.persist();
+      return;
+    }
+    this.stateStore.transaction(() => {
+      this.stateStore?.upsertSession(session);
+      for (const threadId of removed) this.stateStore?.deleteSession(threadId);
+    });
+  }
+
+  private enforceLimit(): string[] {
+    const removed: string[] = [];
     while (this.sessions.size > this.maxSessions) {
       const oldest = this.sessions.keys().next().value;
-      if (!oldest) return;
+      if (!oldest) return removed;
       this.sessions.delete(oldest);
+      removed.push(oldest);
     }
+    return removed;
   }
 
   private isAllowedCwd(cwd: string): boolean {
@@ -182,12 +315,15 @@ export function extractThreadId(result: ToolResult): string | undefined {
   return undefined;
 }
 
-function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
+function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
+  const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
   if (
     typeof value.threadId !== "string" ||
     !value.threadId ||
+    typeof scopeId !== "string" ||
+    !SCOPE_ID_PATTERN.test(scopeId) ||
     typeof value.cwd !== "string" ||
     !path.isAbsolute(value.cwd) ||
     path.normalize(value.cwd) !== value.cwd ||
@@ -201,6 +337,7 @@ function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
   }
   return {
     threadId: value.threadId,
+    scopeId: scopeId.toLowerCase(),
     cwd: value.cwd,
     sandbox,
     model: value.model,

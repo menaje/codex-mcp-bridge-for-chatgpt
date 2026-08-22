@@ -1,6 +1,6 @@
 {
   "name": "codex-mcp-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
   "type": "module",
   "bin": {
@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "bridge:local": "node scripts/start-codex-mcp-bridge.mjs --mode local",
     "bridge:secure": "node scripts/start-codex-mcp-bridge.mjs --mode secure",
     "bridge:secure:keychain": "zsh scripts/start-secure-from-keychain.sh",
@@ -36,9 +36,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^13.0.3",
     "zod": "^4.2.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^22.12.0",
     "tsx": "^4.21.0",
@@ -46,6 +48,6 @@
     "vitest": "^4.0.15"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

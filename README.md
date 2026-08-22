@@ -12,7 +12,8 @@ ChatGPT
 
 The official Codex MCP server already provides `codex` and `codex-reply`. This bridge exposes a smaller lifecycle-oriented surface for safer daily use from ChatGPT:
 
-- `codex_status`: inspect policy, durable sessions, recent jobs, or one long-running job result.
+- `codex_status`: inspect policy, scope-filtered durable sessions and jobs, or wait for one long-running job to change or finish.
+- `codex_cancel`: cancel one running job in its owning conversation scope. Partial filesystem changes may remain.
 - `codex_models`: read the current selectable models and supported reasoning efforts from Codex.
 - `codex_settings`: render an interactive card for saved user preferences and current owner limits.
 - `codex_task`: start or continue a policy-limited Codex session.
@@ -32,20 +33,21 @@ which ChatGPT's model does not need to invoke directly.
 - Refuses repositories containing common secret-file names unless the owner explicitly disables the preflight.
 - Limits prompt size and concurrent Codex jobs.
 - Suppresses upstream Codex stderr unless local debug logging is enabled.
-- Stores user settings in a private local file and revalidates every saved value
+- Stores settings, session metadata, jobs, and bounded results in one private
+  transactional SQLite database and revalidates every saved value
   against owner-enforced capabilities and limits.
 
 These controls are a policy layer, not OS-level isolation. Use a staging copy, container, VM, or separate OS user when hard isolation is required.
 
 ## Requirements
 
-- Node.js 20 or later; Node.js 22 is recommended.
+- Node.js 22 or later.
 - Codex CLI installed, authenticated, and providing `codex mcp-server`.
 - `tunnel-client` and an OpenAI Secure MCP Tunnel for ChatGPT access.
 
 Official references:
 
-- [Run Codex as an MCP server](https://learn.chatgpt.com/docs/mcp-server)
+- [Run Codex as an MCP server](https://developers.openai.com/codex/mcp/)
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 
 ## Install
@@ -128,7 +130,7 @@ The card cannot change allowed roots, capability gates, approval policy, tunnel
 credentials, secret scanning, or process-level hard limits. Settings are global
 to this bridge instance—not per ChatGPT account—because the no-auth private
 tunnel connection does not provide an end-user identity to the bridge. They are
-stored at `~/.codex-mcp-bridge/settings.json` with mode `0600` by default.
+stored in `~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default.
 
 ### ChatGPT plugin permissions and Codex permissions
 
@@ -173,47 +175,99 @@ effort because continued Codex threads keep their original configuration.
 
 `codex_task` consolidates new and follow-up calls:
 
-- `sessionMode: auto` continues the most recently used compatible
-  session, or starts a new one when no compatible recent session exists.
+- `scopeId` is required. ChatGPT generates one UUID for a conversation and
+  reuses it for every bridge call in that conversation. A copied or branched
+  conversation gets a new UUID unless the user explicitly requests a handoff.
+- `requestId` is required. ChatGPT generates one UUID for each logical task
+  call and reuses that exact value only when retrying the same arguments. The
+  bridge returns the existing job/result for a duplicate and rejects reuse with
+  changed arguments.
+
+- `sessionMode: auto` continues the only compatible session in the conversation
+  scope, or starts a new one when no compatible recent session exists. If
+  several compatible sessions exist, it requires an exact `threadId` instead of
+  guessing.
 - `sessionMode: new` always starts with fresh conversation context.
 - `sessionMode: continue` requires an exact `threadId` returned by
   `codex_status` or an earlier task result.
 
 When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
 
-Auto selection is scoped to the same working directory, sandbox, and any
-requested/default model and effort. It never reuses a workspace-write session
-or danger-full-access session for a read-only call. The auto-resume window defaults to six hours. Exact
-continuation can use an older persisted thread.
+Auto selection requires the same `scopeId`, working directory, sandbox, and
+requested/default model and effort. There is no bridge-global
+"most recent session" fallback, so one ChatGPT conversation cannot
+accidentally auto-resume another conversation's thread. It never reuses a
+workspace-write or danger-full-access session for a read-only call. The
+auto-resume window defaults to six hours. Exact continuation can use an older
+persisted thread.
 
-Read-only sessions may run concurrently in the same working directory up to
-the saved active-job limit, which cannot exceed
-`CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`. Mutating jobs (`workspace-write` and
-`danger-full-access`) are serialized per working directory, and turns on one
-Codex thread remain serialized. If auto
-mode finds that its most recent compatible read-only thread is busy, the bridge
-starts a new session instead of rejecting the parallel request. A concurrent
-mutating call in the same directory is rejected with a retryable conflict.
+An exact thread also remains owned by its scope. Moving it to another
+conversation requires `threadId` plus `adoptThread: true`, and
+should be done only after the user explicitly requests that handoff. Scope UUIDs
+are routing labels, not authentication credentials; every caller that can reach
+this private bridge still shares the same operator trust boundary.
+
+Sessions may run concurrently in the same working directory up to the saved
+active-job limit, which cannot exceed `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`.
+This includes `workspace-write` and `danger-full-access` jobs. The same
+Codex thread remains serialized, while different threads under one scope can
+run concurrently. There is no up-front single/parallel mode: begin with the
+ordinary session and use `sessionMode: new` whenever parallel work becomes
+useful. If the only compatible thread is busy, auto mode asks the caller to wait
+or deliberately start another thread. The caller is responsible for
+partitioning overlapping mutations or assigning separate worktrees when
+isolation is needed.
 The owner maximum is a bridge-side admission limit, not a guarantee that the
 ChatGPT host, tunnel, local Codex process, or machine can sustain that many
 simultaneous calls. The secure launcher sets the tunnel's active MCP request and
 control-plane buffer limits to the same value.
 
 An allowed root may contain multiple repositories. Pass the exact repository or
-worktree path as `cwd`; mutating jobs in different directories can run in
-parallel. Git worktree creation and task partitioning remain ordinary
-instructions for ChatGPT/Codex to decide for each job rather than a separate MCP
-management tool.
+worktree path as `cwd`. Git worktree creation and task partitioning remain
+ordinary instructions for ChatGPT/Codex to decide for each job rather than a
+separate MCP management tool.
 
-Session metadata is stored at `~/.codex-mcp-bridge/sessions.json` by default so
-the bridge can resume after a restart. The file contains only thread id, cwd,
-sandbox, model/effort, and timestamps; prompts and results are not written to
-it. Long-running tasks return a `jobId`; retrieve the result with
-`codex_status({ jobId })`. Job state and results are process-memory only, so a
-bridge restart interrupts active jobs and discards retained job results even
-though session metadata remains available. The bridge retains at most 100 jobs
-and one MiB per result by default; oversized results are replaced by a bounded
-completion notice while their session id remains tracked.
+Session metadata is stored in `~/.codex-mcp-bridge/state.sqlite` by default so
+the bridge can resume after a restart. Session rows contain only thread id,
+`scopeId`, cwd, sandbox, model/effort, and timestamps; prompts and results are
+not written to them. Existing `sessions.json` records are imported once;
+pre-scope records are migrated to a quarantined
+legacy scope that is never auto-selected; older task-lane records are collapsed
+into ordinary sessions under their existing scope. Legacy sessions require an
+exact thread handoff. Long-running tasks return a `jobId`; retrieve the result with
+`codex_status({ scopeId, jobId })`, or use
+`codex_status({ scopeId, jobId, waitFor: "terminal", waitMs: 55000 })` to hold one
+bounded status call until completion, failure, interruption, or the wait
+expires. `waitFor: "change"` returns on the next upstream progress or terminal
+transition. A wait timeout leaves the job running and can be repeated; it is
+not a Codex task timeout. Call `codex_cancel({ scopeId, jobId })` to request
+cancellation. The bridge forwards an abort signal and records `cancelled`
+idempotently, but callers must inspect the working tree because edits made
+before cancellation are not rolled back.
+
+Without `scopeId`, `codex_status` returns policy only and omits session/job
+details. `includeAllScopes: true` provides a bridge-wide operator audit and
+should be used only for an explicit request to inspect all conversations.
+
+Job metadata and bounded results are stored transactionally in
+`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Completed and
+failed results remain retrievable across bridge restarts. A job that was still
+running when the bridge stopped is changed to `interrupted` at startup because
+the new process cannot safely claim the former upstream request. While a job is
+live, upstream MCP progress updates refresh `lastProgressAt`. No observed
+progress for ten minutes produces `health: "no-progress-observed"` together
+with `processLiveness: "unknown"`; absence of an MCP progress event is not proof
+that Codex stopped, so callers should inspect actual work evidence before
+waiting longer or cancelling. The bridge retains at most 100 jobs
+for six hours and one MiB per result by default; oversized results are replaced
+by a bounded completion notice while their session id remains tracked.
+
+For a user request that asks for a finished outcome, a running `jobId` is only
+an intermediate response. The plugin instructions tell ChatGPT to wait for a
+terminal state, inspect the result, verify the requested artifacts and relevant
+tests, and only then give its final completion answer. An immediate final answer
+with a running `jobId` is reserved for explicit start-only or background-work
+requests.
 
 ### macOS Keychain
 
@@ -241,8 +295,10 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Time to cache a successful dynamic Codex model catalog |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Timeout for refreshing the Codex model catalog |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE` | `~/.codex-mcp-bridge/models.json` | Private last-successful model catalog fallback |
-| `CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE` | `~/.codex-mcp-bridge/settings.json` | Private durable settings-card state |
-| `CODEX_MCP_BRIDGE_SESSION_STATE_FILE` | `~/.codex-mcp-bridge/sessions.json` | Private durable session-metadata file |
+| `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` | `~/.codex-mcp-bridge/state.sqlite` | Primary private transactional settings/session/job store |
+| `CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE` | `~/.codex-mcp-bridge/settings.json` | Legacy settings JSON imported once when present |
+| `CODEX_MCP_BRIDGE_SESSION_STATE_FILE` | `~/.codex-mcp-bridge/sessions.json` | Legacy session JSON imported once when present |
+| `CODEX_MCP_BRIDGE_JOB_STATE_FILE` | `~/.codex-mcp-bridge/jobs.json` | Legacy job JSON imported once when present |
 | `CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE` | `auto` | Initial card default for omitted session mode: `auto` or `new` |
 | `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` | `21600000` | Initial saved idle window for automatic recent-session reuse; explicit continuation is still allowed |
 | `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Owner maximum and initial saved active Codex-call limit |
@@ -251,12 +307,19 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` | `10800000` | Owner maximum and initial saved Codex MCP inactivity timeout, capped at three hours; progress notifications reset it |
 | `CODEX_MCP_BRIDGE_FAST_RETURN_MS` | `25000` | Delay before returning a job ID |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Completed job retention |
-| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Maximum in-memory running/completed job records |
+| `CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS` | `600000` | No-progress interval before a running job is labeled no-progress-observed; this does not establish process liveness |
+| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Maximum running/terminal job records retained in memory and durable state |
 | `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Maximum retained serialized result size per job |
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
 
 The old `CODEX_GPT_BRIDGE_*` variable prefix is accepted temporarily for upstream compatibility.
+
+`npm run build` writes a source fingerprint and version record to
+`dist/build-info.json`. The launcher verifies that fingerprint even with
+`--no-build` and rebuilds stale output instead of silently running old code.
+Both `/healthz` and `codex_status` expose the active build record so the source
+and running service can be compared directly.
 
 ## ChatGPT setup
 

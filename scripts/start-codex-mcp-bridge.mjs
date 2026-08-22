@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
+import { computeSourceHash } from "./build-fingerprint.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -57,13 +58,25 @@ function ensurePrerequisites() {
 
 function ensureBuilt() {
   const cliPath = resolve(repoRoot, "dist/cli.js");
-  if (args.noBuild && existsSync(cliPath)) return;
-  if (args.noBuild) {
-    console.log("dist/cli.js is missing; building once before startup.");
+  if (args.noBuild && buildMatchesSource(cliPath)) return;
+  if (args.noBuild && existsSync(cliPath)) {
+    console.log("Built output does not match the current source; rebuilding before startup.");
+  } else if (args.noBuild) {
+    console.log("Built output is missing; building once before startup.");
   }
   const result = spawnSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error("Build failed. Run npm run build for details.");
+  }
+}
+
+function buildMatchesSource(cliPath) {
+  if (!existsSync(cliPath)) return false;
+  try {
+    const buildInfo = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    return buildInfo.sourceHash === computeSourceHash(repoRoot);
+  } catch {
+    return false;
   }
 }
 
@@ -240,7 +253,7 @@ Options:
   --profile <name>       tunnel-client profile name.
   --tunnel-client <path> tunnel-client binary path.
   --port <port>          Loopback HTTP port. Defaults to 8876.
-  --no-build             Skip the build step.`);
+  --no-build             Reuse dist only when its source fingerprint is current.`);
 }
 
 function cleanup(code = 0) {

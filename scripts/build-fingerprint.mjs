@@ -1,0 +1,26 @@
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+export function computeSourceHash(repoRoot) {
+  const files = ["package.json", "package-lock.json", "tsconfig.json", ...walk(repoRoot, "src")].sort();
+  const hash = createHash("sha256");
+  for (const relative of files) {
+    hash.update(relative);
+    hash.update("\0");
+    hash.update(readFileSync(path.join(repoRoot, relative)));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function walk(repoRoot, relativeDirectory) {
+  const entries = readdirSync(path.join(repoRoot, relativeDirectory), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const relative = path.join(relativeDirectory, entry.name);
+    if (entry.isDirectory()) files.push(...walk(repoRoot, relative));
+    else if (entry.isFile()) files.push(relative);
+  }
+  return files;
+}

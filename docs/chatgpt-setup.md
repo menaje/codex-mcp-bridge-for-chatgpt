@@ -50,8 +50,8 @@ the intended approval boundary.
 3. Open Plugins and create a developer-mode connection.
 4. Choose Tunnel and select or paste the matching `tunnel_id`.
 5. Use `No Auth`; the bridge is loopback-only and the OpenAI tunnel is the transport boundary.
-6. Confirm that the four user-facing bridge tools are discovered:
-   `codex_status`, `codex_models`, `codex_settings`, and `codex_task`.
+6. Confirm that the five user-facing bridge tools are discovered:
+   `codex_status`, `codex_cancel`, `codex_models`, `codex_settings`, and `codex_task`.
    `codex_update_settings` is an app-only action used by the settings card.
 
 ### Plugin permission setting
@@ -101,8 +101,26 @@ Ask ChatGPT to call `codex_status`. Confirm:
   setting is deliberately used as the outer approval boundary.
 - `allowedRoots` contains only the intended repository.
 - Upstream tools include `codex` and `codex-reply`.
+- `build.id` matches the current `/healthz` build id.
 
-Then ask ChatGPT to call `codex_task` with a narrow repository-inspection prompt. If it returns a `jobId`, pass that exact value to `codex_status`. Omit session mode to use the saved `auto` or `new` default, and use `continue` with an exact `threadId` when selecting a specific persisted session.
+Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
+prompt. ChatGPT must generate one UUID `scopeId` for the current conversation,
+reuse it for later calls in that conversation, and generate a fresh UUID
+`requestId` for each logical task turn. The same `requestId` is reused only for
+a retry with identical arguments. If the task returns a `jobId`, pass that exact
+value and the same `scopeId` to `codex_status`. For a request that should be
+managed through completion, call
+`codex_status({ scopeId, jobId, waitFor: "terminal", waitMs: 55000 })`; repeat a bounded
+wait only when it returns a still-running timeout. Use `waitFor: "change"` when
+the next progress update itself is relevant. Do not treat `running` as a final
+completion response unless the user explicitly requested start-only/background
+behavior. After `completed`, inspect the returned result and verify the actual
+artifacts and relevant tests before reporting completion. Omit session mode to
+use the saved `auto` or `new` default, and use `continue` with an exact
+`threadId` when selecting a specific persisted session. Do not decide in
+advance whether the conversation will be single-threaded or parallel. When
+parallel work becomes useful, start another thread at that moment with
+`sessionMode: new` and keep its returned `threadId` under the same `scopeId`.
 
 To choose a model or reasoning effort, ask ChatGPT to call `codex_models` first.
 The returned list comes from the installed Codex CLI and includes only currently
@@ -111,14 +129,41 @@ pass the selected `model` and `reasoningEffort` to a new `codex_task` session.
 If both are omitted, the saved card defaults are used. Model or effort
 changes require `sessionMode: new`.
 
-`codex_status` lists recent persisted sessions without prompt or response
-bodies. Auto mode selects only the most recent compatible session for the same
-cwd, sandbox, model, and effort inside the saved auto-resume window.
-Read-only sessions can run concurrently in one cwd. Workspace-write calls are
-serialized per cwd; danger-full-access calls use the same mutating-job lock.
-An allowed parent root can contain multiple repositories. Pass the exact repo or
-worktree as `cwd`, and let ChatGPT/Codex decide whether a task needs a worktree;
-the bridge does not add a separate worktree-management tool.
+`codex_status({ scopeId })` lists only that conversation's recent persisted
+sessions and jobs, without submitted prompt bodies. Follow the returned
+`pagination.sessions` and `pagination.jobs` metadata when `hasMore` is true;
+the reported `scopeCounts` are totals for that scope, not page lengths. Omitting `scopeId`
+returns policy only; `includeAllScopes: true` is reserved for an explicit
+bridge-wide operator audit. Auto mode selects a compatible session only when it
+is the sole compatible candidate for the same scope, cwd,
+sandbox, model, and effort inside the saved auto-resume window. With several
+compatible sessions it returns an ambiguity error so ChatGPT can inspect the
+scope and retry with the intended exact `threadId`. A copied or branched
+ChatGPT conversation must use a new scope UUID. Moving an existing thread
+across scopes requires its exact `threadId` and `adoptThread: true` after
+explicit user intent.
+
+The same Codex thread is serialized. Different threads in the same scope can
+run concurrently in one cwd, including workspace-write and danger-full-access
+calls. If the only compatible thread is busy, ChatGPT must wait or deliberately
+start another thread with `sessionMode: new`. The caller must partition
+overlapping mutations or assign separate worktrees when isolation is needed.
+An allowed parent root can contain multiple repositories. Pass the exact repo
+or worktree as `cwd`, and let ChatGPT/Codex decide whether a task needs a
+worktree; the bridge does not add a separate worktree-management tool. Scope
+UUIDs prevent accidental auto-routing between conversations but are not
+authentication credentials.
+
+Recent job state and bounded results are persisted in the same private SQLite
+database as settings and session metadata. Legacy JSON files are imported once.
+On bridge startup, any
+record that had remained `running` is reported as `interrupted`; it is not left
+indefinitely running. Live upstream progress refreshes `lastProgressAt`, while
+`health: "no-progress-observed"` and `processLiveness: "unknown"` mean only
+that no progress notification was observed inside the configured interval.
+Check the repository/worktree and Codex result evidence before deciding that
+such a job actually stopped. Use `codex_cancel({ scopeId, jobId })` only when
+cancellation is intended; it may leave partial filesystem changes.
 
 ## 6. Troubleshooting
 

@@ -28,8 +28,10 @@ export type BridgeConfig = {
   modelCatalogCacheTtlMs: number;
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
+  stateDatabaseFile: string;
   settingsStateFile: string;
   sessionStateFile: string;
+  jobStateFile: string;
   defaultSessionMode: DefaultSessionMode;
   autoResumeTtlMs: number;
   upstreamTimeoutMs: number;
@@ -39,6 +41,7 @@ export type BridgeConfig = {
   maxConcurrentJobs: number;
   maxPromptChars: number;
   jobTtlMs: number;
+  jobStaleAfterMs: number;
   maxRetainedJobs: number;
   maxJobResultBytes: number;
 };
@@ -71,6 +74,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     read("MODEL_CATALOG_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "models.json"),
     "model catalog state file"
   );
+  const stateDatabaseFile = parseAbsoluteFilePath(
+    read("STATE_DATABASE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "state.sqlite"),
+    "state database file"
+  );
   const settingsStateFile = parseAbsoluteFilePath(
     read("SETTINGS_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "settings.json"),
     "settings state file"
@@ -78,6 +85,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const sessionStateFile = parseAbsoluteFilePath(
     read("SESSION_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "sessions.json"),
     "session state file"
+  );
+  const jobStateFile = parseAbsoluteFilePath(
+    read("JOB_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "jobs.json"),
+    "job state file"
   );
   const defaultSessionMode = parseDefaultSessionMode(read("DEFAULT_SESSION_MODE") || "auto");
   const autoResumeTtlMs = parsePositiveInt(read("AUTO_RESUME_TTL_MS") || String(6 * 60 * 60 * 1000));
@@ -92,6 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const upstreamPoolSize = parsePositiveInt(read("UPSTREAM_POOL_SIZE") || String(Math.min(4, maxConcurrentJobs)));
   const maxPromptChars = parsePositiveInt(read("MAX_PROMPT_CHARS") || "50000");
   const jobTtlMs = parsePositiveInt(read("JOB_TTL_MS") || String(6 * 60 * 60 * 1000));
+  const jobStaleAfterMs = parsePositiveInt(read("JOB_STALE_AFTER_MS") || String(10 * 60 * 1000));
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
 
@@ -118,6 +130,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   if (defaultReasoningEffort && !defaultModel) {
     throw new Error("CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT requires CODEX_MCP_BRIDGE_DEFAULT_MODEL.");
   }
+  if (autoResumeTtlMs < 60_000) {
+    throw new Error("CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS cannot be lower than 60000.");
+  }
+  if (upstreamTimeoutMs < 1_000) {
+    throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS cannot be lower than 1000.");
+  }
   if (upstreamPoolSize > maxConcurrentJobs) {
     throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE cannot exceed CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS.");
   }
@@ -143,8 +161,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogCacheTtlMs,
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
+    stateDatabaseFile,
     settingsStateFile,
     sessionStateFile,
+    jobStateFile,
     defaultSessionMode,
     autoResumeTtlMs,
     upstreamTimeoutMs,
@@ -154,6 +174,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     maxConcurrentJobs,
     maxPromptChars,
     jobTtlMs,
+    jobStaleAfterMs,
     maxRetainedJobs,
     maxJobResultBytes
   };

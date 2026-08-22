@@ -22,14 +22,17 @@ describe("config policy", () => {
     expect(config.modelCatalogCacheTtlMs).toBe(600000);
     expect(config.modelCatalogTimeoutMs).toBe(30000);
     expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
+    expect(config.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
     expect(config.settingsStateFile).toMatch(/\.codex-mcp-bridge\/settings\.json$/);
     expect(config.sessionStateFile).toMatch(/\.codex-mcp-bridge\/sessions\.json$/);
+    expect(config.jobStateFile).toMatch(/\.codex-mcp-bridge\/jobs\.json$/);
     expect(config.defaultSessionMode).toBe("auto");
     expect(config.autoResumeTtlMs).toBe(21600000);
     expect(config.upstreamTimeoutMs).toBe(10800000);
     expect(config.upstreamPoolSize).toBe(4);
     expect(config.maxRetainedJobs).toBe(100);
     expect(config.maxJobResultBytes).toBe(1048576);
+    expect(config.jobStaleAfterMs).toBe(600000);
   });
 
   it("loads optional default Codex model and reasoning effort values", () => {
@@ -40,15 +43,18 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS: "120000",
       CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS: "15000",
       CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: "/tmp/codex-mcp-bridge-test-models.json",
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/codex-mcp-bridge-test-state.sqlite",
       CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: "/tmp/codex-mcp-bridge-test-settings.json",
       CODEX_MCP_BRIDGE_SESSION_STATE_FILE: "/tmp/codex-mcp-bridge-test-sessions.json",
+      CODEX_MCP_BRIDGE_JOB_STATE_FILE: "/tmp/codex-mcp-bridge-test-jobs.json",
       CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "read-only",
       CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE: "new",
       CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "900000",
       CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "7200000",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3",
       CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "50",
-      CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "2000000"
+      CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "2000000",
+      CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS: "300000"
     });
 
     expect(config.defaultModel).toBe("gpt-5.6-sol");
@@ -56,8 +62,10 @@ describe("config policy", () => {
     expect(config.modelCatalogCacheTtlMs).toBe(120000);
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
+    expect(config.stateDatabaseFile).toBe("/tmp/codex-mcp-bridge-test-state.sqlite");
     expect(config.settingsStateFile).toBe("/tmp/codex-mcp-bridge-test-settings.json");
     expect(config.sessionStateFile).toBe("/tmp/codex-mcp-bridge-test-sessions.json");
+    expect(config.jobStateFile).toBe("/tmp/codex-mcp-bridge-test-jobs.json");
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config.defaultSessionMode).toBe("new");
     expect(config.autoResumeTtlMs).toBe(900000);
@@ -65,6 +73,7 @@ describe("config policy", () => {
     expect(config.upstreamPoolSize).toBe(3);
     expect(config.maxRetainedJobs).toBe(50);
     expect(config.maxJobResultBytes).toBe(2000000);
+    expect(config.jobStaleAfterMs).toBe(300000);
   });
 
   it("requires a default model when a default reasoning effort is configured", () => {
@@ -94,6 +103,24 @@ describe("config policy", () => {
     ).toThrow(/absolute path/);
   });
 
+  it("requires an absolute job state file", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_JOB_STATE_FILE: "relative/jobs.json"
+      })
+    ).toThrow(/absolute path/);
+  });
+
+  it("requires an absolute SQLite state database file", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
+      })
+    ).toThrow(/absolute path/);
+  });
+
   it("caps the configured Codex inactivity timeout at three hours", () => {
     expect(() =>
       loadConfig({
@@ -101,6 +128,21 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "10800001"
       })
     ).toThrow(/cannot exceed 10800000/);
+  });
+
+  it("rejects owner defaults below settings-card minimums", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "59999"
+      })
+    ).toThrow(/cannot be lower than 60000/);
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "999"
+      })
+    ).toThrow(/cannot be lower than 1000/);
   });
 
   it("does not allow more upstream workers than active jobs", () => {

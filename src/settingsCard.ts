@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings-v4.html";
+export const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings-v5.html";
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 
 export function registerSettingsCardResource(server: McpServer): void {
@@ -73,7 +73,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
       background: Canvas; color: CanvasText; padding: 8px 10px; font: inherit;
     }
     .hint { font-size: 11px; line-height: 1.45; font-weight: 400; color: var(--muted); }
-    .warning { display: none; margin: 12px 0 0; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: 10px; padding: 10px; color: var(--danger); font-size: 12px; line-height: 1.45; }
+    .warning { display: none; margin: 12px 0 0; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: 10px; padding: 10px; color: var(--danger); font-size: 12px; line-height: 1.45; white-space: pre-line; }
     .warning.show { display: block; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
     button { min-height: 36px; border: 1px solid var(--border); border-radius: 10px; padding: 7px 12px; background: Canvas; color: CanvasText; font-weight: 650; cursor: pointer; }
@@ -292,7 +292,10 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
       elements.scope.textContent = view.scopeNotice;
       updateAccessNotice();
 
-      const warning = view.catalog.warning || "";
+      const warnings = [];
+      if (view.catalog.warning) warnings.push(view.catalog.warning);
+      for (const warning of view.warnings || []) warnings.push(warning);
+      const warning = warnings.join("\n");
       elements.catalogWarning.textContent = warning;
       elements.catalogWarning.classList.toggle("show", Boolean(warning));
     }

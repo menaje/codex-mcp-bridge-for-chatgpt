@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
@@ -11,6 +12,11 @@ import { SessionRegistry } from "../src/sessionRegistry.js";
 import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+
+const SCOPE_A = "11111111-1111-4111-8111-111111111111";
+const SCOPE_B = "22222222-2222-4222-8222-222222222222";
+const UPPERCASE_SCOPE = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+let requestSequence = 0;
 
 class FakeUpstream implements CodexUpstream {
   public calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -33,22 +39,57 @@ class FakeUpstream implements CodexUpstream {
 }
 
 class DeferredUpstream extends FakeUpstream {
-  private pending: Array<{ resolve: (result: ToolResult) => void; reject: (error: Error) => void }> = [];
+  public aborts = 0;
+  private pending: Array<{
+    resolve: (result: ToolResult) => void;
+    reject: (error: Error) => void;
+    onProgress?: (progress: Progress) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }> = [];
 
-  override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    _timeoutMs?: number,
+    onProgress?: (progress: Progress) => void,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
     this.calls.push({ name, args });
-    return new Promise<ToolResult>((resolve, reject) => this.pending.push({ resolve, reject }));
+    return new Promise<ToolResult>((resolve, reject) => {
+      const entry: (typeof this.pending)[number] = { resolve, reject, onProgress, signal };
+      entry.onAbort = () => {
+        this.aborts += 1;
+        const index = this.pending.indexOf(entry);
+        if (index >= 0) this.pending.splice(index, 1);
+        reject(new Error("upstream request aborted"));
+      };
+      if (signal?.aborted) {
+        entry.onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", entry.onAbort, { once: true });
+      this.pending.push(entry);
+    });
+  }
+
+  progressNext(progress: Progress): void {
+    const pending = this.pending[0];
+    if (!pending) throw new Error("No pending upstream call.");
+    pending.onProgress?.(progress);
   }
 
   resolveNext(result: ToolResult = fakeCodexResult("thread-1")): void {
     const pending = this.pending.shift();
     if (!pending) throw new Error("No pending upstream call.");
+    pending.signal?.removeEventListener("abort", pending.onAbort as () => void);
     pending.resolve(result);
   }
 
   rejectNext(error = new Error("upstream failed")): void {
     const pending = this.pending.shift();
     if (!pending) throw new Error("No pending upstream call.");
+    pending.signal?.removeEventListener("abort", pending.onAbort as () => void);
     pending.reject(error);
   }
 }
@@ -83,12 +124,13 @@ class FakeModelCatalog implements CodexModelCatalogProvider {
 }
 
 describe("bridge tools", () => {
-  it("publishes four model-facing tools plus one app-only settings action", async () => {
+  it("publishes five model-facing tools plus one app-only settings action", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "codex_cancel",
       "codex_models",
       "codex_settings",
       "codex_status",
@@ -101,11 +143,21 @@ describe("bridge tools", () => {
       destructiveHint: false,
       idempotentHint: true
     });
+    expect(byName.get("codex_status")?.inputSchema).toMatchObject({
+      properties: {
+        waitFor: { enum: ["change", "terminal"] },
+        waitMs: { maximum: 60000 }
+      }
+    });
     expect(byName.get("codex_task")?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: false
     });
+    expect(byName.get("codex_task")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["scopeId", "requestId", "prompt"])
+    });
+    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": SETTINGS_CARD_URI
@@ -185,18 +237,20 @@ describe("bridge tools", () => {
       maxRetainedJobs: 100,
       maxJobResultBytes: 1048576,
       maxConcurrentJobs: 30,
+      stateStorage: { backend: "memory", persistencePath: null, transactional: false },
       concurrencyPolicy: {
         sameWorkingDirectory: {
           readOnly: "allowed",
-          workspaceWrite: "serialized",
-          dangerFullAccess: "serialized"
+          workspaceWrite: "allowed",
+          dangerFullAccess: "allowed"
         },
-        sameThread: "serialized"
+        sameThread: "serialized",
+        mutationCoordination: "caller-managed"
       },
       sessionPolicy: {
         persistent: false,
         autoResumeTtlMs: 120000,
-        selection: "most-recent-compatible"
+        selection: "scope-compatible-only-when-unambiguous"
       }
     });
     expect(status.sessions).toEqual([]);
@@ -497,18 +551,307 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("auto mode continues the most recently used compatible session", async () => {
+  it("auto mode continues the only compatible session in the scope", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
 
     await runTask(client, { prompt: "first", sessionMode: "new" });
-    await runTask(client, { prompt: "second", sessionMode: "new" });
     await runTask(client, { prompt: "follow up" });
 
-    expect(upstream.calls[2]).toEqual({
+    expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-2", prompt: "follow up" }
+      args: { threadId: "thread-1", prompt: "follow up" }
+    });
+    await close();
+  });
+
+  it("does not auto-select a Codex thread from another conversation scope", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    await runTask(client, { prompt: "scope A", sessionMode: "new", scopeId: SCOPE_A });
+    await runTask(client, { prompt: "scope B", scopeId: SCOPE_B });
+    await runTask(client, { prompt: "scope A follow-up", scopeId: SCOPE_A });
+
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex", "codex-reply"]);
+    expect(upstream.calls[2]).toMatchObject({
+      args: { threadId: "thread-1", prompt: "scope A follow-up" }
+    });
+    await close();
+  });
+
+  it("normalizes UUID casing before routing sessions", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    const started = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: UPPERCASE_SCOPE,
+        prompt: "start",
+        sessionMode: "new"
+      }
+    });
+    expect((started as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      bridgeSession: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
+    });
+    const status = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
+      })
+    );
+    expect(status.sessions).toHaveLength(1);
+    await close();
+  });
+
+  it("requires an exact thread after parallel work creates multiple compatible sessions", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    await runTask(client, { prompt: "plan", sessionMode: "new" });
+    await runTask(client, { prompt: "build", sessionMode: "new" });
+    const ambiguous = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "which thread?" }
+    });
+    expect(ambiguous.isError).toBe(true);
+    expect(JSON.stringify(ambiguous)).toContain("Multiple compatible Codex threads");
+    expect(JSON.stringify(ambiguous)).toContain("thread-1");
+    expect(JSON.stringify(ambiguous)).toContain("thread-2");
+
+    await runTask(client, {
+      prompt: "refine plan",
+      sessionMode: "continue",
+      threadId: "thread-1"
+    });
+    await runTask(client, {
+      prompt: "continue build",
+      sessionMode: "continue",
+      threadId: "thread-2"
+    });
+
+    expect(upstream.calls.slice(2)).toEqual([
+      {
+        name: "codex-reply",
+        args: { threadId: "thread-1", prompt: "refine plan" }
+      },
+      {
+        name: "codex-reply",
+        args: { threadId: "thread-2", prompt: "continue build" }
+      }
+    ]);
+    await close();
+  });
+
+  it("deduplicates request retries and rejects request-id reuse with changed arguments", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const requestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const arguments_ = {
+      scopeId: SCOPE_A,
+      requestId,
+      prompt: "one logical task",
+      sessionMode: "new"
+    };
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: arguments_ })
+    );
+    const retry = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: arguments_ })
+    );
+    expect(retry.jobId).toBe(first.jobId);
+    expect(upstream.calls).toHaveLength(1);
+
+    const changed = await client.callTool({
+      name: "codex_task",
+      arguments: { ...arguments_, prompt: "changed task" }
+    });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("already used for a different Codex task");
+
+    upstream.resolveNext(fakeCodexResult("deduped-thread"));
+    await waitForJobStatus(client, first.jobId, "completed");
+    const completedRetry = await client.callTool({ name: "codex_task", arguments: arguments_ });
+    expect(
+      (completedRetry as { structuredContent?: Record<string, any> }).structuredContent
+    ).toMatchObject({
+      threadId: "deduped-thread",
+      bridgeSession: { scopeId: SCOPE_A, requestId }
+    });
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("keeps an omitted-session-mode retry stable after the saved default changes", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    const { rawCallTool, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    const arguments_ = {
+      scopeId: SCOPE_A,
+      requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      prompt: "same raw request with an omitted mode"
+    };
+
+    const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
+    settings.update({ defaultSessionMode: "new" }, 0);
+    const retry = await rawCallTool({ name: "codex_task", arguments: arguments_ });
+
+    expect((retry as { structuredContent?: Record<string, any> }).structuredContent).toEqual(
+      (first as { structuredContent?: Record<string, any> }).structuredContent
+    );
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("requires explicit adoption before moving a thread across scopes", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    await runTask(client, { prompt: "start", sessionMode: "new", scopeId: SCOPE_A });
+
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_B,
+        prompt: "take over",
+        sessionMode: "continue",
+        threadId: "thread-1"
+      }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("another conversation scope");
+
+    await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_B,
+        prompt: "take over",
+        sessionMode: "continue",
+        threadId: "thread-1",
+        adoptThread: true
+      }
+    });
+    const statusA = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_A } })
+    );
+    const statusB = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_B } })
+    );
+    expect(statusA.sessions).toEqual([]);
+    expect(statusB.sessions).toEqual([
+      expect.objectContaining({ threadId: "thread-1", scopeId: SCOPE_B })
+    ]);
+    await close();
+  });
+
+  it("filters status details by scope and exposes all scopes only on explicit audit", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    await runTask(client, { prompt: "A", sessionMode: "new", scopeId: SCOPE_A });
+    await runTask(client, { prompt: "B", sessionMode: "new", scopeId: SCOPE_B });
+
+    const statusA = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_A } })
+    );
+    const statusB = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_B } })
+    );
+    const policyOnly = parseToolJson(
+      await rawCallTool({ name: "codex_status", arguments: {} })
+    );
+    const audit = parseToolJson(
+      await rawCallTool({ name: "codex_status", arguments: { includeAllScopes: true } })
+    );
+
+    expect(statusA.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
+      "thread-1"
+    ]);
+    expect(statusB.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
+      "thread-2"
+    ]);
+    expect(policyOnly).toMatchObject({
+      scopeView: { mode: "policy-only", scopeIdRequiredForDetails: true },
+      sessions: [],
+      jobs: []
+    });
+    expect(audit.sessions).toHaveLength(2);
+    expect(audit.jobs).toHaveLength(2);
+    await close();
+  });
+
+  it("reports scoped totals independently from paginated session and job pages", async () => {
+    const root = temporaryRoot();
+    const sessions = new SessionRegistry();
+    const now = Date.now();
+    for (let index = 0; index < 11; index += 1) {
+      sessions.record({
+        threadId: `scope-a-thread-${index}`,
+        scopeId: SCOPE_A,
+        cwd: realpathSync(root),
+        sandbox: "read-only",
+        createdAt: now + index,
+        lastUsedAt: now + index
+      });
+    }
+    sessions.record({
+      threadId: "scope-b-thread",
+      scopeId: SCOPE_B,
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      createdAt: now + 20,
+      lastUsedAt: now + 20
+    });
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream, sessions);
+    await runTask(client, { prompt: "job one", sessionMode: "new", scopeId: SCOPE_A });
+    await runTask(client, { prompt: "job two", sessionMode: "new", scopeId: SCOPE_A });
+    await runTask(client, { prompt: "job three", sessionMode: "new", scopeId: SCOPE_A });
+    await runTask(client, { prompt: "other job", sessionMode: "new", scopeId: SCOPE_B });
+
+    const firstPage = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: { scopeId: SCOPE_A, sessionLimit: 10, jobLimit: 2 }
+      })
+    );
+    const secondPage = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: { scopeId: SCOPE_A, sessionLimit: 10, sessionOffset: 10, jobLimit: 2, jobOffset: 2 }
+      })
+    );
+
+    expect(firstPage.scopeCounts).toEqual({ sessions: 14, jobs: 3, runningJobs: 0 });
+    expect(firstPage.sessions).toHaveLength(10);
+    expect(firstPage.jobs).toHaveLength(2);
+    expect(firstPage.pagination).toMatchObject({
+      sessions: { offset: 0, returned: 10, total: 14, hasMore: true, nextOffset: 10 },
+      jobs: { offset: 0, returned: 2, total: 3, hasMore: true, nextOffset: 2 }
+    });
+    expect(secondPage.sessions).toHaveLength(4);
+    expect(secondPage.jobs).toHaveLength(1);
+    expect(secondPage.pagination).toMatchObject({
+      sessions: { offset: 10, returned: 4, total: 14, hasMore: false, nextOffset: null },
+      jobs: { offset: 2, returned: 1, total: 3, hasMore: false, nextOffset: null }
     });
     await close();
   });
@@ -682,6 +1025,153 @@ describe("bridge tools", () => {
     const completed = await waitForJobStatus(client, started.jobId, "completed");
     expect(completed.operation).toBe("start");
     expect(JSON.stringify(completed.result)).toContain("thread-1");
+    await close();
+  });
+
+  it("long-polls one existing status call until the job becomes terminal", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const started = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
+    );
+
+    const waiting = client.callTool({
+      name: "codex_status",
+      arguments: { jobId: started.jobId, waitFor: "terminal", waitMs: 1000 }
+    });
+    setTimeout(() => upstream.resolveNext(), 10);
+    const completed = parseToolJson(await waiting);
+
+    expect(completed).toMatchObject({
+      status: "completed",
+      terminal: true,
+      wait: { waitFor: "terminal", timedOut: false, changed: true }
+    });
+    await close();
+  });
+
+  it("long-polls until an upstream progress notification changes the job", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const started = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
+    );
+
+    const waiting = client.callTool({
+      name: "codex_status",
+      arguments: { jobId: started.jobId, waitFor: "change", waitMs: 1000 }
+    });
+    setTimeout(
+      () => upstream.progressNext({ progress: 3, total: 10, message: "editing files" }),
+      10
+    );
+    const changed = parseToolJson(await waiting);
+
+    expect(changed).toMatchObject({
+      status: "running",
+      terminal: false,
+      version: 2,
+      progressObserved: true,
+      lastProgress: { progress: 3, total: 10, message: "editing files" },
+      wait: { waitFor: "change", timedOut: false, changed: true }
+    });
+    upstream.resolveNext();
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
+  it("returns a bounded timeout without changing a still-running job", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS: "1"
+      }),
+      upstream
+    );
+    const started = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "slow", sessionMode: "new" } })
+    );
+    const status = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: { jobId: started.jobId, waitFor: "terminal", waitMs: 10 }
+      })
+    );
+
+    expect(status).toMatchObject({
+      status: "running",
+      health: "no-progress-observed",
+      wait: { waitFor: "terminal", timedOut: true, changed: false }
+    });
+    upstream.resolveNext();
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
+  it("cancels only a job owned by the supplied scope and forwards an abort signal", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      upstream
+    );
+    const started = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "cancel me", sessionMode: "new" } })
+    );
+
+    const denied = await client.callTool({
+      name: "codex_cancel",
+      arguments: { scopeId: SCOPE_B, jobId: started.jobId }
+    });
+    expect(denied.isError).toBe(true);
+    expect(upstream.aborts).toBe(0);
+
+    const cancelled = parseToolJson(
+      await client.callTool({
+        name: "codex_cancel",
+        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
+      })
+    );
+    expect(cancelled).toMatchObject({ status: "cancelled", terminal: true });
+    expect(cancelled.error).toContain("Partial filesystem changes may remain");
+    expect(upstream.aborts).toBe(1);
+
+    const repeated = parseToolJson(
+      await client.callTool({
+        name: "codex_cancel",
+        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
+      })
+    );
+    expect(repeated.status).toBe("cancelled");
+    expect(upstream.aborts).toBe(1);
+    await close();
+  });
+
+  it("requires wait options to target a specific job", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const missingJob = await client.callTool({
+      name: "codex_status",
+      arguments: { waitFor: "terminal", waitMs: 10 }
+    });
+    const missingMode = await client.callTool({
+      name: "codex_status",
+      arguments: { jobId: "missing", waitMs: 10 }
+    });
+
+    expect(JSON.stringify(missingJob)).toContain("require a jobId");
+    expect(JSON.stringify(missingMode)).toContain("waitMs requires waitFor");
     await close();
   });
 
@@ -879,7 +1369,10 @@ describe("bridge tools", () => {
         parseToolJson(
           await client.callTool({
             name: "codex_task",
-            arguments: { prompt: `parallel-${index + 1}`, sessionMode: "new" }
+            arguments: {
+              prompt: `parallel-${index + 1}`,
+              sessionMode: "new"
+            }
           })
         )
       )
@@ -916,10 +1409,16 @@ describe("bridge tools", () => {
     );
 
     const first = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: { prompt: "first", sessionMode: "new" } })
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first", sessionMode: "new" }
+      })
     );
     const second = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: { prompt: "second", sessionMode: "new" } })
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "second", sessionMode: "new" }
+      })
     );
 
     expect(first.status).toBe("running");
@@ -934,7 +1433,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("serializes workspace-write jobs in the same working directory", async () => {
+  it("allows workspace-write jobs in the same working directory", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
@@ -949,24 +1448,37 @@ describe("bridge tools", () => {
     const first = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "first write", sessionMode: "new", sandbox: "workspace-write" }
+        arguments: {
+          prompt: "first write",
+          sessionMode: "new",
+          sandbox: "workspace-write"
+        }
       })
     );
-    const second = await client.callTool({
-      name: "codex_task",
-      arguments: { prompt: "second write", sessionMode: "new", sandbox: "workspace-write" }
-    });
+    const second = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt: "second write",
+          sessionMode: "new",
+          sandbox: "workspace-write"
+        }
+      })
+    );
 
     expect(first.status).toBe("running");
-    expect(second.isError).toBe(true);
-    expect(JSON.stringify(second)).toContain("mutating Codex job is already running");
-    expect(upstream.calls).toHaveLength(1);
-    upstream.resolveNext(fakeCodexResult("write-thread"));
-    await waitForJobStatus(client, first.jobId, "completed");
+    expect(second.status).toBe("running");
+    expect(upstream.calls).toHaveLength(2);
+    upstream.resolveNext(fakeCodexResult("write-thread-1"));
+    upstream.resolveNext(fakeCodexResult("write-thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
     await close();
   });
 
-  it("serializes danger-full-access jobs in the same working directory", async () => {
+  it("allows danger-full-access jobs in the same working directory", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
@@ -981,29 +1493,44 @@ describe("bridge tools", () => {
     const first = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "first full", sessionMode: "new", sandbox: "danger-full-access" }
+        arguments: {
+          prompt: "first full",
+          sessionMode: "new",
+          sandbox: "danger-full-access"
+        }
       })
     );
-    const second = await client.callTool({
-      name: "codex_task",
-      arguments: { prompt: "second full", sessionMode: "new", sandbox: "danger-full-access" }
-    });
+    const second = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt: "second full",
+          sessionMode: "new",
+          sandbox: "danger-full-access"
+        }
+      })
+    );
 
     expect(first.status).toBe("running");
-    expect(second.isError).toBe(true);
-    expect(JSON.stringify(second)).toContain("mutating Codex job is already running");
-    upstream.resolveNext(fakeCodexResult("full-thread"));
-    await waitForJobStatus(client, first.jobId, "completed");
+    expect(second.status).toBe("running");
+    expect(upstream.calls).toHaveLength(2);
+    upstream.resolveNext(fakeCodexResult("full-thread-1"));
+    upstream.resolveNext(fakeCodexResult("full-thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
     await close();
   });
 
-  it("starts a new auto session when the compatible thread is busy", async () => {
+  it("can add a parallel thread dynamically when the existing scope thread is busy", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const sessions = new SessionRegistry();
     const now = Date.now();
     sessions.record({
       threadId: "thread-1",
+      scopeId: SCOPE_A,
       cwd: realpathSync(root),
       sandbox: "read-only",
       createdAt: now,
@@ -1021,18 +1548,103 @@ describe("bridge tools", () => {
     const first = parseToolJson(
       await client.callTool({ name: "codex_task", arguments: { prompt: "continue recent" } })
     );
-    const second = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: { prompt: "parallel work" } })
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "same thread automatically" }
+    });
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("conversation scope is busy");
+
+    const parallel = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "parallel work", sessionMode: "new" }
+      })
     );
 
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex-reply", "codex"]);
-    expect(second.session).toMatchObject({ action: "start", reason: "compatible-session-busy" });
+    expect(parallel.session).toMatchObject({ action: "start", reason: "explicit-new" });
     upstream.resolveNext(fakeCodexResult("thread-1"));
     upstream.resolveNext(fakeCodexResult("thread-2"));
     await Promise.all([
       waitForJobStatus(client, first.jobId, "completed"),
-      waitForJobStatus(client, second.jobId, "completed")
+      waitForJobStatus(client, parallel.jobId, "completed")
     ]);
+    await close();
+  });
+
+  it("does not start a second implicit auto session while the first one has no thread id yet", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream
+    );
+
+    const first = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "first implicit auto" } })
+    );
+    const second = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "second implicit auto" }
+    });
+
+    expect(first.status).toBe("running");
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("session is still starting or running");
+    expect(upstream.calls).toHaveLength(1);
+    upstream.resolveNext(fakeCodexResult("auto-thread"));
+    await waitForJobStatus(client, first.jobId, "completed");
+    await close();
+  });
+
+  it("does not bypass an active compatible selection when its tracked session expires", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const sessions = new SessionRegistry();
+    const old = Date.now() - 120_000;
+    sessions.record({
+      threadId: "expiring-thread",
+      scopeId: SCOPE_A,
+      cwd: realpathSync(root),
+      sandbox: "read-only",
+      createdAt: old,
+      lastUsedAt: old
+    });
+    const { client, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "60000",
+        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
+      }),
+      upstream,
+      sessions
+    );
+
+    const continuing = parseToolJson(
+      await client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt: "explicitly continue the old thread",
+          sessionMode: "continue",
+          threadId: "expiring-thread"
+        }
+      })
+    );
+    const auto = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "auto must not create a duplicate" }
+    });
+
+    expect(continuing.status).toBe("running");
+    expect(auto.isError).toBe(true);
+    expect(JSON.stringify(auto)).toContain("session is still starting or running");
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex-reply"]);
+    upstream.resolveNext(fakeCodexResult("expiring-thread"));
+    await waitForJobStatus(client, continuing.jobId, "completed");
     await close();
   });
 
@@ -1043,6 +1655,7 @@ describe("bridge tools", () => {
     const now = Date.now();
     sessions.record({
       threadId: "thread-1",
+      scopeId: SCOPE_A,
       cwd: realpathSync(root),
       sandbox: "read-only",
       createdAt: now,
@@ -1104,8 +1717,39 @@ async function connectTestClient(
   const client = new Client({ name: "test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  const rawCallTool = client.callTool.bind(client);
+  Object.defineProperty(client, "callTool", {
+    value: (request: { name: string; arguments?: Record<string, unknown> }, ...rest: unknown[]) => {
+      const arguments_ = request.arguments || {};
+      if (request.name === "codex_task") {
+        return rawCallTool(
+          {
+            ...request,
+            arguments: {
+              scopeId: SCOPE_A,
+              requestId: nextRequestId(),
+              ...arguments_
+            }
+          },
+          ...(rest as [])
+        );
+      }
+      if (
+        request.name === "codex_status" &&
+        !arguments_.scopeId &&
+        !arguments_.includeAllScopes
+      ) {
+        return rawCallTool(
+          { ...request, arguments: { scopeId: SCOPE_A, ...arguments_ } },
+          ...(rest as [])
+        );
+      }
+      return rawCallTool(request, ...(rest as []));
+    }
+  });
   return {
     client,
+    rawCallTool,
     close: async () => {
       await client.close();
       await server.close();
@@ -1115,6 +1759,11 @@ async function connectTestClient(
 
 async function runTask(client: Client, arguments_: Record<string, unknown>): Promise<unknown> {
   return client.callTool({ name: "codex_task", arguments: arguments_ });
+}
+
+function nextRequestId(): string {
+  requestSequence += 1;
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${requestSequence.toString(16).padStart(12, "0")}`;
 }
 
 function fakeCodexResult(threadId: string): ToolResult {

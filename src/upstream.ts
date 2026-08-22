@@ -1,12 +1,19 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Progress } from "@modelcontextprotocol/sdk/types.js";
+import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 
 export type ToolResult = CallToolResult;
 
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
-  callTool(name: string, args: Record<string, unknown>, timeoutMs: number): Promise<ToolResult>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs: number,
+    onProgress?: (progress: Progress) => void,
+    signal?: AbortSignal
+  ): Promise<ToolResult>;
   close(): Promise<void>;
 };
 
@@ -15,7 +22,12 @@ export type CodexMcpClient = {
   callTool(
     input: { name: string; arguments: Record<string, unknown> },
     resultSchema?: undefined,
-    options?: { timeout: number; resetTimeoutOnProgress: boolean }
+    options?: {
+      timeout: number;
+      signal?: AbortSignal;
+      resetTimeoutOnProgress: boolean;
+      onprogress?: (progress: Progress) => void;
+    }
   ): Promise<ToolResult>;
   close(): Promise<void>;
 };
@@ -52,7 +64,13 @@ export class CodexStdioUpstream implements CodexUpstream {
     return this.withConnection((client) => client.listTools());
   }
 
-  async callTool(name: string, args: Record<string, unknown>, timeoutMs: number): Promise<ToolResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs: number,
+    onProgress?: (progress: Progress) => void,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
     return this.withConnection((client) =>
       client.callTool(
         {
@@ -62,7 +80,9 @@ export class CodexStdioUpstream implements CodexUpstream {
         undefined,
         {
           timeout: timeoutMs,
-          resetTimeoutOnProgress: true
+          signal,
+          resetTimeoutOnProgress: true,
+          onprogress: onProgress
         }
       )
     );
@@ -162,7 +182,7 @@ export class CodexStdioUpstream implements CodexUpstream {
     const client = new Client(
       {
         name: "codex-mcp-bridge",
-        version: "0.1.0"
+        version: BRIDGE_BUILD_INFO.version
       },
       {
         capabilities: {}
@@ -221,8 +241,14 @@ export class CodexUpstreamPool implements CodexUpstream {
     return this.withWorker((upstream) => upstream.listTools());
   }
 
-  async callTool(name: string, args: Record<string, unknown>, timeoutMs: number): Promise<ToolResult> {
-    return this.withWorker((upstream) => upstream.callTool(name, args, timeoutMs));
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs: number,
+    onProgress?: (progress: Progress) => void,
+    signal?: AbortSignal
+  ): Promise<ToolResult> {
+    return this.withWorker((upstream) => upstream.callTool(name, args, timeoutMs, onProgress, signal));
   }
 
   async close(): Promise<void> {

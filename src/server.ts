@@ -5,10 +5,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import type { NextFunction, Request, Response } from "express";
 import type { BridgeConfig } from "./config.js";
+import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { CodexCliModelCatalog, type CodexModelCatalogProvider } from "./modelCatalog.js";
 import type { CodexUpstream } from "./upstream.js";
 import { CodexJobRegistry, registerBridgeTools } from "./tools.js";
 import { SessionRegistry } from "./sessionRegistry.js";
+import { BridgeStateStore } from "./stateStore.js";
 import { UserSettingsStore } from "./userSettings.js";
 
 export function createBridgeMcpServer(
@@ -19,10 +21,13 @@ export function createBridgeMcpServer(
     autoResumeTtlMs: config.autoResumeTtlMs
   }),
   jobs = new CodexJobRegistry(
-    config.maxConcurrentJobs,
-    config.jobTtlMs,
-    config.maxRetainedJobs,
-    config.maxJobResultBytes
+    {
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs
+    }
   ),
   modelCatalog: CodexModelCatalogProvider = new CodexCliModelCatalog(
     config.codexCommand,
@@ -38,11 +43,11 @@ export function createBridgeMcpServer(
     {
       name: "codex-mcp-bridge",
       title: "Codex MCP Bridge",
-      version: "0.1.0"
+      version: BRIDGE_BUILD_INFO.version
     },
     {
       instructions:
-        "Use codex_settings when the user asks to view or change bridge defaults; it renders the interactive settings card. Use codex_models whenever the user asks to view or choose a model or reasoning effort; never rely on a hard-coded model list. Use codex_task for every Codex prompt. Omit per-call fields to use the saved defaults. The saved access strategy is authoritative: read-only forces inspection mode, adaptive lets you choose an owner-permitted sandbox for the user's task, and always-full forces danger-full-access for new work. Keep the saved session mode unless the user requests fresh context, a model/effort change, or an exact persisted thread. Auto mode resumes only the most recent compatible idle session for the same cwd, effective sandbox, model, and effort inside the saved window. When a compatible read-only session is busy, auto starts a new session. Read-only sessions may run concurrently in the same cwd, but mutating jobs are serialized per cwd and turns on the same thread are always serialized. Use codex_status for bridge/session summaries and long-running job results. Do not request secrets or unrelated broad system access."
+        "Use codex_settings for saved bridge defaults and codex_models for the live model/effort catalog. Before the first codex_task in each ChatGPT conversation, generate one fresh UUID scopeId and reuse it for every Codex bridge call in that conversation. A copied or branched ChatGPT conversation must use a new scopeId unless the user explicitly requests a handoff. For every logical codex_task turn, generate a fresh UUID requestId and reuse that exact requestId on retries; never reuse it for different arguments. Do not decide in advance whether a conversation is single-threaded or parallel. Start normally; whenever parallel work becomes useful, call codex_task with sessionMode='new' to add another Codex thread under the same scopeId. The same Codex thread is serialized, while different threads in the same scope may run in parallel even in the same cwd. Auto mode continues only when exactly one recent compatible thread exists in the scope. If none exists it starts one; if the only compatible session is starting or busy, wait or deliberately start a new thread; if multiple compatible threads exist, call codex_status with scopeId and retry with the exact intended threadId instead of guessing. Keep each returned threadId and jobId associated with the current scope. Never use the legacy scope for auto selection. Set adoptThread=true only with an exact threadId after the user explicitly requests a cross-chat handoff. Pass scopeId to codex_status so it returns only that conversation's sessions and jobs; follow its pagination metadata when the scope has more records, and use includeAllScopes only for an explicit bridge-wide operator audit. Scope IDs route conversations but are not authentication credentials. Omit ordinary task overrides to use saved defaults; the saved access strategy remains authoritative. Jobs may mutate the same cwd concurrently, so partition overlapping work or request separate worktrees when needed. A running jobId is intermediate, not completion: for an outcome request, keep the turn open and call codex_status with the same scopeId, waitFor='terminal', and bounded waitMs until terminal. Then inspect the result and verify artifacts, diff/status, and relevant tests; continue the exact thread for corrections. A no-progress-observed health value means only that no MCP progress event arrived; process liveness remains unknown, so inspect actual work evidence before deciding whether to wait or call codex_cancel. Cancellation can leave partial filesystem changes. Return a running jobId immediately only for explicit start-only/background requests. Do not request secrets or unrelated broad system access."
     }
   );
   registerBridgeTools(server, config, upstream, sessions, jobs, modelCatalog, userSettings);
@@ -54,16 +59,24 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
     allowedHosts: config.allowedHosts,
     host: config.host
   });
+  const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
   const sessions = new SessionRegistry({
     stateFile: config.sessionStateFile,
+    stateStore,
     allowedRoots: config.allowedRoots,
     autoResumeTtlMs: config.autoResumeTtlMs
   });
   const jobs = new CodexJobRegistry(
-    config.maxConcurrentJobs,
-    config.jobTtlMs,
-    config.maxRetainedJobs,
-    config.maxJobResultBytes
+    {
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      stateFile: config.jobStateFile,
+      stateStore,
+      allowedRoots: config.allowedRoots
+    }
   );
   const modelCatalog = new CodexCliModelCatalog(
     config.codexCommand,
@@ -74,7 +87,8 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
     config.modelCatalogStateFile
   );
   const userSettings = new UserSettingsStore(config, {
-    stateFile: config.settingsStateFile
+    stateFile: config.settingsStateFile,
+    stateStore
   });
 
   app.get(
@@ -87,7 +101,8 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
   app.get("/healthz", (_req: Request, res: Response) => {
     res.json({
       ok: true,
-      name: "codex-mcp-bridge"
+      name: "codex-mcp-bridge",
+      build: BRIDGE_BUILD_INFO
     });
   });
 
@@ -154,7 +169,9 @@ export function createHttpServer(config: BridgeConfig, upstream: CodexUpstream):
     });
   });
 
-  return createServer(app);
+  const httpServer = createServer(app);
+  httpServer.once("close", () => stateStore.close());
+  return httpServer;
 }
 
 function isAuthorized(header: string | undefined, config: BridgeConfig): boolean {

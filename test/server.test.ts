@@ -8,6 +8,9 @@ import { createHttpServer } from "../src/server.js";
 import { loadConfig } from "../src/config.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
+const SCOPE_A = "11111111-1111-4111-8111-111111111111";
+const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
 class FakeUpstream implements CodexUpstream {
   async listTools(): Promise<unknown> {
     return { tools: [] };
@@ -61,7 +64,10 @@ describe("http server", () => {
 
     const response = await fetch(`${baseUrl}/healthz`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ ok: true });
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      build: { version: "0.2.0", id: expect.any(String), sourceHash: expect.any(String) }
+    });
   });
 
   it("returns JSON for OAuth metadata probes in no-auth tunnel mode", async () => {
@@ -108,10 +114,21 @@ describe("http server", () => {
     });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
 
+    const policy = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: {} })
+    );
+    expect(policy.stateStorage).toMatchObject({
+      backend: "sqlite",
+      persistencePath: expect.stringMatching(/state\.sqlite$/),
+      transactional: true
+    });
+
     const started = parseToolJson(
       await client.callTool({
         name: "codex_task",
         arguments: {
+          scopeId: SCOPE_A,
+          requestId: REQUEST_A,
           prompt: "slow",
           sessionMode: "new"
         }
@@ -136,7 +153,9 @@ async function start(env: NodeJS.ProcessEnv, upstream: CodexUpstream = new FakeU
     CODEX_GPT_BRIDGE_HOST: "127.0.0.1",
     CODEX_GPT_BRIDGE_PORT: "1",
     CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(stateDirectory, "settings.json"),
-    CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(stateDirectory, "sessions.json")
+    CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(stateDirectory, "sessions.json"),
+    CODEX_MCP_BRIDGE_JOB_STATE_FILE: path.join(stateDirectory, "jobs.json"),
+    CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite")
   });
   const server = createHttpServer(config, upstream);
   servers.push(server);
@@ -161,6 +180,7 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
       await client.callTool({
         name: "codex_status",
         arguments: {
+          scopeId: SCOPE_A,
           jobId
         }
       })
