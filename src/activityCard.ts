@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { serializedUiTranslations } from "./uiI18n.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 
-export const ACTIVITY_CARD_URI = "ui://codex-mcp-bridge/activity-v1.html";
+export const ACTIVITY_CARD_URI = `ui://${PRODUCT_INFO.runtimeName}/activity-v1.html`;
 export const ACTIVITY_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 
 export function registerActivityCardResource(server: McpServer): void {
@@ -9,7 +10,7 @@ export function registerActivityCardResource(server: McpServer): void {
     "codex-activity-card",
     ACTIVITY_CARD_URI,
     {
-      title: "Codex Activity Manager",
+      title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description: "Localized live Activity view for Codex work in the current conversation.",
       mimeType: ACTIVITY_CARD_MIME_TYPE
     },

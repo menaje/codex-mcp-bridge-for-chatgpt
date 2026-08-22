@@ -19,11 +19,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - id: metadata
+        name: Resolve release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ steps.metadata.outputs.node_version }}
           cache: npm
-      - run: npm install --global npm@10.9.3
+      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
       - run: npm run check
       - run: npm audit --omit=dev
@@ -39,33 +42,34 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: metadata
+        name: Resolve release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ steps.metadata.outputs.node_version }}
           cache: npm
-      - id: metadata
-        name: Resolve release version
+      - id: release-state
+        name: Validate release target
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          version="$(node -p "require('./package.json').version")"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid package version: $version" >&2
+          if [[ "$GITHUB_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "Manifest repository $EXPECTED_REPOSITORY does not match workflow repository $GITHUB_REPOSITORY." >&2
             exit 1
           fi
 
-          tag="v${version}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $tag already exists; no duplicate release will be created."
+            echo "Release $RELEASE_TAG already exists; no duplicate release will be created."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
-              tag_commit="$(git rev-list -n 1 "$tag")"
+            if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+              tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
               if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-                echo "Tag $tag already points to $tag_commit instead of $GITHUB_SHA." >&2
+                echo "Tag $RELEASE_TAG already points to $tag_commit instead of $GITHUB_SHA." >&2
                 exit 1
               fi
               echo "tag_exists=true" >> "$GITHUB_OUTPUT"
@@ -73,38 +77,60 @@ jobs:
               echo "tag_exists=false" >> "$GITHUB_OUTPUT"
             fi
           fi
-      - if: steps.metadata.outputs.exists != 'true'
-        run: npm install --global npm@10.9.3
-      - if: steps.metadata.outputs.exists != 'true'
+      - if: steps.release-state.outputs.exists != 'true'
+        run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+      - if: steps.release-state.outputs.exists != 'true'
         run: npm ci
-      - if: steps.metadata.outputs.exists != 'true'
+      - if: steps.release-state.outputs.exists != 'true'
         run: npm run build
-      - if: steps.metadata.outputs.exists != 'true'
+      - if: steps.release-state.outputs.exists != 'true'
         id: package
         name: Build release assets
+        env:
+          EXPECTED_PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+          EXPECTED_CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
         run: |
           pack_json="$(npm pack --json)"
           package_file="$(node -e 'const fs = require("node:fs"); const packed = JSON.parse(fs.readFileSync(0, "utf8")); if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0].filename !== "string") process.exit(1); process.stdout.write(packed[0].filename);' <<< "$pack_json")"
-          sha256sum "$package_file" > "$package_file.sha256"
+          if [[ "$package_file" != "$EXPECTED_PACKAGE_FILE" ]]; then
+            echo "npm produced $package_file instead of manifest asset $EXPECTED_PACKAGE_FILE." >&2
+            exit 1
+          fi
+          checksum_file="$package_file.sha256"
+          if [[ "$checksum_file" != "$EXPECTED_CHECKSUM_FILE" ]]; then
+            echo "Checksum filename $checksum_file does not match manifest asset $EXPECTED_CHECKSUM_FILE." >&2
+            exit 1
+          fi
+          sha256sum "$package_file" > "$checksum_file"
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
-          echo "checksum_file=$package_file.sha256" >> "$GITHUB_OUTPUT"
-      - if: steps.metadata.outputs.exists != 'true'
+          echo "checksum_file=$checksum_file" >> "$GITHUB_OUTPUT"
+      - if: steps.release-state.outputs.exists != 'true'
         name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.metadata.outputs.release_title }}
+          RELEASE_CHANNEL: ${{ steps.metadata.outputs.channel }}
+          GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
           PACKAGE_FILE: ${{ steps.package.outputs.package_file }}
           CHECKSUM_FILE: ${{ steps.package.outputs.checksum_file }}
-          TAG_EXISTS: ${{ steps.metadata.outputs.tag_exists }}
+          TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
         run: |
           release_args=(
             "$RELEASE_TAG"
             "$PACKAGE_FILE#npm package"
             "$CHECKSUM_FILE#SHA-256 checksum"
-            --title "$RELEASE_TAG"
-            --generate-notes
+            --title "$RELEASE_TITLE"
           )
 
+          if [[ "$GENERATE_NOTES" == "true" ]]; then
+            release_args+=(--generate-notes)
+          else
+            release_args+=(--notes "Automated release from $GITHUB_SHA")
+          fi
+          if [[ "$RELEASE_CHANNEL" == "prerelease" ]]; then
+            release_args+=(--prerelease)
+          fi
           if [[ "$TAG_EXISTS" == "true" ]]; then
             release_args+=(--verify-tag)
           else

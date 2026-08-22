@@ -61,6 +61,7 @@ import {
   type BridgeUserSettingsPatch,
   UserSettingsStore
 } from "./userSettings.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 
 type CodexJobStatus =
   | "running"
@@ -1398,7 +1399,7 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_status",
     {
-      title: "Codex Bridge Status",
+      title: `${PRODUCT_INFO.displayName} Status`,
       description:
         "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for MCP hosts that do not provide it. Pass a jobId for one result, an exact Activity/thread id for detail, or activityView=true with afterVersion for the mounted card's one scope-wide bounded watch. A bridge-wide audit is available only to compatibility/admin hosts without ChatGPT session metadata.",
       inputSchema: {
@@ -1677,7 +1678,8 @@ export function registerBridgeTools(
           ? "memory"
           : "split-json";
       return textResult({
-        bridge: "codex-mcp-bridge",
+        bridge: PRODUCT_INFO.runtimeName,
+        product: PRODUCT_INFO.displayName,
         build: BRIDGE_BUILD_INFO,
         auth: config.token && !config.noAuth ? "bearer-token" : "none",
         allowedRoots: config.allowedRoots,
@@ -1807,7 +1809,7 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_activity",
     {
-      title: "Codex Activity Manager",
+      title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description:
         "Render or refresh the Activity view for the current ChatGPT conversation. One scope-wide bounded watch replaces per-job polling. Use it once when codex_task returns an asynchronous job; the mounted card then watches authoritative Activity/job versions itself.",
       inputSchema: {
@@ -1828,9 +1830,7 @@ export function registerBridgeTools(
       _meta: {
         ui: { resourceUri: ACTIVITY_CARD_URI },
         "openai/outputTemplate": ACTIVITY_CARD_URI,
-        "openai/widgetAccessible": true,
-        "openai/toolInvocation/invoking": "Opening Codex activities…",
-        "openai/toolInvocation/invoked": "Codex activities are ready."
+        "openai/widgetAccessible": true
       }
     },
     async (args, { _meta, signal }) => {
@@ -2305,9 +2305,9 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_settings",
     {
-      title: "Open Codex Bridge Settings",
+      title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved bridge defaults, owner-enforced limits, allowed roots, and current dynamic Codex model/effort catalog. Use this whenever the user asks where or how to configure the MacBook Air Codex bridge.",
+        "Open an interactive settings card and return the saved bridge defaults, owner-enforced limits, allowed roots, and current dynamic Codex model/effort catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -2327,9 +2327,7 @@ export function registerBridgeTools(
           visibility: ["model", "app"]
         },
         "openai/outputTemplate": SETTINGS_CARD_URI,
-        "openai/widgetAccessible": true,
-        "openai/toolInvocation/invoking": "Codex Bridge 설정을 불러오는 중…",
-        "openai/toolInvocation/invoked": "Codex Bridge 설정을 열었습니다."
+        "openai/widgetAccessible": true
       }
     },
     async (args, { _meta }) => settingsViewResult(
@@ -2341,7 +2339,7 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_update_settings",
     {
-      title: "Save Codex Bridge Settings",
+      title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
         "Validate and persist user-configurable bridge defaults. This action is intended for the Codex settings card; owner security capabilities and allowed roots cannot be changed here.",
       inputSchema: {
@@ -2373,9 +2371,7 @@ export function registerBridgeTools(
           visibility: ["app"]
         },
         "openai/widgetAccessible": true,
-        "openai/visibility": "private",
-        "openai/toolInvocation/invoking": "Codex Bridge 설정을 저장하는 중…",
-        "openai/toolInvocation/invoked": "Codex Bridge 설정을 저장했습니다."
+        "openai/visibility": "private"
       }
     },
     async (args, { _meta }) => {
@@ -3716,7 +3712,7 @@ async function buildSettingsView(
     },
     warnings: [...config.startupWarnings, ...userSettings.loadWarnings],
     scopeNotice:
-      "이 설정은 ChatGPT 계정별 값이 아니라 이 MacBook Air 브리지 연결을 사용하는 모든 대화에 공유됩니다. 운영자 보안정책은 카드에서 변경할 수 없습니다."
+      "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Operator security policy cannot be changed from the card."
   };
 }
 

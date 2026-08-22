@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { JsonRpcProcess, type JsonRpcTerminationResult } from "./jsonRpcProcess.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 import type {
   CodexPendingInteraction,
   CodexProgress,
@@ -370,8 +371,8 @@ class AppServerConnection {
       "initialize",
       {
         clientInfo: {
-          name: "codex-mcp-bridge",
-          title: "Codex MCP Bridge",
+          name: PRODUCT_INFO.runtimeName,
+          title: PRODUCT_INFO.displayName,
           version: BRIDGE_BUILD_INFO.version
         },
         capabilities: {

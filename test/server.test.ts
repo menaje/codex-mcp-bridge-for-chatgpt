@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createHttpServer } from "../src/server.js";
 import { loadConfig } from "../src/config.js";
+import { PRODUCT_INFO } from "../src/productInfo.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
@@ -81,7 +82,9 @@ describe("http server", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       ok: true,
-      build: { version: "0.2.0", id: expect.any(String), sourceHash: expect.any(String) }
+      name: PRODUCT_INFO.runtimeName,
+      title: PRODUCT_INFO.displayName,
+      build: { version: PRODUCT_INFO.version, id: expect.any(String), sourceHash: expect.any(String) }
     });
   });
 

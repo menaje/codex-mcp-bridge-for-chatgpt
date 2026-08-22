@@ -3,7 +3,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export function computeSourceHash(repoRoot) {
-  const files = ["package.json", "package-lock.json", "tsconfig.json", ...walk(repoRoot, "src")].sort();
+  const files = [
+    "release-manifest.json",
+    "release-manifest.schema.json",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    ...walk(repoRoot, "src"),
+    ...walk(repoRoot, "scripts")
+  ].sort();
   const hash = createHash("sha256");
   for (const relative of files) {
     hash.update(relative);

@@ -1,6 +1,6 @@
 {
-  "name": "codex-mcp-bridge",
-  "version": "0.2.0",
+  "name": "codex-mcp-bridge-for-chatgpt",
+  "version": "0.3.0",
   "packageManager": "npm@10.9.3",
   "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
   "type": "module",
@@ -10,10 +10,17 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "UPSTREAM.md",
+    "docs",
+    "release-manifest.json",
+    "release-manifest.schema.json"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
+    "release:check": "node scripts/release-manifest.mjs check",
+    "release:sync": "node scripts/release-manifest.mjs sync",
+    "release:version": "node scripts/release-manifest.mjs version",
+    "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "bridge:local": "node scripts/start-codex-mcp-bridge.mjs --mode local",
     "bridge:secure": "node scripts/start-codex-mcp-bridge.mjs --mode secure",
     "bridge:secure:keychain": "zsh scripts/start-secure-from-keychain.sh",
@@ -33,7 +40,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/menaje/codex-mcp-bridge.git"
+    "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -50,5 +57,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "homepage": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt#readme",
+  "bugs": {
+    "url": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues"
   }
 }

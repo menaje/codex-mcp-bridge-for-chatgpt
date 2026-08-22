@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { PRODUCT_INFO } from "./productInfo.js";
 
 export type BridgeBuildInfo = {
   version: string;
@@ -30,7 +31,7 @@ function loadBuildInfo(): BridgeBuildInfo {
     // Development mode runs directly from src without a generated build record.
   }
   return {
-    version: "0.2.0",
+    version: PRODUCT_INFO.version,
     commit: "development",
     dirty: true,
     sourceHash: "development",

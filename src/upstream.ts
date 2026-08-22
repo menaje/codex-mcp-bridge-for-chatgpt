@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import type { CodexBackendKind } from "./config.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 import {
   JsonRpcProcess,
   type JsonRpcProcessIdentity,
@@ -415,7 +416,7 @@ class ProcessMcpClient implements CodexMcpClient {
       {
         protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "codex-mcp-bridge", version: BRIDGE_BUILD_INFO.version }
+        clientInfo: { name: PRODUCT_INFO.runtimeName, version: BRIDGE_BUILD_INFO.version }
       },
       { timeoutMs: 30_000 }
     );

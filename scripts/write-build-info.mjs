@@ -1,16 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeSourceHash } from "./build-fingerprint.mjs";
+import { loadReleaseManifest } from "./release-manifest.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const manifest = loadReleaseManifest(repoRoot);
 const commit = git(["rev-parse", "HEAD"]) || "unknown";
 const dirty = Boolean(git(["status", "--porcelain", "--untracked-files=normal"]));
 const sourceHash = computeSourceHash(repoRoot);
 const build = {
-  version: packageJson.version,
+  version: manifest.release.version,
   commit,
   dirty,
   sourceHash,

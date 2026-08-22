@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { serializedUiTranslations } from "./uiI18n.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 
-export const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings-v6.html";
+export const SETTINGS_CARD_URI = `ui://${PRODUCT_INFO.runtimeName}/settings-v6.html`;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 
 export function registerSettingsCardResource(server: McpServer): void {
@@ -9,7 +10,7 @@ export function registerSettingsCardResource(server: McpServer): void {
     "codex-settings-card",
     SETTINGS_CARD_URI,
     {
-      title: "Codex Bridge Settings",
+      title: `${PRODUCT_INFO.displayName} Settings`,
       description: "Localized interactive settings card for user-configurable Codex bridge preferences.",
       mimeType: SETTINGS_CARD_MIME_TYPE
     },
@@ -26,7 +27,7 @@ export function registerSettingsCardResource(server: McpServer): void {
               domain: "https://web-sandbox.oaiusercontent.com"
             },
             "openai/widgetDescription":
-              "Configure saved access, model, working-directory, session, and concurrency defaults for the MacBook Air Codex Bridge.",
+              `Configure saved access, model, working-directory, session, and concurrency defaults for ${PRODUCT_INFO.displayName}.`,
             "openai/widgetPrefersBorder": true,
             "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
             "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
@@ -42,7 +43,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Codex Bridge settings</title>
+  <title>${PRODUCT_INFO.displayName} settings</title>
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --surface:color-mix(in srgb,Canvas 96%,CanvasText 4%); --muted:color-mix(in srgb,CanvasText 62%,transparent); --border:color-mix(in srgb,CanvasText 16%,transparent); --accent:#1777ff; --danger:#c34132; }
     * { box-sizing:border-box; } body { margin:0; padding:12px; background:transparent; color:CanvasText; }
@@ -64,7 +65,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
 </head>
 <body>
   <main class="card">
-    <header><div><h1 data-i18n="settings.title"></h1><p class="scope" data-i18n="settings.scope"></p></div><span class="revision" id="revision" data-i18n="common.loading"></span></header>
+    <header><div><h1>${PRODUCT_INFO.displayName}</h1><p class="scope" data-i18n="settings.scope"></p></div><span class="revision" id="revision" data-i18n="common.loading"></span></header>
     <form id="settings-form">
       <div class="grid">
         <label class="wide"><span data-i18n="settings.access"></span><select id="access-strategy"></select><span class="hint" id="access-hint"></span></label>

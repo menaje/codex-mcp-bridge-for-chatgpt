@@ -1,11 +1,11 @@
-# codex-mcp-bridge
+# Codex MCP Bridge for ChatGPT
 
-A small policy layer between ChatGPT and the official local Codex MCP server.
+A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.
 
 ```text
 ChatGPT
   -> OpenAI Secure MCP Tunnel
-  -> codex-mcp-bridge (loopback HTTP)
+  -> Codex MCP Bridge for ChatGPT (loopback HTTP)
   -> sticky backend router
        -> codex mcp-server (stable default)
        -> codex app-server (feature-selectable rich events/controls)
@@ -54,6 +54,7 @@ Official references:
 
 - [Run Codex as an MCP server](https://developers.openai.com/codex/mcp/)
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+- [Build MCP Apps for ChatGPT](https://developers.openai.com/plugins/reference)
 
 ## Install
 
@@ -68,16 +69,37 @@ Use `dev` as the working branch. Pushes to `dev` and pull-request updates do
 not start GitHub Actions. The single workflow runs only after a change reaches
 `main`, where it performs the full build, test, and production dependency audit.
 
-Before merging a release into `main`, update the package version on `dev`:
+[`release-manifest.json`](release-manifest.json) is the canonical source for the
+product name, npm package and binary names, Node/npm toolchain, GitHub
+repository, SemVer version, tag prefix, release channel, generated-notes
+policy, and release assets.
+`package.json`, `package-lock.json`, runtime build metadata, npm archive names,
+and the GitHub Release workflow consume or validate that manifest instead of
+maintaining independent release values.
+
+Before merging a release into `main`, update the manifest and synchronized npm
+metadata together on `dev`:
 
 ```bash
-npm version patch --no-git-tag-version
+npm run release:version -- patch
+npm run release:check
+npm run check
 ```
 
-Use `minor` or `major` instead of `patch` when appropriate. After the `main`
-checks pass, the workflow creates `v<package-version>` with generated notes,
-the npm package tarball, and its SHA-256 checksum. If that version already has
-a GitHub Release, the release job succeeds without replacing or duplicating it.
+Use `minor`, `major`, or an exact SemVer value such as `0.4.0-beta.1` when
+appropriate. Use `npm run release:sync` only to repair derived npm metadata
+after an intentional manifest edit. After the `main` checks pass, the workflow
+validates that the manifest names the active GitHub repository and creates the
+manifest-derived tag, title, npm package tarball, and SHA-256 checksum. An
+existing release is never replaced or duplicated. See
+[docs/releasing.md](docs/releasing.md) for the complete contract.
+
+The public repository and npm package use the `-for-chatgpt` suffix. The
+`codex-mcp-bridge` executable, `CODEX_MCP_BRIDGE_*` environment variables,
+`~/.codex-mcp-bridge` state directory, keychain service names, tunnel profile,
+and MCP App resource URIs intentionally retain their original runtime identity.
+Changing those compatibility identifiers would disconnect existing local
+deployments, credentials, state, or mounted cards.
 
 ## Local smoke test
 
@@ -131,7 +153,7 @@ one for a concrete user-authorized change or build request and makes the
 
 ### Interactive settings card
 
-Ask ChatGPT to **open the MacBook Air Codex Bridge settings**. It calls
+Ask ChatGPT to **open the Codex MCP Bridge for ChatGPT settings**. It calls
 `codex_settings` and renders an inline card where the bridge user can set:
 
 - access strategy: `read-only`, `adaptive`, or `always-full` when the owner has
@@ -205,8 +227,11 @@ effort because continued Codex threads keep their original configuration.
 
 - In ChatGPT, omit `scopeId`. The bridge derives a stable opaque UUID from the
   host-provided anonymous organization, subject, and conversation session tuple
-  using a private HMAC key. A copied or branched conversation receives a new
-  host session automatically. MCP hosts without ChatGPT session metadata must
+  using a private HMAC key. OpenAI defines `openai/session` as an anonymized
+  conversation id for correlating calls within the same ChatGPT session. Equal
+  host tuples resolve to one scope and a different session value resolves to a
+  different scope; the bridge does not infer device, copy, or branch identity
+  beyond those host values. MCP hosts without ChatGPT session metadata must
   provide and reuse an explicit compatibility `scopeId` instead.
 - `requestId` is required. ChatGPT generates one UUID for each logical task
   call and reuses that exact value only when retrying the same arguments. The
@@ -401,6 +426,12 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `CODEX_MCP_BRIDGE_HOST` | `127.0.0.1` | HTTP bind host; no-auth mode rejects non-loopback values |
+| `CODEX_MCP_BRIDGE_PORT` | `8765` | Direct-server port; the bundled local/secure launcher defaults to `8876` |
+| `CODEX_MCP_BRIDGE_TOKEN` | unset | Optional bearer token; required unless loopback-only no-auth mode is enabled |
+| `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Set to `1` only for a loopback endpoint or Secure MCP Tunnel transport boundary |
+| `CODEX_MCP_BRIDGE_ALLOWED_HOSTS` | unset | Optional comma-separated HTTP Host allowlist; the launcher sets loopback hosts |
+| `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI executable path or command |
 | `CODEX_MCP_BRIDGE_ROOTS` | current directory | Comma-separated absolute allowed roots |
 | `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access`; the matching capability must be enabled |
 | `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial card strategy: `read-only`, `adaptive`, or `always-full`; the last value requires full-access capability |
@@ -430,13 +461,18 @@ Use `bridge:secure:write:keychain` only for an intentional write session.
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
 
+These are package defaults. A local launcher or LaunchAgent may deliberately
+override them—for example, an installation may select `app-server` while the
+portable package keeps the conservative `mcp-server` default. Inspect
+`codex_status` to confirm the effective policy and backend of a running bridge.
+
 The retired `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` variable is ignored for one
 compatibility release and emits an operator warning. Remove it from service
 definitions; it cannot re-enable a finite Codex task deadline.
 
 The old `CODEX_GPT_BRIDGE_*` variable prefix is accepted temporarily for upstream compatibility.
 
-`npm run build` writes a source fingerprint and version record to
+`npm run build` validates the release manifest, then writes a source fingerprint and version record to
 `dist/build-info.json`. The launcher verifies that fingerprint even with
 `--no-build` and rebuilds stale output instead of silently running old code.
 Both `/healthz` and `codex_status` expose the active build record so the source

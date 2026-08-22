@@ -1,4 +1,4 @@
-# Security model
+# Codex MCP Bridge for ChatGPT security model
 
 ## Trust boundary
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
+import { PRODUCT_INFO } from "../src/productInfo.js";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import {
   resolveUiLocale,
@@ -58,6 +59,8 @@ describe("human-facing UI localization", () => {
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
     expect(SETTINGS_CARD_HTML).toContain(serialized);
     expect(ACTIVITY_CARD_HTML).toContain(serialized);
+    expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
+    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
 
   it("supports host locale updates, accessible controls, and standard/fallback app messaging", () => {

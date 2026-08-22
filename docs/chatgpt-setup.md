@@ -1,4 +1,4 @@
-# Connect ChatGPT through Secure MCP Tunnel
+# Connect Codex MCP Bridge for ChatGPT through Secure MCP Tunnel
 
 ## 1. Prepare Codex
 
@@ -73,12 +73,15 @@ initial `adaptive` setting keeps omitted sandboxes read-only. A saved
 
 ### Bridge settings card
 
-Ask ChatGPT to open the MacBook Air Codex Bridge settings. The
+Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The
 `codex_settings` result renders an inline card for access strategy, dynamic
 model/effort defaults, working directory, session behavior, auto-resume window,
 concurrency, and completion delivery. Codex job execution is unlimited-only;
 there is no task-timeout field or per-call timeout. The save button calls the
 app-only update action; the server validates the complete request and stores it privately.
+The card selects English, Korean, Japanese, Simplified or Traditional Chinese,
+Spanish, French, German, or Portuguese from the host locale and falls back to
+English when that locale is unsupported.
 
 The access choices are:
 
@@ -105,6 +108,9 @@ Ask ChatGPT to call `codex_status`. Confirm:
 - `allowedRoots` contains only the intended repository.
 - Upstream tools include `codex` and `codex-reply`.
 - `build.id` matches the current `/healthz` build id.
+- `defaultBackend` reflects the effective deployment configuration. The package
+  default is stable `mcp-server`, while a local launcher or LaunchAgent may
+  explicitly choose experimental `app-server` for richer events and controls.
 
 Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
 prompt. ChatGPT must omit `scopeId`; the bridge derives it from host-provided
@@ -177,9 +183,15 @@ is the sole compatible candidate for the same scope, cwd,
 sandbox, model, and effort inside the saved auto-resume window. With several
 compatible sessions it returns an ambiguity error so ChatGPT can inspect the
 scope and retry with the intended exact `threadId`. A copied or branched
-ChatGPT conversation receives a new host session automatically. Moving an existing thread
-across scopes requires its exact `threadId` and `adoptThread: true` after
-explicit user intent.
+ChatGPT conversation is isolated only when the host supplies a different
+`openai/session` value. Moving an existing thread across scopes requires its
+exact `threadId` and `adoptThread: true` after explicit user intent.
+
+For a cross-surface deployment, compare the opaque `scopeView.scopeId` returned
+by `codex_status` from the same chat on macOS, iOS, and web, then compare it with
+a new chat. The same host tuple must produce the same scope and a different
+host session must produce a different scope. This diagnostic compares only the
+derived identifier; raw host metadata is never persisted or returned.
 
 The status entry `resumeAvailability: "available"` means the thread is still
 bound to its active Codex MCP worker. After the bridge or worker restarts,
@@ -238,3 +250,4 @@ Official guidance:
 
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [Connect and test a ChatGPT plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt)
+- [MCP Apps and ChatGPT-specific extensions](https://developers.openai.com/plugins/reference)

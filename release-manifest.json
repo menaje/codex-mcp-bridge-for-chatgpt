@@ -1,0 +1,49 @@
+{
+  "$schema": "./release-manifest.schema.json",
+  "manifestVersion": 1,
+  "product": {
+    "displayName": "Codex MCP Bridge for ChatGPT",
+    "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
+    "runtimeName": "codex-mcp-bridge"
+  },
+  "package": {
+    "name": "codex-mcp-bridge-for-chatgpt",
+    "binaryName": "codex-mcp-bridge",
+    "license": "MIT",
+    "files": [
+      "dist",
+      "README.md",
+      "LICENSE",
+      "UPSTREAM.md",
+      "docs",
+      "release-manifest.json",
+      "release-manifest.schema.json"
+    ],
+    "keywords": [
+      "codex",
+      "chatgpt",
+      "mcp",
+      "model-context-protocol",
+      "bridge"
+    ]
+  },
+  "toolchain": {
+    "node": "22",
+    "npm": "10.9.3"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "menaje",
+    "name": "codex-mcp-bridge-for-chatgpt"
+  },
+  "release": {
+    "version": "0.3.0",
+    "tagPrefix": "v",
+    "channel": "stable",
+    "generateNotes": true,
+    "assets": [
+      "npm-tarball",
+      "sha256"
+    ]
+  }
+}

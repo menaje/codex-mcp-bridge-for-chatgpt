@@ -5,6 +5,7 @@ import { createHttpServer } from "./server.js";
 import { CodexUpstreamPool } from "./upstream.js";
 import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
 import { CodexBackendRouter } from "./upstreamRouter.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 
 const config = loadConfig();
 const upstream = new CodexBackendRouter(
@@ -19,7 +20,7 @@ for (const warning of config.startupWarnings) console.warn(`warning: ${warning}`
 
 server.listen(config.port, config.host, () => {
   const authHint = config.token && !config.noAuth ? "Bearer token required" : "no auth";
-  console.log(`codex-mcp-bridge listening on http://${config.host}:${config.port}/mcp (${authHint})`);
+  console.log(`${PRODUCT_INFO.displayName} listening on http://${config.host}:${config.port}/mcp (${authHint})`);
   console.log(`build: ${BRIDGE_BUILD_INFO.id} (${BRIDGE_BUILD_INFO.version})`);
   console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
 });
