@@ -57,6 +57,14 @@ export type ActivityJobCounts = {
   terminal: number;
 };
 
+export type ActivityVerificationEvidence = {
+  summary: string;
+  jobIds?: string[];
+  tests?: string[];
+  artifacts?: string[];
+  references?: string[];
+};
+
 export type BridgeActivity = {
   activityId: string;
   scopeId: string;

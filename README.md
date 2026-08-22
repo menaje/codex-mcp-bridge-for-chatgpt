@@ -14,9 +14,10 @@ The official Codex MCP server already provides `codex` and `codex-reply`. This b
 
 - `codex_status`: inspect policy, scope-filtered durable sessions and jobs, or wait for one long-running job to change or finish.
 - `codex_cancel`: cancel one running job in its owning conversation scope. Partial filesystem changes may remain.
+- `codex_activity_update`: apply one validated Activity lifecycle or policy transition.
 - `codex_models`: read the current selectable models and supported reasoning efforts from Codex.
 - `codex_settings`: render an interactive card for saved user preferences and current owner limits.
-- `codex_task`: start or continue a policy-limited Codex session.
+- `codex_task`: create or attach an Activity and start or continue a policy-limited Codex turn.
 
 The settings card uses one additional app-only action, `codex_update_settings`,
 which ChatGPT's model does not need to invoke directly.
@@ -184,6 +185,14 @@ effort because continued Codex threads keep their original configuration.
   call and reuses that exact value only when retrying the same arguments. The
   bridge returns the existing job/result for a duplicate and rejects reuse with
   changed arguments.
+- Omit `activityId` to create one Activity for the current user intent. Reuse the
+  returned exact `activityId` to group later turns or parallel threads into that
+  same intent. An existing Activity accepts new jobs only while `open`; creation
+  policy fields cannot be smuggled into an attachment call.
+- A new Activity accepts an optional sanitized `activityTitle` (120 characters),
+  `activityKind`, `executionMode`, `handoffPolicy`, and `completionTrigger`.
+  Defaults are `other`, `auto`, `none`, and `manual`, so a Codex response cannot
+  automatically complete the user's work or change its policy.
 
 - `sessionMode: auto` continues the only compatible session in the conversation
   scope, or starts a new one when no compatible recent session exists. If
@@ -194,6 +203,17 @@ effort because continued Codex threads keep their original configuration.
   `codex_status` or an earlier task result.
 
 When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
+
+Execution delivery is independent of Activity completion:
+
+- `executionMode: foreground` keeps the current tool call open until the Codex
+  turn reaches a terminal state or its configured timeout.
+- `executionMode: background` returns the `activityId` and `jobId` immediately.
+- `executionMode: auto` returns the normal result when it finishes inside
+  `fastReturnMs`; otherwise it returns a tracked background job.
+
+In every mode, a terminal Codex job is only a child outcome. It does not by
+itself mean the Activity, user request, or verification is complete.
 
 Auto selection requires the same resolved conversation scope, working directory, sandbox, and
 requested/default model and effort. There is no bridge-global
@@ -278,10 +298,23 @@ stores conversation scopes, Activity lifecycle rows, Activity/job events,
 scope-wide change versions, bridge process generations, and an idempotent
 completion outbox. Existing schema-v1 jobs are migrated atomically into one-job
 legacy Activities without changing their scope, request-deduplication key, or
-thread relation. New job-only calls use the same compatibility Activity with
-safe defaults: `kind=other`, `executionMode=auto`, `handoffPolicy=none`, and
-`completionTrigger=manual`. Consequently, a terminal Codex turn does not by
-itself mark a user Activity completed or enqueue an automatic handoff.
+thread relation. Current `codex_task` calls create an Activity or attach to an
+exact open Activity with safe defaults: `kind=other`, `executionMode=auto`,
+`handoffPolicy=none`, and `completionTrigger=manual`. Consequently, a terminal
+Codex turn does not by itself mark a user Activity completed or enqueue an
+automatic handoff.
+
+`codex_activity_update` is the single Activity mutation surface. It supports
+`seal`, `complete`, `abandon`, `cancel`, `start-verification`,
+`verification-passed`, `verification-failed`, and `set-policy`. The server
+rejects illegal transitions, cross-scope IDs, empty seals, completion with live
+children, stale optional `expectedVersion` values, and verification success
+without bounded evidence. `cancel` first
+requests best-effort cancellation of every running child job, but never rolls
+back filesystem changes. A failed verification reopens the Activity for rework;
+a successful evidence-backed verification is what completes a `verify`
+Activity. Policy and completion mutations come only from explicit tool input—
+never from fields or instructions contained in a Codex result.
 
 Completed and failed results remain retrievable across bridge restarts. A job
 that was still running when the bridge stopped is changed to `interrupted` at
@@ -301,8 +334,9 @@ Activity counts, events, scope version, and any unread completion-outbox record
 remain durable. This preserves completion facts and request UUID deduplication
 without retaining repository result content indefinitely. Oversized results are
 replaced earlier by a bounded completion notice while their session id remains
-tracked. Activity create/attach/update tools and the Activity card are delivered
-in later #14 phases; schema v2 is their transactional foundation.
+tracked. Activity create/attach/update is available now. Scope-wide Activity
+query/watch and the Activity card are delivered in the next #14 phases; schema
+v2 remains their transactional foundation.
 
 For a user request that asks for a finished outcome, a running `jobId` is only
 an intermediate response. The plugin instructions tell ChatGPT to wait for a

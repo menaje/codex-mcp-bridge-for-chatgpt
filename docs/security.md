@@ -41,6 +41,9 @@ the network as the current macOS user.
 - HMAC-derived ChatGPT conversation scopes for automatic session routing,
   explicit UUID fallback for hosts without ChatGPT metadata, and required request
   UUIDs for retained-job retry deduplication.
+- Exact-scope Activity creation/attachment and server-validated lifecycle
+  transitions. Existing Activity policy cannot be changed through `codex_task`,
+  and Codex output is never treated as transition authority.
 - 50,000 characters per prompt.
 - Six-hour automatic session-resume window and completed-job retention.
 - Durable sessions, bridge preferences, jobs, bounded results, Activities,
@@ -111,6 +114,11 @@ because the private no-auth tunnel does not supply per-user identity.
   tuple or loss/rotation of the locally persisted HMAC key produce a new scope.
 - Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
   cannot independently prove that a particular call received fresh user approval.
+- `codex_activity_update` is stateful and includes a destructive `cancel` action.
+  The server validates scope and lifecycle and cancels current child jobs best
+  effort, but cannot undo commands or file edits already performed. Verification
+  evidence is bounded metadata supplied by the caller; it is an audit reference,
+  not cryptographic proof that a test or artifact belongs only to that Activity.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
   can still affect the subset of calls assigned to that worker.
 - Codex MCP thread context is worker-process local. Persisted session metadata

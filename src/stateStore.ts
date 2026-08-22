@@ -19,6 +19,7 @@ import {
   type ActivityHandoffPolicy,
   type ActivityJobCounts,
   type ActivityKind,
+  type ActivityVerificationEvidence,
   type ActivityVerificationState,
   type BridgeActivity
 } from "./activity.js";
@@ -467,10 +468,11 @@ export class BridgeStateStore {
         .prepare(`
           UPDATE activities
              SET kind = ?, execution_mode = ?, handoff_policy = ?, completion_trigger = ?,
+                 verification = CASE WHEN ? = 'verify' THEN verification ELSE 'not-required' END,
                  version = version + 1, updated_at = ?
            WHERE activity_id = ?
         `)
-        .run(kind, executionMode, handoffPolicy, completionTrigger, now, activityId);
+        .run(kind, executionMode, handoffPolicy, completionTrigger, handoffPolicy, now, activityId);
       this.insertActivityEvent({
         activityId,
         scopeId: activity.scopeId,
@@ -489,6 +491,9 @@ export class BridgeStateStore {
       if (activity.lifecycle !== "open") {
         throw new Error("Only an open Activity can be sealed.");
       }
+      if (activity.counts.total === 0) {
+        throw new Error("An Activity must contain at least one Codex job before it can be sealed.");
+      }
       const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
       this.database
         .prepare(`
@@ -506,6 +511,196 @@ export class BridgeStateStore {
         payload: {}
       });
       this.reconcileActivity(activityId, scopeVersion, now);
+      return this.requireActivity(activityId);
+    });
+  }
+
+  completeActivity(activityId: string, reason?: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "completed");
+      this.assertNoRunningJobs(activity, "complete");
+      if (activity.verification === "pending" || activity.verification === "verifying") {
+        throw new Error("Finish Activity verification before completing the Activity.");
+      }
+      if (activity.handoffPolicy === "verify" && activity.verification !== "verified") {
+        throw new Error(
+          "A verify Activity cannot be completed before verification passes. Start verification first."
+        );
+      }
+      const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+      const completionVersion = activity.completionVersion + 1;
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET lifecycle = 'completed', waiting_on = 'none', verification = 'not-required',
+                 version = version + 1,
+                 completion_version = ?, updated_at = ?, completed_at = ?
+           WHERE activity_id = ?
+        `)
+        .run(completionVersion, now, now, activityId);
+      this.insertActivityEvent({
+        activityId,
+        scopeId: activity.scopeId,
+        scopeVersion,
+        eventType: "activity-completed",
+        createdAt: now,
+        payload: { source: "explicit-update", reason: normalizeOptionalBoundedText(reason, 2_000) || null }
+      });
+      if (activity.handoffPolicy === "notify") {
+        this.insertCompletionOutbox({
+          activityId,
+          scopeId: activity.scopeId,
+          completionVersion,
+          channel: "notify",
+          createdAt: now,
+          payload: {
+            activityId,
+            completionVersion,
+            channel: "notify",
+            counts: activity.counts,
+            requiresResultVerification: false,
+            source: "explicit-update"
+          }
+        });
+      }
+      return this.requireActivity(activityId);
+    });
+  }
+
+  abandonActivity(activityId: string, reason?: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "abandoned");
+      this.assertNoRunningJobs(activity, "abandon");
+      return this.transitionActivityTerminal(
+        activity,
+        "abandoned",
+        "activity-abandoned",
+        { reason: normalizeOptionalBoundedText(reason, 2_000) || null },
+        now
+      );
+    });
+  }
+
+  cancelActivity(activityId: string, reason?: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "cancelled");
+      this.assertNoRunningJobs(activity, "cancel");
+      return this.transitionActivityTerminal(
+        activity,
+        "cancelled",
+        "activity-cancelled",
+        {
+          reason: normalizeOptionalBoundedText(reason, 2_000) || null,
+          partialFilesystemChangesMayRemain: true
+        },
+        now
+      );
+    });
+  }
+
+  startActivityVerification(activityId: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "verified");
+      if (activity.handoffPolicy !== "verify") {
+        throw new Error("Only an Activity with handoffPolicy='verify' can start verification.");
+      }
+      this.assertNoRunningJobs(activity, "start verification for");
+      if (activity.counts.total === 0) {
+        throw new Error("An Activity must contain at least one Codex job before verification starts.");
+      }
+      if (activity.counts.completed === 0) {
+        throw new Error("Verification requires at least one completed child job with an outcome to inspect.");
+      }
+      if (
+        activity.verification !== "not-required" &&
+        activity.verification !== "pending" &&
+        activity.verification !== "failed"
+      ) {
+        throw new Error(`Activity verification cannot start from '${activity.verification}'.`);
+      }
+      const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET lifecycle = 'sealed', sealed_at = COALESCE(sealed_at, ?),
+                 waiting_on = 'verification', verification = 'verifying',
+                 version = version + 1, updated_at = ?
+           WHERE activity_id = ?
+        `)
+        .run(now, now, activityId);
+      this.insertActivityEvent({
+        activityId,
+        scopeId: activity.scopeId,
+        scopeVersion,
+        eventType: "verification-started",
+        createdAt: now,
+        payload: { previousVerification: activity.verification }
+      });
+      this.acknowledgeCompletionOutbox(activityId, "verify", now);
+      return this.requireActivity(activityId);
+    });
+  }
+
+  passActivityVerification(
+    activityId: string,
+    evidence: ActivityVerificationEvidence,
+    now = Date.now()
+  ): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "verified");
+      if (activity.lifecycle !== "sealed" || activity.verification !== "verifying") {
+        throw new Error("Activity verification can pass only after verification has started.");
+      }
+      this.assertNoRunningJobs(activity, "verify");
+      const normalizedEvidence = normalizeVerificationEvidence(evidence);
+      this.assertEvidenceJobsBelongToActivity(activityId, normalizedEvidence.jobIds || []);
+      const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+      const completionVersion = activity.completionVersion + 1;
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET lifecycle = 'completed', waiting_on = 'none', verification = 'verified',
+                 version = version + 1, completion_version = ?, updated_at = ?, completed_at = ?
+           WHERE activity_id = ?
+        `)
+        .run(completionVersion, now, now, activityId);
+      this.insertActivityEvent({
+        activityId,
+        scopeId: activity.scopeId,
+        scopeVersion,
+        eventType: "verification-passed",
+        createdAt: now,
+        payload: { evidence: normalizedEvidence }
+      });
+      return this.requireActivity(activityId);
+    });
+  }
+
+  failActivityVerification(activityId: string, reason: string, now = Date.now()): BridgeActivity {
+    return this.transaction(() => {
+      const activity = this.requireMutableActivity(activityId, "verification failed");
+      if (activity.verification !== "pending" && activity.verification !== "verifying") {
+        throw new Error("Activity verification can fail only while pending or verifying.");
+      }
+      const normalizedReason = normalizeRequiredBoundedText(reason, "Verification failure reason", 2_000);
+      const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET lifecycle = 'open', sealed_at = NULL, waiting_on = 'orchestrator',
+                 verification = 'failed', version = version + 1, updated_at = ?, completed_at = NULL
+           WHERE activity_id = ?
+        `)
+        .run(now, activityId);
+      this.insertActivityEvent({
+        activityId,
+        scopeId: activity.scopeId,
+        scopeVersion,
+        eventType: "verification-failed",
+        createdAt: now,
+        payload: { reason: normalizedReason }
+      });
+      this.acknowledgeCompletionOutbox(activityId, "verify", now);
       return this.requireActivity(activityId);
     });
   }
@@ -1333,6 +1528,88 @@ export class BridgeStateStore {
     return activity;
   }
 
+  private requireMutableActivity(activityId: string, target: string): BridgeActivity {
+    const activity = this.requireActivity(activityId);
+    if (
+      activity.lifecycle === "completed" ||
+      activity.lifecycle === "cancelled" ||
+      activity.lifecycle === "abandoned"
+    ) {
+      throw new Error(
+        `A ${activity.lifecycle} Activity cannot transition to ${target}. Create a new Activity instead.`
+      );
+    }
+    return activity;
+  }
+
+  private assertNoRunningJobs(activity: BridgeActivity, action: string): void {
+    if (activity.counts.running > 0) {
+      throw new Error(`Cannot ${action} an Activity while ${activity.counts.running} child job(s) are running.`);
+    }
+  }
+
+  private assertEvidenceJobsBelongToActivity(activityId: string, jobIds: string[]): void {
+    const lookup = this.database.prepare("SELECT activity_id FROM jobs WHERE job_id = ?");
+    for (const jobId of jobIds) {
+      const row = lookup.get(jobId) as { activity_id: string } | undefined;
+      if (!row || row.activity_id !== activityId) {
+        throw new Error(`Verification evidence job '${jobId}' is not a child of this Activity.`);
+      }
+    }
+  }
+
+  private transitionActivityTerminal(
+    activity: BridgeActivity,
+    lifecycle: "cancelled" | "abandoned",
+    eventType: string,
+    payload: unknown,
+    now: number
+  ): BridgeActivity {
+    const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
+    this.database
+      .prepare(`
+        UPDATE activities
+           SET lifecycle = ?, waiting_on = 'none', verification = 'not-required',
+               version = version + 1, updated_at = ?
+         WHERE activity_id = ?
+      `)
+      .run(lifecycle, now, activity.activityId);
+    this.insertActivityEvent({
+      activityId: activity.activityId,
+      scopeId: activity.scopeId,
+      scopeVersion,
+      eventType,
+      createdAt: now,
+      payload
+    });
+    this.acknowledgeCompletionOutbox(activity.activityId, undefined, now);
+    return this.requireActivity(activity.activityId);
+  }
+
+  private acknowledgeCompletionOutbox(
+    activityId: string,
+    channel: "notify" | "verify" | undefined,
+    now: number
+  ): void {
+    if (channel) {
+      this.database
+        .prepare(`
+          UPDATE completion_outbox
+             SET acknowledged_at = COALESCE(acknowledged_at, ?)
+           WHERE activity_id = ? AND channel = ? AND acknowledged_at IS NULL
+        `)
+        .run(now, activityId, channel);
+      return;
+    }
+    this.database
+      .prepare(`
+        UPDATE completion_outbox
+           SET acknowledged_at = COALESCE(acknowledged_at, ?)
+         WHERE activity_id = ? AND acknowledged_at IS NULL
+      `)
+      .run(now, activityId);
+  }
+
   private enforcePrivateFileModes(): void {
     if (this.options.file === ":memory:") return;
     for (const file of [this.options.file, `${this.options.file}-wal`, `${this.options.file}-shm`]) {
@@ -1428,6 +1705,52 @@ function normalizeActivityTitle(value: string): string {
   const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) throw new Error("Activity title cannot be empty.");
   return normalized.slice(0, 120);
+}
+
+function normalizeVerificationEvidence(
+  evidence: ActivityVerificationEvidence
+): ActivityVerificationEvidence {
+  if (!evidence || typeof evidence !== "object") {
+    throw new Error("Verification evidence is required.");
+  }
+  const summary = normalizeRequiredBoundedText(evidence.summary, "Verification evidence summary", 1_000);
+  return {
+    summary,
+    ...normalizeEvidenceList("jobIds", evidence.jobIds, 30, 200),
+    ...normalizeEvidenceList("tests", evidence.tests, 20, 300),
+    ...normalizeEvidenceList("artifacts", evidence.artifacts, 20, 500),
+    ...normalizeEvidenceList("references", evidence.references, 20, 500)
+  };
+}
+
+function normalizeEvidenceList<K extends keyof ActivityVerificationEvidence>(
+  key: K,
+  values: string[] | undefined,
+  maxItems: number,
+  maxLength: number
+): Pick<ActivityVerificationEvidence, K> | Record<string, never> {
+  if (values === undefined) return {};
+  if (!Array.isArray(values) || values.length > maxItems) {
+    throw new Error(`Verification evidence ${key} must contain at most ${maxItems} items.`);
+  }
+  const normalized = values.map((value) =>
+    normalizeRequiredBoundedText(value, `Verification evidence ${key} item`, maxLength)
+  );
+  return { [key]: normalized } as Pick<ActivityVerificationEvidence, K>;
+}
+
+function normalizeRequiredBoundedText(value: string, label: string, maxLength: number): string {
+  const normalized = normalizeOptionalBoundedText(value, maxLength);
+  if (!normalized) throw new Error(`${label} cannot be empty.`);
+  return normalized;
+}
+
+function normalizeOptionalBoundedText(value: string | undefined, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  if (normalized.length > maxLength) throw new Error(`Text cannot exceed ${maxLength} characters.`);
+  return normalized;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

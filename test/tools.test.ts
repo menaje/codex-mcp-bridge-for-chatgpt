@@ -10,6 +10,7 @@ import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../sr
 import { createBridgeMcpServer } from "../src/server.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
 import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
+import { CodexJobRegistry } from "../src/tools.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
@@ -134,12 +135,13 @@ class FakeModelCatalog implements CodexModelCatalogProvider {
 }
 
 describe("bridge tools", () => {
-  it("publishes five model-facing tools plus one app-only settings action", async () => {
+  it("publishes six model-facing tools plus one app-only settings action", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "codex_activity_update",
       "codex_cancel",
       "codex_models",
       "codex_settings",
@@ -160,7 +162,7 @@ describe("bridge tools", () => {
       }
     });
     expect(byName.get("codex_task")?.annotations).toMatchObject({
-      readOnlyHint: true,
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false
     });
@@ -170,6 +172,18 @@ describe("bridge tools", () => {
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
+    expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
+      activityKind: { enum: ["discussion", "investigation", "review", "implementation", "other"] },
+      executionMode: { enum: ["auto", "foreground", "background"] },
+      handoffPolicy: { enum: ["none", "notify", "verify"] },
+      completionTrigger: { enum: ["manual", "sealed-jobs-terminal"] }
+    });
+    expect(byName.get("codex_activity_update")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    });
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": SETTINGS_CARD_URI
@@ -217,7 +231,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("marks codex_task as write-capable only when write policy is enabled", async () => {
+  it("marks codex_task as stateful and filesystem-destructive only when write policy is enabled", async () => {
     const root = temporaryRoot();
     const config = configFor(root, {
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
@@ -478,6 +492,275 @@ describe("bridge tools", () => {
       }
     ]);
 
+    await close();
+  });
+
+  it("creates and reuses one explicit Activity across parallel background Codex jobs", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "parallel part one",
+        sessionMode: "new",
+        activityTitle: "Parallel investigation",
+        activityKind: "investigation",
+        executionMode: "background",
+        handoffPolicy: "none",
+        completionTrigger: "manual"
+      }
+    }));
+    expect(first).toMatchObject({
+      status: "running",
+      async: true,
+      executionMode: "background",
+      activityTracking: {
+        statusTool: "codex_status",
+        plannedRenderTool: "codex_activity",
+        renderToolAvailable: false
+      }
+    });
+    expect(first.activityId).toMatch(SCOPE_ID_PATTERN);
+    expect(jobs.getActivity(first.activityId)).toMatchObject({
+      title: "Parallel investigation",
+      kind: "investigation",
+      executionMode: "background",
+      handoffPolicy: "none",
+      completionTrigger: "manual",
+      lifecycle: "open",
+      waitingOn: "codex",
+      counts: { total: 1, running: 1 }
+    });
+
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "parallel part two",
+        sessionMode: "new",
+        activityId: first.activityId,
+        executionMode: "background"
+      }
+    }));
+    expect(second.activityId).toBe(first.activityId);
+    expect(second.jobId).not.toBe(first.jobId);
+    expect(jobs.getActivity(first.activityId)).toMatchObject({ counts: { total: 2, running: 2 } });
+
+    const policyInjection = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must not mutate policy",
+        sessionMode: "new",
+        activityId: first.activityId,
+        handoffPolicy: "notify"
+      }
+    });
+    expect(policyInjection.isError).toBe(true);
+    expect(JSON.stringify(policyInjection)).toContain("cannot be used with activityId");
+    expect(upstream.calls).toHaveLength(2);
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    upstream.resolveNext(fakeCodexResult("thread-2"));
+    await waitForJobStatus(client, first.jobId, "completed");
+    await waitForJobStatus(client, second.jobId, "completed");
+    expect(jobs.getActivity(first.activityId)).toMatchObject({
+      lifecycle: "open",
+      waitingOn: "orchestrator",
+      handoffPolicy: "none",
+      counts: { total: 2, completed: 2, terminal: 2 }
+    });
+
+    const stalePolicy = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: 1,
+        action: "set-policy",
+        handoffPolicy: "notify"
+      }
+    });
+    expect(stalePolicy.isError).toBe(true);
+    expect(JSON.stringify(stalePolicy)).toContain("Activity version changed");
+    expect(jobs.getActivity(first.activityId)).toMatchObject({ handoffPolicy: "none" });
+
+    const completed = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        action: "complete",
+        reason: "The orchestrator accepted both investigation results"
+      }
+    }));
+    expect(completed).toMatchObject({
+      action: "complete",
+      activity: { lifecycle: "completed", waitingOn: "none", completionVersion: 1 },
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
+    });
+    await close();
+  });
+
+  it("keeps foreground execution in the active call and returns Activity identifiers", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    let settled = false;
+    const pending = client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "discuss synchronously",
+        sessionMode: "new",
+        activityTitle: "Architecture discussion",
+        activityKind: "discussion",
+        executionMode: "foreground"
+      }
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(upstream.calls).toHaveLength(1);
+
+    upstream.resolveNext(fakeCodexResult("discussion-thread"));
+    const result = await pending;
+    expect((result as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      threadId: "discussion-thread",
+      bridgeActivity: {
+        activityId: expect.stringMatching(SCOPE_ID_PATTERN),
+        jobId: expect.stringMatching(SCOPE_ID_PATTERN),
+        executionMode: "foreground"
+      }
+    });
+    const activityId = (result as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId;
+    expect(jobs.getActivity(activityId)).toMatchObject({
+      kind: "discussion",
+      lifecycle: "open",
+      waitingOn: "orchestrator",
+      counts: { completed: 1 }
+    });
+    await close();
+  });
+
+  it("enforces verify lifecycle transitions and conversation-scope isolation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const started = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "implement and test",
+        sessionMode: "new",
+        activityTitle: "Verified implementation",
+        activityKind: "implementation",
+        handoffPolicy: "verify",
+        completionTrigger: "sealed-jobs-terminal"
+      }
+    });
+    const activityId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId;
+    const jobId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.jobId;
+    expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "not-required" });
+
+    const crossScope = await rawCallTool({
+      name: "codex_activity_update",
+      arguments: { scopeId: SCOPE_B, activityId, action: "seal" }
+    });
+    expect(crossScope.isError).toBe(true);
+    expect(JSON.stringify(crossScope)).toContain("another conversation scope");
+
+    const sealed = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: { activityId, action: "seal" }
+    }));
+    expect(sealed.activity).toMatchObject({
+      lifecycle: "sealed",
+      waitingOn: "verification",
+      verification: "pending",
+      completionVersion: 1
+    });
+    const illegalComplete = await client.callTool({
+      name: "codex_activity_update",
+      arguments: { activityId, action: "complete" }
+    });
+    expect(illegalComplete.isError).toBe(true);
+    expect(JSON.stringify(illegalComplete)).toContain("Finish Activity verification");
+
+    const verifying = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: { activityId, action: "start-verification" }
+    }));
+    expect(verifying.activity).toMatchObject({ verification: "verifying" });
+    const passed = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        action: "verification-passed",
+        evidence: {
+          summary: "Reviewed the diff and ran the test suite",
+          jobIds: [jobId],
+          tests: ["npm test: exit 0"]
+        }
+      }
+    }));
+    expect(passed.activity).toMatchObject({
+      lifecycle: "completed",
+      verification: "verified",
+      waitingOn: "none"
+    });
+    await close();
+  });
+
+  it("cancels every running child job before cancelling its Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "long delegated work",
+        sessionMode: "new",
+        activityTitle: "Cancelable work",
+        executionMode: "background"
+      }
+    }));
+
+    const cancelled = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: running.activityId,
+        action: "cancel",
+        reason: "The user stopped this Activity"
+      }
+    }));
+    expect(cancelled).toMatchObject({
+      action: "cancel",
+      activity: {
+        lifecycle: "cancelled",
+        waitingOn: "none",
+        counts: { running: 0, cancelled: 1, terminal: 1 }
+      },
+      cancelledJobIds: [running.jobId]
+    });
+    expect(cancelled.warning).toContain("not rolled back");
+    expect(upstream.aborts).toBe(1);
+    expect(jobs.get(running.jobId)).toMatchObject({ status: "cancelled" });
+
+    const attach = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must start a new Activity",
+        sessionMode: "new",
+        activityId: running.activityId
+      }
+    });
+    expect(attach.isError).toBe(true);
+    expect(JSON.stringify(attach)).toContain("only to an open Activity");
     await close();
   });
 
@@ -837,7 +1120,10 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       requestId,
       prompt: "one logical task",
-      sessionMode: "new"
+      sessionMode: "new",
+      activityTitle: "Deduplicated Activity",
+      activityKind: "investigation" as const,
+      executionMode: "auto" as const
     };
 
     const first = parseToolJson(
@@ -847,6 +1133,7 @@ describe("bridge tools", () => {
       await client.callTool({ name: "codex_task", arguments: arguments_ })
     );
     expect(retry.jobId).toBe(first.jobId);
+    expect(retry.activityId).toBe(first.activityId);
     expect(upstream.calls).toHaveLength(1);
 
     const changed = await client.callTool({
@@ -855,6 +1142,12 @@ describe("bridge tools", () => {
     });
     expect(changed.isError).toBe(true);
     expect(JSON.stringify(changed)).toContain("already used for a different Codex task");
+    const changedActivity = await client.callTool({
+      name: "codex_task",
+      arguments: { ...arguments_, activityTitle: "Different Activity" }
+    });
+    expect(changedActivity.isError).toBe(true);
+    expect(JSON.stringify(changedActivity)).toContain("already used for a different Codex task");
 
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
@@ -863,7 +1156,8 @@ describe("bridge tools", () => {
       (completedRetry as { structuredContent?: Record<string, any> }).structuredContent
     ).toMatchObject({
       threadId: "deduped-thread",
-      bridgeSession: { scopeId: SCOPE_A, requestId }
+      bridgeSession: { scopeId: SCOPE_A, requestId },
+      bridgeActivity: { activityId: first.activityId, jobId: first.jobId, executionMode: "auto" }
     });
     expect(upstream.calls).toHaveLength(1);
     await close();
@@ -1925,13 +2219,22 @@ async function connectTestClient(
   upstream: CodexUpstream,
   sessions?: SessionRegistry,
   modelCatalog: CodexModelCatalogProvider = new FakeModelCatalog(),
-  userSettings: UserSettingsStore = new UserSettingsStore(config)
+  userSettings: UserSettingsStore = new UserSettingsStore(config),
+  jobs?: CodexJobRegistry
 ) {
+  const jobRegistry = jobs || new CodexJobRegistry({
+    maxConcurrentJobs: config.maxConcurrentJobs,
+    ttlMs: config.jobTtlMs,
+    maxJobs: config.maxRetainedJobs,
+    maxResultBytes: config.maxJobResultBytes,
+    staleAfterMs: config.jobStaleAfterMs,
+    allowedRoots: config.allowedRoots
+  });
   const server = createBridgeMcpServer(
     config,
     upstream,
     sessions,
-    undefined,
+    jobRegistry,
     modelCatalog,
     userSettings
   );
@@ -1963,7 +2266,7 @@ async function connectTestClient(
         );
       }
       if (
-        request.name === "codex_status" &&
+        (request.name === "codex_status" || request.name === "codex_activity_update") &&
         !arguments_.scopeId &&
         !arguments_.includeAllScopes
       ) {
@@ -1978,6 +2281,7 @@ async function connectTestClient(
   return {
     client,
     rawCallTool,
+    jobs: jobRegistry,
     close: async () => {
       await client.close();
       await server.close();

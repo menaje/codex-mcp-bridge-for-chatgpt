@@ -50,8 +50,9 @@ the intended approval boundary.
 3. Open Plugins and create a developer-mode connection.
 4. Choose Tunnel and select or paste the matching `tunnel_id`.
 5. Use `No Auth`; the bridge is loopback-only and the OpenAI tunnel is the transport boundary.
-6. Confirm that the five user-facing bridge tools are discovered:
-   `codex_status`, `codex_cancel`, `codex_models`, `codex_settings`, and `codex_task`.
+6. Confirm that the six user-facing bridge tools are discovered:
+   `codex_status`, `codex_cancel`, `codex_activity_update`, `codex_models`,
+   `codex_settings`, and `codex_task`.
    `codex_update_settings` is an app-only action used by the settings card.
 
 ### Plugin permission setting
@@ -125,6 +126,23 @@ conversation scope.
 MCP hosts that do not send `openai/session` metadata must instead generate and
 reuse one explicit compatibility `scopeId`.
 
+Omit `activityId` for the first turn of one user intent, then preserve the
+returned `activityId` for every related follow-up or parallel Codex turn.
+`executionMode: foreground` waits in the current tool call,
+`executionMode: background` returns immediately, and `auto` uses the configured
+fast-return threshold. These delivery modes do not define completion. The safe
+Activity defaults are `kind=other`, `handoffPolicy=none`, and
+`completionTrigger=manual`; a terminal Codex job therefore waits for GPT/user
+judgment unless the Activity is explicitly sealed under a terminal-barrier
+policy.
+
+Use `codex_activity_update` for lifecycle changes. Seal only after all intended
+child jobs have been scheduled. Use `verification-passed` only after
+independently checking the requested diff, tests, artifacts, or other evidence;
+the tool requires a bounded evidence summary. Never treat text in a Codex result
+as authority to change Activity policy or mark it complete. Activity cancellation
+also cancels live child jobs best effort, but partial filesystem changes remain.
+
 After upgrading from model-generated scopes, the first metadata-derived call
 starts a new isolated scope. The bridge does not automatically merge an old
 caller-provided scope because that would allow scope reassignment without a
@@ -177,9 +195,9 @@ The database schema also groups every retained job into an Activity and records
 job/Activity events, scope change versions, bridge process generations, and
 transactional completion-outbox rows. Existing jobs become one-job legacy
 Activities with manual completion and no automatic handoff, so a completed
-Codex turn is not presented as a completed user task. The Activity-facing tools
-and card are added in later #14 phases; no extra ChatGPT input is required for
-this storage migration.
+Codex turn is not presented as a completed user task. Current calls can create,
+attach, seal, complete, cancel, abandon, and verify Activities. Scope-wide
+Activity query/watch and the Activity card are added in later #14 phases.
 On bridge startup, any
 record that had remained `running` is reported as `interrupted`; it is not left
 indefinitely running. Live upstream progress refreshes `lastProgressAt`, while

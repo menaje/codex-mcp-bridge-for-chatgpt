@@ -138,7 +138,8 @@ describe("http server", () => {
       transactional: true,
       schemaVersion: 2,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v2-compatibility-activities"
+      activityFoundation: "schema-v2-activity-tools",
+      activityPersistent: true
     });
 
     const started = parseToolJson(
@@ -212,6 +213,88 @@ describe("http server", () => {
     expect(JSON.stringify(restored)).not.toContain("http-subject");
     expect(JSON.stringify(restored)).not.toContain("http-org");
     await secondClient.close();
+  });
+
+  it("persists explicit Activity attachment and lifecycle updates across HTTP restarts", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-activity-tool-state-"));
+    const firstUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new ThreadUpstream(),
+      stateDirectory
+    );
+    const firstClient = new Client({ name: "http-activity-client", version: "0.0.0" });
+    await firstClient.connect(new StreamableHTTPClientTransport(new URL(`${firstUrl}/mcp`)));
+    const started = await firstClient.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        prompt: "persist Activity",
+        sessionMode: "new",
+        activityTitle: "Persistent Activity",
+        activityKind: "review",
+        handoffPolicy: "none",
+        completionTrigger: "manual"
+      }
+    });
+    const activityId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId;
+    expect(activityId).toMatch(/^[0-9a-f-]{36}$/);
+    await firstClient.close();
+    await stopLastServer();
+
+    const secondUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new ThreadUpstream(),
+      stateDirectory
+    );
+    const secondClient = new Client({ name: "http-activity-client", version: "0.0.0" });
+    await secondClient.connect(new StreamableHTTPClientTransport(new URL(`${secondUrl}/mcp`)));
+    const updated = parseToolJson(await secondClient.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId,
+        action: "set-policy",
+        handoffPolicy: "notify"
+      }
+    }));
+    expect(updated.activity).toMatchObject({
+      activityId,
+      title: "Persistent Activity",
+      kind: "review",
+      handoffPolicy: "notify",
+      lifecycle: "open",
+      counts: { completed: 1 }
+    });
+    const completed = parseToolJson(await secondClient.callTool({
+      name: "codex_activity_update",
+      arguments: { scopeId: SCOPE_A, activityId, action: "complete" }
+    }));
+    expect(completed.activity).toMatchObject({ lifecycle: "completed", completionVersion: 1 });
+    await secondClient.close();
+    await stopLastServer();
+
+    const thirdUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new ThreadUpstream(),
+      stateDirectory
+    );
+    const thirdClient = new Client({ name: "http-activity-client", version: "0.0.0" });
+    await thirdClient.connect(new StreamableHTTPClientTransport(new URL(`${thirdUrl}/mcp`)));
+    const deniedAttachment = await thirdClient.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        prompt: "must not attach to completed Activity",
+        sessionMode: "new",
+        activityId
+      }
+    });
+    expect(deniedAttachment.isError).toBe(true);
+    expect(JSON.stringify(deniedAttachment)).toContain("only to an open Activity");
+    await thirdClient.close();
   });
 });
 

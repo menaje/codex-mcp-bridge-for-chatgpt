@@ -189,6 +189,146 @@ describe("Activity SQLite state", () => {
     store.close();
   });
 
+  it("validates explicit completion and verification transitions with bounded evidence", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      title: "Manual verified implementation",
+      kind: "implementation",
+      handoffPolicy: "verify",
+      completionTrigger: "manual",
+      now: 1
+    });
+    expect(() => store.sealActivity(ACTIVITY_A, 2)).toThrow(/at least one Codex job/);
+    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 3));
+    expect(() => store.completeActivity(ACTIVITY_A, undefined, 4)).toThrow(/cannot be completed before verification/);
+
+    expect(store.startActivityVerification(ACTIVITY_A, 5)).toMatchObject({
+      lifecycle: "sealed",
+      waitingOn: "verification",
+      verification: "verifying"
+    });
+    expect(() =>
+      store.passActivityVerification(ACTIVITY_A, { summary: "   " }, 6)
+    ).toThrow(/cannot be empty/);
+    expect(() =>
+      store.passActivityVerification(ACTIVITY_A, {
+        summary: "Looks good",
+        jobIds: ["job-from-another-activity"]
+      }, 6)
+    ).toThrow(/is not a child of this Activity/);
+    expect(store.passActivityVerification(ACTIVITY_A, {
+      summary: "Diff and tests independently inspected",
+      jobIds: ["job-a"],
+      tests: ["npm test: exit 0"],
+      artifacts: ["dist/cli.js"]
+    }, 7)).toMatchObject({
+      lifecycle: "completed",
+      waitingOn: "none",
+      verification: "verified",
+      completionVersion: 1
+    });
+    expect(store.listActivityEvents(ACTIVITY_A)).toContainEqual(
+      expect.objectContaining({
+        eventType: "verification-passed",
+        payload: {
+          evidence: {
+            summary: "Diff and tests independently inspected",
+            jobIds: ["job-a"],
+            tests: ["npm test: exit 0"],
+            artifacts: ["dist/cli.js"]
+          }
+        }
+      })
+    );
+    expect(() => store.abandonActivity(ACTIVITY_A, undefined, 8)).toThrow(/completed Activity/);
+    store.close();
+  });
+
+  it("reopens failed verification for rework and acknowledges the stale verify handoff", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      handoffPolicy: "verify",
+      completionTrigger: "sealed-jobs-terminal",
+      now: 1
+    });
+    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 2));
+    store.sealActivity(ACTIVITY_A, 3);
+    expect(store.getActivity(ACTIVITY_A)).toMatchObject({ verification: "pending" });
+    expect(store.listCompletionOutbox(ACTIVITY_A)[0]).toMatchObject({
+      channel: "verify",
+      acknowledgedAt: undefined
+    });
+
+    store.startActivityVerification(ACTIVITY_A, 4);
+    expect(store.listCompletionOutbox(ACTIVITY_A)[0]).toMatchObject({ acknowledgedAt: 4 });
+    expect(store.failActivityVerification(ACTIVITY_A, "Required test was not run", 5)).toMatchObject({
+      lifecycle: "open",
+      waitingOn: "orchestrator",
+      verification: "failed"
+    });
+    store.upsertJob(job("job-b", "request-b", ACTIVITY_A, "running", 6));
+    expect(() => store.startActivityVerification(ACTIVITY_A, 7)).toThrow(/while 1 child job/);
+    store.upsertJob(job("job-b", "request-b", ACTIVITY_A, "completed", 8));
+    expect(store.startActivityVerification(ACTIVITY_A, 9)).toMatchObject({
+      lifecycle: "sealed",
+      verification: "verifying",
+      counts: { total: 2, completed: 2 }
+    });
+    store.close();
+  });
+
+  it("creates a notify outbox only after explicit manual completion", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      handoffPolicy: "notify",
+      completionTrigger: "manual",
+      now: 1
+    });
+    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 2));
+    expect(store.listCompletionOutbox(ACTIVITY_A)).toHaveLength(0);
+
+    expect(store.completeActivity(ACTIVITY_A, "Orchestrator accepted the outcome", 3)).toMatchObject({
+      lifecycle: "completed",
+      completionVersion: 1
+    });
+    expect(store.listCompletionOutbox(ACTIVITY_A)).toEqual([
+      expect.objectContaining({ channel: "notify", completionVersion: 1 })
+    ]);
+    expect(() => store.completeActivity(ACTIVITY_A, undefined, 4)).toThrow(/completed Activity/);
+    store.close();
+  });
+
+  it("clears failed verification when an open Activity explicitly leaves verify policy", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      handoffPolicy: "verify",
+      completionTrigger: "manual",
+      now: 1
+    });
+    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 2));
+    store.startActivityVerification(ACTIVITY_A, 3);
+    store.failActivityVerification(ACTIVITY_A, "Verification policy no longer applies", 4);
+
+    expect(store.setActivityPolicy(ACTIVITY_A, { handoffPolicy: "none" }, 5)).toMatchObject({
+      lifecycle: "open",
+      handoffPolicy: "none",
+      verification: "not-required"
+    });
+    expect(store.completeActivity(ACTIVITY_A, undefined, 6)).toMatchObject({
+      lifecycle: "completed",
+      verification: "not-required"
+    });
+    store.close();
+  });
+
   it("rolls back job terminal state, Activity transition, scope version, and outbox together", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.createActivity({
