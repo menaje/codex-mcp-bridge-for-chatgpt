@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -11,11 +12,18 @@ import {
 import path from "node:path";
 import { promisify } from "node:util";
 import * as z from "zod/v4";
+import type { CodexBackendKind } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
 export type CodexReasoningEffort = {
   effort: string;
+  description?: string;
+};
+
+export type CodexModelServiceTier = {
+  id: string;
+  name: string;
   description?: string;
 };
 
@@ -25,27 +33,36 @@ export type CodexModelDescriptor = {
   description?: string;
   defaultReasoningEffort?: string;
   supportedReasoningEfforts: CodexReasoningEffort[];
+  isDefault?: boolean;
+  defaultServiceTier?: string;
+  serviceTiers: CodexModelServiceTier[];
+  inputModalities: string[];
   supportedInApi?: boolean;
 };
 
 export type CodexModelCatalogSnapshot = {
-  source: "codex-cli";
+  source: "app-server" | "codex-cli";
   fetchedAt: string;
+  validatedAt: string;
+  fingerprint: string;
   cached: boolean;
   stale: boolean;
+  validation: "valid" | "temporarily-unverified-with-last-known-good";
   models: CodexModelDescriptor[];
   warning?: string;
 };
 
 export type ModelCatalogOptions = {
   refresh?: boolean;
+  backendKind?: CodexBackendKind;
 };
 
 export type CodexModelCatalogProvider = {
   getCatalog(options?: ModelCatalogOptions): Promise<CodexModelCatalogSnapshot>;
+  getCachedCatalog?(options?: Pick<ModelCatalogOptions, "backendKind">): CodexModelCatalogSnapshot | undefined;
 };
 
-type CatalogData = Omit<CodexModelCatalogSnapshot, "cached" | "stale" | "warning">;
+type CatalogData = Omit<CodexModelCatalogSnapshot, "cached" | "stale" | "validation" | "warning">;
 type CatalogCommand = (command: string, args: string[], timeoutMs: number) => Promise<string>;
 type PersistedCatalog = { version: 1; fetchedAt: string; raw: string };
 
@@ -63,6 +80,16 @@ const rawModelSchema = z
     description: z.string().trim().min(1).optional(),
     default_reasoning_level: z.string().trim().min(1).optional().nullable(),
     supported_reasoning_levels: z.array(rawEffortSchema).default([]),
+    priority: z.number().optional(),
+    default_service_tier: z.string().trim().min(1).optional().nullable(),
+    service_tiers: z.array(
+      z.object({
+        id: z.string().trim().min(1).max(100),
+        name: z.string().trim().min(1).max(200),
+        description: z.string().trim().min(1).optional()
+      }).passthrough()
+    ).default([]),
+    input_modalities: z.array(z.string().trim().min(1).max(100)).default([]),
     visibility: z.string().optional(),
     supported_in_api: z.boolean().optional()
   })
@@ -73,6 +100,33 @@ const rawCatalogSchema = z
     models: z.array(rawModelSchema)
   })
   .passthrough();
+
+const appEffortSchema = z.object({
+  reasoningEffort: z.string().trim().min(1).max(100),
+  description: z.string().trim().optional()
+}).passthrough();
+
+const appServiceTierSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().optional()
+}).passthrough();
+
+const appModelSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  model: z.string().trim().min(1).max(200),
+  displayName: z.string().trim().min(1).max(200),
+  description: z.string().default(""),
+  defaultReasoningEffort: z.string().trim().min(1).max(100),
+  supportedReasoningEfforts: z.array(appEffortSchema),
+  hidden: z.boolean(),
+  isDefault: z.boolean(),
+  defaultServiceTier: z.string().trim().min(1).optional().nullable(),
+  serviceTiers: z.array(appServiceTierSchema).default([]),
+  inputModalities: z.array(z.string().trim().min(1).max(100)).default(["text", "image"])
+}).passthrough();
+
+const appCatalogSchema = z.object({ data: z.array(appModelSchema) }).passthrough();
 
 export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   private cached?: { data: CatalogData; expiresAt: number };
@@ -95,7 +149,8 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       return {
         ...this.cached.data,
         cached: true,
-        stale: false
+        stale: false,
+        validation: "valid"
       };
     }
 
@@ -104,7 +159,8 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       return {
         ...data,
         cached: false,
-        stale: false
+        stale: false,
+        validation: "valid"
       };
     } catch (error) {
       if (this.cached) {
@@ -112,11 +168,23 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
           ...this.cached.data,
           cached: true,
           stale: true,
+          validation: "temporarily-unverified-with-last-known-good",
           warning: `Could not refresh the Codex model catalog; using the last successful result. ${errorMessage(error)}`
         };
       }
       throw new Error(`Could not load the Codex model catalog. ${errorMessage(error)}`);
     }
+  }
+
+  getCachedCatalog(): CodexModelCatalogSnapshot | undefined {
+    if (!this.cached) return undefined;
+    const stale = this.cached.expiresAt <= this.now();
+    return {
+      ...this.cached.data,
+      cached: true,
+      stale,
+      validation: stale ? "temporarily-unverified-with-last-known-good" : "valid"
+    };
   }
 
   private async refresh(): Promise<CatalogData> {
@@ -135,6 +203,8 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
     const data: CatalogData = {
       source: "codex-cli",
       fetchedAt: new Date(fetchedAtMs).toISOString(),
+      validatedAt: new Date(fetchedAtMs).toISOString(),
+      fingerprint: modelCatalogFingerprint(models),
       models
     };
     this.cached = {
@@ -153,11 +223,14 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       if (!isPersistedCatalog(parsed)) return;
       const fetchedAtMs = Date.parse(parsed.fetchedAt);
       if (!Number.isFinite(fetchedAtMs)) return;
+      const models = parseCodexModelCatalog(parsed.raw);
       this.cached = {
         data: {
           source: "codex-cli",
           fetchedAt: parsed.fetchedAt,
-          models: parseCodexModelCatalog(parsed.raw)
+          validatedAt: parsed.fetchedAt,
+          fingerprint: modelCatalogFingerprint(models),
+          models
         },
         expiresAt: fetchedAtMs + this.cacheTtlMs
       };
@@ -196,8 +269,11 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
 
   const seenModels = new Set<string>();
   const models: CodexModelDescriptor[] = [];
-  for (const model of parsed.data.models) {
-    if (model.visibility !== "list" || seenModels.has(model.slug)) {
+  const selectable = parsed.data.models
+    .filter((model) => model.visibility === "list")
+    .sort((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER));
+  for (const model of selectable) {
+    if (seenModels.has(model.slug)) {
       continue;
     }
     seenModels.add(model.slug);
@@ -215,6 +291,10 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
       description: model.description,
       defaultReasoningEffort: model.default_reasoning_level || undefined,
       supportedReasoningEfforts,
+      isDefault: models.length === 0,
+      defaultServiceTier: model.default_service_tier || undefined,
+      serviceTiers: model.service_tiers,
+      inputModalities: model.input_modalities,
       supportedInApi: model.supported_in_api
     });
   }
@@ -223,6 +303,143 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
     throw new Error("Codex did not return any selectable models.");
   }
   return models;
+}
+
+export function parseAppServerModelCatalog(value: unknown): CodexModelDescriptor[] {
+  const parsed = appCatalogSchema.safeParse(value);
+  if (!parsed.success) throw new Error("Codex App Server returned an unsupported model catalog format.");
+  const seen = new Set<string>();
+  const models = parsed.data.data.flatMap((model) => {
+    if (model.hidden || seen.has(model.model)) return [];
+    seen.add(model.model);
+    return [{
+      id: model.model,
+      displayName: model.displayName || model.model,
+      ...(model.description ? { description: model.description } : {}),
+      defaultReasoningEffort: model.defaultReasoningEffort,
+      supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => ({
+        effort: entry.reasoningEffort,
+        ...(entry.description ? { description: entry.description } : {})
+      })),
+      isDefault: model.isDefault,
+      defaultServiceTier: model.defaultServiceTier || undefined,
+      serviceTiers: model.serviceTiers,
+      inputModalities: model.inputModalities
+    } satisfies CodexModelDescriptor];
+  });
+  if (models.length === 0) throw new Error("Codex App Server did not return any selectable models.");
+  return models;
+}
+
+type AppServerCatalogLoader = () => Promise<unknown>;
+
+export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
+  private appCached?: { snapshot: CodexModelCatalogSnapshot; expiresAt: number };
+  private appFallbackWarning?: string;
+
+  constructor(
+    private readonly defaultBackend: CodexBackendKind,
+    private readonly cliCatalog: CodexModelCatalogProvider,
+    private readonly loadAppServerCatalog: AppServerCatalogLoader,
+    private readonly cacheTtlMs = 10 * 60 * 1000,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
+    const backendKind = options.backendKind || this.defaultBackend;
+    if (backendKind !== "app-server") return this.cliCatalog.getCatalog(options);
+    const now = this.now();
+    if (!options.refresh && this.appCached && this.appCached.expiresAt > now) {
+      const stale = Boolean(this.appFallbackWarning);
+      return {
+        ...this.appCached.snapshot,
+        cached: true,
+        stale,
+        validation: stale ? "temporarily-unverified-with-last-known-good" : "valid",
+        ...(this.appFallbackWarning ? { warning: this.appFallbackWarning } : {})
+      };
+    }
+    try {
+      const models = parseAppServerModelCatalog(await this.loadAppServerCatalog());
+      const fetchedAt = new Date(now).toISOString();
+      const snapshot: CodexModelCatalogSnapshot = {
+        source: "app-server",
+        fetchedAt,
+        validatedAt: fetchedAt,
+        fingerprint: modelCatalogFingerprint(models),
+        cached: false,
+        stale: false,
+        validation: "valid",
+        models
+      };
+      this.appCached = { snapshot, expiresAt: now + this.cacheTtlMs };
+      this.appFallbackWarning = undefined;
+      return snapshot;
+    } catch (error) {
+      if (this.appCached) {
+        this.appFallbackWarning =
+          `Could not refresh the App Server model catalog; using the last successful result. ${errorMessage(error)}`;
+        return {
+          ...this.appCached.snapshot,
+          cached: true,
+          stale: true,
+          validation: "temporarily-unverified-with-last-known-good",
+          warning: this.appFallbackWarning
+        };
+      }
+      const fallback = await this.cliCatalog.getCatalog({ ...options, backendKind: "mcp-server" });
+      this.appFallbackWarning =
+        `Could not load the App Server model catalog; the Codex CLI fallback is unverified for policy activation. ${errorMessage(error)}`;
+      return {
+        ...fallback,
+        stale: true,
+        validation: "temporarily-unverified-with-last-known-good",
+        warning: `${this.appFallbackWarning}${fallback.warning ? ` ${fallback.warning}` : ""}`
+      };
+    }
+  }
+
+  getCachedCatalog(options: Pick<ModelCatalogOptions, "backendKind"> = {}): CodexModelCatalogSnapshot | undefined {
+    const backendKind = options.backendKind || this.defaultBackend;
+    if (backendKind !== "app-server") return this.cliCatalog.getCachedCatalog?.(options);
+    if (this.appCached) {
+      const stale = Boolean(this.appFallbackWarning) || this.appCached.expiresAt <= this.now();
+      return {
+        ...this.appCached.snapshot,
+        cached: true,
+        stale,
+        validation: stale ? "temporarily-unverified-with-last-known-good" : "valid",
+        ...(stale
+          ? {
+              warning: this.appFallbackWarning ||
+                "The cached App Server model catalog has expired and is temporarily unverified."
+            }
+          : {})
+      };
+    }
+    const fallback = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
+    if (!fallback) return undefined;
+    return {
+      ...fallback,
+      stale: true,
+      validation: "temporarily-unverified-with-last-known-good",
+      warning: this.appFallbackWarning ||
+        "The cached Codex CLI catalog is an unverified fallback for the App Server backend."
+    };
+  }
+}
+
+export function modelCatalogFingerprint(models: CodexModelDescriptor[]): string {
+  const canonical = models.map((model) => ({
+    id: model.id,
+    defaultReasoningEffort: model.defaultReasoningEffort || null,
+    supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => entry.effort),
+    isDefault: model.isDefault || false,
+    defaultServiceTier: model.defaultServiceTier || null,
+    serviceTiers: model.serviceTiers.map((tier) => tier.id),
+    inputModalities: model.inputModalities
+  }));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 async function runCodexCatalogCommand(command: string, args: string[], timeoutMs: number): Promise<string> {

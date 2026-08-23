@@ -22,9 +22,15 @@ describe("CodexJobRegistry persistence", () => {
 
     expect(loaded).toMatchObject({
       status: "completed",
+      executionDecision: {
+        policyRevision: 3,
+        effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        source: "fixed",
+        appliedAt: "thread-start"
+      },
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
@@ -119,7 +125,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -141,7 +147,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {
@@ -416,6 +422,16 @@ function jobInput(root: string) {
     requestHash: "a".repeat(64),
     requestHashVersion: 2 as const,
     selectionKey: "selection-a",
+    executionDecision: {
+      policyRevision: 3,
+      catalogFingerprint: "c".repeat(64),
+      catalogValidation: "valid" as const,
+      backendKind: "mcp-server" as const,
+      effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      source: "fixed" as const,
+      appliedAt: "thread-start" as const,
+      reason: "Selected from the saved fixed policy."
+    },
     exclusiveKeys: [],
     sessionDecision: {
       requestedMode: "new" as const,

@@ -31,6 +31,23 @@ import type {
   CodexModelCatalogSnapshot,
   CodexModelDescriptor
 } from "./modelCatalog.js";
+import {
+  MODEL_POLICY_SCHEMA_VERSION,
+  ModelPolicyError,
+  listAllowedModelSelections,
+  modelSelectionKey,
+  resolveModelPolicy,
+  sameModelPolicy,
+  sameModelSelection,
+  validateModelSelection,
+  validateModelPolicy,
+  validatePolicyAgainstCatalog,
+  type BackendCapabilities,
+  type ExecutionDecision,
+  type ModelPolicy,
+  type ModelSelection
+} from "./modelPolicy.js";
+import { SdkModelPolicyProjectionAdapter } from "./modelPolicyTransport.js";
 import type { TrackedCodexSession } from "./sessionRegistry.js";
 import {
   extractThreadId,
@@ -97,11 +114,12 @@ export const DEFAULT_CODEX_STATUS_WAIT_MS = 55_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
 
 const bridgeUserSettingsOutputSchema = z.object({
+  schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
   revision: z.number().int().min(0),
   updatedAt: z.string().nullable(),
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
-  defaultModel: z.string().nullable(),
-  defaultReasoningEffort: z.string().nullable(),
+  modelPolicy: modelPolicyZod(),
+  legacyPreferredModel: z.string().optional(),
   defaultCwd: z.string().nullable(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
@@ -120,6 +138,14 @@ const catalogModelOutputSchema = z.object({
       description: z.string().optional()
     })
   ),
+  isDefault: z.boolean().optional(),
+  defaultServiceTier: z.string().optional(),
+  serviceTiers: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().optional()
+  })),
+  inputModalities: z.array(z.string()),
   supportedInApi: z.boolean().optional()
 });
 
@@ -135,18 +161,28 @@ const settingsViewOutputSchema = z.object({
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
+    operatorModelCeiling: z.array(modelSelectionZod()).nullable(),
     persistent: z.boolean()
   }),
   catalog: z.object({
     source: z.string().nullable(),
     fetchedAt: z.string().nullable(),
+    validatedAt: z.string().nullable(),
+    fingerprint: z.string().nullable(),
     cached: z.boolean(),
     stale: z.boolean(),
+    validation: z.enum(["valid", "temporarily-unverified-with-last-known-good", "invalid"]),
     warning: z.string().nullable(),
     models: z.array(catalogModelOutputSchema)
   }),
   warnings: z.array(z.string()),
-  scopeNotice: z.string()
+  scopeNotice: z.string(),
+  policyActivation: z.object({
+    policyRevision: z.number().int().min(0),
+    executionPolicyActive: z.boolean(),
+    schemaRefreshRequested: z.boolean(),
+    schemaRefreshGuaranteed: z.boolean()
+  })
 });
 
 type SettingsView = z.infer<typeof settingsViewOutputSchema>;
@@ -199,6 +235,7 @@ type CodexJob = {
   requestHash: string;
   requestHashVersion: 1 | 2;
   selectionKey?: string;
+  executionDecision?: ExecutionDecision;
   exclusiveKeys: string[];
   sessionDecision: SessionDecision;
   status: CodexJobStatus;
@@ -217,7 +254,7 @@ type CodexJob = {
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
 type PersistedCodexJobState = {
-  version: 6;
+  version: 7;
   jobs: PersistedCodexJob[];
 };
 
@@ -1118,7 +1155,7 @@ export class CodexJobRegistry {
   private load(): void {
     if (this.stateStore) {
       const stored = this.stateStore.listJobs();
-      const changed = this.loadJobs(stored, 6);
+      const changed = this.loadJobs(stored, 7);
       if (changed || this.jobs.size !== stored.length) {
         this.stateStore.replaceJobs(this.persistedJobs());
       }
@@ -1140,21 +1177,21 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
 
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7;
     const changed = this.loadJobs(parsed.jobs, stateVersion);
-    if (changed || stateVersion !== 6) this.persist();
+    if (changed || stateVersion !== 7) this.persist();
     else this.activityStore.replaceJobs(this.persistedJobs());
   }
 
-  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6): boolean {
+  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7): boolean {
     const now = Date.now();
-    let changed = stateVersion !== 6;
+    let changed = stateVersion !== 7;
     const valid = values
       .map((job) => readPersistedJob(job, stateVersion))
       .filter((job): job is PersistedCodexJob => Boolean(job))
@@ -1217,12 +1254,12 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7;
     const existing = new Set(this.jobs.keys());
     const candidates = parsed.jobs.filter((value) => {
       const id = isRecord(value) && typeof value.jobId === "string" ? value.jobId : undefined;
@@ -1248,7 +1285,7 @@ export class CodexJobRegistry {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const temporary = `${this.stateFile}.${process.pid}.tmp`;
       const state: PersistedCodexJobState = {
-        version: 6,
+        version: 7,
         jobs: persisted
       };
       writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
@@ -1405,6 +1442,17 @@ export function registerBridgeTools(
   jobs.attachUpstream(upstream);
   registerSettingsCardResource(server);
   registerActivityCardResource(server);
+  const policyProjection = new SdkModelPolicyProjectionAdapter(server);
+  const publishTaskProjection = (catalog?: CodexModelCatalogSnapshot) =>
+    policyProjection.publish({
+      policyRevision: userSettings.current.revision,
+      catalogFingerprint: catalog?.fingerprint,
+      schema: codexTaskInputSchema(
+        config,
+        userSettings.current,
+        catalog || modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
+      )
+    });
 
   server.registerTool(
     "codex_status",
@@ -1698,8 +1746,10 @@ export function registerBridgeTools(
         allowWorkspaceWrite: config.allowWorkspaceWrite,
         allowDangerFullAccess: config.allowDangerFullAccess,
         defaultApprovalPolicy: config.defaultApprovalPolicy,
-        defaultModel: preferences.defaultModel,
-        defaultReasoningEffort: preferences.defaultReasoningEffort,
+        settingsSchemaVersion: preferences.schemaVersion,
+        modelPolicyRevision: preferences.revision,
+        modelPolicy: preferences.modelPolicy,
+        operatorModelCeiling: config.operatorModelCeiling || null,
         uiLocalePreference: preferences.uiLocalePreference,
         dynamicModelCatalog: true,
         modelCatalogCacheTtlMs: config.modelCatalogCacheTtlMs,
@@ -2280,7 +2330,7 @@ export function registerBridgeTools(
     {
       title: "List Codex Models",
       description:
-        "Return the current selectable models and each model's supported reasoning efforts directly from the installed Codex CLI. Call this before presenting model or reasoning-effort choices instead of relying on a hard-coded list.",
+        "Return the target backend's current selectable models, exact supported efforts/service tiers, and validated catalog fingerprint. App Server model/list is preferred for that backend; the installed Codex CLI is the MCP source and fallback.",
       inputSchema: {
         refresh: z
           .boolean()
@@ -2295,16 +2345,23 @@ export function registerBridgeTools(
       }
     },
     async (args) => {
-      const catalog = await modelCatalog.getCatalog({ refresh: args.refresh });
+      const catalog = await modelCatalog.getCatalog({
+        refresh: args.refresh,
+        backendKind: config.defaultBackend
+      });
+      publishTaskProjection(catalog);
       const preferences = userSettings.current;
       return textResult({
         source: catalog.source,
         fetchedAt: catalog.fetchedAt,
+        validatedAt: catalog.validatedAt,
+        fingerprint: catalog.fingerprint,
         cached: catalog.cached,
         stale: catalog.stale,
+        validation: catalog.validation,
         warning: catalog.warning,
-        defaultModel: preferences.defaultModel,
-        defaultReasoningEffort: preferences.defaultReasoningEffort,
+        modelPolicy: preferences.modelPolicy,
+        operatorModelCeiling: config.operatorModelCeiling || null,
         models: catalog.models
       });
     }
@@ -2315,7 +2372,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved bridge defaults, bridge-enforced limits, allowed roots, and current dynamic Codex model/effort catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
+        "Open an interactive settings card and return the saved versioned model execution policy, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -2338,10 +2395,16 @@ export function registerBridgeTools(
         "openai/widgetAccessible": true
       }
     },
-    async (args, { _meta }) => settingsViewResult(
-      await buildSettingsView(config, userSettings, modelCatalog, args.refreshModels),
-      metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
-    )
+    async (args, { _meta }) => {
+      const view = await buildSettingsView(config, userSettings, modelCatalog, args.refreshModels);
+      publishTaskProjection(
+        modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
+      );
+      return settingsViewResult(
+        view,
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
+      );
+    }
   );
 
   server.registerTool(
@@ -2349,13 +2412,12 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate and persist user-configurable bridge defaults. This action is intended for the Codex settings card; bridge security capabilities and allowed roots cannot be changed here.",
+        "Validate, persist, and activate user-configurable bridge policy and preferences. This action is intended for the Codex settings card; bridge security capabilities, operator ceilings, and allowed roots cannot be changed here.",
       inputSchema: {
-        expectedRevision: z.number().int().min(0).optional(),
+        expectedRevision: z.number().int().min(0),
         reset: z.boolean().optional(),
         accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
-        defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
-        defaultReasoningEffort: z.string().trim().min(1).max(100).nullable().optional(),
+        modelPolicy: modelPolicyZod().optional(),
         defaultCwd: z.string().trim().min(1).nullable().optional(),
         uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
@@ -2380,18 +2442,30 @@ export function registerBridgeTools(
     async (args, { _meta }) => {
       const settingKeys = [
         "accessStrategy",
-        "defaultModel",
-        "defaultReasoningEffort",
+        "modelPolicy",
         "defaultCwd",
         "uiLocalePreference",
         "maxConcurrentJobs",
         "activityCardVisibility",
         "completionHandoff"
       ] as const;
+      let validatedCatalog: CodexModelCatalogSnapshot | undefined;
       if (args.reset) {
         if (settingKeys.some((key) => args[key] !== undefined)) {
           throw new Error("reset cannot be combined with individual setting values.");
         }
+        const catalog = await freshCatalogForPolicy(
+          modelCatalog,
+          config.defaultBackend,
+          userSettings.current.revision + 1
+        );
+        validatedCatalog = catalog;
+        validatePolicyAgainstCatalog(
+          userSettings.defaults.modelPolicy,
+          catalog,
+          config.operatorModelCeiling,
+          userSettings.current.revision + 1
+        );
         userSettings.reset(args.expectedRevision);
       } else {
         if (!settingKeys.some((key) => args[key] !== undefined)) {
@@ -2404,113 +2478,70 @@ export function registerBridgeTools(
             (patch as Record<string, unknown>)[key] = args[key];
           }
         }
-        const candidateModel = patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel;
-        const candidateEffort =
-          patch.defaultReasoningEffort === undefined
-            ? patch.defaultModel === null
-              ? null
-              : current.defaultReasoningEffort
-            : patch.defaultReasoningEffort;
-        const modelChanged =
-          candidateModel !== current.defaultModel || candidateEffort !== current.defaultReasoningEffort;
-        if (modelChanged) {
-          await resolveModelSelection(
-            modelCatalog,
-            candidateModel || undefined,
-            candidateEffort || undefined
-          );
+        if (patch.modelPolicy !== undefined) {
+          const policy = validateModelPolicy(patch.modelPolicy);
+          if (
+            current.legacyPreferredModel !== undefined ||
+            !sameModelPolicy(policy, current.modelPolicy)
+          ) {
+            const catalog = await freshCatalogForPolicy(
+              modelCatalog,
+              config.defaultBackend,
+              current.revision + 1
+            );
+            validatedCatalog = catalog;
+            validatePolicyAgainstCatalog(
+              policy,
+              catalog,
+              config.operatorModelCeiling,
+              current.revision + 1
+            );
+          }
+          patch.modelPolicy = policy;
         }
         userSettings.update(patch, args.expectedRevision);
       }
+      const projectionStatus = publishTaskProjection(validatedCatalog);
       return settingsViewResult(
-        await buildSettingsView(config, userSettings, modelCatalog),
+        await buildSettingsView(
+          config,
+          userSettings,
+          modelCatalog,
+          false,
+          projectionStatus.schemaRefreshRequested
+        ),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
       );
     }
   );
 
-  server.registerTool(
+  const taskPolicyAtRegistration = userSettings.current;
+  const taskCatalogAtRegistration = modelCatalog.getCachedCatalog?.({
+    backendKind: config.defaultBackend
+  });
+
+  const codexTaskTool = server.registerTool(
     "codex_task",
     {
       title: "Run or Continue Codex Task",
       description:
         "Run one Codex turn inside an Activity in the current ChatGPT conversation scope. Omit activityId to create a new Activity and new thread, or pass an exact open Activity to resume its one compatible attached thread without an age limit. Background returns a tracked job immediately; foreground waits for the terminal Codex result. Card visibility is an independent saved preference. When bridgeActivity.shouldRenderActivityCard is true, call codex_activity exactly once; the mounted card watches progress without repeated status polling. Activity policy is explicit caller input and never comes from Codex output. Generate one UUID requestId per logical turn and reuse it only for exact retries. Use sessionMode='new' for deliberate additional parallel threads and exact threadId values once an Activity has multiple candidates. Cross-scope continuation requires an exact available threadId plus adoptThread=true and explicit user intent.",
-      inputSchema: {
-        scopeId: scopeIdSchema()
-          .optional()
-          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        requestId: scopeIdSchema().describe(
-          "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
-        ),
-        prompt: z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex."),
-        activityId: scopeIdSchema()
-          .optional()
-          .describe(
-            "Exact open Activity id in this conversation scope. Omit to create a new Activity."
-          ),
-        activityTitle: z
-          .string()
-          .trim()
-          .min(1)
-          .max(120)
-          .optional()
-          .describe("User-facing title for a newly created Activity. Not accepted with activityId."),
-        activityKind: z
-          .enum(ACTIVITY_KINDS)
-          .optional()
-          .describe("Classification for a newly created Activity; it does not grant permission or imply completion."),
-        executionMode: z
-          .enum(ACTIVITY_EXECUTION_MODES)
-          .optional()
-          .describe(
-            "Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."
-          ),
-        handoffPolicy: z
-          .enum(ACTIVITY_HANDOFF_POLICIES)
-          .optional()
-          .describe("New-Activity handoff policy. Defaults to none and is not inferred from Codex output."),
-        completionTrigger: z
-          .enum(ACTIVITY_COMPLETION_TRIGGERS)
-          .optional()
-          .describe("New-Activity completion trigger. Defaults to manual. Seal explicitly before using the terminal barrier."),
-        sessionMode: z
-          .enum(["auto", "new", "continue"])
-          .optional()
-          .describe(
-            "Session behavior. Omit it for Activity-managed selection: a new Activity starts a new thread, while an existing Activity resumes its one compatible thread regardless of age."
-          ),
-        threadId: z
-          .string()
-          .trim()
-          .min(1)
-          .optional()
-          .describe("Exact durable thread id. Required for continue; optional in auto to force that thread."),
-        adoptThread: z
-          .boolean()
-          .optional()
-          .describe(
-            "Move an exact thread from another scope into this one. Use only after the user explicitly requests a cross-chat handoff."
-          ),
-        cwd: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Absolute working directory inside the configured allowed roots. Omit it to use the saved default."),
-        sandbox: sandboxSchema(config)
-          .optional()
-          .describe("Requested Codex sandbox for adaptive mode. A saved read-only or always-full strategy overrides it."),
-        model: modelSchema(),
-        reasoningEffort: reasoningEffortSchema()
-      },
+      inputSchema: codexTaskInputSchema(
+        config,
+        taskPolicyAtRegistration,
+        taskCatalogAtRegistration
+      ),
       annotations: codexToolAnnotations(config)
     },
     async (args, { _meta }) => {
-      const preferences = userSettings.current;
-      const requestedMode = (args.sessionMode || "auto") as SessionMode;
+      try {
+        const preferences = userSettings.current;
+        const requestedMode = (args.sessionMode || "auto") as SessionMode;
       const scope = scopeResolver.require(_meta as ToolCallMetadata, args.scopeId, "Codex task execution");
       const routing = resolveTaskRouting(args, scope.scopeId);
       const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
       if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences);
+      rejectStaleTaskModelInputs(args, preferences);
       const activityRequest = validateActivityTaskRequest(args, jobs, routing.scopeId);
 
       if (args.adoptThread && !args.threadId) {
@@ -2525,7 +2556,7 @@ export function registerBridgeTools(
       if (requestedMode === "new") {
         if (args.threadId) throw new Error("threadId cannot be used with sessionMode='new'.");
         if (args.adoptThread) throw new Error("adoptThread cannot be used with sessionMode='new'.");
-        return startNewSession({
+        return await startNewSession({
           args,
           routing,
           requestedMode,
@@ -2542,7 +2573,7 @@ export function registerBridgeTools(
 
       if (requestedMode === "continue") {
         if (!args.threadId) throw new Error("sessionMode='continue' requires threadId from codex_status or a prior codex_task result.");
-        return continueSession({
+        return await continueSession({
           args,
           routing,
           requestedMode,
@@ -2551,13 +2582,14 @@ export function registerBridgeTools(
           upstream,
           sessions,
           jobs,
+          modelCatalog,
           preferences,
           activityRequest
         });
       }
 
       if (args.threadId) {
-        return continueSession({
+        return await continueSession({
           args,
           routing,
           requestedMode,
@@ -2566,6 +2598,7 @@ export function registerBridgeTools(
           upstream,
           sessions,
           jobs,
+          modelCatalog,
           preferences,
           activityRequest
         });
@@ -2573,15 +2606,19 @@ export function registerBridgeTools(
 
       const cwd = resolveTaskCwd(config, preferences, args.cwd);
       const sandbox = resolveTaskSandbox(config, preferences, args.sandbox as SandboxMode | undefined);
-      const requestedSelection = taskModelSelection(args, preferences);
-      const selection = await resolveModelSelection(
-        modelCatalog,
-        requestedSelection.model,
-        requestedSelection.reasoningEffort
-      );
       await enforceSensitiveFilePreflight(config, cwd, "run Codex");
       if (!activityRequest.activityId) {
-        return startNewSession({
+        const startDecision = await resolveExecutionDecision({
+          config,
+          upstream,
+          modelCatalog,
+          preferences,
+          backendKind: config.defaultBackend,
+          operation: "start",
+          requestedSelection: args.selection,
+          requestedPolicyRevision: args.modelPolicyRevision
+        });
+        return await startNewSession({
           args,
           routing,
           requestedMode,
@@ -2593,7 +2630,7 @@ export function registerBridgeTools(
           modelCatalog,
           preferences,
           activityRequest,
-          resolved: { cwd, sandbox, selection },
+          resolved: { cwd, sandbox, decision: startDecision },
           preflightDone: true
         });
       }
@@ -2604,36 +2641,61 @@ export function registerBridgeTools(
           .map((job) => job.threadId || job.sessionDecision.threadId)
           .filter((threadId): threadId is string => Boolean(threadId))
       );
-      const compatible = sessions
+      const candidateSessions = sessions
         .findCompatible({
           scopeId: routing.scopeId,
           cwd,
-          sandbox,
-          ...selection
+          sandbox
         })
         .filter((session) => activityThreadIds.has(session.threadId))
         .filter((session) => upstream.canResumeThread?.(session.threadId, session.backendKind) !== false);
+      const compatible: Array<{ session: TrackedCodexSession; decision: ExecutionDecision }> = [];
+      let unsupportedOverride: ModelPolicyError | undefined;
+      for (const session of candidateSessions) {
+        try {
+          compatible.push({
+            session,
+            decision: await resolveExecutionDecision({
+              config,
+              upstream,
+              modelCatalog,
+              preferences,
+              backendKind: session.backendKind,
+              operation: "continue",
+              requestedSelection: args.selection,
+              requestedPolicyRevision: args.modelPolicyRevision,
+              currentSelection: session.selection
+            })
+          });
+        } catch (error) {
+          if (error instanceof ModelPolicyError && error.code === "THREAD_OVERRIDE_UNSUPPORTED") {
+            unsupportedOverride ||= error;
+            continue;
+          }
+          throw error;
+        }
+      }
       if (compatible.length > 1) {
         const candidates = compatible
           .slice(0, 10)
-          .map((session) => session.threadId)
+          .map(({ session }) => session.threadId)
           .join(", ");
         throw new Error(
           `Multiple compatible Codex threads are attached to this Activity (${candidates}). Retry with the exact intended threadId, or use sessionMode='new' to start another thread.`
         );
       }
-      const activitySession = compatible[0];
-      if (activitySession && jobs.isThreadActive(activitySession.threadId)) {
+      const activityCandidate = compatible[0];
+      if (activityCandidate && jobs.isThreadActive(activityCandidate.session.threadId)) {
         throw new Error(
           "The compatible Codex thread attached to this Activity is busy. Wait for it, or use sessionMode='new' to start parallel work on another thread."
         );
       }
-      if (activitySession) {
-        return continueTrackedSession({
+      if (activityCandidate) {
+        return await continueTrackedSession({
           prompt: args.prompt,
           requestedMode,
           reason: "activity-compatible",
-          session: activitySession,
+          session: activityCandidate.session,
           routing,
           config,
           upstream,
@@ -2643,11 +2705,23 @@ export function registerBridgeTools(
           preferences,
           activityRequest,
           preflightDone: true,
-          rejectIfSelectionActive: true
+          rejectIfSelectionActive: true,
+          executionDecision: activityCandidate.decision
         });
       }
+      if (unsupportedOverride) throw unsupportedOverride;
 
-      return startNewSession({
+      const startDecision = await resolveExecutionDecision({
+        config,
+        upstream,
+        modelCatalog,
+        preferences,
+        backendKind: config.defaultBackend,
+        operation: "start",
+        requestedSelection: args.selection,
+        requestedPolicyRevision: args.modelPolicyRevision
+      });
+      return await startNewSession({
         args,
         routing,
         requestedMode,
@@ -2659,12 +2733,17 @@ export function registerBridgeTools(
         modelCatalog,
         preferences,
         activityRequest,
-        resolved: { cwd, sandbox, selection },
+        resolved: { cwd, sandbox, decision: startDecision },
         preflightDone: true,
         rejectIfSelectionActive: true
       });
+      } catch (error) {
+        if (error instanceof ModelPolicyError) return modelPolicyErrorResult(error);
+        throw error;
+      }
     }
   );
+  policyProjection.attach(codexTaskTool);
 }
 
 type CodexTaskArgs = {
@@ -2682,9 +2761,49 @@ type CodexTaskArgs = {
   adoptThread?: boolean;
   cwd?: string;
   sandbox?: SandboxMode;
-  model?: string;
-  reasoningEffort?: string;
+  modelPolicyRevision?: number;
+  selection?: ModelSelection;
 };
+
+function rejectStaleTaskModelInputs(
+  args: CodexTaskArgs,
+  preferences: BridgeUserSettings
+): void {
+  if (
+    args.modelPolicyRevision !== undefined &&
+    args.modelPolicyRevision !== preferences.revision
+  ) {
+    throw new ModelPolicyError(
+      "MODEL_POLICY_CHANGED",
+      `The request used policy revision ${args.modelPolicyRevision}, but revision ${preferences.revision} is active.`,
+      preferences.revision,
+      ["Refresh the Codex tool descriptor or settings view and retry with the current revision."]
+    );
+  }
+  const raw = args as CodexTaskArgs & Record<string, unknown>;
+  const legacyFields = ["model", "reasoningEffort", "serviceTier"].filter((key) =>
+    Object.prototype.hasOwnProperty.call(raw, key)
+  );
+  if (legacyFields.length > 0) {
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_FORBIDDEN",
+      `Legacy top-level model fields are not accepted: ${legacyFields.join(", ")}.`,
+      preferences.revision,
+      ["Use one exact nested selection exposed by the current descriptor in automatic mode."]
+    );
+  }
+  if (
+    preferences.modelPolicy.mode === "fixed" &&
+    Object.prototype.hasOwnProperty.call(raw, "selection")
+  ) {
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_FORBIDDEN",
+      "This bridge is in fixed model mode and does not accept a per-call model selection.",
+      preferences.revision,
+      ["Omit selection and retry; the saved fixed selection will be applied."]
+    );
+  }
+}
 
 type ActivityTaskRequest = Pick<
   CodexTaskArgs,
@@ -2860,16 +2979,25 @@ async function startNewSession(input: {
   modelCatalog: CodexModelCatalogProvider;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
-  resolved?: { cwd: string; sandbox: SandboxMode; selection: ResolvedModelSelection };
+  resolved?: { cwd: string; sandbox: SandboxMode; decision: ExecutionDecision };
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
 }): Promise<ToolResult> {
   const cwd = input.resolved?.cwd || resolveTaskCwd(input.config, input.preferences, input.args.cwd);
   const sandbox =
     input.resolved?.sandbox || resolveTaskSandbox(input.config, input.preferences, input.args.sandbox);
-  const selection =
-    input.resolved?.selection ||
-    (await resolveModelSelection(input.modelCatalog, ...modelSelectionTuple(input.args, input.preferences)));
+  const executionDecision =
+    input.resolved?.decision ||
+    (await resolveExecutionDecision({
+      config: input.config,
+      upstream: input.upstream,
+      modelCatalog: input.modelCatalog,
+      preferences: input.preferences,
+      backendKind: input.config.defaultBackend,
+      operation: "start",
+      requestedSelection: input.args.selection,
+      requestedPolicyRevision: input.args.modelPolicyRevision
+    }));
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
   const payload: Record<string, unknown> = {
@@ -2878,8 +3006,8 @@ async function startNewSession(input: {
     sandbox,
     "approval-policy": input.config.defaultApprovalPolicy
   };
-  applyModelSelection(payload, selection);
-  const decision: SessionDecision = {
+  applyModelSelection(payload, executionDecision.effectiveSelection, input.config.defaultBackend);
+  const sessionDecision: SessionDecision = {
     requestedMode: input.requestedMode,
     action: "start",
     reason: input.reason
@@ -2893,30 +3021,45 @@ async function startNewSession(input: {
     cwd,
     sandbox,
     routing: input.routing,
-    selectionKey: selectionKeyFor(input.routing.scopeId, cwd, sandbox, selection),
+    selectionKey: selectionKeyFor(input.routing.scopeId, cwd, sandbox, executionDecision.effectiveSelection),
+    executionDecision,
     rejectIfSelectionActive: input.rejectIfSelectionActive,
-    sessionDecision: decision,
+    sessionDecision,
     activityRequest: input.activityRequest,
-    run: (onProgress, onAssigned) => input.upstream.callTool("codex", payload, onProgress, onAssigned),
+    run: (onProgress, onAssigned) => input.upstream.startThread
+      ? input.upstream.startThread(
+          {
+            backendKind: input.config.defaultBackend,
+            prompt: input.args.prompt,
+            cwd,
+            sandbox,
+            approvalPolicy: input.config.defaultApprovalPolicy,
+            selection: executionDecision.effectiveSelection
+          },
+          onProgress,
+          onAssigned
+        )
+      : input.upstream.callTool("codex", payload, onProgress, onAssigned),
     onComplete: (result) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const previous = input.sessions.get(threadId);
-      decision.threadId = threadId;
+      sessionDecision.threadId = threadId;
       const now = Date.now();
       input.sessions.record({
         threadId,
         scopeId: input.routing.scopeId,
         cwd,
         sandbox,
-        model: selection.model,
-        reasoningEffort: selection.reasoningEffort,
+        selection: executionDecision.effectiveSelection,
+        policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
+        updatedAt: now,
         createdAt: now,
         lastUsedAt: now
       });
       return () => {
-        delete decision.threadId;
+        delete sessionDecision.threadId;
         input.sessions.restoreInMemory(threadId, previous);
       };
     }
@@ -2932,6 +3075,7 @@ async function continueSession(input: {
   upstream: CodexUpstream;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
+  modelCatalog: CodexModelCatalogProvider;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
 }): Promise<ToolResult> {
@@ -2944,9 +3088,17 @@ async function continueSession(input: {
       "The selected Codex thread belongs to an earlier MCP worker generation and cannot be resumed. Use sessionMode='new' to start a new thread."
     );
   }
-  if (input.args.model || input.args.reasoningEffort) {
-    throw new Error("Model and reasoning effort cannot change on a continued thread. Use sessionMode='new'.");
-  }
+  const executionDecision = await resolveExecutionDecision({
+    config: input.config,
+    upstream: input.upstream,
+    modelCatalog: input.modelCatalog,
+    preferences: input.preferences,
+    backendKind: session.backendKind,
+    operation: "continue",
+    requestedSelection: input.args.selection,
+    requestedPolicyRevision: input.args.modelPolicyRevision,
+    currentSelection: session.selection
+  });
   if (input.args.cwd && resolveTaskCwd(input.config, input.preferences, input.args.cwd) !== session.cwd) {
     throw new Error("cwd does not match the selected Codex thread. Use sessionMode='new' for another working directory.");
   }
@@ -2989,7 +3141,8 @@ async function continueSession(input: {
     requestedSandbox: effectiveContinuationSandbox(input.preferences, input.args.sandbox),
     preferences: input.preferences,
     activityRequest: input.activityRequest,
-    adoptOnComplete: adopting
+    adoptOnComplete: adopting,
+    executionDecision
   });
 }
 
@@ -3009,6 +3162,7 @@ async function continueTrackedSession(input: {
   adoptOnComplete?: boolean;
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
+  executionDecision: ExecutionDecision;
 }): Promise<ToolResult> {
   if (isMutatingSandbox(input.session.sandbox) && input.requestedSandbox !== input.session.sandbox) {
     throw new Error(
@@ -3028,6 +3182,7 @@ async function continueTrackedSession(input: {
     reason: input.reason,
     threadId: input.session.threadId
   };
+  let executionStateApplied = false;
   return runCodex({
     jobs: input.jobs,
     config: input.config,
@@ -3038,31 +3193,64 @@ async function continueTrackedSession(input: {
     sandbox: input.session.sandbox,
     routing: input.routing,
     selectionKey: selectionKeyFor(input.routing.scopeId, input.session.cwd, input.session.sandbox, {
-      model: input.session.model,
-      reasoningEffort: input.session.reasoningEffort
+      ...input.executionDecision.effectiveSelection
     }),
+    executionDecision: input.executionDecision,
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision: decision,
     activityRequest: input.activityRequest,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
-    run: (onProgress, onAssigned) =>
-      input.upstream.callTool(
-        "codex-reply",
-        {
-          threadId: input.session.threadId,
-          prompt: input.prompt,
-          ...backendRoutingArgument(input.session.backendKind)
-        },
-        onProgress,
-        onAssigned
-      ),
+    run: (onProgress, onAssigned) => {
+      const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
+        onAssigned(assignment);
+        if (executionStateApplied || input.session.backendKind !== "app-server") return;
+        executionStateApplied = true;
+        try {
+          input.sessions.updateExecution(
+            input.session.threadId,
+            input.executionDecision.effectiveSelection,
+            input.executionDecision.policyRevision
+          );
+        } catch (error) {
+          console.error(
+            `Could not persist App Server turn selection for ${input.session.threadId}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      };
+      if (input.upstream.continueThread) {
+        return input.upstream.continueThread(
+          {
+            backendKind: input.session.backendKind,
+            threadId: input.session.threadId,
+            prompt: input.prompt,
+            ...(input.session.backendKind === "app-server"
+              ? { selection: input.executionDecision.effectiveSelection }
+              : {})
+          },
+          onProgress,
+          recordAssignment
+        );
+      }
+      const payload: Record<string, unknown> = {
+        threadId: input.session.threadId,
+        prompt: input.prompt,
+        ...backendRoutingArgument(input.session.backendKind)
+      };
+      if (input.session.backendKind === "app-server") {
+        applyModelSelection(payload, input.executionDecision.effectiveSelection, "app-server");
+      }
+      return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
+    },
     onComplete: () => {
       const previous = input.sessions.get(input.session.threadId);
-      if (input.adoptOnComplete) {
-        input.sessions.adopt(input.session.threadId, input.routing.scopeId);
-      } else {
-        input.sessions.touch(input.session.threadId);
-      }
+      input.sessions.record({
+        ...input.session,
+        scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
+        selection: input.executionDecision.effectiveSelection,
+        policyRevision: input.executionDecision.policyRevision,
+        updatedAt: Date.now(),
+        lastUsedAt: Date.now()
+      });
       return () => input.sessions.restoreInMemory(input.session.threadId, previous);
     }
   });
@@ -3080,6 +3268,7 @@ async function runCodex(input: {
   sessionDecision: SessionDecision;
   activityRequest: ActivityTaskRequest;
   selectionKey: string;
+  executionDecision: ExecutionDecision;
   rejectIfSelectionActive?: boolean;
   exclusiveKeys?: string[];
   run: (
@@ -3117,6 +3306,7 @@ async function runCodex(input: {
         requestHash: input.routing.requestHash,
         requestHashVersion: 2,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
+        executionDecision: input.executionDecision,
         exclusiveKeys: input.exclusiveKeys || [],
         sessionDecision: input.sessionDecision
       },
@@ -3209,6 +3399,7 @@ function formatJobStatus(
     operation: job.operation,
     cwd: job.cwd,
     sandbox: job.sandbox,
+    executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
     session: job.sessionDecision,
@@ -3335,6 +3526,7 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     operation: job.operation,
     cwd: job.cwd,
     sandbox: job.sandbox,
+    executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
     session: job.sessionDecision,
@@ -3643,7 +3835,7 @@ function selectionKeyFor(
   scopeId: string,
   cwd: string,
   sandbox: SandboxMode,
-  selection: ResolvedModelSelection
+  selection: ModelSelection
 ): string {
   return createHash("sha256")
     .update(
@@ -3652,7 +3844,8 @@ function selectionKeyFor(
         cwd,
         sandbox,
         model: selection.model || null,
-        reasoningEffort: selection.reasoningEffort || null
+        reasoningEffort: selection.reasoningEffort || null,
+        serviceTier: selection.serviceTier || null
       })
     )
     .digest("hex");
@@ -3673,6 +3866,162 @@ function scopeIdSchema() {
     .transform((value) => value.toLowerCase());
 }
 
+function modelSelectionZod() {
+  return z.strictObject({
+    model: z.string().trim().min(1).max(200),
+    reasoningEffort: z.string().trim().min(1).max(100),
+    serviceTier: z.string().trim().min(1).max(100).optional()
+  });
+}
+
+function modelPolicyZod() {
+  const constraints = z.strictObject({ allowDelegation: z.boolean() });
+  return z.union([
+    z.strictObject({
+      mode: z.literal("fixed"),
+      selection: modelSelectionZod(),
+      constraints
+    }),
+    z.strictObject({
+      mode: z.literal("automatic"),
+      preferredSelection: modelSelectionZod().optional(),
+      allowedSelections: z.union([
+        z.strictObject({ kind: z.literal("catalog-visible") }),
+        z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelSelectionZod()).min(1).max(500) })
+      ]),
+      constraints
+    })
+  ]);
+}
+
+function codexTaskInputSchema(
+  config: BridgeConfig,
+  settings: BridgeUserSettings,
+  catalog: CodexModelCatalogSnapshot | undefined
+): z.ZodType<CodexTaskArgs> {
+  const common = {
+    scopeId: scopeIdSchema()
+      .optional()
+      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+    requestId: scopeIdSchema().describe(
+      "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
+    ),
+    prompt: z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex."),
+    activityId: scopeIdSchema()
+      .optional()
+      .describe("Exact open Activity id in this conversation scope. Omit to create a new Activity."),
+    activityTitle: z.string().trim().min(1).max(120).optional()
+      .describe("User-facing title for a newly created Activity. Not accepted with activityId."),
+    activityKind: z.enum(ACTIVITY_KINDS).optional()
+      .describe("Classification for a newly created Activity; it does not grant permission or imply completion."),
+    executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional()
+      .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."),
+    handoffPolicy: z.enum(ACTIVITY_HANDOFF_POLICIES).optional()
+      .describe("New-Activity handoff policy. Defaults to none and is not inferred from Codex output."),
+    completionTrigger: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
+      .describe("New-Activity completion trigger. Defaults to manual. Seal explicitly before using the terminal barrier."),
+    sessionMode: z.enum(["auto", "new", "continue"]).optional()
+      .describe("Session behavior. Omit it for Activity-managed selection: a new Activity starts a new thread, while an existing Activity resumes its one compatible thread regardless of age."),
+    threadId: z.string().trim().min(1).max(200).optional()
+      .describe("Exact durable thread id. Required for continue; optional in auto to force that thread."),
+    adoptThread: z.boolean().optional()
+      .describe("Move an exact thread from another scope into this one. Use only after the user explicitly requests a cross-chat handoff."),
+    cwd: z.string().min(1).optional()
+      .describe("Absolute working directory inside the configured allowed roots. Omit it to use the saved default."),
+    sandbox: sandboxSchema(config).optional()
+      .describe("Requested Codex sandbox for adaptive mode. A saved read-only or always-full strategy overrides it.")
+  };
+  if (settings.modelPolicy.mode === "fixed") {
+    const projected = z.strictObject(common);
+    const runtime = z.strictObject({
+      ...common,
+      selection: z.unknown().optional(),
+      model: z.unknown().optional(),
+      reasoningEffort: z.unknown().optional(),
+      serviceTier: z.unknown().optional(),
+      modelPolicyRevision: z.number().int().min(0).optional()
+    });
+    return withJsonSchemaProjection(runtime, projected) as z.ZodType<CodexTaskArgs>;
+  }
+  return z.strictObject({
+    ...common,
+    modelPolicyRevision: z.number().int().min(0).optional()
+      .describe(`Policy revision ${settings.revision} was current when this descriptor was projected. Refresh tools if the bridge reports MODEL_POLICY_CHANGED.`),
+    selection: projectedSelectionZod(
+      settings.modelPolicy,
+      catalog,
+      config.operatorModelCeiling
+    ).optional().describe(
+      "Optional exact model, reasoningEffort, and serviceTier selection. Omit it to use the saved preferred or validated backend default selection."
+    )
+  }) as z.ZodType<CodexTaskArgs>;
+}
+
+function projectedSelectionZod(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot | undefined,
+  operatorCeiling?: ModelSelection[]
+): z.ZodType<ModelSelection> {
+  if (!catalog) {
+    return withJsonSchemaProjection(modelSelectionZod(), z.never()) as z.ZodType<ModelSelection>;
+  }
+  const allowed = listAllowedModelSelections(policy, catalog, operatorCeiling);
+  if (allowed.length === 0) {
+    return withJsonSchemaProjection(modelSelectionZod(), z.never()) as z.ZodType<ModelSelection>;
+  }
+  const byModelAndTier = new Map<string, ModelSelection[]>();
+  for (const selection of allowed) {
+    const key = JSON.stringify([selection.model, selection.serviceTier || null]);
+    const selections = byModelAndTier.get(key) || [];
+    selections.push(selection);
+    byModelAndTier.set(key, selections);
+  }
+  const schemas = [...byModelAndTier.values()].map((selections) => {
+    const model = selections[0].model;
+    const serviceTier = selections[0].serviceTier;
+    const efforts = [...new Set(selections.map((selection) => selection.reasoningEffort))];
+    return z.strictObject({
+      model: z.literal(model),
+      reasoningEffort: literalChoice(efforts),
+      ...(serviceTier ? { serviceTier: z.literal(serviceTier) } : {})
+    });
+  });
+  // The public descriptor is the exact allowlist projection, while runtime
+  // parsing accepts any strict, well-formed selection so PolicyResolver can
+  // return structured stale-policy/catalog errors instead of a generic Zod
+  // validation failure. The resolver remains the execution authority.
+  return withJsonSchemaProjection(modelSelectionZod(), {
+    oneOf: schemas.map(jsonSchemaBody)
+  }) as z.ZodType<ModelSelection>;
+}
+
+function literalChoice(values: string[]): z.ZodType<string> {
+  if (values.length === 1) return z.literal(values[0]);
+  return z.enum(values as [string, ...string[]]);
+}
+
+function withJsonSchemaProjection<T extends z.ZodType>(
+  runtime: T,
+  projected: z.ZodType | Record<string, unknown>
+): T {
+  const jsonSchema = "_zod" in projected
+    ? z.toJSONSchema(projected as z.ZodType, { target: "draft-7", io: "input" })
+    : projected;
+  const internals = runtime._zod as typeof runtime._zod & {
+    toJSONSchema?: () => Record<string, unknown>;
+  };
+  internals.toJSONSchema = () => jsonSchema as Record<string, unknown>;
+  return runtime;
+}
+
+function jsonSchemaBody(schema: z.ZodType): Record<string, unknown> {
+  const { $schema: _schema, ...body } = z.toJSONSchema(schema, {
+    target: "draft-7",
+    io: "input"
+  });
+  return body;
+}
+
 function sandboxSchema(config: BridgeConfig) {
   const allowed: [SandboxMode, ...SandboxMode[]] = ["read-only"];
   if (config.allowWorkspaceWrite) allowed.push("workspace-write");
@@ -3682,26 +4031,6 @@ function sandboxSchema(config: BridgeConfig) {
 
 function isMutatingSandbox(sandbox: SandboxMode): boolean {
   return sandbox !== "read-only";
-}
-
-function modelSchema() {
-  return z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
-    .optional()
-    .describe("Optional exact model id for a new session. Omit it to use the bridge or Codex default.");
-}
-
-function reasoningEffortSchema() {
-  return z
-    .string()
-    .trim()
-    .min(1)
-    .max(100)
-    .optional()
-    .describe("Optional effort for a new session. Call codex_models to discover supported values.");
 }
 
 function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting {
@@ -3722,8 +4051,8 @@ function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting 
         adoptThread: args.adoptThread || false,
         cwd: args.cwd || null,
         sandbox: args.sandbox || null,
-        model: args.model || null,
-        reasoningEffort: args.reasoningEffort || null,
+        modelPolicyRevision: args.modelPolicyRevision ?? null,
+        selection: args.selection || null,
         ...(hasActivityArguments
           ? {
               activityId: args.activityId || null,
@@ -3748,14 +4077,31 @@ async function buildSettingsView(
   config: BridgeConfig,
   userSettings: UserSettingsStore,
   modelCatalog: CodexModelCatalogProvider,
-  refreshModels = false
+  refreshModels = false,
+  schemaRefreshRequested = false
 ): Promise<SettingsView> {
   let catalog: CodexModelCatalogSnapshot | undefined;
   let catalogError: string | undefined;
   try {
-    catalog = await modelCatalog.getCatalog({ refresh: refreshModels });
+    catalog = await modelCatalog.getCatalog({
+      refresh: refreshModels,
+      backendKind: config.defaultBackend
+    });
   } catch (error) {
     catalogError = error instanceof Error ? error.message : String(error);
+  }
+  let modelPolicyWarning: string | undefined;
+  if (catalog) {
+    try {
+      validatePolicyAgainstCatalog(
+        userSettings.current.modelPolicy,
+        catalog,
+        config.operatorModelCeiling,
+        userSettings.current.revision
+      );
+    } catch (error) {
+      modelPolicyWarning = error instanceof Error ? error.message : String(error);
+    }
   }
   const availableAccessStrategies: SettingsView["capabilities"]["availableAccessStrategies"] = [
     "read-only",
@@ -3774,20 +4120,61 @@ async function buildSettingsView(
       maxConcurrentJobs: config.maxConcurrentJobs,
       allowWorkspaceWrite: config.allowWorkspaceWrite,
       allowDangerFullAccess: config.allowDangerFullAccess,
+      operatorModelCeiling: config.operatorModelCeiling || null,
       persistent: userSettings.persistent
     },
     catalog: {
       source: catalog?.source || null,
       fetchedAt: catalog?.fetchedAt || null,
+      validatedAt: catalog?.validatedAt || null,
+      fingerprint: catalog?.fingerprint || null,
       cached: catalog?.cached || false,
       stale: catalog?.stale || false,
+      validation: catalog?.validation || "invalid",
       warning: catalog?.warning || catalogError || null,
       models: (catalog?.models || []) as CodexModelDescriptor[]
     },
-    warnings: [...config.startupWarnings, ...userSettings.loadWarnings],
+    warnings: [
+      ...config.startupWarnings,
+      ...userSettings.loadWarnings,
+      ...(userSettings.current.legacyPreferredModel
+        ? [
+            `Legacy model-only preference '${userSettings.current.legacyPreferredModel}' remains active; its exact default effort and service tier are materialized from the backend catalog.`
+          ]
+        : []),
+      ...(modelPolicyWarning ? [modelPolicyWarning] : [])
+    ],
     scopeNotice:
-      "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed from the card."
+      "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Bridge security and operator model ceilings cannot be changed from the card.",
+    policyActivation: {
+      policyRevision: userSettings.current.revision,
+      executionPolicyActive: true,
+      schemaRefreshRequested,
+      schemaRefreshGuaranteed: false
+    }
   };
+}
+
+async function freshCatalogForPolicy(
+  modelCatalog: CodexModelCatalogProvider,
+  backendKind: CodexBackendKind,
+  policyRevision: number
+): Promise<CodexModelCatalogSnapshot> {
+  let catalog: CodexModelCatalogSnapshot;
+  try {
+    catalog = await modelCatalog.getCatalog({ refresh: true, backendKind });
+  } catch (error) {
+    throw catalogUnavailableError(policyRevision, error);
+  }
+  if (catalog.stale) {
+    throw new ModelPolicyError(
+      "MODEL_UNAVAILABLE",
+      "A fresh backend model catalog is required before activating a changed model policy.",
+      policyRevision,
+      ["Keep the existing active policy, restore backend catalog access, and retry the save."]
+    );
+  }
+  return catalog;
 }
 
 function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
@@ -3849,63 +4236,84 @@ function effectiveContinuationSandbox(
   return forcedSandboxForStrategy(preferences) || requested;
 }
 
-type ResolvedModelSelection = {
-  model?: string;
-  reasoningEffort?: string;
-};
-
-function taskModelSelection(
-  args: Pick<CodexTaskArgs, "model" | "reasoningEffort">,
-  preferences: BridgeUserSettings
-): ResolvedModelSelection {
-  const model = args.model || preferences.defaultModel || undefined;
-  const useSavedEffort = !args.model || args.model === preferences.defaultModel;
-  const reasoningEffort =
-    args.reasoningEffort || (useSavedEffort ? preferences.defaultReasoningEffort || undefined : undefined);
-  return { model, reasoningEffort };
+async function resolveExecutionDecision(input: {
+  config: BridgeConfig;
+  upstream: CodexUpstream;
+  modelCatalog: CodexModelCatalogProvider;
+  preferences: BridgeUserSettings;
+  backendKind: CodexBackendKind;
+  operation: "start" | "continue";
+  requestedSelection?: ModelSelection;
+  requestedPolicyRevision?: number;
+  currentSelection?: ModelSelection;
+}): Promise<ExecutionDecision> {
+  let catalog: CodexModelCatalogSnapshot;
+  try {
+    catalog = await input.modelCatalog.getCatalog({ backendKind: input.backendKind });
+  } catch (error) {
+    throw catalogUnavailableError(input.preferences.revision, error);
+  }
+  return resolveModelPolicy({
+    policyRevision: input.preferences.revision,
+    policy: input.preferences.modelPolicy,
+    legacyPreferredModel: input.preferences.legacyPreferredModel,
+    catalog,
+    operatorCeiling: input.config.operatorModelCeiling,
+    backendKind: input.backendKind,
+    backendCapabilities: backendCapabilities(input.upstream, input.backendKind),
+    operation: input.operation,
+    requestedSelection: input.requestedSelection,
+    requestedPolicyRevision: input.requestedPolicyRevision,
+    currentSelection: input.currentSelection
+  });
 }
 
-function modelSelectionTuple(
-  args: Pick<CodexTaskArgs, "model" | "reasoningEffort">,
-  preferences: BridgeUserSettings
-): [string | undefined, string | undefined] {
-  const selection = taskModelSelection(args, preferences);
-  return [selection.model, selection.reasoningEffort];
+function catalogUnavailableError(policyRevision: number, error: unknown): ModelPolicyError {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new ModelPolicyError(
+    "MODEL_UNAVAILABLE",
+    `The backend model catalog could not be loaded. ${detail}`,
+    policyRevision,
+    ["Restore backend catalog access and retry.", "Open Codex settings to inspect catalog status."]
+  );
 }
 
-async function resolveModelSelection(
-  modelCatalog: CodexModelCatalogProvider,
-  model: string | undefined,
-  reasoningEffort: string | undefined
-): Promise<ResolvedModelSelection> {
-  if (!model && !reasoningEffort) return {};
-  if (!model) {
-    throw new Error(
-      "reasoningEffort requires an explicit model or CODEX_MCP_BRIDGE_DEFAULT_MODEL so the bridge can validate compatibility."
-    );
-  }
-
-  const catalog = await modelCatalog.getCatalog();
-  const selectedModel = catalog.models.find((entry) => entry.id === model);
-  if (!selectedModel) {
-    const available = catalog.models.map((entry) => entry.id).join(", ");
-    throw new Error(`Unknown or unavailable Codex model '${model}'. Call codex_models to refresh the list. Available: ${available}`);
-  }
-  if (
-    reasoningEffort &&
-    !selectedModel.supportedReasoningEfforts.some((entry) => entry.effort === reasoningEffort)
-  ) {
-    const available = selectedModel.supportedReasoningEfforts.map((entry) => entry.effort).join(", ");
-    throw new Error(
-      `Codex model '${model}' does not support reasoning effort '${reasoningEffort}'. Supported values: ${available}`
-    );
-  }
-  return { model, reasoningEffort };
+function backendCapabilities(
+  upstream: CodexUpstream,
+  backendKind: CodexBackendKind
+): BackendCapabilities {
+  return upstream.capabilities?.(backendKind) || (backendKind === "app-server"
+    ? {
+        selectionScope: "turn",
+        supportsModelOverrideOnContinue: true,
+        supportsEffortOverrideOnContinue: true,
+        supportsServiceTierOverrideOnContinue: true,
+        supportsFork: false
+      }
+    : {
+        selectionScope: "thread",
+        supportsModelOverrideOnContinue: false,
+        supportsEffortOverrideOnContinue: false,
+        supportsServiceTierOverrideOnContinue: false,
+        supportsFork: false
+      });
 }
 
-function applyModelSelection(payload: Record<string, unknown>, selection: ResolvedModelSelection): void {
-  if (selection.model) payload.model = selection.model;
-  if (selection.reasoningEffort) payload.config = { model_reasoning_effort: selection.reasoningEffort };
+function applyModelSelection(
+  payload: Record<string, unknown>,
+  selection: ModelSelection,
+  backendKind: CodexBackendKind
+): void {
+  payload.model = selection.model;
+  payload.config = {
+    model_reasoning_effort: selection.reasoningEffort,
+    ...(backendKind === "mcp-server" && selection.serviceTier
+      ? { service_tier: selection.serviceTier }
+      : {})
+  };
+  if (backendKind === "app-server" && selection.serviceTier) {
+    payload.serviceTier = selection.serviceTier;
+  }
 }
 
 async function enforceSensitiveFilePreflight(
@@ -4077,7 +4485,7 @@ function readTrackingState(
 
 function readPersistedJob(
   value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6
+  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7
 ): PersistedCodexJob | undefined {
   if (!isRecord(value)) return undefined;
   const jobId = typeof value.jobId === "string" && value.jobId ? value.jobId : undefined;
@@ -4115,6 +4523,7 @@ function readPersistedJob(
         .filter((interaction): interaction is CodexPendingInteraction => Boolean(interaction))
         .slice(-20)
     : [];
+  const executionDecision = readExecutionDecision(value.executionDecision);
   if (
     !jobId ||
     !activityId ||
@@ -4160,7 +4569,8 @@ function readPersistedJob(
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     (value.result !== undefined && !isRecord(value.result)) ||
-    (value.lastProgress !== undefined && !lastProgress)
+    (value.lastProgress !== undefined && !lastProgress) ||
+    (value.executionDecision !== undefined && !executionDecision)
   ) {
     return undefined;
   }
@@ -4190,6 +4600,7 @@ function readPersistedJob(
     requestHash,
     requestHashVersion,
     selectionKey: value.selectionKey,
+    ...(executionDecision ? { executionDecision } : {}),
     exclusiveKeys: [...value.exclusiveKeys],
     sessionDecision,
     status,
@@ -4231,6 +4642,48 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
     reason,
     threadId: value.threadId
   };
+}
+
+function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
+  if (!isRecord(value)) return undefined;
+  const source = value.source;
+  const appliedAt = value.appliedAt;
+  const catalogValidation = value.catalogValidation;
+  const backendKind = value.backendKind;
+  if (
+    !Number.isInteger(value.policyRevision) ||
+    (value.policyRevision as number) < 0 ||
+    typeof value.catalogFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/i.test(value.catalogFingerprint) ||
+    (catalogValidation !== "valid" &&
+      catalogValidation !== "temporarily-unverified-with-last-known-good" &&
+      catalogValidation !== "invalid") ||
+    (backendKind !== "mcp-server" && backendKind !== "app-server") ||
+    (source !== "fixed" && source !== "preferred" && source !== "caller" && source !== "backend-default") ||
+    (appliedAt !== "thread-start" && appliedAt !== "turn-start") ||
+    typeof value.reason !== "string"
+  ) {
+    return undefined;
+  }
+  try {
+    const effectiveSelection = validateModelSelection(value.effectiveSelection, "persisted effective selection");
+    const requestedSelection = value.requestedSelection === undefined
+      ? undefined
+      : validateModelSelection(value.requestedSelection, "persisted requested selection");
+    return {
+      policyRevision: value.policyRevision as number,
+      catalogFingerprint: value.catalogFingerprint,
+      catalogValidation,
+      backendKind,
+      ...(requestedSelection ? { requestedSelection } : {}),
+      effectiveSelection,
+      source,
+      appliedAt,
+      reason: value.reason
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function readProgress(value: unknown): Progress | undefined {
@@ -4413,7 +4866,8 @@ function forwardResult(
         jobId: job.jobId,
         executionMode: job.executionMode,
         ...activityCardRenderHint(job.executionMode, preferences)
-      }
+      },
+      executionDecision: job.executionDecision || null
     }
   };
 }
@@ -4422,6 +4876,22 @@ function textResult(value: unknown): ToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
     ...(isRecord(value) ? { structuredContent: value } : {})
+  };
+}
+
+function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      policyRevision: error.policyRevision,
+      nextActions: error.nextActions
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
   };
 }
 

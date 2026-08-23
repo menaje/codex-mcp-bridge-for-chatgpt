@@ -2,7 +2,14 @@ import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CodexCliModelCatalog, parseCodexModelCatalog } from "../src/modelCatalog.js";
+import {
+  BackendAwareModelCatalog,
+  CodexCliModelCatalog,
+  parseAppServerModelCatalog,
+  parseCodexModelCatalog,
+  type CodexModelCatalogProvider,
+  type CodexModelCatalogSnapshot
+} from "../src/modelCatalog.js";
 
 const catalogJson = JSON.stringify({
   models: [
@@ -11,6 +18,10 @@ const catalogJson = JSON.stringify({
       display_name: "GPT Current",
       description: "Current selectable model",
       default_reasoning_level: "medium",
+      priority: 1,
+      default_service_tier: "priority",
+      service_tiers: [{ id: "priority", name: "Priority" }],
+      input_modalities: ["text", "image"],
       supported_reasoning_levels: [
         { effort: "low", description: "Fast" },
         { effort: "medium", description: "Balanced" },
@@ -41,6 +52,10 @@ describe("Codex model catalog", () => {
           { effort: "low", description: "Fast" },
           { effort: "medium", description: "Balanced" }
         ],
+        isDefault: true,
+        defaultServiceTier: "priority",
+        serviceTiers: [{ id: "priority", name: "Priority" }],
+        inputModalities: ["text", "image"],
         supportedInApi: true
       }
     ]);
@@ -69,6 +84,9 @@ describe("Codex model catalog", () => {
     expect(refreshed.cached).toBe(false);
     expect(calls).toBe(2);
     expect(first.fetchedAt).toBe("2026-08-21T00:00:00.000Z");
+    expect(first.validatedAt).toBe(first.fetchedAt);
+    expect(first.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.validation).toBe("valid");
 
     now += 2000;
   });
@@ -94,6 +112,7 @@ describe("Codex model catalog", () => {
 
     expect(stale.cached).toBe(true);
     expect(stale.stale).toBe(true);
+    expect(stale.validation).toBe("temporarily-unverified-with-last-known-good");
     expect(stale.warning).toContain("offline");
     expect(stale.models[0]?.id).toBe("gpt-current");
   });
@@ -135,4 +154,169 @@ describe("Codex model catalog", () => {
     expect(() => parseCodexModelCatalog("not-json")).toThrow(/invalid JSON/);
     expect(() => parseCodexModelCatalog(JSON.stringify({ models: [] }))).toThrow(/selectable models/);
   });
+
+  it("normalizes the App Server model/list contract with exact backend capabilities", () => {
+    expect(parseAppServerModelCatalog({
+      data: [
+        {
+          id: "display-id",
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "Backend-visible model",
+          defaultReasoningEffort: "max",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "high" },
+            { reasoningEffort: "max", description: "Maximum" }
+          ],
+          hidden: false,
+          isDefault: true,
+          defaultServiceTier: "priority",
+          serviceTiers: [{ id: "priority", name: "Priority" }],
+          inputModalities: ["text", "image"]
+        },
+        {
+          id: "hidden-id",
+          model: "hidden-model",
+          displayName: "Hidden",
+          description: "",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+          hidden: true,
+          isDefault: false,
+          serviceTiers: [],
+          inputModalities: ["text"]
+        }
+      ]
+    })).toEqual([
+      {
+        id: "gpt-5.6-sol",
+        displayName: "GPT-5.6-Sol",
+        description: "Backend-visible model",
+        defaultReasoningEffort: "max",
+        supportedReasoningEfforts: [
+          { effort: "high" },
+          { effort: "max", description: "Maximum" }
+        ],
+        isDefault: true,
+        defaultServiceTier: "priority",
+        serviceTiers: [{ id: "priority", name: "Priority" }],
+        inputModalities: ["text", "image"]
+      }
+    ]);
+
+    expect(parseAppServerModelCatalog({
+      data: [{
+        id: "text-image-default",
+        model: "gpt-default-modalities",
+        displayName: "Default modalities",
+        description: "",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        hidden: false,
+        isDefault: true,
+        serviceTiers: []
+      }]
+    })[0]?.inputModalities).toEqual(["text", "image"]);
+  });
+
+  it("prefers App Server model/list and falls back explicitly to the CLI catalog", async () => {
+    const cliSnapshot = snapshot("codex-cli", "c");
+    const cli: CodexModelCatalogProvider = {
+      async getCatalog() { return cliSnapshot; },
+      getCachedCatalog() { return cliSnapshot; }
+    };
+    const appPayload = {
+      data: [{
+        id: "gpt-app",
+        model: "gpt-app",
+        displayName: "GPT App",
+        description: "",
+        defaultReasoningEffort: "high",
+        supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+        hidden: false,
+        isDefault: true,
+        serviceTiers: [],
+        inputModalities: ["text"]
+      }]
+    };
+    const app = new BackendAwareModelCatalog(
+      "app-server",
+      cli,
+      async () => appPayload,
+      1_000,
+      () => Date.parse("2026-08-23T00:00:00.000Z")
+    );
+    await expect(app.getCatalog()).resolves.toMatchObject({
+      source: "app-server",
+      validation: "valid",
+      models: [{ id: "gpt-app" }]
+    });
+
+    const fallback = new BackendAwareModelCatalog(
+      "app-server",
+      cli,
+      async () => { throw new Error("model/list unavailable"); }
+    );
+    await expect(fallback.getCatalog()).resolves.toMatchObject({
+      source: "codex-cli",
+      stale: true,
+      validation: "temporarily-unverified-with-last-known-good",
+      warning: expect.stringContaining("model/list unavailable")
+    });
+    expect(fallback.getCachedCatalog({ backendKind: "app-server" })).toMatchObject({
+      source: "codex-cli",
+      stale: true,
+      validation: "temporarily-unverified-with-last-known-good",
+      warning: expect.stringContaining("unverified")
+    });
+
+    let refreshFails = false;
+    const warm = new BackendAwareModelCatalog(
+      "app-server",
+      cli,
+      async () => {
+        if (refreshFails) throw new Error("refresh failed");
+        return appPayload;
+      }
+    );
+    await warm.getCatalog({ refresh: true, backendKind: "app-server" });
+    refreshFails = true;
+    await expect(warm.getCatalog({ refresh: true, backendKind: "app-server" }))
+      .resolves.toMatchObject({
+        source: "app-server",
+        stale: true,
+        warning: expect.stringContaining("refresh failed")
+      });
+    expect(warm.getCachedCatalog({ backendKind: "app-server" })).toMatchObject({
+      source: "app-server",
+      stale: true,
+      warning: expect.stringContaining("refresh failed")
+    });
+    await expect(warm.getCatalog({ backendKind: "app-server" })).resolves.toMatchObject({
+      source: "app-server",
+      stale: true,
+      warning: expect.stringContaining("refresh failed")
+    });
+  });
 });
+
+function snapshot(source: "app-server" | "codex-cli", fingerprint: string): CodexModelCatalogSnapshot {
+  return {
+    source,
+    fetchedAt: "2026-08-23T00:00:00.000Z",
+    validatedAt: "2026-08-23T00:00:00.000Z",
+    fingerprint: fingerprint.repeat(64),
+    cached: true,
+    stale: false,
+    validation: "valid",
+    models: [{
+      id: "gpt-cli",
+      displayName: "GPT CLI",
+      defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: [{ effort: "medium" }],
+      isDefault: true,
+      serviceTiers: [],
+      inputModalities: ["text"]
+    }]
+  };
+}

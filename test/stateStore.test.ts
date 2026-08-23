@@ -85,7 +85,7 @@ describe("BridgeStateStore", () => {
     }));
     await legacyJob.promise;
     const legacySettings = new UserSettingsStore(config, { stateFile: settingsFile });
-    legacySettings.update({ uiLocalePreference: "ko" });
+    legacySettings.update({ uiLocalePreference: "ko" }, legacySettings.current.revision);
 
     const store = new BridgeStateStore({ file: databaseFile });
     const importedSessions = new SessionRegistry({

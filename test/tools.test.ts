@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ToolListChangedNotificationSchema,
+  type Progress
+} from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
@@ -163,18 +166,75 @@ class RestartAwareUpstream extends FakeUpstream {
 class FakeModelCatalog implements CodexModelCatalogProvider {
   public calls: Array<{ refresh?: boolean }> = [];
 
-  async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
-    this.calls.push(options);
+  protected snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const models = [
+      model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"], true),
+      model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"]),
+      model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"])
+    ];
     return {
       source: "codex-cli",
       fetchedAt: "2026-08-21T00:00:00.000Z",
-      cached: this.calls.length > 1,
+      validatedAt: "2026-08-21T00:00:00.000Z",
+      fingerprint: "f".repeat(64),
+      cached,
       stale: false,
-      models: [
-        model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"]),
-        model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"]),
-        model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"])
-      ]
+      validation: "valid",
+      models
+    };
+  }
+
+  async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    return this.snapshot(this.calls.length > 1);
+  }
+
+  getCachedCatalog(): CodexModelCatalogSnapshot {
+    return this.snapshot(true);
+  }
+}
+
+class DriftingModelCatalog extends FakeModelCatalog {
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    const current = this.snapshot(false);
+    return {
+      ...current,
+      fingerprint: "d".repeat(64),
+      models: current.models.filter((entry) => entry.id !== "gpt-5.6-terra")
+    };
+  }
+}
+
+class TieredModelCatalog extends FakeModelCatalog {
+  protected override snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const snapshot = super.snapshot(cached);
+    return {
+      ...snapshot,
+      fingerprint: "e".repeat(64),
+      models: snapshot.models.map((entry) => entry.id === "gpt-5.6-sol"
+        ? {
+            ...entry,
+            serviceTiers: [{ id: "priority", name: "Priority" }]
+          }
+        : entry)
+    };
+  }
+}
+
+class UnavailableModelCatalog implements CodexModelCatalogProvider {
+  async getCatalog(): Promise<CodexModelCatalogSnapshot> {
+    throw new Error("catalog transport unavailable");
+  }
+}
+
+class StaleModelCatalog extends FakeModelCatalog {
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    return {
+      ...this.snapshot(true),
+      stale: true,
+      validation: "temporarily-unverified-with-last-known-good"
     };
   }
 }
@@ -278,6 +338,8 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("result&&result.isError");
     expect(contents.text).toContain("!elements.form.reportValidity()");
     expect(contents.text).toContain("Number.isSafeInteger(value)");
+    expect(contents.text).toContain("if(modelPolicyDirty)args.modelPolicy=buildModelPolicy()");
+    expect(contents.text).toContain("settings.legacyPreferredModel");
     expect(contents.text).not.toContain("view.settings.defaultReasoningEffort = null");
     expect(contents._meta).toMatchObject({
       ui: {
@@ -315,8 +377,11 @@ describe("bridge tools", () => {
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
       defaultCwd: realpathSync(root),
-      defaultModel: "gpt-5.6-sol",
-      defaultReasoningEffort: "max",
+      modelPolicy: {
+        mode: "automatic",
+        preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        allowedSelections: { kind: "catalog-visible" }
+      },
       codexExecutionDeadline: "none",
       upstreamPoolSize: 4,
       maxRetainedJobs: 100,
@@ -366,13 +431,406 @@ describe("bridge tools", () => {
     const result = parseToolJson(
       await client.callTool({ name: "codex_models", arguments: { refresh: true } })
     );
+    expect(result).toMatchObject({
+      source: "codex-cli",
+      validatedAt: "2026-08-21T00:00:00.000Z",
+      fingerprint: "f".repeat(64),
+      validation: "valid"
+    });
     expect(result.models.map((entry: { id: string }) => entry.id)).toEqual([
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.5"
     ]);
-    expect(catalog.calls).toEqual([{ refresh: true }]);
+    expect(catalog.calls).toEqual([{ refresh: true, backendKind: "mcp-server" }]);
 
+    await close();
+  });
+
+  it("projects automatic exact selections, refreshes the next descriptor, and enforces fixed mode", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+
+    let task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema).toMatchObject({ additionalProperties: false });
+    expect(task.inputSchema.properties).not.toHaveProperty("model");
+    expect(task.inputSchema.properties).not.toHaveProperty("reasoningEffort");
+    expect(task.inputSchema.properties?.selection).toMatchObject({
+      oneOf: expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            model: { const: "gpt-5.6-sol", type: "string" },
+            reasoningEffort: expect.objectContaining({
+              enum: expect.arrayContaining(["high", "max"])
+            })
+          }),
+          additionalProperties: false
+        })
+      ])
+    });
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        policyActivation: {
+          policyRevision: 1,
+          executionPolicyActive: true,
+          schemaRefreshRequested: true,
+          schemaRefreshGuaranteed: false
+        }
+      });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(listChanged).toBeGreaterThan(0);
+
+    task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties).not.toHaveProperty("selection");
+    expect(task.inputSchema.properties).not.toHaveProperty("modelPolicyRevision");
+    expect(task.inputSchema).toMatchObject({ additionalProperties: false });
+
+    const staleOverride = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "stale override",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    });
+    expect(staleOverride.isError).toBe(true);
+    expect(staleOverride).toMatchObject({
+      structuredContent: {
+        error: {
+          code: "MODEL_SELECTION_FORBIDDEN",
+          policyRevision: 1,
+          nextActions: [expect.stringContaining("Omit selection")]
+        }
+      }
+    });
+    const staleLegacyOverride = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "stale legacy override",
+        model: "gpt-5.6-terra",
+        reasoningEffort: "high"
+      }
+    });
+    expect(staleLegacyOverride).toMatchObject({
+      structuredContent: {
+        error: { code: "MODEL_SELECTION_FORBIDDEN", policyRevision: 1 }
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+
+    const fixed = await runTask(client, { prompt: "fixed execution", sessionMode: "new" });
+    expect((fixed as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        executionDecision: {
+          policyRevision: 1,
+          effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          source: "fixed"
+        }
+      });
+    expect(upstream.calls[0]).toMatchObject({
+      args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [{ model: "gpt-5.6-terra", reasoningEffort: "high" }]
+          },
+          preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties?.selection).toMatchObject({
+      oneOf: [{
+        properties: {
+          model: { const: "gpt-5.6-terra" },
+          reasoningEffort: { const: "high" }
+        },
+        additionalProperties: false
+      }]
+    });
+
+    const staleRevision = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "stale revision",
+        modelPolicyRevision: 1,
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(staleRevision).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "MODEL_POLICY_CHANGED",
+          policyRevision: 2,
+          nextActions: [expect.stringContaining("Refresh")]
+        }
+      }
+    });
+    await close();
+  });
+
+  it("keeps service-tier schema choices identical to the exact resolver allowlist", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new TieredModelCatalog()
+    );
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "high" },
+              { model: "gpt-5.6-sol", reasoningEffort: "max", serviceTier: "priority" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const selectionSchema = task.inputSchema.properties?.selection as {
+      oneOf?: Array<{ properties?: Record<string, { const?: string }> }>;
+    };
+    expect(selectionSchema.oneOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          model: expect.objectContaining({ const: "gpt-5.6-sol" }),
+          reasoningEffort: expect.objectContaining({ const: "high" })
+        })
+      }),
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          model: expect.objectContaining({ const: "gpt-5.6-sol" }),
+          reasoningEffort: expect.objectContaining({ const: "max" }),
+          serviceTier: expect.objectContaining({ const: "priority" })
+        })
+      })
+    ]));
+
+    for (const selection of [
+      { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      { model: "gpt-5.6-sol", reasoningEffort: "high", serviceTier: "priority" }
+    ]) {
+      const rejected = await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "not an exact allowed tuple", sessionMode: "new", selection }
+      });
+      expect(rejected).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: { code: "MODEL_SELECTION_FORBIDDEN", policyRevision: 1 }
+        }
+      });
+    }
+
+    await runTask(client, {
+      prompt: "allowed default tier",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+    });
+    await runTask(client, {
+      prompt: "allowed priority tier",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max", serviceTier: "priority" }
+    });
+    expect(upstream.calls).toHaveLength(2);
+    expect(upstream.calls[1].args).toMatchObject({
+      model: "gpt-5.6-sol",
+      config: { model_reasoning_effort: "max", service_tier: "priority" }
+    });
+    expect(upstream.calls[1].args).not.toHaveProperty("serviceTier");
+    await close();
+  });
+
+  it("revalidates a stale descriptor against catalog drift at runtime", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new DriftingModelCatalog()
+    );
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(JSON.stringify(task.inputSchema)).toContain("gpt-5.6-terra");
+
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "catalog drift",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    });
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "MODEL_UNAVAILABLE",
+          policyRevision: 0,
+          nextActions: expect.any(Array)
+        }
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+    await close();
+  });
+
+  it("accepts an automatic policy when catalog drift leaves a non-empty intersection", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new DriftingModelCatalog()
+    );
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              { model: "gpt-5.6-terra", reasoningEffort: "medium" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({ revision: 1, modelPolicy: { mode: "automatic" } });
+
+    const task = await runTask(client, { prompt: "use surviving selection", sessionMode: "new" });
+    expect((task as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        executionDecision: {
+          source: "backend-default",
+          effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+        }
+      });
+    await close();
+  });
+
+  it("warns and fails closed when a fixed selection disappears from a fresh catalog", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    settings.update({
+      modelPolicy: {
+        mode: "fixed",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        constraints: { allowDelegation: true }
+      }
+    }, 0);
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new DriftingModelCatalog(),
+      settings
+    );
+    const opened = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((opened as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
+      .toEqual(expect.arrayContaining([expect.stringContaining("MODEL_UNAVAILABLE")]));
+    const task = await runTask(client, { prompt: "fixed selection removed", sessionMode: "new" });
+    expect(task).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE", policyRevision: 1 }
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+    await close();
+  });
+
+  it("returns structured unavailable errors and preserves policy when catalog loading fails", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new UnavailableModelCatalog()
+    );
+    const task = await runTask(client, { prompt: "catalog required", sessionMode: "new" });
+    expect(task).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+      }
+    });
+    const staleSelection = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "catalog required for a stale exact choice",
+        sessionMode: "new",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(staleSelection).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+      }
+    });
+    const update = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(update.isError).toBe(true);
+    expect(JSON.stringify(update)).toContain("MODEL_UNAVAILABLE");
+    expect(JSON.stringify(update)).toContain("policy revision 1");
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({
+      modelPolicyRevision: 0,
+      modelPolicy: { mode: "automatic" }
+    });
+    expect(upstream.calls).toHaveLength(0);
     await close();
   });
 
@@ -398,10 +856,14 @@ describe("bridge tools", () => {
     const opened = await client.callTool({ name: "codex_settings", arguments: {} });
     expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
       settings: {
+        schemaVersion: 2,
         revision: 0,
         accessStrategy: "adaptive",
-        defaultModel: "gpt-5.6-sol",
-        defaultReasoningEffort: "max",
+        modelPolicy: {
+          mode: "automatic",
+          preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          allowedSelections: { kind: "catalog-visible" }
+        },
         defaultCwd: realpathSync(root),
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
@@ -424,8 +886,11 @@ describe("bridge tools", () => {
       arguments: {
         expectedRevision: 0,
         accessStrategy: "always-full",
-        defaultModel: "gpt-5.6-terra",
-        defaultReasoningEffort: "high",
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        },
         defaultCwd: root,
         uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
@@ -436,8 +901,10 @@ describe("bridge tools", () => {
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
       revision: 1,
       accessStrategy: "always-full",
-      defaultModel: "gpt-5.6-terra",
-      defaultReasoningEffort: "high",
+      modelPolicy: {
+        mode: "fixed",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      },
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
       activityCardVisibility: "background-only",
@@ -491,10 +958,20 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("rejects stale settings cards and unsupported saved model/effort pairs", async () => {
+  it("rejects stale settings cards and unavailable saved exact selections", async () => {
     const root = temporaryRoot();
     const config = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
     const { client, close } = await connectTestClient(config, new FakeUpstream());
+
+    const descriptor = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_update_settings"
+    )!;
+    expect(descriptor.inputSchema.required).toContain("expectedRevision");
+    const missingRevision = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { uiLocalePreference: "ko" }
+    });
+    expect(missingRevision.isError).toBe(true);
 
     await client.callTool({
       name: "codex_update_settings",
@@ -513,12 +990,58 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        defaultModel: "gpt-5.5",
-        defaultReasoningEffort: "max"
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.5", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
       }
     });
     expect(unsupported.isError).toBe(true);
-    expect(JSON.stringify(unsupported)).toContain("does not support reasoning effort");
+    expect(JSON.stringify(unsupported)).toContain("MODEL_UNAVAILABLE");
+    await close();
+  });
+
+  it("saves unrelated preferences without reactivating an unchanged model policy", async () => {
+    const root = temporaryRoot();
+    const catalog = new StaleModelCatalog();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+    const unchangedPolicy = {
+      mode: "automatic" as const,
+      allowedSelections: { kind: "catalog-visible" as const },
+      constraints: { allowDelegation: true }
+    };
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        uiLocalePreference: "ko",
+        modelPolicy: unchangedPolicy
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({ revision: 1, uiLocalePreference: "ko" });
+    expect(catalog.calls.some((call) => call.refresh === true)).toBe(false);
+
+    const changed = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("fresh backend model catalog");
     await close();
   });
 
@@ -634,6 +1157,46 @@ describe("bridge tools", () => {
     await fullClient.close();
   });
 
+  it("projects and enforces the immutable exact operator model ceiling", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING:
+        '[{"model":"gpt-5.6-sol","reasoningEffort":"max"}]'
+    });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties?.selection).toMatchObject({
+      oneOf: [{
+        properties: {
+          model: { const: "gpt-5.6-sol" },
+          reasoningEffort: { const: "max" }
+        },
+        additionalProperties: false
+      }]
+    });
+    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((settings as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        capabilities: {
+          operatorModelCeiling: [{ model: "gpt-5.6-sol", reasoningEffort: "max" }]
+        }
+      });
+    const widened = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(widened.isError).toBe(true);
+    expect(JSON.stringify(widened)).toContain("MODEL_SELECTION_FORBIDDEN");
+    await close();
+  });
+
   it("starts a sanitized read-only session by default", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -650,7 +1213,9 @@ describe("bridge tools", () => {
           prompt: "inspect",
           cwd: realpathSync(root),
           sandbox: "read-only",
-          "approval-policy": "on-request"
+          "approval-policy": "on-request",
+          model: "gpt-5.6-sol",
+          config: { model_reasoning_effort: "max" }
         }
       }
     ]);
@@ -1031,7 +1596,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("uses and validates configured or per-call model settings for new sessions", async () => {
+  it("uses and validates configured or per-call exact selections for new sessions", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const config = configFor(root, {
@@ -1049,8 +1614,7 @@ describe("bridge tools", () => {
       arguments: {
         prompt: "override",
         sessionMode: "new",
-        model: "gpt-5.6-terra",
-        reasoningEffort: "medium"
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
       }
     });
     expect(upstream.calls[0]).toMatchObject({
@@ -1062,12 +1626,169 @@ describe("bridge tools", () => {
 
     const rejected = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "invalid", sessionMode: "new", model: "gpt-5.5", reasoningEffort: "max" }
+      arguments: {
+        prompt: "invalid",
+        sessionMode: "new",
+        selection: { model: "gpt-5.5", reasoningEffort: "max" }
+      }
     });
-    expect(rejected.isError).toBe(true);
-    expect(JSON.stringify(rejected)).toContain("does not support reasoning effort");
+    expect(rejected).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+      }
+    });
     expect(upstream.calls).toHaveLength(2);
 
+    await close();
+  });
+
+  it("keeps a running job on its admission-time policy decision", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    });
+    const { client, close } = await connectTestClient(config, upstream);
+
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "hold admission decision", sessionMode: "new" }
+    }));
+    expect(running.executionDecision).toMatchObject({
+      policyRevision: 0,
+      effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      source: "preferred"
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(upstream.calls[0]).toMatchObject({
+      args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+    upstream.resolveNext(fakeCodexResult("admission-thread"));
+    const completed = await waitForJobStatus(client, running.jobId, "completed");
+    expect(completed.executionDecision).toMatchObject({
+      policyRevision: 0,
+      effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      source: "preferred"
+    });
+    await close();
+  });
+
+  it("rejects an MCP policy change until the caller explicitly starts a new thread", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    });
+    const { client, close } = await connectTestClient(config, upstream);
+    const started = await runTask(client, { prompt: "start MCP thread", sessionMode: "new" });
+    const activityId = taskActivityId(started);
+    const threadId = (started as { structuredContent?: Record<string, any> }).structuredContent?.threadId;
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    for (const arguments_ of [
+      { prompt: "auto must not hide a new thread", activityId },
+      { prompt: "exact continuation must reject", activityId, sessionMode: "continue", threadId }
+    ]) {
+      const rejected = await client.callTool({ name: "codex_task", arguments: arguments_ });
+      expect(rejected).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: { code: "THREAD_OVERRIDE_UNSUPPORTED", policyRevision: 1 }
+        }
+      });
+    }
+    expect(upstream.calls).toHaveLength(1);
+
+    await runTask(client, {
+      prompt: "explicit replacement thread",
+      activityId,
+      sessionMode: "new"
+    });
+    expect(upstream.calls).toHaveLength(2);
+    expect(upstream.calls[1].args).toMatchObject({
+      model: "gpt-5.6-terra",
+      config: { model_reasoning_effort: "high" }
+    });
+    await close();
+  });
+
+  it("applies an App Server policy change on the same thread and updates execution state", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    });
+    const { client, close } = await connectTestClient(config, upstream, sessions);
+
+    await runTask(client, { prompt: "start app thread", sessionMode: "new" });
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const continued = await runTask(client, {
+      prompt: "continue with changed selection",
+      sessionMode: "continue",
+      threadId: "thread-1"
+    });
+
+    expect(upstream.calls[1]).toMatchObject({
+      name: "codex-reply",
+      args: {
+        threadId: "thread-1",
+        model: "gpt-5.6-terra",
+        config: { model_reasoning_effort: "high" },
+        _bridgeBackendKind: "app-server"
+      }
+    });
+    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        threadId: "thread-1",
+        executionDecision: {
+          policyRevision: 1,
+          effectiveSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          appliedAt: "turn-start"
+        }
+      });
+    expect(sessions.get("thread-1")).toMatchObject({
+      threadId: "thread-1",
+      backendKind: "app-server",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      policyRevision: 1
+    });
     await close();
   });
 
@@ -1427,7 +2148,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("keeps an omitted-session-mode retry stable after saved settings change", async () => {
+  it("keeps an exact-selection retry stable after a fixed-policy change", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const config = configFor(root);
@@ -1442,11 +2163,18 @@ describe("bridge tools", () => {
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      prompt: "same raw request with an omitted mode"
+      prompt: "same raw request with an omitted mode",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
     };
 
     const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
-    settings.update({ uiLocalePreference: "ko" }, 0);
+    settings.update({
+      modelPolicy: {
+        mode: "fixed",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        constraints: { allowDelegation: true }
+      }
+    }, 0);
     const retry = await rawCallTool({ name: "codex_task", arguments: arguments_ });
 
     const firstStructured = (first as { structuredContent?: Record<string, any> }).structuredContent!;
@@ -1735,7 +2463,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
-    settings.update({ completionHandoff: "auto-handoff" });
+    settings.update({ completionHandoff: "auto-handoff" }, settings.current.revision);
     const { client, rawCallTool, close } = await connectTestClient(
       config,
       new FakeUpstream(),
@@ -1832,7 +2560,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("auto mode starts new when cwd, sandbox, or model is incompatible", async () => {
+  it("starts independent new Activities across cwd, sandbox, and exact selections", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -1840,14 +2568,19 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`,
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
-      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol"
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
     const { client, close } = await connectTestClient(config, upstream);
 
     await runTask(client, { prompt: "first", sessionMode: "new", cwd: first });
     await runTask(client, { prompt: "other cwd", cwd: second });
     await runTask(client, { prompt: "write", cwd: first, sandbox: "workspace-write" });
-    await runTask(client, { prompt: "other model", cwd: first, model: "gpt-5.6-terra" });
+    await runTask(client, {
+      prompt: "other model",
+      cwd: first,
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
+    });
 
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex", "codex", "codex"]);
     await close();
@@ -1893,11 +2626,11 @@ describe("bridge tools", () => {
         prompt: "switch",
         sessionMode: "continue",
         threadId: "thread-1",
-        model: "gpt-5.6-terra"
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
       }
     });
     expect(modelChange.isError).toBe(true);
-    expect(JSON.stringify(modelChange)).toContain("cannot change");
+    expect(JSON.stringify(modelChange)).toContain("THREAD_OVERRIDE_UNSUPPORTED");
 
     await close();
   });
@@ -2369,7 +3102,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("does not expose or apply a Codex execution timeout", async () => {
+  it("does not expose and strictly rejects the retired Codex execution timeout", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
@@ -2378,9 +3111,9 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "inspect", timeoutMs: 10800001 }
     });
-    expect(result.isError).not.toBe(true);
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.calls[0]?.args).not.toHaveProperty("timeoutMs");
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("timeoutMs");
+    expect(upstream.calls).toHaveLength(0);
     await close();
   });
 
@@ -2416,7 +3149,7 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
     });
     const settings = new UserSettingsStore(config);
-    settings.update({ maxConcurrentJobs: 1 });
+    settings.update({ maxConcurrentJobs: 1 }, settings.current.revision);
     const { client, close } = await connectTestClient(
       config,
       upstream,
@@ -2733,6 +3466,10 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       cwd: realpathSync(root),
       sandbox: "read-only",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      policyRevision: 0,
+      backendKind: "mcp-server",
+      updatedAt: now,
       createdAt: now,
       lastUsedAt: now
     });
@@ -2879,12 +3616,15 @@ function fakeCodexResult(threadId: string): ToolResult {
   };
 }
 
-function model(id: string, defaultEffort: string, efforts: string[]) {
+function model(id: string, defaultEffort: string, efforts: string[], isDefault = false) {
   return {
     id,
     displayName: id,
     defaultReasoningEffort: defaultEffort,
     supportedReasoningEfforts: efforts.map((effort) => ({ effort })),
+    isDefault,
+    serviceTiers: [],
+    inputModalities: ["text"],
     supportedInApi: true
   };
 }

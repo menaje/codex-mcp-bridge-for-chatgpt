@@ -1,6 +1,9 @@
 import type { CodexBackendKind } from "./config.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
+import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type {
+  CodexThreadContinueRequest,
+  CodexThreadStartRequest,
   CodexPendingInteraction,
   CodexProgress,
   CodexUpstream,
@@ -41,6 +44,56 @@ export class CodexBackendRouter implements CodexUpstream {
         "app-server": settledValue(app)
       }
     };
+  }
+
+  capabilities(backendKind = this.defaultBackend): BackendCapabilities {
+    return this.backend(backendKind).capabilities?.(backendKind) || defaultCapabilities(backendKind);
+  }
+
+  async listModels(backendKind = this.defaultBackend): Promise<unknown> {
+    const backend = this.backend(backendKind);
+    if (!backend.listModels) {
+      throw new Error(`Codex backend ${backendKind} does not expose model/list.`);
+    }
+    return backend.listModels(backendKind);
+  }
+
+  startThread(
+    input: CodexThreadStartRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool(
+      "codex",
+      {
+        prompt: input.prompt,
+        cwd: input.cwd,
+        sandbox: input.sandbox,
+        "approval-policy": input.approvalPolicy,
+        ...selectionArguments(input.selection, input.backendKind),
+        ...backendRoutingArgument(input.backendKind)
+      },
+      onProgress,
+      onAssigned
+    );
+  }
+
+  continueThread(
+    input: CodexThreadContinueRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool(
+      "codex-reply",
+      {
+        threadId: input.threadId,
+        prompt: input.prompt,
+        ...(input.selection ? selectionArguments(input.selection, input.backendKind) : {}),
+        ...backendRoutingArgument(input.backendKind)
+      },
+      onProgress,
+      onAssigned
+    );
   }
 
   canResumeThread(threadId: string, backendKind?: CodexBackendKind): boolean | undefined {
@@ -137,4 +190,40 @@ function settledValue(result: PromiseSettledResult<unknown>): unknown {
   return result.status === "fulfilled"
     ? { available: true, tools: result.value }
     : { available: false, error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
+}
+
+function selectionArguments(
+  selection: ModelSelection,
+  backendKind: CodexBackendKind
+): Record<string, unknown> {
+  return {
+    model: selection.model,
+    config: {
+      model_reasoning_effort: selection.reasoningEffort,
+      ...(backendKind === "mcp-server" && selection.serviceTier
+        ? { service_tier: selection.serviceTier }
+        : {})
+    },
+    ...(backendKind === "app-server" && selection.serviceTier
+      ? { serviceTier: selection.serviceTier }
+      : {})
+  };
+}
+
+function defaultCapabilities(kind: CodexBackendKind): BackendCapabilities {
+  return kind === "app-server"
+    ? {
+        selectionScope: "turn",
+        supportsModelOverrideOnContinue: true,
+        supportsEffortOverrideOnContinue: true,
+        supportsServiceTierOverrideOnContinue: true,
+        supportsFork: false
+      }
+    : {
+        selectionScope: "thread",
+        supportsModelOverrideOnContinue: false,
+        supportsEffortOverrideOnContinue: false,
+        supportsServiceTierOverrideOnContinue: false,
+        supportsFork: false
+      };
 }

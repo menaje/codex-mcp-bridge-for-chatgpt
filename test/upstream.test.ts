@@ -8,6 +8,51 @@ import {
 } from "../src/upstream.js";
 
 describe("CodexStdioUpstream", () => {
+  it("maps exact selections into the MCP start contract and rejects continuation overrides", async () => {
+    let observed: { name: string; arguments: Record<string, unknown> } | undefined;
+    const upstream = new CodexStdioUpstream("codex", async () => ({
+      client: {
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool(input) {
+          observed = input;
+          return result("selection-thread");
+        },
+        async close() {}
+      },
+      transport: { async close() {} }
+    }));
+
+    await upstream.startThread!({
+      backendKind: "mcp-server",
+      prompt: "start",
+      cwd: "/tmp/project",
+      sandbox: "read-only",
+      approvalPolicy: "on-request",
+      selection: {
+        model: "gpt-5.6-sol",
+        reasoningEffort: "max",
+        serviceTier: "priority"
+      }
+    });
+    expect(observed).toMatchObject({
+      name: "codex",
+      arguments: {
+        model: "gpt-5.6-sol",
+        config: { model_reasoning_effort: "max", service_tier: "priority" }
+      }
+    });
+    expect(observed?.arguments).not.toHaveProperty("serviceTier");
+    await expect(upstream.continueThread!({
+      backendKind: "mcp-server",
+      threadId: "selection-thread",
+      prompt: "continue",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+    })).rejects.toThrow(/cannot override model selection/);
+    await upstream.close();
+  });
+
   it("forwards MCP progress notifications to the job observer", async () => {
     let observedOptions: Record<string, unknown> | undefined;
     const progress: Array<{ progress: number; total?: number; message?: string }> = [];

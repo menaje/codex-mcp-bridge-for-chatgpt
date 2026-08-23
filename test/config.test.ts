@@ -19,6 +19,7 @@ describe("config policy", () => {
     expect(config.maxConcurrentJobs).toBe(30);
     expect(config.defaultModel).toBeUndefined();
     expect(config.defaultReasoningEffort).toBeUndefined();
+    expect(config.operatorModelCeiling).toBeUndefined();
     expect(config.modelCatalogCacheTtlMs).toBe(600000);
     expect(config.modelCatalogTimeoutMs).toBe(30000);
     expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
@@ -37,11 +38,12 @@ describe("config policy", () => {
     expect(config.startupWarnings).toEqual([]);
   });
 
-  it("loads optional default Codex model and reasoning effort values", () => {
+  it("loads the optional exact automatic-policy model and effort seed", () => {
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max",
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '[{"model":"gpt-5.6-sol","reasoningEffort":"max"},{"model":"gpt-5.6-terra","reasoningEffort":"high","serviceTier":"priority"}]',
       CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS: "120000",
       CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS: "15000",
       CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: "/tmp/codex-mcp-bridge-test-models.json",
@@ -62,6 +64,10 @@ describe("config policy", () => {
 
     expect(config.defaultModel).toBe("gpt-5.6-sol");
     expect(config.defaultReasoningEffort).toBe("max");
+    expect(config.operatorModelCeiling).toEqual([
+      { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      { model: "gpt-5.6-terra", reasoningEffort: "high", serviceTier: "priority" }
+    ]);
     expect(config.modelCatalogCacheTtlMs).toBe(120000);
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
@@ -91,6 +97,21 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "high"
       })
     ).toThrow(/requires CODEX_MCP_BRIDGE_DEFAULT_MODEL/);
+  });
+
+  it("requires an exact default pair and validates the operator selection ceiling", () => {
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol"
+    })).toThrow(/requires CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: "not-json"
+    })).toThrow(/JSON array/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '[{"model":"gpt-5.6-sol"}]'
+    })).toThrow(/reasoning effort/i);
   });
 
   it("requires an absolute session state file", () => {

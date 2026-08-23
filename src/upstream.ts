@@ -7,7 +7,8 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS
 } from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
-import type { CodexBackendKind } from "./config.js";
+import type { ApprovalPolicy, CodexBackendKind, SandboxMode } from "./config.js";
+import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   JsonRpcProcess,
@@ -61,8 +62,36 @@ export type UpstreamWorkerAssignment = {
   threadId?: string;
 };
 
+export type CodexThreadStartRequest = {
+  backendKind: CodexBackendKind;
+  prompt: string;
+  cwd: string;
+  sandbox: SandboxMode;
+  approvalPolicy: ApprovalPolicy;
+  selection: ModelSelection;
+};
+
+export type CodexThreadContinueRequest = {
+  backendKind: CodexBackendKind;
+  threadId: string;
+  prompt: string;
+  selection?: ModelSelection;
+};
+
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
+  capabilities?(backendKind?: CodexBackendKind): BackendCapabilities;
+  listModels?(backendKind?: CodexBackendKind): Promise<unknown>;
+  startThread?(
+    input: CodexThreadStartRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult>;
+  continueThread?(
+    input: CodexThreadContinueRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult>;
   canResumeThread?(threadId: string, backendKind?: CodexBackendKind): boolean | undefined;
   callTool(
     name: string,
@@ -130,6 +159,34 @@ export class CodexStdioUpstream implements CodexUpstream {
 
   async listTools(): Promise<unknown> {
     return this.withConnection((client) => client.listTools());
+  }
+
+  capabilities(): BackendCapabilities {
+    return MCP_SERVER_CAPABILITIES;
+  }
+
+  startThread(
+    input: CodexThreadStartRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool("codex", threadStartArguments(input), onProgress, onAssigned);
+  }
+
+  async continueThread(
+    input: CodexThreadContinueRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    if (input.selection) {
+      throw new Error("The Codex MCP Server cannot override model selection on continuation.");
+    }
+    return this.callTool(
+      "codex-reply",
+      { threadId: input.threadId, prompt: input.prompt },
+      onProgress,
+      onAssigned
+    );
   }
 
   async callTool(
@@ -319,6 +376,34 @@ export class CodexUpstreamPool implements CodexUpstream {
     return this.withWorker((upstream) => upstream.listTools());
   }
 
+  capabilities(): BackendCapabilities {
+    return MCP_SERVER_CAPABILITIES;
+  }
+
+  startThread(
+    input: CodexThreadStartRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool("codex", threadStartArguments(input), onProgress, onAssigned);
+  }
+
+  async continueThread(
+    input: CodexThreadContinueRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    if (input.selection) {
+      throw new Error("The Codex MCP Server cannot override model selection on continuation.");
+    }
+    return this.callTool(
+      "codex-reply",
+      { threadId: input.threadId, prompt: input.prompt },
+      onProgress,
+      onAssigned
+    );
+  }
+
   async callTool(
     name: string,
     args: Record<string, unknown>,
@@ -403,6 +488,28 @@ export class CodexUpstreamPool implements CodexUpstream {
       if (index === workerIndex) this.threadWorkers.delete(threadId);
     }
   }
+}
+
+export const MCP_SERVER_CAPABILITIES: BackendCapabilities = {
+  selectionScope: "thread",
+  supportsModelOverrideOnContinue: false,
+  supportsEffortOverrideOnContinue: false,
+  supportsServiceTierOverrideOnContinue: false,
+  supportsFork: false
+};
+
+function threadStartArguments(input: CodexThreadStartRequest): Record<string, unknown> {
+  return {
+    prompt: input.prompt,
+    cwd: input.cwd,
+    sandbox: input.sandbox,
+    "approval-policy": input.approvalPolicy,
+    model: input.selection.model,
+    config: {
+      model_reasoning_effort: input.selection.reasoningEffort,
+      ...(input.selection.serviceTier ? { service_tier: input.selection.serviceTier } : {})
+    }
+  };
 }
 
 class ProcessMcpClient implements CodexMcpClient {

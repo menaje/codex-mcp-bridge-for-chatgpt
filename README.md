@@ -171,8 +171,9 @@ Ask ChatGPT to **open the Codex MCP Bridge for ChatGPT settings**. It calls
 
 - access strategy: `read-only`, `adaptive`, or `always-full` when the owner has
   enabled full access;
-- default Codex model and its supported reasoning effort from the live Codex
-  catalog;
+- execution model policy: one fixed exact model/effort/service-tier selection,
+  or automatic selection over the live catalog or an explicit exact allowlist;
+- optional preferred automatic selection and a separate Ultra/delegation gate;
 - default working directory inside the owner allowlist;
 - interface language: automatic host-language detection or a fixed supported
   language;
@@ -195,8 +196,9 @@ operations. Use the Activity card's single **Force stop** action when a tracked
 turn or worker must be ended. The settings revision remains an internal
 optimistic-concurrency token and is not displayed in the card.
 
-Saved values are authoritative defaults for later calls. A fixed interface
-language overrides the host locale for both Settings and Activity cards;
+Saved values are authoritative policy for turns admitted after the save. A
+running turn keeps the immutable execution decision captured at admission. A
+fixed interface language overrides the host locale for both Settings and Activity cards;
 `auto` follows the host locale and falls back to English. `read-only` forces all
 new work to read-only even if a caller asks for more permission. `adaptive`
 keeps the current GPT-selected behavior. `always-full` forces new work to
@@ -231,22 +233,78 @@ the plugin set to allow all actions, authorized mutation calls can then run
 without another confirmation. With the plugin set to always confirm, ChatGPT
 still asks before the MCP call.
 
-Call `codex_models` before presenting model or reasoning-effort choices. It
-loads the current catalog with `codex debug models`, filters it to selectable
-entries, and caches the result briefly. Model ids and reasoning-effort values
-are intentionally not hard-coded into the MCP schema, so a normal Codex model
-catalog update does not require a bridge or plugin schema update. The last
-successful catalog is also stored privately so a temporary CLI catalog failure
-after a restart can fall back to a validated stale result.
+### Model execution policy
 
-`codex_task` accepts optional exact `model` and `reasoningEffort` values when
-starting a new session. Set the saved defaults in `codex_settings`; the
+Call `codex_models` before presenting model or reasoning-effort choices. For an
+App Server target, its `model/list` result is authoritative; the selectable
+`codex debug models` catalog is the MCP Server source and App Server fallback.
+Each validated snapshot records its source, timestamp, and fingerprint. A
+temporary refresh failure may use the last known good snapshot and reports
+`temporarily-unverified-with-last-known-good`; a fresh catalog that confirms a
+selection has disappeared fails closed instead of silently choosing another
+model. A CLI fallback for an unavailable App Server catalog is marked unverified:
+it may keep existing execution usable, but it cannot activate a changed policy.
+
+The saved, versioned `modelPolicy` has two modes:
+
+- `fixed` forces one exact `selection` for every newly admitted turn. The
+  GPT-visible `codex_task` schema contains no model-selection input.
+- `automatic` permits an optional exact `selection` inside either an explicit
+  allowlist or the current `catalog-visible` set. When omitted, the resolver
+  uses the saved preferred selection and then a validated, fully materialized
+  backend default.
+
+An exact selection is one atomic nested object. Model ids, efforts, and optional
+service tiers are stored and transmitted verbatim; bridge aliases such as
+`sol-max` are never generated or accepted:
+
+```json
+{
+  "selection": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "max"
+  }
+}
+```
+
+In automatic mode the current `codex_task` descriptor projects the intersection
+of operator ceiling, user policy, and backend catalog as strict catalog-derived
+`oneOf` choices. Runtime resolution repeats exact-pair validation, so an old
+descriptor cannot bypass a newer policy. Stale revisions and invalid choices
+return structured `MODEL_POLICY_CHANGED`, `MODEL_SELECTION_FORBIDDEN`, or
+`MODEL_UNAVAILABLE` errors with the active revision and recovery guidance.
+Catalog drift may remove individual preferred or explicit entries without
+invalidating the policy while at least one exact intersection remains.
+
 `CODEX_MCP_BRIDGE_DEFAULT_MODEL` and
-`CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` variables seed those values before
-the first save. The bridge validates the pair against the
-current catalog and forwards the effort through Codex's
-`model_reasoning_effort` config. Use `sessionMode: new` to change model or
-effort because continued Codex threads keep their original configuration.
+`CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` may seed one exact automatic-mode
+preferred pair before the first save; both must be set together.
+`CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` is an immutable JSON array of exact
+operator-permitted selections. The settings card can narrow it but cannot widen
+it. Legacy JSON and SQLite default-model settings migrate to automatic,
+`catalog-visible` policy instead of being silently strengthened to fixed mode.
+A legacy model-only default is retained as a compatibility preference and its
+exact default effort and service tier are materialized from the live catalog.
+
+App Server applies the resolved model, effort, and optional service tier on
+`turn/start`, including the next turn of the same thread, and then updates that
+thread's current execution state. MCP Server can apply them only at
+`thread/start`; a continuation that would change them returns
+`THREAD_OVERRIDE_UNSUPPORTED` rather than ignoring the change or secretly
+starting another thread. Start a deliberate `sessionMode: new` turn in that
+case. Thread identity is independent of mutable execution state, while every
+job, result, and status retains its complete `executionDecision` for audit.
+
+After policy or catalog changes, the current SDK adapter requests
+`notifications/tools/list_changed`, and the next `tools/list` returns the new
+descriptor. An in-memory SDK smoke confirms notification delivery, while a
+stateless Streamable HTTP integration smoke confirms the next request receives
+the new descriptor. The ChatGPT HTTP surface has no durable subscription on which the
+bridge can guarantee immediate host rediscovery, so settings report
+`schemaRefreshGuaranteed: false`; reconnecting or the next host tool-list fetch
+is the documented fallback. Runtime enforcement never depends on notification
+delivery. The notification boundary is isolated so a future
+`subscriptions/listen` adapter does not change policy logic.
 
 ## Session lifecycle
 
@@ -300,7 +358,8 @@ In every mode, a terminal Codex job is only a child outcome. It does not by
 itself mean the Activity, user request, or verification is complete.
 
 Activity selection requires the same resolved conversation scope, working
-directory, sandbox, and requested/default model and effort. There is no bridge-global
+directory, and sandbox. Model selection is mutable thread execution state, not
+part of thread identity. There is no bridge-global
 "most recent session" fallback, so one ChatGPT conversation cannot
 accidentally auto-resume another conversation's thread. It never reuses a
 workspace-write or danger-full-access session for a read-only call. The
@@ -357,7 +416,7 @@ approval/input responses, steering, and exact turn interruption. Existing MCP
 threads remain pinned to their original backend and are never silently
 migrated. OpenAI currently documents App Server as experimental, so
 `mcp-server` remains the conservative package default. Session rows contain only thread id,
-`scopeId`, cwd, sandbox, model/effort, and timestamps; prompts and results are
+`scopeId`, backend, cwd, sandbox, current exact selection/policy revision, and timestamps; prompts and results are
 not written to them. Existing `sessions.json` records are imported once;
 pre-scope records are migrated to a quarantined
 legacy scope that is never auto-selected; older task-lane records are collapsed
@@ -482,8 +541,9 @@ product and package name remains **Codex MCP Bridge for ChatGPT**.
 | `CODEX_MCP_BRIDGE_ALLOW_WRITE` | unset | Must be `1` before write mode is accepted |
 | `CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS` | unset | Must be `1` before danger-full-access is accepted |
 | `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `untrusted`, `on-request`, or `never` |
-| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional default Codex model id; individual initial calls may override it |
-| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional default effort; must be supported by the selected model |
+| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional exact automatic-policy preferred model seed; requires the effort seed below |
+| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional exact automatic-policy preferred effort seed; requires the model seed above |
+| `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` | unset | Immutable JSON array of owner-permitted exact model/effort/optional-service-tier selections |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Time to cache a successful dynamic Codex model catalog |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Timeout for refreshing the Codex model catalog |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE` | `~/.codex-mcp-bridge/models.json` | Private last-successful model catalog fallback |

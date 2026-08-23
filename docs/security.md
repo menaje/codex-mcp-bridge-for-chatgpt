@@ -18,12 +18,17 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   filesystem changes are not rolled back.
 - `codex_activity_update` performs server-validated Activity transitions,
   including whole-Activity force-stop and evidence-backed verification.
-- `codex_models` returns the current selectable Codex model catalog.
-- `codex_settings` returns owner limits and renders the settings card.
-- `codex_update_settings` is app-only and persists validated preferences.
+- `codex_models` returns the target backend's validated selectable catalog,
+  source, timestamp, and fingerprint.
+- `codex_settings` returns owner limits and renders the versioned model-policy card.
+- `codex_update_settings` is app-only, requires the current settings revision,
+  and atomically persists a changed policy validated against a fresh target-backend
+  catalog; an unverified CLI fallback cannot activate policy changes. It cannot
+  widen the immutable operator selection ceiling.
 - `codex_task` starts or continues a tracked thread. It exposes
   `workspace-write` and `danger-full-access` only when the owner enables the
-  corresponding capabilities.
+  corresponding capabilities. Its exact model/effort/service-tier decision is
+  resolved again at runtime and retained with the job.
 
 The bridge does not expose a raw shell tool, process-control tool, arbitrary
 Codex config, or a general Responses API proxy. An explicitly enabled
@@ -49,6 +54,10 @@ the network as the current macOS user.
 - Exact-scope Activity creation/attachment and server-validated lifecycle
   transitions. Existing Activity policy cannot be changed through `codex_task`,
   and Codex output is never treated as transition authority.
+- Operator model ceiling ∩ versioned user policy ∩ backend catalog/capability ∩
+  request intent is the only model execution authority. Fixed mode rejects
+  stale overrides; automatic mode accepts only exact nested selections. No
+  bridge-maintained model aliases are interpreted.
 - 50,000 characters per prompt.
 - Activity-bound compatible-thread selection with no age limit, plus bounded
   completed-job retention.
@@ -147,6 +156,10 @@ because the private no-auth tunnel does not supply per-user identity.
   steering, and exact turn interruption. OpenAI currently documents the App
   Server interface as experimental, so it is not represented as a production
   stability guarantee.
+- App Server model/effort/service-tier changes are sent on the next
+  `turn/start` of the same thread. MCP Server continuation has no such override;
+  the bridge returns `THREAD_OVERRIDE_UNSUPPORTED` and requires an explicit new
+  thread instead of silently keeping the old choice or creating a hidden one.
 - Tool results and retained jobs can contain repository content. They are
   stripped of result `_meta`, token/password/key patterns, and configured-root
   absolute prefixes, then bounded in memory and persisted to the private state
@@ -156,8 +169,9 @@ because the private no-auth tunnel does not supply per-user identity.
   as source-sensitive.
 - The 30-job setting is a bridge admission limit. The MCP host, tunnel, Codex,
   account, and machine can impose lower practical limits.
-- Persisted session rows contain scope routing labels, thread ids, and local
-  working-directory paths, but not prompts or results. Pre-scope records are
+- Persisted session rows contain scope routing labels, thread ids, backend,
+  local working-directory paths, and current exact execution selection/revision,
+  but not prompts or results. Historical decisions remain on job rows. Pre-scope records are
   migrated into a legacy scope that automatic selection ignores; obsolete v2
   task-lane labels are discarded during migration.
 - Bridge metadata contains the conversation-scope HMAC key. Protect database

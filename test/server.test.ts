@@ -6,6 +6,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createHttpServer } from "../src/server.js";
 import { loadConfig } from "../src/config.js";
+import type {
+  CodexModelCatalogProvider,
+  CodexModelCatalogSnapshot
+} from "../src/modelCatalog.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
@@ -64,6 +68,45 @@ class ThreadUpstream extends FakeUpstream {
   }
 }
 
+class FakeModelCatalog implements CodexModelCatalogProvider {
+  private readonly snapshot: CodexModelCatalogSnapshot = {
+    source: "codex-cli",
+    fetchedAt: "2026-08-23T00:00:00.000Z",
+    validatedAt: "2026-08-23T00:00:00.000Z",
+    fingerprint: "c".repeat(64),
+    cached: true,
+    stale: false,
+    validation: "valid",
+    models: [
+      {
+        id: "gpt-5.6-sol",
+        displayName: "GPT-5.6 Sol",
+        defaultReasoningEffort: "max",
+        supportedReasoningEfforts: [{ effort: "high" }, { effort: "max" }],
+        isDefault: true,
+        serviceTiers: [],
+        inputModalities: ["text"]
+      },
+      {
+        id: "gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        defaultReasoningEffort: "high",
+        supportedReasoningEfforts: [{ effort: "high" }],
+        serviceTiers: [],
+        inputModalities: ["text"]
+      }
+    ]
+  };
+
+  async getCatalog(): Promise<CodexModelCatalogSnapshot> {
+    return { ...this.snapshot, models: this.snapshot.models.map((model) => ({ ...model })) };
+  }
+
+  getCachedCatalog(): CodexModelCatalogSnapshot {
+    return { ...this.snapshot, models: this.snapshot.models.map((model) => ({ ...model })) };
+  }
+}
+
 const servers: Array<ReturnType<typeof createHttpServer>> = [];
 
 afterEach(() => {
@@ -115,6 +158,41 @@ describe("http server", () => {
       body: "{}"
     });
     expect(allowed.status).not.toBe(401);
+  });
+
+  it("projects a saved model policy on the next stateless HTTP tools/list", async () => {
+    const baseUrl = await start({ CODEX_GPT_BRIDGE_NO_AUTH: "1" });
+    const client = new Client({ name: "http-schema-client", version: "0.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+
+    const initialTask = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    expect(initialTask.inputSchema.properties).toHaveProperty("selection");
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        policyActivation: {
+          policyRevision: 1,
+          executionPolicyActive: true,
+          schemaRefreshRequested: true,
+          schemaRefreshGuaranteed: false
+        }
+      });
+
+    const refreshedTask = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    expect(refreshedTask.inputSchema).toMatchObject({ additionalProperties: false });
+    expect(refreshedTask.inputSchema.properties).not.toHaveProperty("selection");
+    expect(refreshedTask.inputSchema.properties).not.toHaveProperty("modelPolicyRevision");
+    await client.close();
   });
 
   it("keeps async Codex jobs across stateless HTTP MCP requests", async () => {
@@ -316,7 +394,7 @@ async function start(
     CODEX_MCP_BRIDGE_JOB_STATE_FILE: path.join(stateDirectory, "jobs.json"),
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite")
   });
-  const server = createHttpServer(config, upstream);
+  const server = createHttpServer(config, upstream, new FakeModelCatalog());
   servers.push(server);
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);

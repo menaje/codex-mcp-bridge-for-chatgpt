@@ -17,9 +17,10 @@ describe("SessionRegistry", () => {
       scopeId: SCOPE_A,
       cwd: root,
       sandbox: "read-only",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "max",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      policyRevision: 3,
       backendKind: "app-server",
+      updatedAt: 200,
       createdAt: 100,
       lastUsedAt: 200
     });
@@ -34,8 +35,9 @@ describe("SessionRegistry", () => {
       scopeId: SCOPE_A,
       cwd: root,
       sandbox: "read-only",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "max",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      policyRevision: 3,
+      updatedAt: 200,
       backendKind: "app-server"
     });
   });
@@ -53,7 +55,7 @@ describe("SessionRegistry", () => {
     });
   });
 
-  it("returns every compatible session regardless of age", () => {
+  it("keeps model execution state out of thread compatibility identity", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     let now = 10_000;
     const sessions = new SessionRegistry({ now: () => now });
@@ -65,20 +67,16 @@ describe("SessionRegistry", () => {
       sessions.findCompatible({
         scopeId: SCOPE_A,
         cwd: root,
-        sandbox: "read-only",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "max"
+        sandbox: "read-only"
       }).map((session) => session.threadId)
     ).toEqual(["newer", "older"]);
     expect(
       sessions.findCompatible({
         scopeId: SCOPE_A,
         cwd: root,
-        sandbox: "read-only",
-        model: "gpt-5.6-terra",
-        reasoningEffort: "max"
-      })
-    ).toEqual([]);
+        sandbox: "read-only"
+      }).map((session) => session.threadId)
+    ).toEqual(["newer", "older"]);
 
     sessions.record(session("cli-default", root, "read-only", undefined, undefined, 9_950));
     expect(
@@ -87,27 +85,23 @@ describe("SessionRegistry", () => {
         cwd: root,
         sandbox: "read-only"
       }).map((session) => session.threadId)
-    ).toEqual(["cli-default"]);
+    ).toEqual(["cli-default", "newer", "older"]);
     expect(
       sessions.findCompatible({
         scopeId: SCOPE_A,
         cwd: root,
-        sandbox: "read-only",
-        model: "gpt-5.6-sol",
-        reasoningEffort: undefined
-      })
-    ).toEqual([]);
+        sandbox: "read-only"
+      }).map((session) => session.threadId)
+    ).toEqual(["cli-default", "newer", "older"]);
 
     now = 11_001;
     expect(
       sessions.findCompatible({
         scopeId: SCOPE_A,
         cwd: root,
-        sandbox: "read-only",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "max"
+        sandbox: "read-only"
       }).map((session) => session.threadId)
-    ).toEqual(["newer", "older"]);
+    ).toEqual(["cli-default", "newer", "older"]);
     expect(sessions.get("newer")?.threadId).toBe("newer");
   });
 
@@ -176,6 +170,28 @@ describe("SessionRegistry", () => {
     });
   });
 
+  it("updates mutable execution state without replacing thread identity", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    let now = 2_000;
+    const sessions = new SessionRegistry({ now: () => now });
+    sessions.record(session("thread-1", root, "read-only", "gpt-5.6-sol", "max", 1_000));
+    now = 2_500;
+
+    expect(sessions.updateExecution(
+      "thread-1",
+      { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      9
+    )).toMatchObject({
+      threadId: "thread-1",
+      scopeId: SCOPE_A,
+      backendKind: "mcp-server",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      policyRevision: 9,
+      updatedAt: 2_500,
+      lastUsedAt: 2_500
+    });
+  });
+
   it("migrates version 1 state into a quarantined legacy scope", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
@@ -199,7 +215,7 @@ describe("SessionRegistry", () => {
     expect(sessions.get("legacy-thread")).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
     expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -227,8 +243,38 @@ describe("SessionRegistry", () => {
     const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
     expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
     expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 4 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
     expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
+  });
+
+  it("migrates version 4 model fields into mutable exact selection state", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
+    writeFileSync(stateFile, JSON.stringify({
+      version: 4,
+      sessions: [{
+        threadId: "v4-thread",
+        scopeId: SCOPE_A,
+        cwd: root,
+        sandbox: "read-only",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "max",
+        backendKind: "app-server",
+        createdAt: 100,
+        lastUsedAt: 200
+      }]
+    }));
+
+    const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
+    expect(sessions.get("v4-thread")).toMatchObject({
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      updatedAt: 200,
+      backendKind: "app-server"
+    });
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
+    expect(persisted).toMatchObject({ version: 5 });
+    expect(persisted.sessions[0]).not.toHaveProperty("model");
+    expect(persisted.sessions[0]).not.toHaveProperty("reasoningEffort");
   });
 });
 
@@ -246,9 +292,11 @@ function session(
     scopeId,
     cwd,
     sandbox,
-    model,
-    reasoningEffort,
+    ...(model && reasoningEffort
+      ? { selection: { model, reasoningEffort }, policyRevision: 1 }
+      : {}),
     backendKind: "mcp-server" as const,
+    updatedAt: lastUsedAt,
     createdAt: lastUsedAt,
     lastUsedAt
   };

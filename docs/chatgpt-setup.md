@@ -74,17 +74,19 @@ initial `adaptive` setting keeps omitted sandboxes read-only. A saved
 ### Bridge settings card
 
 Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The
-`codex_settings` result renders an inline card for access strategy, dynamic
-model/effort defaults, working directory, interface language, concurrency, and
+`codex_settings` result renders an inline card for access strategy, the
+versioned fixed/automatic exact model policy, working directory, interface
+language, concurrency, and
 independent Activity-card visibility and completion handoff. Card visibility is
 `always`, `background-only`, or `never`; completion handoff is `off` or
 `auto-handoff`, and the latter requires a visible card. The default is to show
 cards and keep automatic handoff off. Codex job execution is unlimited-only;
 there is no task-timeout field or per-call timeout. The save button calls the
 app-only update action; the server validates the complete request and stores it privately.
-The revision used to reject stale saves remains internal and is not shown in
-the card. A stale card automatically reloads the latest values before asking the
-user to review and save again.
+The required revision used to reject stale saves remains internal and is not
+shown in the card. A stale card automatically reloads the latest values before
+asking the user to review and save again. Unrelated preference saves do not
+revalidate or reactivate an unchanged model policy.
 The language preference can be automatic or fixed to English, Korean, Japanese,
 Simplified or Traditional Chinese, Spanish, French, German, or Portuguese.
 Automatic mode follows the host locale and falls back to English; a fixed value
@@ -97,6 +99,28 @@ The access choices are:
   an owner-enabled mutation sandbox for an explicit user change/build request.
 - **Full-access fixed**: every new task is forced to `danger-full-access` and
   incompatible older sessions are not continued.
+
+The model-policy choices are:
+
+- **Fixed**: one exact model, reasoning effort, and optional service tier is
+  forced on every turn admitted after the save. `codex_task` exposes no model
+  selection field in this mode.
+- **Automatic / catalog visible**: GPT may send one exact nested `selection`
+  from the current backend catalog. Newly cataloged choices require no bridge
+  alias update.
+- **Automatic / explicit**: GPT may select only the exact pairs checked in the
+  card. A preferred pair is used when `selection` is omitted.
+
+If catalog drift removes only some saved automatic choices, the surviving exact
+intersection remains valid. The bridge blocks execution only when no allowed
+selection remains; a missing preferred pair falls back to the materialized
+backend default.
+
+Display names are UI-only. Saved values and tool calls always use the exact
+model id and effort together; values such as `sol-max` are not bridge profiles.
+Ultra reasoning can be disabled separately because it may enable delegation.
+The owner-only `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` is intersected before
+these user choices and cannot be widened from the card.
 
 The card shows only owner-permitted choices. It cannot widen allowed roots,
 enable a disabled capability, change the Codex approval policy, or alter tunnel
@@ -118,6 +142,10 @@ Ask ChatGPT to call `codex_status`. Confirm:
 - `defaultBackend` reflects the effective deployment configuration. The package
   default is stable `mcp-server`, while a local launcher or LaunchAgent may
   explicitly choose experimental `app-server` for richer events and controls.
+- `settings.schemaVersion`, `settings.modelPolicy`, the catalog
+  fingerprint/validation state, and
+  every job's `executionDecision` show the exact effective model/effort,
+  decision source, backend, policy revision, and thread/turn application point.
 
 Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
 prompt. ChatGPT must omit `scopeId`; the bridge derives it from host-provided
@@ -176,12 +204,38 @@ caller-provided scope because that would allow scope reassignment without a
 trusted mapping. Run upgrades only when no job is active; retained legacy
 history remains visible through a trusted compatibility/admin audit.
 
-To choose a model or reasoning effort, ask ChatGPT to call `codex_models` first.
-The returned list comes from the installed Codex CLI and includes only currently
-selectable models with each model's supported effort values. ChatGPT can then
-pass the selected `model` and `reasoningEffort` to a new `codex_task` session.
-If both are omitted, the saved card defaults are used. Model or effort
-changes require `sessionMode: new`.
+To choose a model or reasoning effort in automatic mode, ask ChatGPT to call
+`codex_models` first. App Server uses its live `model/list`; MCP Server uses the
+installed Codex CLI catalog. ChatGPT then passes one exact nested object:
+
+```json
+{
+  "selection": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "max"
+  }
+}
+```
+
+If App Server `model/list` is unavailable, its CLI fallback is reported as
+temporarily unverified. Existing execution may use that bounded fallback, but a
+model-policy change waits for a fresh App Server catalog.
+
+The descriptor exposes only strict catalog/policy intersections, and the
+runtime resolver revalidates the pair. Fixed mode removes the field entirely.
+App Server can apply a changed selection to the same thread's next
+`turn/start`. MCP Server continuation cannot override model/effort, so the
+bridge returns `THREAD_OVERRIDE_UNSUPPORTED`; use an explicit
+`sessionMode: new` instead of expecting a silent fallback.
+
+A successful settings update requests `tools/list_changed`, and the next
+`tools/list` projects the new policy. The in-memory SDK smoke confirms the
+notification, and the stateless Streamable HTTP smoke confirms the next
+request's descriptor. The ChatGPT endpoint is stateless and does not offer
+the bridge a durable subscription, so immediate host rediscovery remains
+best-effort and settings expose `schemaRefreshGuaranteed: false`. Reconnect or
+trigger a fresh tool discovery if the host still shows an older schema. Runtime
+policy enforcement remains current either way.
 
 `codex_status({})` lists only the current ChatGPT conversation's recent persisted
 sessions and jobs, without submitted prompt bodies. Follow the returned
@@ -195,7 +249,8 @@ not persisted. `includeAllScopes: true` is rejected for ordinary ChatGPT calls
 and is reserved for a trusted compatibility/admin host without session metadata.
 Auto mode selects a compatible session only when it is the sole compatible
 thread already attached to the exact Activity and matches the same scope, cwd,
-sandbox, model, and effort. Age is not a selection criterion. With several
+and sandbox. Model/effort is mutable execution state evaluated separately by
+the policy resolver. Age is not a selection criterion. With several
 compatible Activity threads it returns an ambiguity error so ChatGPT can
 inspect the Activity and retry with the intended exact `threadId`. A copied or branched
 ChatGPT conversation is isolated only when the host supplies a different

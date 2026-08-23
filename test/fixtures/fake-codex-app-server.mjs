@@ -45,6 +45,47 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "model/list") {
+    response(message.id, {
+      data: [
+        {
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "Fixture default",
+          defaultReasoningEffort: "max",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "high" },
+            { reasoningEffort: "max" }
+          ],
+          hidden: false,
+          isDefault: true,
+          defaultServiceTier: "priority",
+          serviceTiers: [{ id: "priority", name: "Priority" }],
+          inputModalities: ["text", "image"]
+        },
+        {
+          id: "gpt-5.6-terra",
+          model: "gpt-5.6-terra",
+          displayName: "GPT-5.6-Terra",
+          description: "Fixture continuation model",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" }
+          ],
+          hidden: false,
+          isDefault: false,
+          defaultServiceTier: null,
+          serviceTiers: [],
+          inputModalities: ["text"]
+        }
+      ],
+      nextCursor: null
+    });
+    return;
+  }
+
   if (message.method === "thread/start") {
     if (message.params.experimentalRawEvents !== false) {
       send({ id: message.id, error: { code: -32602, message: "raw events must be disabled" } });
@@ -61,7 +102,16 @@ lines.on("line", (line) => {
   if (message.method === "turn/start") {
     const turnId = `fake-turn-${++turnSequence}`;
     const prompt = message.params.input?.[0]?.text || "";
-    const context = { threadId: message.params.threadId, turnId, prompt };
+    const context = {
+      threadId: message.params.threadId,
+      turnId,
+      prompt,
+      selection: {
+        model: message.params.model,
+        effort: message.params.effort,
+        serviceTier: message.params.serviceTier
+      }
+    };
     activeTurns.set(turnId, context);
     const startResult = {
       turn: {
@@ -229,6 +279,10 @@ function beginTurn(context) {
     return;
   }
   if (prompt.includes("hold")) return;
+  if (prompt.includes("report selection")) {
+    finishTurn(context, "completed", `SELECTION:${JSON.stringify(context.selection)}`);
+    return;
+  }
   finishTurn(context, "completed", "APP SERVER");
 }
 

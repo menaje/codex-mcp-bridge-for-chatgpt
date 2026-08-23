@@ -3,19 +3,30 @@ import path from "node:path";
 import type { CodexBackendKind, SandboxMode } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { ToolResult } from "./upstream.js";
+import {
+  validateModelSelection,
+  type ModelSelection
+} from "./modelPolicy.js";
 
 export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
 export const SCOPE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type TrackedCodexSession = {
+export type ThreadIdentity = {
   threadId: string;
   scopeId: string;
+  backendKind: CodexBackendKind;
+};
+
+export type ThreadExecutionState = {
   cwd: string;
   sandbox: SandboxMode;
-  model?: string;
-  reasoningEffort?: string;
-  backendKind: CodexBackendKind;
+  selection?: ModelSelection;
+  policyRevision?: number;
+  updatedAt: number;
+};
+
+export type TrackedCodexSession = ThreadIdentity & ThreadExecutionState & {
   createdAt: number;
   lastUsedAt: number;
 };
@@ -24,12 +35,10 @@ export type SessionMatch = {
   scopeId: string;
   cwd: string;
   sandbox: SandboxMode;
-  model?: string;
-  reasoningEffort?: string;
 };
 
 type PersistedSessionState = {
-  version: 4;
+  version: 5;
   sessions: TrackedCodexSession[];
 };
 
@@ -71,8 +80,16 @@ export class SessionRegistry {
     const existing = this.sessions.get(session.threadId);
     this.sessions.delete(session.threadId);
     this.sessions.set(session.threadId, {
-      ...session,
-      createdAt: existing?.createdAt ?? session.createdAt
+      threadId: session.threadId,
+      scopeId: session.scopeId,
+      backendKind: session.backendKind,
+      cwd: session.cwd,
+      sandbox: session.sandbox,
+      ...(session.selection ? { selection: validateModelSelection(session.selection) } : {}),
+      ...(session.policyRevision !== undefined ? { policyRevision: session.policyRevision } : {}),
+      updatedAt: session.updatedAt,
+      createdAt: existing?.createdAt ?? session.createdAt,
+      lastUsedAt: session.lastUsedAt
     });
     const removed = this.enforceLimit();
     try {
@@ -86,7 +103,7 @@ export class SessionRegistry {
 
   get(threadId: string): TrackedCodexSession | undefined {
     const session = this.sessions.get(threadId);
-    return session ? { ...session } : undefined;
+    return session ? cloneSession(session) : undefined;
   }
 
   touch(threadId: string): void {
@@ -106,6 +123,31 @@ export class SessionRegistry {
     }
   }
 
+  updateExecution(
+    threadId: string,
+    selection: ModelSelection,
+    policyRevision: number
+  ): TrackedCodexSession | undefined {
+    const session = this.sessions.get(threadId);
+    if (!session) return undefined;
+    const updated: TrackedCodexSession = {
+      ...session,
+      selection: validateModelSelection(selection),
+      policyRevision,
+      updatedAt: this.now(),
+      lastUsedAt: this.now()
+    };
+    this.sessions.delete(threadId);
+    this.sessions.set(threadId, updated);
+    try {
+      this.persistSession(updated);
+    } catch (error) {
+      this.restoreInMemory(threadId, session);
+      throw error;
+    }
+    return cloneSession(updated);
+  }
+
   adopt(threadId: string, scopeId: string): TrackedCodexSession | undefined {
     const session = this.sessions.get(threadId);
     if (!session) return undefined;
@@ -122,12 +164,12 @@ export class SessionRegistry {
       this.restoreInMemory(threadId, session);
       throw error;
     }
-    return { ...adopted };
+    return cloneSession(adopted);
   }
 
   restoreInMemory(threadId: string, session?: TrackedCodexSession): void {
     this.sessions.delete(threadId);
-    if (session) this.sessions.set(threadId, { ...session });
+    if (session) this.sessions.set(threadId, cloneSession(session));
   }
 
   findCompatible(match: SessionMatch): TrackedCodexSession[] {
@@ -135,9 +177,7 @@ export class SessionRegistry {
       (session) =>
         session.scopeId === match.scopeId &&
         session.cwd === match.cwd &&
-        session.sandbox === match.sandbox &&
-        session.model === match.model &&
-        session.reasoningEffort === match.reasoningEffort
+        session.sandbox === match.sandbox
     );
   }
 
@@ -146,7 +186,7 @@ export class SessionRegistry {
       .reverse()
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit))
-      .map((session) => ({ ...session }));
+      .map(cloneSession);
   }
 
   listForScope(scopeId: string, limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
@@ -167,7 +207,7 @@ export class SessionRegistry {
     if (this.stateStore) {
       const stored = this.stateStore.listSessions();
       const sessions = stored
-        .map((session) => readPersistedSession(session, 4))
+        .map((session) => readPersistedSession(session, 5))
         .filter((session): session is TrackedCodexSession => Boolean(session))
         .filter((session) => this.isAllowedCwd(session.cwd))
         .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
@@ -192,12 +232,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
     const sessions = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -207,7 +247,7 @@ export class SessionRegistry {
     for (const session of sessions) {
       this.sessions.set(session.threadId, session);
     }
-    if (stateVersion !== 4) this.persist();
+    if (stateVersion !== 5) this.persist();
   }
 
   private importLegacyState(): void {
@@ -224,12 +264,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
     const imported = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -253,7 +293,7 @@ export class SessionRegistry {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSessionState = {
-      version: 4,
+      version: 5,
       sessions: this.list()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -304,11 +344,32 @@ export function extractThreadId(result: ToolResult): string | undefined {
   return undefined;
 }
 
-function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4): TrackedCodexSession | undefined {
+function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4 | 5): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
   const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
   const backendKind = stateVersion >= 4 ? value.backendKind : "mcp-server";
+  const legacySelection =
+    typeof value.model === "string" &&
+    value.model &&
+    typeof value.reasoningEffort === "string" &&
+    value.reasoningEffort
+      ? { model: value.model, reasoningEffort: value.reasoningEffort }
+      : undefined;
+  let selection: ModelSelection | undefined;
+  try {
+    selection = stateVersion >= 5 && value.selection !== undefined
+      ? validateModelSelection(value.selection, "persisted thread selection")
+      : legacySelection;
+  } catch {
+    return undefined;
+  }
+  const policyRevision = stateVersion >= 5 ? value.policyRevision : undefined;
+  const updatedAt = stateVersion >= 5 && isTimestamp(value.updatedAt)
+    ? value.updatedAt
+    : isTimestamp(value.lastUsedAt)
+      ? value.lastUsedAt
+      : 0;
   if (
     typeof value.threadId !== "string" ||
     !value.threadId ||
@@ -321,8 +382,7 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4): Trac
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.lastUsedAt) ||
     (backendKind !== "mcp-server" && backendKind !== "app-server") ||
-    !isOptionalString(value.model) ||
-    !isOptionalString(value.reasoningEffort)
+    (policyRevision !== undefined && (!Number.isInteger(policyRevision) || (policyRevision as number) < 0))
   ) {
     return undefined;
   }
@@ -331,11 +391,19 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4): Trac
     scopeId: scopeId.toLowerCase(),
     cwd: value.cwd,
     sandbox,
-    model: value.model,
-    reasoningEffort: value.reasoningEffort,
+    ...(selection ? { selection } : {}),
+    ...(typeof policyRevision === "number" ? { policyRevision } : {}),
+    updatedAt,
     backendKind,
     createdAt: value.createdAt,
     lastUsedAt: value.lastUsedAt
+  };
+}
+
+function cloneSession(session: TrackedCodexSession): TrackedCodexSession {
+  return {
+    ...session,
+    ...(session.selection ? { selection: { ...session.selection } } : {})
   };
 }
 

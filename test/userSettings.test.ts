@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
 describe("user settings store", () => {
@@ -20,10 +21,15 @@ describe("user settings store", () => {
     const store = new UserSettingsStore(config, { stateFile, now: () => Date.parse("2026-08-21T01:02:03Z") });
 
     expect(store.current).toMatchObject({
+      schemaVersion: 2,
       revision: 0,
       accessStrategy: "adaptive",
-      defaultModel: "gpt-5.6-sol",
-      defaultReasoningEffort: "max",
+      modelPolicy: {
+        mode: "automatic",
+        preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        allowedSelections: { kind: "catalog-visible" },
+        constraints: { allowDelegation: true }
+      },
       defaultCwd: config.allowedRoots[0],
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
@@ -52,8 +58,8 @@ describe("user settings store", () => {
     });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
-      version: 1,
-      settings: { revision: 1, accessStrategy: "always-full" }
+      version: 2,
+      settings: { schemaVersion: 2, revision: 1, accessStrategy: "always-full" }
     });
 
     const restored = new UserSettingsStore(config, { stateFile });
@@ -106,8 +112,8 @@ describe("user settings store", () => {
         revision: 4,
         updatedAt: "2026-08-21T00:00:00.000Z",
         accessStrategy: "adaptive",
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        defaultModel: "gpt-5.6-sol",
+        defaultReasoningEffort: "max",
         defaultCwd: root,
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
@@ -118,6 +124,11 @@ describe("user settings store", () => {
     const migrated = new UserSettingsStore(config, { stateFile });
     expect(migrated.current).toMatchObject({
       revision: 5,
+      modelPolicy: {
+        mode: "automatic",
+        preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        allowedSelections: { kind: "catalog-visible" }
+      },
       activityCardVisibility: "always",
       completionHandoff: "auto-handoff"
     });
@@ -125,8 +136,160 @@ describe("user settings store", () => {
       "completionDeliveryMode"
     );
     expect(migrated.loadWarnings).toEqual([
+      expect.stringContaining("model policy"),
       expect.stringContaining("completionDeliveryMode was migrated")
     ]);
+  });
+
+  it("preserves a legacy JSON model-only default until its exact effort is materialized", () => {
+    const root = temporaryDirectory("bridge-root-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root
+    });
+    writeFileSync(stateFile, JSON.stringify({
+      version: 1,
+      settings: {
+        revision: 4,
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        accessStrategy: "adaptive",
+        defaultModel: "gpt-5.6-terra",
+        defaultReasoningEffort: null,
+        defaultCwd: root,
+        uiLocalePreference: "auto",
+        maxConcurrentJobs: 30,
+        completionDeliveryMode: "off"
+      }
+    }));
+
+    const migrated = new UserSettingsStore(config, { stateFile });
+    expect(migrated.current).toMatchObject({
+      revision: 5,
+      legacyPreferredModel: "gpt-5.6-terra",
+      modelPolicy: {
+        mode: "automatic",
+        allowedSelections: { kind: "catalog-visible" }
+      }
+    });
+    expect(migrated.current.modelPolicy).not.toHaveProperty("preferredSelection");
+    expect(migrated.loadWarnings).toEqual([
+      expect.stringContaining("legacy preference"),
+      expect.stringContaining("completionDeliveryMode was migrated")
+    ]);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
+      schemaVersion: 2,
+      legacyPreferredModel: "gpt-5.6-terra"
+    });
+
+    const reloaded = new UserSettingsStore(config, { stateFile });
+    expect(reloaded.current).toEqual(migrated.current);
+    expect(reloaded.loadWarnings).toEqual([]);
+    expect(reloaded.update(
+      { uiLocalePreference: "ko" },
+      reloaded.current.revision
+    )).toMatchObject({
+      legacyPreferredModel: "gpt-5.6-terra",
+      uiLocalePreference: "ko"
+    });
+    const materialized = reloaded.update(
+      {
+        modelPolicy: {
+          mode: "automatic",
+          preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+          allowedSelections: { kind: "catalog-visible" },
+          constraints: { allowDelegation: true }
+        }
+      },
+      reloaded.current.revision
+    );
+    expect(materialized).not.toHaveProperty("legacyPreferredModel");
+  });
+
+  it("migrates a legacy SQLite payload to an idempotent automatic exact policy", () => {
+    const root = temporaryDirectory("bridge-root-");
+    const databaseFile = path.join(temporaryDirectory("bridge-state-"), "state.sqlite");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root,
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: databaseFile
+    });
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    stateStore.setSettings({
+      revision: 4,
+      updatedAt: "2026-08-21T00:00:00.000Z",
+      accessStrategy: "adaptive",
+      defaultModel: "gpt-5.6-terra",
+      defaultReasoningEffort: "high",
+      defaultCwd: root,
+      uiLocalePreference: "auto",
+      maxConcurrentJobs: 30,
+      activityCardVisibility: "always",
+      completionHandoff: "off"
+    });
+
+    const migrated = new UserSettingsStore(config, {
+      stateStore,
+      now: () => Date.parse("2026-08-23T00:00:00.000Z")
+    });
+    expect(migrated.current).toMatchObject({
+      schemaVersion: 2,
+      revision: 5,
+      modelPolicy: {
+        mode: "automatic",
+        preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        allowedSelections: { kind: "catalog-visible" },
+        constraints: { allowDelegation: true }
+      }
+    });
+    const persisted = stateStore.getSettings() as Record<string, unknown>;
+    expect(persisted).not.toHaveProperty("defaultModel");
+    expect(persisted).not.toHaveProperty("defaultReasoningEffort");
+    expect(persisted).toMatchObject({ schemaVersion: 2, revision: 5 });
+
+    const reloaded = new UserSettingsStore(config, { stateStore });
+    expect(reloaded.current).toEqual(migrated.current);
+    expect(reloaded.loadWarnings).toEqual([]);
+    stateStore.close();
+  });
+
+  it("preserves a legacy SQLite model-only default", () => {
+    const root = temporaryDirectory("bridge-root-");
+    const databaseFile = path.join(temporaryDirectory("bridge-state-"), "state.sqlite");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root,
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: databaseFile
+    });
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    stateStore.setSettings({
+      revision: 2,
+      updatedAt: "2026-08-21T00:00:00.000Z",
+      accessStrategy: "adaptive",
+      defaultModel: "gpt-5.6-sol",
+      defaultReasoningEffort: null,
+      defaultCwd: root,
+      uiLocalePreference: "auto",
+      maxConcurrentJobs: 30,
+      activityCardVisibility: "always",
+      completionHandoff: "off"
+    });
+
+    const migrated = new UserSettingsStore(config, { stateStore });
+    expect(migrated.current).toMatchObject({
+      schemaVersion: 2,
+      revision: 3,
+      legacyPreferredModel: "gpt-5.6-sol",
+      modelPolicy: {
+        mode: "automatic",
+        allowedSelections: { kind: "catalog-visible" }
+      }
+    });
+    expect(stateStore.getSettings()).toMatchObject({
+      schemaVersion: 2,
+      legacyPreferredModel: "gpt-5.6-sol"
+    });
+    stateStore.close();
   });
 
   it("forces read-only even when a caller asks for full access", () => {
@@ -158,7 +321,7 @@ describe("user settings store", () => {
     oldStore.update({
       accessStrategy: "always-full",
       maxConcurrentJobs: 4
-    });
+    }, oldStore.current.revision);
     const legacy = JSON.parse(readFileSync(stateFile, "utf8"));
     legacy.settings.taskTimeoutMs = 60000;
     legacy.settings.defaultSessionMode = "new";

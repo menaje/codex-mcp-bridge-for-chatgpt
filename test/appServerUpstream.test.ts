@@ -15,6 +15,51 @@ const FIXTURE = path.join(
 );
 
 describe("CodexAppServerUpstreamPool", () => {
+  it("exposes the backend model catalog and applies exact turn-level continuation overrides", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const catalog = await pool.listModels() as { data: Array<Record<string, unknown>> };
+      expect(catalog.data[0]).toMatchObject({
+        model: "gpt-5.6-sol",
+        defaultReasoningEffort: "max",
+        isDefault: true
+      });
+      const started = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "report selection",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: {
+          model: "gpt-5.6-sol",
+          reasoningEffort: "max",
+          serviceTier: "priority"
+        }
+      });
+      expect(started.content).toEqual([
+        {
+          type: "text",
+          text: 'SELECTION:{"model":"gpt-5.6-sol","effort":"max","serviceTier":"priority"}'
+        }
+      ]);
+      const threadId = (started.structuredContent as { threadId: string }).threadId;
+      const continued = await pool.continueThread!({
+        backendKind: "app-server",
+        threadId,
+        prompt: "report selection",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      });
+      expect(continued.content).toEqual([
+        {
+          type: "text",
+          text: 'SELECTION:{"model":"gpt-5.6-terra","effort":"high","serviceTier":null}'
+        }
+      ]);
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
   it("uses the safe App Server handshake and emits only allowlisted public events", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const events: CodexPublicEvent[] = [];

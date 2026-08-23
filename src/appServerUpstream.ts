@@ -3,7 +3,10 @@ import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { JsonRpcProcess, type JsonRpcTerminationResult } from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type {
+  CodexThreadContinueRequest,
+  CodexThreadStartRequest,
   CodexPendingInteraction,
   CodexProgress,
   CodexPublicEvent,
@@ -74,6 +77,50 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       ],
       backendKind: "app-server"
     };
+  }
+
+  capabilities(): BackendCapabilities {
+    return APP_SERVER_CAPABILITIES;
+  }
+
+  startThread(
+    input: CodexThreadStartRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool(
+      "codex",
+      requestArguments(input.prompt, input.selection, {
+        cwd: input.cwd,
+        sandbox: input.sandbox,
+        "approval-policy": input.approvalPolicy
+      }),
+      onProgress,
+      onAssigned
+    );
+  }
+
+  continueThread(
+    input: CodexThreadContinueRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    return this.callTool(
+      "codex-reply",
+      requestArguments(input.prompt, input.selection, { threadId: input.threadId }),
+      onProgress,
+      onAssigned
+    );
+  }
+
+  async listModels(): Promise<unknown> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      return await (await this.connectionFor(worker)).listModels();
+    } finally {
+      worker.activeCalls -= 1;
+    }
   }
 
   canResumeThread(_threadId: string): boolean {
@@ -244,6 +291,7 @@ class AppServerConnection {
         sandbox: requiredString(args.sandbox, "sandbox"),
         approvalPolicy: requiredString(args["approval-policy"], "approval-policy"),
         model: optionalString(args.model) || null,
+        serviceTier: optionalString(args.serviceTier) || null,
         config: isRecord(args.config) ? args.config : null,
         experimentalRawEvents: false,
         ephemeral: false
@@ -253,7 +301,7 @@ class AppServerConnection {
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
     this.loadedThreads.add(threadId);
-    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), onProgress, onAssigned);
+    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
   }
 
   async resumeThreadAndTurn(
@@ -266,7 +314,25 @@ class AppServerConnection {
       await this.rpc.request("thread/resume", { threadId }, { timeoutMs: 30_000 });
       this.loadedThreads.add(threadId);
     }
-    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), onProgress, onAssigned);
+    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+  }
+
+  async listModels(): Promise<unknown> {
+    const data: unknown[] = [];
+    let cursor: string | null = null;
+    do {
+      const response: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>(
+        "model/list",
+        { cursor, limit: 100, includeHidden: false },
+        { timeoutMs: 30_000 }
+      );
+      if (!Array.isArray(response.data)) {
+        throw new Error("Codex App Server returned an invalid model/list response.");
+      }
+      data.push(...response.data);
+      cursor = optionalString(response.nextCursor) || null;
+    } while (cursor);
+    return { data, nextCursor: null };
   }
 
   async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
@@ -390,13 +456,20 @@ class AppServerConnection {
   private async startTurn(
     threadId: string,
     prompt: string,
+    args: Record<string, unknown>,
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
     if (this.threadTurns.has(threadId)) throw new Error("A Codex App Server turn is already active for this thread.");
     const response = await this.rpc.request<Record<string, unknown>>(
       "turn/start",
-      { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] },
+      {
+        threadId,
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+        model: optionalString(args.model) || null,
+        effort: modelReasoningEffort(args.config) || null,
+        serviceTier: optionalString(args.serviceTier) || null
+      },
       { timeoutMs: 30_000 }
     );
     const turn = isRecord(response.turn) ? response.turn : undefined;
@@ -623,6 +696,32 @@ class AppServerConnection {
   }
 }
 
+export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
+  selectionScope: "turn",
+  supportsModelOverrideOnContinue: true,
+  supportsEffortOverrideOnContinue: true,
+  supportsServiceTierOverrideOnContinue: true,
+  supportsFork: false
+};
+
+function requestArguments(
+  prompt: string,
+  selection: ModelSelection | undefined,
+  base: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...base,
+    prompt,
+    ...(selection
+      ? {
+          model: selection.model,
+          config: { model_reasoning_effort: selection.reasoningEffort },
+          ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+        }
+      : {})
+  };
+}
+
 function publicItemEvent(
   item: Record<string, unknown>,
   phase: "started" | "completed",
@@ -688,6 +787,10 @@ function optionalString(value: unknown): string | undefined {
 
 function rawString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function modelReasoningEffort(value: unknown): string | undefined {
+  return isRecord(value) ? optionalString(value.model_reasoning_effort) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

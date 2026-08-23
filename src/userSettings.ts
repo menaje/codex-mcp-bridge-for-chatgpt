@@ -4,6 +4,12 @@ import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
 import { enforceSandbox, requireAllowedCwd } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import {
+  MODEL_POLICY_SCHEMA_VERSION,
+  automaticModelPolicy,
+  validateModelPolicy,
+  type ModelPolicy
+} from "./modelPolicy.js";
+import {
   isUiLocalePreference,
   type UiLocalePreference
 } from "./uiI18n.js";
@@ -15,11 +21,13 @@ export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 
 export type BridgeUserSettings = {
+  schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
   revision: number;
   updatedAt: string | null;
   accessStrategy: AccessStrategy;
-  defaultModel: string | null;
-  defaultReasoningEffort: string | null;
+  modelPolicy: ModelPolicy;
+  /** Migration-only compatibility for legacy defaults that selected a model but no effort. */
+  legacyPreferredModel?: string;
   defaultCwd: string | null;
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
@@ -28,11 +36,14 @@ export type BridgeUserSettings = {
 };
 
 export type BridgeUserSettingsPatch = Partial<
-  Omit<BridgeUserSettings, "revision" | "updatedAt">
+  Omit<
+    BridgeUserSettings,
+    "schemaVersion" | "revision" | "updatedAt" | "legacyPreferredModel"
+  >
 >;
 
 type PersistedSettingsState = {
-  version: 1;
+  version: 2;
   settings: BridgeUserSettings;
 };
 
@@ -59,18 +70,25 @@ export class UserSettingsStore {
     this.stateStore = options.stateStore;
     this.now = options.now || Date.now;
     this.initial = this.validate({
+      schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
       revision: 0,
       updatedAt: null,
       accessStrategy: config.defaultAccessStrategy,
-      defaultModel: config.defaultModel || null,
-      defaultReasoningEffort: config.defaultReasoningEffort || null,
+      modelPolicy: automaticModelPolicy(
+        config.defaultModel && config.defaultReasoningEffort
+          ? {
+              model: config.defaultModel,
+              reasoningEffort: config.defaultReasoningEffort
+            }
+          : undefined
+      ),
       defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
-    this.settings = { ...this.initial };
+    this.settings = cloneSettings(this.initial);
     this.load();
   }
 
@@ -83,18 +101,18 @@ export class UserSettingsStore {
   }
 
   get current(): BridgeUserSettings {
-    return { ...this.settings };
+    return cloneSettings(this.settings);
   }
 
   get defaults(): BridgeUserSettings {
-    return { ...this.initial };
+    return cloneSettings(this.initial);
   }
 
   get loadWarnings(): string[] {
     return [...this.warnings];
   }
 
-  update(patch: BridgeUserSettingsPatch, expectedRevision?: number): BridgeUserSettings {
+  update(patch: BridgeUserSettingsPatch, expectedRevision: number): BridgeUserSettings {
     this.assertRevision(expectedRevision);
     const candidate: BridgeUserSettings = {
       ...this.settings,
@@ -102,16 +120,14 @@ export class UserSettingsStore {
       revision: this.settings.revision + 1,
       updatedAt: new Date(this.now()).toISOString()
     };
-    if (patch.defaultModel === null && patch.defaultReasoningEffort === undefined) {
-      candidate.defaultReasoningEffort = null;
-    }
+    if (patch.modelPolicy !== undefined) delete candidate.legacyPreferredModel;
     const validated = this.validate(candidate);
     this.persist(validated);
     this.settings = validated;
     return this.current;
   }
 
-  reset(expectedRevision?: number): BridgeUserSettings {
+  reset(expectedRevision: number): BridgeUserSettings {
     this.assertRevision(expectedRevision);
     const validated = this.validate({
       ...this.initial,
@@ -140,8 +156,8 @@ export class UserSettingsStore {
     throw new Error("cwd is required when multiple CODEX_MCP_BRIDGE_ROOTS are configured.");
   }
 
-  private assertRevision(expectedRevision: number | undefined): void {
-    if (expectedRevision !== undefined && expectedRevision !== this.settings.revision) {
+  private assertRevision(expectedRevision: number): void {
+    if (expectedRevision !== this.settings.revision) {
       throw new Error(`${SETTINGS_REVISION_CONFLICT}: Settings changed after this card was opened.`);
     }
   }
@@ -160,11 +176,21 @@ export class UserSettingsStore {
     if (candidate.defaultCwd !== null) {
       candidate.defaultCwd = requireAllowedCwd(candidate.defaultCwd, this.config.allowedRoots);
     }
-    validateOptionalIdentifier(candidate.defaultModel, "default model", 200);
-    validateOptionalIdentifier(candidate.defaultReasoningEffort, "default reasoning effort", 100);
-    if (!candidate.defaultModel && candidate.defaultReasoningEffort) {
-      throw new Error("A default reasoning effort requires a default model.");
+    if (candidate.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) {
+      throw new Error("Invalid settings schema version.");
     }
+    if (candidate.legacyPreferredModel !== undefined) {
+      validateIdentifier(candidate.legacyPreferredModel, "legacy preferred model", 200);
+      if (
+        candidate.modelPolicy.mode !== "automatic" ||
+        candidate.modelPolicy.preferredSelection !== undefined
+      ) {
+        throw new Error(
+          "A legacy model-only preference is valid only for an automatic policy without an exact preferred selection."
+        );
+      }
+    }
+    candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
     if (!isUiLocalePreference(candidate.uiLocalePreference)) {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
@@ -184,7 +210,7 @@ export class UserSettingsStore {
     if (candidate.updatedAt !== null && !Number.isFinite(Date.parse(candidate.updatedAt))) {
       throw new Error("Invalid settings update timestamp.");
     }
-    return { ...candidate };
+    return cloneSettings(candidate);
   }
 
   private load(): void {
@@ -207,7 +233,11 @@ export class UserSettingsStore {
         `Could not read bridge settings at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
-    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
+    if (
+      !isRecord(parsed) ||
+      (parsed.version !== 1 && parsed.version !== 2) ||
+      !isRecord(parsed.settings)
+    ) {
       throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
     }
     this.noteRetiredSettings(parsed.settings);
@@ -228,7 +258,11 @@ export class UserSettingsStore {
             `Could not read bridge settings at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
           );
         }
-        if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
+        if (
+          !isRecord(parsed) ||
+          (parsed.version !== 1 && parsed.version !== 2) ||
+          !isRecord(parsed.settings)
+        ) {
           throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
         }
         this.noteRetiredSettings(parsed.settings);
@@ -275,16 +309,39 @@ export class UserSettingsStore {
   }
 
   private noteRetiredSettings(value: Record<string, unknown>): void {
-    const retired = ["taskTimeoutMs", "defaultSessionMode", "autoResumeTtlMs", "completionDeliveryMode"].filter(
+    const retired = [
+      "taskTimeoutMs",
+      "defaultSessionMode",
+      "autoResumeTtlMs",
+      "completionDeliveryMode",
+      "defaultModel",
+      "defaultReasoningEffort"
+    ].filter(
       (key) => key in value
     );
     if (
       retired.length === 0 &&
+      value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION &&
+      "modelPolicy" in value &&
       "uiLocalePreference" in value &&
       "activityCardVisibility" in value &&
       "completionHandoff" in value
     ) return;
     this.retiredSettingsMigrationPending = true;
+    const modelOnlyLegacy =
+      typeof value.defaultModel === "string" &&
+      Boolean(value.defaultModel) &&
+      (value.defaultReasoningEffort === null || value.defaultReasoningEffort === undefined);
+    if (
+      ("defaultModel" in value || "defaultReasoningEffort" in value) &&
+      !this.warnings.some((warning) => warning.includes("model policy"))
+    ) {
+      this.warnings.push(
+        modelOnlyLegacy
+          ? "Saved defaultModel was preserved in the automatic model policy as a legacy preference; its exact default effort is materialized from the backend catalog at execution time."
+          : "Saved defaultModel/defaultReasoningEffort values were migrated to the versioned automatic model policy."
+      );
+    }
     if ("taskTimeoutMs" in value && !this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
       this.warnings.push(
         "Saved taskTimeoutMs was retired and removed. Codex execution is now unlimited-only."
@@ -318,7 +375,7 @@ export class UserSettingsStore {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSettingsState = {
-      version: 1,
+      version: 2,
       settings
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
@@ -346,12 +403,34 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     throw new Error(`Invalid uiLocalePreference in bridge settings at ${stateFile}.`);
   }
   const updatedAt = requiredStringOrNull("updatedAt");
+  const legacyModel = value.defaultModel === undefined ? null : requiredStringOrNull("defaultModel");
+  const legacyEffort = value.defaultReasoningEffort === undefined
+    ? null
+    : requiredStringOrNull("defaultReasoningEffort");
+  if (legacyEffort && !legacyModel) {
+    throw new Error(`A legacy defaultReasoningEffort requires defaultModel in bridge settings at ${stateFile}.`);
+  }
+  const persistedLegacyPreferredModel = value.legacyPreferredModel === undefined
+    ? undefined
+    : requiredStringOrNull("legacyPreferredModel") || undefined;
+  const hasCurrentPolicy =
+    value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION && value.modelPolicy !== undefined;
+  const modelPolicy = hasCurrentPolicy
+    ? validateModelPolicy(value.modelPolicy)
+    : automaticModelPolicy(
+        legacyModel && legacyEffort
+          ? { model: legacyModel, reasoningEffort: legacyEffort }
+          : undefined
+      );
   return {
+    schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
     revision: requiredNumber("revision"),
     updatedAt,
     accessStrategy: accessStrategy as AccessStrategy,
-    defaultModel: requiredStringOrNull("defaultModel"),
-    defaultReasoningEffort: requiredStringOrNull("defaultReasoningEffort"),
+    modelPolicy,
+    ...(persistedLegacyPreferredModel || (!hasCurrentPolicy && legacyModel && !legacyEffort)
+      ? { legacyPreferredModel: (persistedLegacyPreferredModel || legacyModel) as string }
+      : {}),
     defaultCwd: requiredStringOrNull("defaultCwd"),
     uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
       ? value.uiLocalePreference
@@ -372,11 +451,11 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
   };
 }
 
-function validateOptionalIdentifier(value: string | null, label: string, maxLength: number): void {
-  if (value === null) return;
-  if (!value.trim() || value.length > maxLength || /[\r\n]/.test(value)) {
-    throw new Error(`Invalid ${label}.`);
-  }
+function cloneSettings(settings: BridgeUserSettings): BridgeUserSettings {
+  return {
+    ...settings,
+    modelPolicy: validateModelPolicy(settings.modelPolicy)
+  };
 }
 
 function validateIntegerRange(
@@ -388,6 +467,12 @@ function validateIntegerRange(
 ): void {
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${label} must be an integer between ${minimum} and ${maximum} ${unit}.`);
+  }
+}
+
+function validateIdentifier(value: string, label: string, maximum: number): void {
+  if (!value.trim() || value !== value.trim() || value.length > maximum || /[\r\n]/.test(value)) {
+    throw new Error(`Invalid ${label}.`);
   }
 }
 
