@@ -1,23 +1,25 @@
-# Connect Codex MCP Bridge for ChatGPT through Secure MCP Tunnel
+# Connect Codex MCP Bridge for ChatGPT
 
-## 1. Prepare Codex
+## 1. Prepare Codex and the bridge
 
 Confirm that Codex is installed and authenticated:
 
 ```bash
 codex --version
 codex mcp-server --help
+codex app-server --help
 ```
 
-## 2. Create the tunnel
+Install and verify the bridge:
 
-Create an MCP tunnel in OpenAI Platform and associate it with the ChatGPT workspace that will use it. The operator needs the applicable Tunnel Read and Use permissions, and ChatGPT Developer mode must be available for the workspace.
+```bash
+npm ci
+npm run check
+```
 
-Keep the runtime API key and `tunnel_id` outside Git.
+## 2. Create the Secure MCP Tunnel
 
-## 3. Start the bridge
-
-Use a single narrow repository root:
+Create an MCP tunnel in OpenAI Platform and associate it with the ChatGPT workspace that will use it. The operator needs applicable Tunnel Read/Use permissions and ChatGPT Developer mode. Keep the runtime key and tunnel ID outside Git.
 
 ```bash
 export CONTROL_PLANE_API_KEY="<runtime-key>"
@@ -26,293 +28,201 @@ export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
 npm run bridge:secure -- --root /absolute/path/to/repository
 ```
 
-The default profile exposes only read-only. Stop it before starting a write profile:
+The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
 
 ```bash
-npm run bridge:secure -- --root /absolute/path/to/repository --write
+npm run bridge:secure -- --root /absolute/path/to/projects --allow-write
+npm run bridge:secure -- --root /absolute/path/to/projects --allow-full-access
 ```
 
-To keep read-only as the default while allowing ChatGPT to select either
-mutation sandbox for an authorized task:
+Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT plugin permission is deliberately the single approval boundary.
+
+## 3. Add or refresh the ChatGPT plugin
+
+1. Open ChatGPT Settings and enable Developer mode.
+2. Open Plugins and create a developer-mode connection.
+3. Choose Tunnel and select/paste the matching tunnel ID.
+4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
+5. Verify discovery of eight model-visible tools: `codex_status`, `codex_activity`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
+6. The card-only `codex_update_settings` and `codex_activity_handoff` actions should also be registered but are not normal model operations.
+
+### Refresh after a bridge/UI change
+
+MCP App resource URIs are cache keys. This repository derives immutable Settings and Activity URIs from final content plus host-affecting resource metadata. Before refreshing ChatGPT:
 
 ```bash
-CODEX_MCP_BRIDGE_APPROVAL_POLICY=never npm run bridge:secure -- \
-  --root /absolute/path/to/projects --allow-full-access
+npm run release:sync
+npm run release:check
+npm run check
 ```
 
-Use `approval-policy=never` only when the private ChatGPT plugin permission is
-the intended approval boundary.
+Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves both the newly advertised current URI and the retained previous URI.
 
-## 4. Add the connection in ChatGPT
+After Refresh:
 
-1. Open ChatGPT Settings.
-2. Enable Developer mode under Security and login.
-3. Open Plugins and create a developer-mode connection.
-4. Choose Tunnel and select or paste the matching `tunnel_id`.
-5. Use `No Auth`; the bridge is loopback-only and the OpenAI tunnel is the transport boundary.
-6. Confirm that the seven user-facing bridge tools are discovered:
-   `codex_status`, `codex_activity`, `codex_cancel`,
-   `codex_activity_update`, `codex_models`, `codex_settings`, and `codex_task`.
-   `codex_update_settings` and `codex_activity_handoff` are app-only actions
-   used by the settings and Activity cards.
+1. inspect `dist/ui-manifest.json`;
+2. confirm the registered `codex_settings` `_meta.ui.resourceUri` and `openai/outputTemplate` exactly equal the manifest's current Settings URI;
+3. confirm `codex_activity` points to the current Activity URI;
+4. open a new conversation and run the smoke checklist below;
+5. test an existing conversation. If it still has an old tool descriptor, ask it to rediscover tools or use a new conversation. The bridge cannot inject refreshed metadata into an already cached conversation.
 
-### Plugin permission setting
+See OpenAI's [Plugin Refresh guidance](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata) and [MCP App UI guidance](https://developers.openai.com/plugins/build/chatgpt-ui).
 
-The plugin detail screen already provides four permission choices:
+## 4. Configure the Settings card
 
-1. Always confirm.
-2. Allow read actions.
-3. Allow low-risk actions (default).
-4. Allow all actions (high risk).
+Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves shared bridge-instance preferences:
 
-This setting governs ChatGPT's confirmation before it calls `codex_task`; it is
-not a Codex sandbox selector. Choose **Allow all actions** only for a private,
-trusted connection when unattended change/build requests are desired. The
-initial `adaptive` setting keeps omitted sandboxes read-only. A saved
-`read-only` or `always-full` strategy overrides a per-call sandbox choice.
+- access strategy;
+- fixed or automatic exact model policy;
+- default working folder;
+- UI language;
+- concurrent-job limit;
+- card visibility;
+- card layout (`agent-list` by default or `activity-summary`);
+- optional completion handoff.
 
-### Bridge settings card
+With one allowed root the default folder starts as that root. With multiple allowed roots, save one folder before starting a new Activity. The card cannot widen operator roots/capabilities, change tunnel credentials, or change the Codex approval policy.
 
-Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The
-`codex_settings` result renders an inline card for access strategy, the
-versioned fixed/automatic exact model policy, working directory, interface
-language, concurrency, and
-independent Activity-card visibility and completion handoff. Card visibility is
-`always`, `background-only`, or `never`; completion handoff is `off` or
-`auto-handoff`, and the latter requires a visible card. The default is to show
-cards and keep automatic handoff off. Codex job execution is unlimited-only;
-there is no task-timeout field or per-call timeout. The save button calls the
-app-only update action; the server validates the complete request and stores it privately.
-The required revision used to reject stale saves remains internal and is not
-shown in the card. A stale card automatically reloads the latest values before
-asking the user to review and save again. Unrelated preference saves do not
-revalidate or reactivate an unchanged model policy.
-The language preference can be automatic or fixed to English, Korean, Japanese,
-Simplified or Traditional Chinese, Spanish, French, German, or Portuguese.
-Automatic mode follows the host locale and falls back to English; a fixed value
-overrides the host locale for both Settings and Activity cards.
+The default folder and access strategy are independent:
 
-The access choices are:
+- fixed `read-only` forces read-only and removes per-call `sandbox` from `codex_task`;
+- fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
+- `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-- **Read-only fixed**: every new task is forced to `read-only`.
-- **GPT adaptive**: the saved/default sandbox is read-only, while GPT may choose
-  an owner-enabled mutation sandbox for an explicit user change/build request.
-- **Full-access fixed**: every new task is forced to `danger-full-access` and
-  incompatible older sessions are not continued.
+The public `codex_task` descriptor must never contain `cwd`. New Activities and `fresh` context use the saved default folder. Existing Agent threads keep their pinned admission-time folder and sandbox after Settings changes. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
 
-The model-policy choices are:
+### Dynamic model/effort behavior
 
-- **Fixed**: one exact model, reasoning effort, and optional service tier is
-  forced on every turn admitted after the save. `codex_task` exposes no model
-  selection field in this mode.
-- **Automatic / catalog visible**: GPT may send one exact nested `selection`
-  from the current backend catalog. Newly cataloged choices require no bridge
-  alias update.
-- **Automatic / explicit**: GPT may select only the exact pairs checked in the
-  card. A preferred pair is used when `selection` is omitted.
+Opening or manually refreshing Settings uses the same bridge catalog adapter. App Server `model/list` is authoritative for App Server, including picker visibility, supported/default efforts, upgrade metadata, and service tiers. A short TTL avoids redundant lookup; a refresh failure preserves and labels the last known good catalog instead of replacing it with an empty list.
 
-If catalog drift removes only some saved automatic choices, the surviving exact
-intersection remains valid. The bridge blocks execution only when no allowed
-selection remains; a missing preferred pair falls back to the materialized
-backend default.
+Effort options display short localized names only. The selected description is a separate helper linked with `aria-describedby`. Changing model immediately rebuilds supported efforts and the helper. Unknown new effort IDs remain visible with their canonical label and deterministic localized fallback description.
 
-Display names are UI-only. Saved values and tool calls always use the exact
-model id and effort together; values such as `sol-max` are not bridge profiles.
-Ultra reasoning can be disabled separately because it may enable delegation.
-The owner-only `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` is intersected before
-these user choices and cannot be widened from the card.
+If a saved effort is no longer supported, Settings warns instead of rewriting it. The suggested value is the model's current default. Task execution never forwards the unsupported value; diagnostics record the transient effective effort and warning until the user explicitly saves a supported value.
 
-The card shows only owner-permitted choices. It cannot widen allowed roots,
-enable a disabled capability, change the Codex approval policy, or alter tunnel
-credentials. Values apply to every conversation using this one bridge; they are
-not isolated per ChatGPT user.
+## 5. Verify the active contract
 
-## 5. Verify the active policy
+Call `codex_status` and confirm:
 
-Ask ChatGPT to call `codex_status`. Confirm:
+- the saved `defaultCwd`, `accessStrategy`, card layout/visibility, and language;
+- operator roots and mutation capability flags;
+- default backend and active build ID;
+- settings schema/model policy and catalog source/fingerprint/LKG status;
+- SQLite state is reachable.
 
-- `accessStrategy` and `defaultSandbox` match the saved card selection.
-- `allowWorkspaceWrite` matches the profile you started.
-- `allowDangerFullAccess` matches the profile you started.
-- `defaultApprovalPolicy` is `on-request` normally, or `never` when the plugin
-  setting is deliberately used as the outer approval boundary.
-- `allowedRoots` contains only the intended repository.
-- Upstream tools include `codex` and `codex-reply`.
-- `build.id` matches the current `/healthz` build id.
-- `defaultBackend` reflects the effective deployment configuration. The package
-  default is stable `mcp-server`, while a local launcher or LaunchAgent may
-  explicitly choose experimental `app-server` for richer events and controls.
-- `settings.schemaVersion`, `settings.modelPolicy`, the catalog
-  fingerprint/validation state, and
-  every job's `executionDecision` show the exact effective model/effort,
-  decision source, backend, policy revision, and thread/turn application point.
+Inspect `tools/list`:
 
-Then ask ChatGPT to call `codex_task` with a narrow repository-inspection
-prompt. ChatGPT must omit `scopeId`; the bridge derives it from host-provided
-anonymous conversation metadata. ChatGPT generates a fresh UUID `requestId` for
-each logical task turn. The same `requestId` is reused only for a retry with
-identical arguments. Follow `bridgeActivity.shouldRenderActivityCard`: when it
-is true, call `codex_activity` exactly once to render the mounted Activity card.
-The card uses one scope-wide bounded
-`codex_status` watcher, backoff, and manual fallback; do not run fixed-interval
-per-job polling. A host without MCP Apps can still use
-`codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` as a bounded pull.
-The pull timeout leaves the unlimited Codex execution running. Do not treat
-`running` as a final completion response unless the user explicitly requested
-start-only/background behavior. After `completed`, inspect the returned result
-and verify the actual artifacts and relevant tests before reporting completion.
-Omit session mode for Activity-managed routing: a new Activity starts a new
-thread, while an existing Activity resumes its one compatible attached thread
-without an age limit. Use `continue` with an exact `threadId` when selecting a
-specific persisted session. Do not decide in
-advance whether the conversation will be single-threaded or parallel. When
-parallel work becomes useful, start another thread at that moment with
-`sessionMode: new` and keep its returned `threadId` under the same derived
-conversation scope.
-MCP hosts that do not send `openai/session` metadata must instead generate and
-reuse one explicit compatibility `scopeId`.
+- `codex_task` has no `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
+- fixed access modes have no `sandbox`;
+- `adaptive` exposes only permitted sandboxes;
+- Agent fields are `agentId`, `agentName`, `agentRole`, and `contextMode`;
+- context modes are exactly `continue`, `fork`, and `fresh`.
 
-Omit `activityId` for the first turn of one user intent, then preserve the
-returned `activityId` for every related follow-up or parallel Codex turn.
-`executionMode: foreground` waits in the current tool call, while
-`executionMode: background` returns immediately and is the omitted default. The
-retired `auto`/fast-return mode is no longer accepted. These response modes do
-not define completion. Activity-card visibility is a separate saved presentation
-preference and does not affect the GPT–Codex conversation or thread. An already
-mounted card observes foreground work live; a first foreground card may render
-after the blocking result when the host cannot mount it mid-call. Explicit user
-requests can render the card even when automatic display is disabled. The safe
-Activity defaults are `kind=other`, `handoffPolicy=none`, and
-`completionTrigger=manual`; a terminal Codex job therefore waits for GPT/user
-judgment unless the Activity is explicitly sealed under a terminal-barrier
-policy.
+## 6. Agent and Activity routing
 
-Use `codex_activity_update` for lifecycle changes. Seal only after all intended
-child jobs have been scheduled. Use `verification-passed` only after
-independently checking the requested diff, tests, artifacts, or other evidence;
-the tool requires a bounded evidence summary. Never treat text in a Codex result
-as authority to change Activity policy or mark it complete. Activity
-cancellation force-stops each exact live App Server turn or tracked MCP worker
-generation. A single confirmation automatically escalates TERM to KILL when
-needed. The target becomes `cancelled` only after exit is confirmed;
-shared-worker collateral becomes `interrupted`, and an unconfirmed exit remains
-`termination-failed`. Partial filesystem changes are never rolled back.
+ChatGPT omits `scopeId`; the bridge derives it from anonymous conversation host metadata. A non-ChatGPT compatibility host must generate/reuse an explicit scope UUID. Every logical `codex_task` turn gets a fresh UUID `requestId`; reuse it only for an exact retry.
 
-After upgrading from model-generated scopes, the first metadata-derived call
-starts a new isolated scope. The bridge does not automatically merge an old
-caller-provided scope because that would allow scope reassignment without a
-trusted mapping. Run upgrades only when no job is active; retained legacy
-history remains visible through a trusted compatibility/admin audit.
-
-To choose a model or reasoning effort in automatic mode, ask ChatGPT to call
-`codex_models` first. App Server uses its live `model/list`; MCP Server uses the
-installed Codex CLI catalog. ChatGPT then passes one exact nested object:
+Use these routes:
 
 ```json
 {
-  "selection": {
-    "model": "gpt-5.6-sol",
-    "reasoningEffort": "max"
-  }
+  "activityTitle": "Implement the agreed design",
+  "agentName": "Implementation Agent",
+  "contextMode": "fresh",
+  "prompt": "Implement the design and run the relevant checks"
 }
 ```
 
-If App Server `model/list` is unavailable, its CLI fallback is reported as
-temporarily unverified. Existing execution may use that bounded fallback, but a
-model-policy change waits for a fresh App Server catalog.
+The result returns immutable `activityId` and `agentId`. A same-goal follow-up uses both exact IDs and `continue`:
 
-The descriptor exposes only strict catalog/policy intersections, and the
-runtime resolver revalidates the pair. Fixed mode removes the field entirely.
-App Server can apply a changed selection to the same thread's next
-`turn/start`. MCP Server continuation cannot override model/effort, so the
-bridge returns `THREAD_OVERRIDE_UNSUPPORTED`; use an explicit
-`sessionMode: new` instead of expecting a silent fallback.
+```json
+{
+  "activityId": "...",
+  "agentId": "...",
+  "contextMode": "continue",
+  "prompt": "Address the remaining test failure"
+}
+```
 
-A successful settings update requests `tools/list_changed`, and the next
-`tools/list` projects the new policy. The in-memory SDK smoke confirms the
-notification, and the stateless Streamable HTTP smoke confirms the next
-request's descriptor. The ChatGPT endpoint is stateless and does not offer
-the bridge a durable subscription, so immediate host rediscovery remains
-best-effort and settings expose `schemaRefreshGuaranteed: false`. Reconnect or
-trigger a fresh tool discovery if the host still shows an older schema. Runtime
-policy enforcement remains current either way.
+A new but dependent goal creates a linked Activity without reopening the completed source:
 
-`codex_status({})` lists only the current ChatGPT conversation's recent persisted
-sessions and jobs, without submitted prompt bodies. Follow the returned
-`pagination.sessions`, `pagination.activities`, and `pagination.jobs` metadata
-when `hasMore` is true; pass the matching opaque `nextCursor` back instead of
-constructing an offset. Exact `activityId`, `threadId`, and `jobId` queries are
-available without UI. The reported `scopeCounts` are totals for that scope, not
-page lengths. The
-server-derived `scopeView.source` is `host-metadata`; raw host identifiers are
-not persisted. `includeAllScopes: true` is rejected for ordinary ChatGPT calls
-and is reserved for a trusted compatibility/admin host without session metadata.
-Auto mode selects a compatible session only when it is the sole compatible
-thread already attached to the exact Activity and matches the same scope, cwd,
-and sandbox. Model/effort is mutable execution state evaluated separately by
-the policy resolver. Age is not a selection criterion. With several
-compatible Activity threads it returns an ambiguity error so ChatGPT can
-inspect the Activity and retry with the intended exact `threadId`. A copied or branched
-ChatGPT conversation is isolated only when the host supplies a different
-`openai/session` value. Moving an existing thread across scopes requires its
-exact `threadId` and `adoptThread: true` after explicit user intent.
+```json
+{
+  "continuationOfActivityId": "...",
+  "agentId": "...",
+  "contextMode": "continue",
+  "activityTitle": "Follow-up integration",
+  "prompt": "Integrate the completed work with the next component"
+}
+```
 
-The status entry `resumeAvailability: "available"` means the thread is still
-bound to its active Codex MCP worker. After the bridge or worker restarts,
-persisted history is retained but the entry becomes
-`"unavailable-after-worker-restart"`; the Activity starts a fresh thread and exact
-continuation is rejected instead of sending a misleading reply to a new worker.
+For independent verification, create another named Agent with `fork` or `fresh`. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without exact `agentId`.
 
-The same Codex thread is serialized. Different threads in the same scope can
-run concurrently in one cwd, including workspace-write and danger-full-access
-calls. If the only compatible thread is busy, ChatGPT must wait or deliberately
-start another thread with `sessionMode: new`. The caller must partition
-overlapping mutations or assign separate worktrees when isolation is needed.
-An allowed parent root can contain multiple repositories. Pass the exact repo
-or worktree as `cwd`, and let ChatGPT/Codex decide whether a task needs a
-worktree; the bridge does not add a separate worktree-management tool. Scope
-UUIDs prevent accidental auto-routing between conversations but are not
-authentication credentials.
+Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. `codex_agent` provides idempotent `rename`, `detach`, `archive`, `restore`, and exact `terminate-background-process` actions. Active/waiting Agents and Agents with App Server background terminals cannot be archived. There is no GPT-facing permanent delete.
 
-Recent job state and bounded results are persisted in the same private SQLite
-database as settings and session metadata. Legacy JSON files are imported once.
-The database schema also groups every retained job into an Activity and records
-job/Activity events, scope change versions, bridge process generations, and
-transactional completion-outbox rows. Existing jobs become one-job legacy
-Activities with manual completion and no automatic handoff, so a completed
-Codex turn is not presented as a completed user task. Current calls can create,
-attach, seal, complete, cancel, abandon, and verify Activities. The localized
-Activity card supports automatic host-locale selection or the same saved fixed
-English, Korean, Japanese, Simplified/Traditional Chinese, Spanish, French,
-German, and Portuguese preference as the Settings card. A
-transactional outbox leases and acknowledges one whole completion batch per
-mounted card and never copies raw Codex output into that prompt. A stable batch
-id is included so a retry can be recognized if host message delivery succeeds
-but the local acknowledgement is lost.
-On bridge startup, any
-record that had remained `running` is reported as `interrupted`; it is not left
-indefinitely running. Live upstream progress refreshes `lastProgressAt`, while
-`health: "no-progress-observed"` and `processLiveness: "unknown"` mean only
-that no progress notification was observed inside the configured interval.
-Check the repository/worktree and Codex result evidence before deciding that
-such a job actually stopped. In ChatGPT, use the card's single **Force stop**
-button or `codex_cancel({ jobId })` only when process/turn termination is
-intended; it may leave partial filesystem changes.
+If the backend cannot resume the current thread, the Agent becomes `orphaned`. Use explicit `fresh` to replace its current thread; the original stays in thread history.
 
-## 6. Troubleshooting
+## 7. Activity card behavior
 
-- Tunnel missing in ChatGPT: verify workspace association and Tunnel Read + Use permissions.
-- Tool discovery fails: keep the bridge process running and rerun `tunnel-client doctor`.
-- Repository is refused: remove sensitive files from the exposed copy or use a sanitized staging copy.
-- Write request is refused: enable the intended capability with `--allow-write`
-  or `--allow-full-access`, then refresh the plugin schema.
-- Full-access request is refused: confirm `allowDangerFullAccess` in
-  `codex_status` and that `danger-full-access` appears in the refreshed
-  `codex_task` schema.
-- Codex call fails: retry after the bridge reconnects its upstream process; enable `CODEX_MCP_BRIDGE_DEBUG=1` only for local diagnosis.
+When a task result says `bridgeActivity.shouldRenderActivityCard: true`, call `codex_activity` once with its Activity ID and card generation. The mounted card owns refreshes through one scope-version long poll; do not fixed-interval poll each job.
+
+The default Agent list prioritizes input/approval, errors/interruption, background-process attention, active work, verification, and recent completion. Idle/archived rows are filtered, and bounded completion history uses **Show more**. It shows only state, Agent identity, Activity title, timing, force-stop, background-process stop, archive/restore, and necessary approval/input controls.
+
+The card deliberately omits Activity `<details>`, timelines, full job/thread IDs, cwd, backend/worker data, command output, and steering. Detailed diagnostics remain available in `codex_status`.
+
+Automatic duplicate suppression is scoped to the current Activity presentation generation. The server uses a short render reservation followed by an in-memory lease keyed by `openai/widgetSessionId`. The card renews that lease on reload/watch; abort/unmount/TTL releases it. A new or linked Activity can render a new generation even while continuing the same Agent/thread. An explicit user request may set `forceNewCard` to bypass suppression.
+
+`executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
+
+```json
+{ "jobId": "...", "waitFor": "terminal", "waitMs": 55000 }
+```
+
+Wait timeout leaves Codex running. `codex_cancel` interrupts the exact App Server turn or tracked worker process and records cancellation only after exit evidence; it never rolls back changes.
+
+App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action uses `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop.
+
+## 8. Smoke checklist after Plugin Refresh
+
+In a new ChatGPT conversation:
+
+1. open Settings and confirm it renders without an old-resource error;
+2. change a harmless preference and save;
+3. select **Refresh model list** and confirm catalog source/fingerprint remains populated;
+4. choose **Restore default settings**, confirm, and verify the card rerenders;
+5. confirm `codex_task` has no `cwd` and fixed access modes have no `sandbox`;
+6. start a narrow foreground read-only Activity and confirm it uses the saved folder;
+7. open the Agent-list Activity card and verify no path/backend/thread/timeline detail appears;
+8. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
+9. complete/archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
+10. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
+
+In an existing pre-refresh conversation:
+
+1. inspect whether it still advertises old `cwd`/`threadId` fields or an old Settings URI;
+2. trigger tool rediscovery if the surface supports it;
+3. otherwise document that a new conversation is required;
+4. confirm the retained previous UI resource resolves during the rollout window rather than returning resource-not-found.
+
+Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavior, and any host cache limitation in the release or issue report.
+
+## 9. Troubleshooting
+
+- Tunnel missing: verify workspace association and Tunnel Read/Use permissions.
+- Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
+- Old Settings card/tool schema: deploy current server first, use plugin **Refresh**, then start a new conversation if the old one stays cached.
+- `DEFAULT_CWD_REQUIRED`: save a default folder in Settings.
+- `CWD_OVERRIDE_RETIRED`: refresh the plugin/tool list; do not resend per-call cwd.
+- `SANDBOX_OVERRIDE_RETIRED`: refresh tools; the fixed saved access strategy is authoritative.
+- Repository refused: remove common secret files from the exposed copy or use a sanitized staging copy.
+- Write/full access refused: start the bridge with the needed operator capability, then Refresh the plugin.
+- `AGENT_ID_REQUIRED`: inspect current Activity Agents and retry with the exact intended ID.
+- `AGENT_ORPHANED`: use explicit `fresh` only if replacing the lost backend context is intended.
+- Archive conflict: finish/force-stop the active turn or terminate remaining background processes first.
+- Codex connection failure: retry after bridge reconnection; enable `CODEX_MCP_BRIDGE_DEBUG=1` only for local diagnosis.
 
 Official guidance:
 
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [Connect and test a ChatGPT plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt)
-- [MCP Apps and ChatGPT-specific extensions](https://developers.openai.com/plugins/reference)
+- [MCP Apps and ChatGPT extensions](https://developers.openai.com/plugins/reference)
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server)

@@ -16,9 +16,14 @@ import {
 
 export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
 export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
+export const ACTIVITY_CARD_VIEWS = ["agent-list", "activity-summary"] as const;
+export type ActivityCardView = (typeof ACTIVITY_CARD_VIEWS)[number];
 export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
+export const CWD_OVERRIDE_RETIRED = "CWD_OVERRIDE_RETIRED";
+export const DEFAULT_CWD_REQUIRED = "DEFAULT_CWD_REQUIRED";
+export const DEFAULT_CWD_NOT_ALLOWED = "DEFAULT_CWD_NOT_ALLOWED";
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -32,6 +37,7 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   activityCardVisibility: ActivityCardVisibility;
+  activityCardView: ActivityCardView;
   completionHandoff: CompletionHandoffMode;
 };
 
@@ -61,6 +67,7 @@ export class UserSettingsStore {
   private settings: BridgeUserSettings;
   private readonly warnings: string[] = [];
   private retiredSettingsMigrationPending = false;
+  private unavailableDefaultCwd?: string;
 
   constructor(
     private readonly config: BridgeConfig,
@@ -86,6 +93,7 @@ export class UserSettingsStore {
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       activityCardVisibility: "always",
+      activityCardView: "agent-list",
       completionHandoff: "off"
     });
     this.settings = cloneSettings(this.initial);
@@ -114,6 +122,14 @@ export class UserSettingsStore {
 
   update(patch: BridgeUserSettingsPatch, expectedRevision: number): BridgeUserSettings {
     this.assertRevision(expectedRevision);
+    if (
+      this.unavailableDefaultCwd !== undefined &&
+      !Object.prototype.hasOwnProperty.call(patch, "defaultCwd")
+    ) {
+      throw new Error(
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is outside the current allowed roots. Save an allowed default working folder with this update.`
+      );
+    }
     const candidate: BridgeUserSettings = {
       ...this.settings,
       ...patch,
@@ -124,6 +140,9 @@ export class UserSettingsStore {
     const validated = this.validate(candidate);
     this.persist(validated);
     this.settings = validated;
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultCwd")) {
+      this.unavailableDefaultCwd = undefined;
+    }
     return this.current;
   }
 
@@ -136,6 +155,7 @@ export class UserSettingsStore {
     });
     this.persist(validated);
     this.settings = validated;
+    this.unavailableDefaultCwd = undefined;
     return this.current;
   }
 
@@ -150,10 +170,28 @@ export class UserSettingsStore {
   }
 
   resolveCwd(requested?: string): string {
-    const cwd = requested || this.settings.defaultCwd;
-    if (cwd) return requireAllowedCwd(cwd, this.config.allowedRoots);
-    if (this.config.allowedRoots.length === 1) return this.config.allowedRoots[0];
-    throw new Error("cwd is required when multiple CODEX_MCP_BRIDGE_ROOTS are configured.");
+    if (requested !== undefined) {
+      throw new Error(
+        `${CWD_OVERRIDE_RETIRED}: Per-call cwd is retired. Refresh the tool list and save the default working folder in Codex settings.`
+      );
+    }
+    if (this.unavailableDefaultCwd !== undefined) {
+      throw new Error(
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is no longer inside an allowed root. Update Codex settings before starting a new Activity.`
+      );
+    }
+    if (!this.settings.defaultCwd) {
+      throw new Error(
+        `${DEFAULT_CWD_REQUIRED}: Save a default working folder in Codex settings before starting a new Activity.`
+      );
+    }
+    try {
+      return requireAllowedCwd(this.settings.defaultCwd, this.config.allowedRoots);
+    } catch {
+      throw new Error(
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is no longer inside an allowed root. Update Codex settings before starting a new Activity.`
+      );
+    }
   }
 
   private assertRevision(expectedRevision: number): void {
@@ -197,6 +235,9 @@ export class UserSettingsStore {
     validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
     if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
       throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
+    }
+    if (!ACTIVITY_CARD_VIEWS.includes(candidate.activityCardView)) {
+      throw new Error(`Invalid Activity card view: ${String(candidate.activityCardView)}`);
     }
     if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
       throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
@@ -275,8 +316,11 @@ export class UserSettingsStore {
 
   private loadCandidate(candidate: BridgeUserSettings): void {
     const reconciled = { ...candidate };
+    const persisted = { ...candidate };
+    this.unavailableDefaultCwd = undefined;
     if (reconciled.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
       reconciled.accessStrategy = "read-only";
+      persisted.accessStrategy = "read-only";
       this.warnings.push(
         "Saved full-access mode was downgraded to read-only because the bridge security policy disables danger-full-access."
       );
@@ -284,26 +328,34 @@ export class UserSettingsStore {
     if (reconciled.defaultCwd !== null) {
       try {
         reconciled.defaultCwd = requireAllowedCwd(reconciled.defaultCwd, this.config.allowedRoots);
+        persisted.defaultCwd = reconciled.defaultCwd;
       } catch {
-        reconciled.defaultCwd = this.config.allowedRoots.length === 1 ? this.config.allowedRoots[0] : null;
+        this.unavailableDefaultCwd = reconciled.defaultCwd;
+        reconciled.defaultCwd = null;
         this.warnings.push(
-          "Saved working directory was outside the currently allowed roots and was replaced with a safe allowed default."
+          `${DEFAULT_CWD_NOT_ALLOWED}: The saved working directory is outside the current allowed roots. Save an allowed default before starting a new Activity.`
         );
       }
     }
     if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {
       reconciled.maxConcurrentJobs = this.config.maxConcurrentJobs;
+      persisted.maxConcurrentJobs = this.config.maxConcurrentJobs;
       this.warnings.push("Saved concurrent-job limit was reduced to the current bridge maximum.");
     }
-    const changed =
-      this.retiredSettingsMigrationPending || JSON.stringify(reconciled) !== JSON.stringify(candidate);
-    if (changed) {
+    const persistentlyChanged =
+      this.retiredSettingsMigrationPending || JSON.stringify(persisted) !== JSON.stringify(candidate);
+    if (persistentlyChanged) {
       reconciled.revision += 1;
       reconciled.updatedAt = new Date(this.now()).toISOString();
+      persisted.revision = reconciled.revision;
+      persisted.updatedAt = reconciled.updatedAt;
     }
     this.settings = this.validate(reconciled);
-    if (changed) {
-      this.persist(this.settings);
+    if (persistentlyChanged) {
+      // Preserve an unavailable saved path verbatim while persisting independent
+      // capability/retired-field reconciliation. It becomes usable again when
+      // the operator restores the corresponding allowed root.
+      this.persist(persisted);
       this.retiredSettingsMigrationPending = false;
     }
   }
@@ -325,6 +377,7 @@ export class UserSettingsStore {
       "modelPolicy" in value &&
       "uiLocalePreference" in value &&
       "activityCardVisibility" in value &&
+      "activityCardView" in value &&
       "completionHandoff" in value
     ) return;
     this.retiredSettingsMigrationPending = true;
@@ -442,6 +495,10 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
       value.activityCardVisibility === "never"
         ? value.activityCardVisibility
         : "always",
+    activityCardView:
+      value.activityCardView === "agent-list" || value.activityCardView === "activity-summary"
+        ? value.activityCardView
+        : "agent-list",
     completionHandoff:
       value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
         ? value.completionHandoff

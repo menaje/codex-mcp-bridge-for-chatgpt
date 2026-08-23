@@ -3,7 +3,9 @@ import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type {
   CodexThreadContinueRequest,
+  CodexThreadForkRequest,
   CodexThreadStartRequest,
+  CodexBackgroundTerminal,
   CodexPendingInteraction,
   CodexProgress,
   CodexUpstream,
@@ -94,6 +96,75 @@ export class CodexBackendRouter implements CodexUpstream {
       onProgress,
       onAssigned
     );
+  }
+
+  async forkThread(
+    input: CodexThreadForkRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    const recorded = this.threadBackends.get(input.threadId);
+    const kind = recorded || input.backendKind;
+    if (recorded && recorded !== input.backendKind) {
+      throw new Error(`Codex thread ${input.threadId} is pinned to backend ${recorded}, not ${input.backendKind}.`);
+    }
+    const backend = this.backend(kind);
+    if (!backend.forkThread) throw new Error(`Codex backend ${kind} does not support thread fork.`);
+    const result = await backend.forkThread(
+      { ...input, backendKind: kind },
+      onProgress,
+      (assignment) => {
+        if (assignment.threadId) this.threadBackends.set(assignment.threadId, kind);
+        onAssigned?.(assignment);
+      }
+    );
+    const threadId = resultThreadId(result);
+    if (threadId) this.threadBackends.set(threadId, kind);
+    return result;
+  }
+
+  async archiveThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (!kind) throw new Error("The Agent thread backend is unknown.");
+    const backend = this.backend(kind);
+    if (!backend.archiveThread) return;
+    await backend.archiveThread(threadId, kind);
+  }
+
+  async restoreThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (!kind) throw new Error("The Agent thread backend is unknown.");
+    const backend = this.backend(kind);
+    if (!backend.restoreThread) return;
+    await backend.restoreThread(threadId, kind);
+  }
+
+  async listBackgroundTerminals(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexBackgroundTerminal[]> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (!kind || kind !== "app-server") return [];
+    const backend = this.backend(kind);
+    return backend.listBackgroundTerminals
+      ? backend.listBackgroundTerminals(threadId, kind)
+      : [];
+  }
+
+  async terminateBackgroundTerminal(
+    threadId: string,
+    processId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<{ terminated: boolean }> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (kind !== "app-server") {
+      throw new Error("Background terminal control is available only for Codex App Server threads.");
+    }
+    const backend = this.backend(kind);
+    if (!backend.terminateBackgroundTerminal) {
+      throw new Error("The Codex App Server does not support background terminal control.");
+    }
+    return backend.terminateBackgroundTerminal(threadId, processId, kind);
   }
 
   canResumeThread(threadId: string, backendKind?: CodexBackendKind): boolean | undefined {
@@ -217,7 +288,7 @@ function defaultCapabilities(kind: CodexBackendKind): BackendCapabilities {
         supportsModelOverrideOnContinue: true,
         supportsEffortOverrideOnContinue: true,
         supportsServiceTierOverrideOnContinue: true,
-        supportsFork: false
+        supportsFork: true
       }
     : {
         selectionScope: "thread",

@@ -236,7 +236,7 @@ describe("model policy resolver", () => {
       requestedSelection: TERRA_HIGH
     })).toMatchObject({ appliedAt: "turn-start", effectiveSelection: TERRA_HIGH });
 
-    expectPolicyError(
+    const unsupported = expectPolicyError(
       () => decide({
         policy: AUTOMATIC_POLICY,
         operation: "continue",
@@ -247,6 +247,11 @@ describe("model policy resolver", () => {
       }),
       "THREAD_OVERRIDE_UNSUPPORTED"
     );
+    expect(unsupported.nextActions).toEqual([
+      expect.stringContaining("contextMode='fresh'"),
+      expect.stringContaining("App Server")
+    ]);
+    expect(unsupported.nextActions.join(" ")).not.toContain("sessionMode");
     expect(decide({
       policy: {
         mode: "automatic",
@@ -261,12 +266,15 @@ describe("model policy resolver", () => {
     })).toMatchObject({ appliedAt: "thread-start", effectiveSelection: SOL_MAX });
   });
 
-  it("fails closed for confirmed catalog drift and distinguishes cached refresh failure", () => {
+  it("uses a visible compatible fallback for saved catalog drift and distinguishes cached refresh failure", () => {
     const removed = catalog().models.filter((model) => model.id !== SOL_MAX.model);
-    expectPolicyError(
-      () => decide({ policy: FIXED_POLICY, catalog: catalog({ models: removed }) }),
-      "MODEL_UNAVAILABLE"
-    );
+    expect(decide({ policy: FIXED_POLICY, catalog: catalog({ models: removed }) })).toMatchObject({
+      source: "compatibility-fallback",
+      savedSelectionSupported: false,
+      effectiveSelection: TERRA_MEDIUM,
+      effectiveReasoningEffort: TERRA_MEDIUM.reasoningEffort,
+      preferenceWarning: expect.stringContaining("unsupported by the current catalog")
+    });
     const stale = catalog({
       stale: true,
       validation: "temporarily-unverified-with-last-known-good"
@@ -390,12 +398,13 @@ function allCatalogSelections(): ModelSelection[] {
   ];
 }
 
-function expectPolicyError(operation: () => unknown, code: ModelPolicyError["code"]): void {
+function expectPolicyError(operation: () => unknown, code: ModelPolicyError["code"]): ModelPolicyError {
   try {
     operation();
     throw new Error(`Expected ${code}.`);
   } catch (error) {
     expect(error).toBeInstanceOf(ModelPolicyError);
     expect(error).toMatchObject({ code });
+    return error as ModelPolicyError;
   }
 }

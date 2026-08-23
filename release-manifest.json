@@ -36,6 +36,16 @@
     "owner": "menaje",
     "name": "codex-mcp-bridge-for-chatgpt"
   },
+  "uiResources": {
+    "strategy": "content-hash",
+    "hashAlgorithm": "sha256",
+    "hashLength": 12,
+    "retainPrevious": 1,
+    "resources": [
+      "settings",
+      "activity"
+    ]
+  },
   "release": {
     "version": "0.3.0",
     "tagPrefix": "v",

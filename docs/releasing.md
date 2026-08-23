@@ -22,8 +22,41 @@ The manifest controls:
 - npm package name, retained executable name, and packaged file list;
 - Node and npm versions used by local package metadata and GitHub Actions;
 - GitHub owner and repository name;
+- immutable Settings and Activity UI cache-key policy, hash algorithm and
+  prefix length, retained-generation count, and required logical resources;
 - SemVer version, tag prefix, stable/prerelease channel, and release title;
 - generated release-note policy and the required npm tarball/checksum assets.
+
+## UI resource identity and compatibility
+
+UI identity is independent from release SemVer. `npm run release:sync` renders
+the final self-contained Settings and Activity HTML, combines it with the
+canonical host-affecting metadata (`mimeType`, CSP, widget domain, and
+presentation preference), and derives an immutable SHA-256 URI:
+
+```text
+ui://codex-mcp-bridge/settings/<content-hash>.html
+ui://codex-mcp-bridge/activity/<content-hash>.html
+```
+
+The command is the only supported writer for:
+
+- `ui-manifest.lock.json`, which records current and retained identities;
+- `ui-resources/`, which contains immutable source-side HTML snapshots;
+- `src/uiManifest.generated.ts`, which gives the server the same identities;
+- build-time `dist/ui-manifest.json` and packaged snapshots.
+
+The server registers both the current URI and the configured retained previous
+generation. This lets a ChatGPT descriptor cached during rollout resolve while
+the new descriptor is being refreshed. The resource descriptor,
+`_meta.ui.resourceUri`, and compatibility `openai/outputTemplate` must all name
+the same current URI.
+
+`npm run release:check` reproduces the render and fails on content, digest,
+metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
+template drift. Do not edit generated manifests or snapshots by hand. A SemVer
+change with identical cards preserves the URIs; a card or relevant metadata
+change produces new URIs even before the next version bump.
 
 ### Legacy runtime namespace
 
@@ -70,6 +103,23 @@ npm run release:check
 
 Do not use `npm version` directly. `npm run build` and the main workflow reject
 derived npm metadata that has drifted from the manifest.
+
+## ChatGPT rollout and smoke test
+
+For a UI or tool-contract change, use this order:
+
+1. run `npm run release:sync`, `npm run release:check`, and `npm run check`;
+2. deploy or restart the bridge so it serves current and retained UI URIs;
+3. open the plugin detail in ChatGPT Developer mode and select **Refresh**;
+4. verify the registered `codex_settings` output template equals the current
+   Settings URI in `dist/ui-manifest.json`;
+5. test Settings open, save, model-list refresh, and default restore in a new
+   conversation, then check an existing conversation for cached metadata.
+
+The bridge cannot force ChatGPT to replace a tool list already cached by a
+conversation. If rediscovery is unavailable or retains the former descriptor,
+record that limitation and use a new conversation. See
+[`docs/chatgpt-setup.md`](chatgpt-setup.md) for the full checklist.
 
 ## GitHub workflow contract
 

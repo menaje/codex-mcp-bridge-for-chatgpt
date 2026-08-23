@@ -130,11 +130,12 @@ describe("user settings store", () => {
         allowedSelections: { kind: "catalog-visible" }
       },
       activityCardVisibility: "always",
+      activityCardView: "agent-list",
       completionHandoff: "auto-handoff"
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).not.toHaveProperty(
-      "completionDeliveryMode"
-    );
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+    expect(persisted).toMatchObject({ activityCardView: "agent-list" });
+    expect(persisted).not.toHaveProperty("completionDeliveryMode");
     expect(migrated.loadWarnings).toEqual([
       expect.stringContaining("model policy"),
       expect.stringContaining("completionDeliveryMode was migrated")
@@ -344,7 +345,7 @@ describe("user settings store", () => {
       revision: 2,
       updatedAt: "2026-08-22T00:00:00.000Z",
       accessStrategy: "read-only",
-      defaultCwd: tightenedConfig.allowedRoots[0],
+      defaultCwd: null,
       maxConcurrentJobs: 2
     });
     expect(reconciled.current).not.toHaveProperty("taskTimeoutMs");
@@ -352,16 +353,29 @@ describe("user settings store", () => {
     expect(reconciled.current).not.toHaveProperty("autoResumeTtlMs");
     expect(reconciled.loadWarnings).toHaveLength(5);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
-    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the currently allowed roots/);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the current allowed roots/);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/save an allowed default/i);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/taskTimeoutMs was retired and removed/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/Activity-managed/);
+    expect(() => reconciled.resolveCwd()).toThrow(/DEFAULT_CWD_NOT_ALLOWED/);
+    expect(() => reconciled.update({ uiLocalePreference: "ko" }, 2)).toThrow(
+      /DEFAULT_CWD_NOT_ALLOWED/
+    );
     const migrated = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(migrated).toMatchObject({
-      settings: { revision: 2, accessStrategy: "read-only", maxConcurrentJobs: 2 }
+      settings: {
+        revision: 2,
+        accessStrategy: "read-only",
+        defaultCwd: oldConfig.allowedRoots[0],
+        maxConcurrentJobs: 2
+      }
     });
     expect(migrated.settings).not.toHaveProperty("taskTimeoutMs");
     expect(migrated.settings).not.toHaveProperty("defaultSessionMode");
     expect(migrated.settings).not.toHaveProperty("autoResumeTtlMs");
+
+    const rootsRestored = new UserSettingsStore(oldConfig, { stateFile });
+    expect(rootsRestored.current.defaultCwd).toBe(oldConfig.allowedRoots[0]);
   });
 });
 

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createHttpServer } from "../src/server.js";
+import { BRIDGE_MCP_INSTRUCTIONS, createHttpServer } from "../src/server.js";
 import { loadConfig } from "../src/config.js";
 import type {
   CodexModelCatalogProvider,
@@ -116,6 +116,14 @@ afterEach(() => {
 });
 
 describe("http server", () => {
+  it("publishes the Agent-first public routing contract in server instructions", () => {
+    expect(BRIDGE_MCP_INSTRUCTIONS.slice(0, 512)).toContain("scope-owned Agent");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("continuationOfActivityId");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("contextMode='continue'");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("saved default working folder");
+    expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b|\bcwd\b/);
+  });
+
   it("serves health without auth", async () => {
     const baseUrl = await start({
       CODEX_GPT_BRIDGE_NO_AUTH: "1"
@@ -216,9 +224,9 @@ describe("http server", () => {
       backend: "sqlite",
       persistencePath: expect.stringMatching(/state\.sqlite$/),
       transactional: true,
-      schemaVersion: 3,
+      schemaVersion: 4,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v3-activity-manager",
+      activityFoundation: "schema-v4-scope-agent-manager",
       activityPersistent: true
     });
 
@@ -229,7 +237,8 @@ describe("http server", () => {
           scopeId: SCOPE_A,
           requestId: REQUEST_A,
           prompt: "slow",
-          sessionMode: "new"
+          agentName: "HTTP Agent",
+          contextMode: "fresh"
         }
       })
     );
@@ -270,7 +279,10 @@ describe("http server", () => {
     });
     const scopeId = (started as { structuredContent?: Record<string, any> })
       .structuredContent?.bridgeSession?.scopeId;
+    const agentId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId;
     expect(scopeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
     await firstClient.close();
     await stopLastServer();
 
@@ -290,6 +302,15 @@ describe("http server", () => {
       source: "host-metadata"
     });
     expect(restored.scopeCounts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(restored.agents).toEqual([
+      expect.objectContaining({
+        agentId,
+        lifecycle: "idle",
+        hasCurrentThread: true,
+        threadHistoryCount: 1,
+        currentThread: expect.objectContaining({ threadId: "http-thread-1" })
+      })
+    ]);
     expect(JSON.stringify(restored)).not.toContain("http-session");
     expect(JSON.stringify(restored)).not.toContain("http-subject");
     expect(JSON.stringify(restored)).not.toContain("http-org");

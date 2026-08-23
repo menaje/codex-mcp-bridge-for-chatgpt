@@ -51,7 +51,12 @@ export type CatalogValidationState =
   | "temporarily-unverified-with-last-known-good"
   | "invalid";
 
-export type ExecutionDecisionSource = "fixed" | "preferred" | "caller" | "backend-default";
+export type ExecutionDecisionSource =
+  | "fixed"
+  | "preferred"
+  | "caller"
+  | "backend-default"
+  | "compatibility-fallback";
 
 export type ExecutionDecision = {
   policyRevision: number;
@@ -60,6 +65,9 @@ export type ExecutionDecision = {
   backendKind: CodexBackendKind;
   requestedSelection?: ModelSelection;
   effectiveSelection: ModelSelection;
+  effectiveReasoningEffort: string;
+  savedSelectionSupported: boolean;
+  preferenceWarning?: string;
   source: ExecutionDecisionSource;
   appliedAt: "thread-start" | "turn-start";
   reason: string;
@@ -211,6 +219,8 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
   let effectiveSelection: ModelSelection;
   let source: ExecutionDecisionSource;
   let preferredFallback = false;
+  let savedSelectionSupported = true;
+  let preferenceWarning: string | undefined;
   const preferredSelection = policy.mode === "automatic"
     ? policy.preferredSelection
     : undefined;
@@ -235,8 +245,29 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
         ["Omit selection and retry; the saved fixed selection will be applied."]
       );
     }
-    effectiveSelection = cloneSelection(policy.selection);
-    source = "fixed";
+    if (catalogSupportsSelection(input.catalog, policy.selection)) {
+      effectiveSelection = cloneSelection(policy.selection);
+      source = "fixed";
+    } else {
+      const fallback = savedSelectionFallback(
+        policy.selection,
+        input.catalog,
+        input.operatorCeiling,
+        policy.constraints.allowDelegation
+      );
+      if (!fallback) {
+        throw unavailable(
+          input.policyRevision,
+          `Saved fixed selection ${selectionLabel(policy.selection)} is no longer available and no compatible upstream default exists.`
+        );
+      }
+      effectiveSelection = fallback;
+      source = "compatibility-fallback";
+      savedSelectionSupported = false;
+      preferenceWarning =
+        `Saved selection ${selectionLabel(policy.selection)} is unsupported by the current catalog. ` +
+        `This turn uses ${selectionLabel(fallback)} without rewriting the saved preference.`;
+    }
   } else if (input.requestedSelection) {
     effectiveSelection = readSelection(input.requestedSelection, "requested model selection");
     source = "caller";
@@ -261,15 +292,34 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     }
     effectiveSelection = backendDefault;
     source = "backend-default";
+    if (preferredFallback) {
+      savedSelectionSupported = false;
+      const savedLabel = preferredSelection
+        ? selectionLabel(preferredSelection)
+        : String(legacyPreferredModel);
+      preferenceWarning =
+        `Saved preferred selection ${savedLabel} is unsupported by the current catalog. ` +
+        `This turn uses ${selectionLabel(backendDefault)} without rewriting the saved preference.`;
+    }
   }
 
-  assertSelectionAllowed(
-    effectiveSelection,
-    policy,
-    input.catalog,
-    input.operatorCeiling,
-    input.policyRevision
-  );
+  if (source === "compatibility-fallback") {
+    assertFallbackAllowed(
+      effectiveSelection,
+      policy.constraints.allowDelegation,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
+  } else {
+    assertSelectionAllowed(
+      effectiveSelection,
+      policy,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
+  }
 
   if (
     input.operation === "continue" &&
@@ -285,7 +335,7 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
         "THREAD_OVERRIDE_UNSUPPORTED",
         `Backend ${input.backendKind} cannot apply the selected model configuration to the continued thread.`,
         input.policyRevision,
-        ["Start a new Codex session with sessionMode='new'.", "Use the App Server backend for turn-level selection changes."]
+        ["Start explicit fresh context with contextMode='fresh'.", "Use the App Server backend for turn-level selection changes."]
       );
     }
   }
@@ -306,12 +356,78 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
       ? { requestedSelection: cloneSelection(input.requestedSelection) }
       : {}),
     effectiveSelection,
+    effectiveReasoningEffort: effectiveSelection.reasoningEffort,
+    savedSelectionSupported,
+    ...(preferenceWarning ? { preferenceWarning } : {}),
     source,
     appliedAt: turnOverride ? "turn-start" : "thread-start",
     reason: `${decisionReason(source, input.operation, input.backendKind, catalogValidation)}${preferredFallback
       ? " The saved preferred selection was outside the current allowed catalog intersection."
       : ""}`
   };
+}
+
+function savedSelectionFallback(
+  saved: ModelSelection,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelSelection[] | undefined,
+  allowDelegation: boolean
+): ModelSelection | undefined {
+  const model = catalog.models.find((entry) => entry.id === saved.model && !entry.hidden);
+  const orderedModels = model
+    ? [model]
+    : [
+        ...catalog.models.filter((entry) => !entry.hidden && entry.isDefault),
+        ...catalog.models.filter((entry) => !entry.hidden && !entry.isDefault)
+      ];
+  for (const candidateModel of orderedModels) {
+    const efforts = [
+      candidateModel.defaultReasoningEffort,
+      ...candidateModel.supportedReasoningEfforts.map((entry) => entry.effort)
+    ].filter((value, index, values): value is string =>
+      Boolean(value) && values.indexOf(value) === index && (allowDelegation || value !== "ultra")
+    );
+    const tiers = [
+      candidateModel.serviceTiers.some((tier) => tier.id === saved.serviceTier)
+        ? saved.serviceTier
+        : undefined,
+      candidateModel.defaultServiceTier,
+      undefined,
+      ...candidateModel.serviceTiers.map((tier) => tier.id)
+    ].filter((value, index, values) => values.indexOf(value) === index);
+    for (const reasoningEffort of efforts) {
+      for (const serviceTier of tiers) {
+        const selection: ModelSelection = {
+          model: candidateModel.id,
+          reasoningEffort,
+          ...(serviceTier ? { serviceTier } : {})
+        };
+        if (
+          catalogSupportsSelection(catalog, selection) &&
+          (!operatorCeiling || operatorCeiling.some((entry) => sameModelSelection(entry, selection)))
+        ) return selection;
+      }
+    }
+  }
+  return undefined;
+}
+
+function assertFallbackAllowed(
+  selection: ModelSelection,
+  allowDelegation: boolean,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelSelection[] | undefined,
+  policyRevision: number
+): void {
+  if (!catalogSupportsSelection(catalog, selection)) {
+    throw unavailable(policyRevision, `Fallback selection ${selectionLabel(selection)} is unavailable.`);
+  }
+  if (!allowDelegation && selection.reasoningEffort === "ultra") {
+    throw forbidden(policyRevision, "Ultra reasoning is disabled by the active model policy.");
+  }
+  if (operatorCeiling && !operatorCeiling.some((entry) => sameModelSelection(entry, selection))) {
+    throw forbidden(policyRevision, `Fallback selection ${selectionLabel(selection)} exceeds the operator ceiling.`);
+  }
 }
 
 export function listAllowedModelSelections(
@@ -338,7 +454,7 @@ export function catalogSupportsSelection(
   selection: ModelSelection
 ): boolean {
   const model = catalog.models.find((entry) => entry.id === selection.model);
-  if (!model) return false;
+  if (!model || model.hidden) return false;
   if (!model.supportedReasoningEfforts.some((entry) => entry.effort === selection.reasoningEffort)) {
     return false;
   }
@@ -409,8 +525,8 @@ function catalogDefaultSelection(
     listAllowedModelSelections(policy, catalog, operatorCeiling).map(modelSelectionKey)
   );
   const ordered = [
-    ...catalog.models.filter((model) => model.isDefault),
-    ...catalog.models.filter((model) => !model.isDefault)
+    ...catalog.models.filter((model) => !model.hidden && model.isDefault),
+    ...catalog.models.filter((model) => !model.hidden && !model.isDefault)
   ].filter((model) => !preferredModel || model.id === preferredModel);
   for (const model of ordered) {
     const efforts = [
@@ -563,7 +679,9 @@ function decisionReason(
       ? "the saved preferred selection"
       : source === "caller"
         ? "the caller's exact selection"
-        : "the validated backend catalog default";
+        : source === "compatibility-fallback"
+          ? "the current upstream default because the saved selection is unsupported"
+          : "the validated backend catalog default";
   return `Selected from ${sourceText} for ${operation} on ${backendKind}; catalog state is ${validation}.`;
 }
 

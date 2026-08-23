@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
 import { LEGACY_SCOPE_ID } from "../src/sessionRegistry.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
@@ -30,7 +31,7 @@ describe("CodexJobRegistry persistence", () => {
       },
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
@@ -125,7 +126,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -147,7 +148,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {
@@ -231,6 +232,38 @@ describe("CodexJobRegistry persistence", () => {
     await expect(watch).rejects.toThrow(/cancelled by the host/);
   });
 
+  it("directs deliberate parallel work to a fresh Agent context, not retired session inputs", async () => {
+    const root = temporaryRoot();
+    const registry = new CodexJobRegistry({ maxConcurrentJobs: 2, allowedRoots: [root] });
+    let finish!: (value: ToolResult) => void;
+    const pending = new Promise<ToolResult>((resolve) => {
+      finish = resolve;
+    });
+    const first = registry.start(jobInput(root), async () => pending);
+
+    let conflict = "";
+    try {
+      registry.start(
+        {
+          ...jobInput(root),
+          requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          requestHash: "b".repeat(64)
+        },
+        async () => result("unused"),
+        undefined,
+        2,
+        true
+      );
+    } catch (error) {
+      conflict = error instanceof Error ? error.message : String(error);
+    }
+    expect(conflict).toContain("contextMode='fresh'");
+    expect(conflict).not.toContain("sessionMode");
+
+    finish(result("thread-completed"));
+    await first.promise;
+  });
+
   it("enforces independent per-scope and global watcher fairness limits", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
@@ -261,6 +294,57 @@ describe("CodexJobRegistry persistence", () => {
 
     for (const controller of controllers) controller.abort();
     await Promise.all(watches);
+  });
+
+  it("suppresses duplicate Activity generations with reservations and in-memory widget leases", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
+    try {
+      const registry = new CodexJobRegistry();
+      const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Card generation" });
+      const preferences = { activityCardVisibility: "always" as const };
+
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({
+          activityId: activity.activityId,
+          cardGeneration: 1,
+          shouldRenderActivityCard: true,
+          renderReason: "new-generation"
+        });
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
+
+      registry.touchActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-one");
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "active-lease" });
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, { explicit: true }))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "explicit" });
+
+      registry.releaseActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-one");
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+      await vi.advanceTimersByTimeAsync(15_001);
+      registry.touchActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-two");
+      await vi.advanceTimersByTimeAsync(75_001);
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+
+      const root = temporaryRoot();
+      const databaseFile = path.join(root, "state.sqlite");
+      const firstStore = new BridgeStateStore({ file: databaseFile });
+      const beforeRestart = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root] });
+      const persistentActivity = beforeRestart.createActivity({ scopeId: SCOPE_A, title: "Restart lease" });
+      beforeRestart.touchActivityCardLease(SCOPE_A, persistentActivity.activityId, 1, "widget-persist");
+      firstStore.close();
+
+      const secondStore = new BridgeStateStore({ file: databaseFile });
+      const afterRestart = new CodexJobRegistry({ stateStore: secondStore, allowedRoots: [root] });
+      expect(afterRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+      secondStore.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restores a terminal result that arrives while an unconfirmed force-stop is pending", async () => {

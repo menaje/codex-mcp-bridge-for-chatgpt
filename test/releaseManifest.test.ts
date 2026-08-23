@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkReleaseMetadata,
   deriveReleaseMetadata,
+  deriveUiResourceManifest,
   loadReleaseManifest,
   setReleaseVersion,
   syncReleaseMetadata
@@ -71,6 +72,49 @@ describe("release manifest", () => {
     });
     expect(checkReleaseMetadata(root).version).toBe("0.4.0-beta.1");
     expect(() => setReleaseVersion("1.2.3-01", root)).toThrow(/Version must be/);
+  });
+
+  it("keeps UI cache keys independent from SemVer and changes them for HTML or host metadata", () => {
+    const manifest = loadReleaseManifest(REPO_ROOT);
+    const rendered = {
+      resources: {
+        settings: {
+          html: "<!doctype html><p>settings</p>",
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: { prefersBorder: true, csp: { connectDomains: [] } }
+          }
+        },
+        activity: {
+          html: "<!doctype html><p>activity</p>",
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: { prefersBorder: true, csp: { connectDomains: [] } }
+          }
+        }
+      }
+    };
+    const initial = deriveUiResourceManifest(manifest, rendered);
+    const nextRelease = structuredClone(manifest);
+    nextRelease.release.version = "0.3.1";
+    const semverOnly = deriveUiResourceManifest(nextRelease, rendered, initial);
+
+    expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
+    expect(semverOnly.resources.activity.uri).toBe(initial.resources.activity.uri);
+
+    const metadataChanged = structuredClone(rendered);
+    metadataChanged.resources.settings.metadata.content.prefersBorder = false;
+    const afterMetadata = deriveUiResourceManifest(manifest, metadataChanged, initial);
+    expect(afterMetadata.resources.settings.uri).not.toBe(initial.resources.settings.uri);
+    expect(afterMetadata.resources.settings.previous).toEqual([
+      expect.objectContaining({ uri: initial.resources.settings.uri, digest: initial.resources.settings.digest })
+    ]);
+    expect(afterMetadata.resources.activity.uri).toBe(initial.resources.activity.uri);
+
+    const htmlChanged = structuredClone(rendered);
+    htmlChanged.resources.activity.html += "<!-- changed -->";
+    const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, initial);
+    expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
   });
 
   it("rejects unknown manifest fields and invalid GitHub owners", () => {

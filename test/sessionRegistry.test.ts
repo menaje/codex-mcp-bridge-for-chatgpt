@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { LEGACY_SCOPE_ID, SessionRegistry } from "../src/sessionRegistry.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
@@ -115,6 +116,82 @@ describe("SessionRegistry", () => {
 
     const reader = new SessionRegistry({ stateFile, allowedRoots: [allowed] });
     expect(reader.list().map((entry) => entry.threadId)).toEqual(["allowed"]);
+  });
+
+  it("quarantines SQLite sessions outside temporary roots without deleting them", () => {
+    const allowed = mkdtempSync(path.join(tmpdir(), "bridge-allowed-"));
+    const outside = mkdtempSync(path.join(tmpdir(), "bridge-outside-"));
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const writer = new SessionRegistry({ stateStore: firstStore });
+    writer.record(session("allowed", allowed, "read-only", undefined, undefined, 100));
+    writer.record(session("outside", outside, "read-only", undefined, undefined, 200));
+    firstStore.close();
+
+    const narrowedStore = new BridgeStateStore({ file: databaseFile });
+    const narrowed = new SessionRegistry({ stateStore: narrowedStore, allowedRoots: [allowed] });
+    expect(narrowed.list().map((entry) => entry.threadId)).toEqual(["allowed"]);
+    expect(narrowedStore.countSessions()).toBe(2);
+    narrowedStore.close();
+
+    const restoredStore = new BridgeStateStore({ file: databaseFile });
+    const restored = new SessionRegistry({ stateStore: restoredStore, allowedRoots: [outside] });
+    expect(restored.list().map((entry) => entry.threadId)).toEqual(["outside"]);
+    expect(restoredStore.countSessions()).toBe(2);
+    restoredStore.close();
+  });
+
+  it("preserves quarantined SQLite sessions during the one-time legacy import", () => {
+    const allowed = mkdtempSync(path.join(tmpdir(), "bridge-allowed-"));
+    const outside = mkdtempSync(path.join(tmpdir(), "bridge-outside-"));
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"));
+    const databaseFile = path.join(stateDirectory, "state.sqlite");
+    const legacyFile = path.join(stateDirectory, "sessions.json");
+    writeFileSync(
+      legacyFile,
+      `${JSON.stringify({
+        version: 5,
+        sessions: [session("legacy-allowed", allowed, "read-only", undefined, undefined, 300)]
+      })}\n`
+    );
+
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const writer = new SessionRegistry({ stateStore: firstStore });
+    writer.record(session("sqlite-outside", outside, "read-only", undefined, undefined, 200));
+    firstStore.close();
+
+    const narrowedStore = new BridgeStateStore({ file: databaseFile });
+    const narrowed = new SessionRegistry({
+      stateStore: narrowedStore,
+      stateFile: legacyFile,
+      allowedRoots: [allowed]
+    });
+    expect(narrowed.list().map((entry) => entry.threadId)).toEqual(["legacy-allowed"]);
+    expect(narrowedStore.countSessions()).toBe(2);
+    narrowedStore.close();
+
+    const restoredStore = new BridgeStateStore({ file: databaseFile });
+    const restored = new SessionRegistry({ stateStore: restoredStore, allowedRoots: [outside] });
+    expect(restored.list().map((entry) => entry.threadId)).toEqual(["sqlite-outside"]);
+    expect(restoredStore.countSessions()).toBe(2);
+    restoredStore.close();
+  });
+
+  it("still enforces the global SQLite session retention limit", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const writer = new SessionRegistry({ stateStore: firstStore });
+    writer.record(session("oldest", root, "read-only", undefined, undefined, 100));
+    writer.record(session("middle", root, "read-only", undefined, undefined, 200));
+    writer.record(session("newest", root, "read-only", undefined, undefined, 300));
+    firstStore.close();
+
+    const limitedStore = new BridgeStateStore({ file: databaseFile });
+    const limited = new SessionRegistry({ stateStore: limitedStore, maxSessions: 2 });
+    expect(limited.list().map((entry) => entry.threadId)).toEqual(["newest", "middle"]);
+    expect(limitedStore.countSessions()).toBe(2);
+    limitedStore.close();
   });
 
   it("touch moves a session to the front and persists its last-used time", () => {

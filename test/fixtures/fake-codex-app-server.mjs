@@ -4,6 +4,10 @@ import readline from "node:readline";
 const lines = readline.createInterface({ input: process.stdin });
 const activeTurns = new Map();
 const pendingServerRequests = new Map();
+const archivedThreads = new Set();
+const knownThreads = new Set();
+const loadedThreads = new Set();
+const backgroundTerminals = new Map();
 let initialized = false;
 let threadSequence = 0;
 let turnSequence = 0;
@@ -92,14 +96,77 @@ lines.on("line", (line) => {
       return;
     }
     const id = `fake-thread-${++threadSequence}`;
+    knownThreads.add(id);
+    loadedThreads.add(id);
     response(message.id, { thread: { id } });
     return;
   }
   if (message.method === "thread/resume") {
-    response(message.id, { thread: { id: message.params.threadId } });
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    loadedThreads.add(threadId);
+    response(message.id, { thread: { id: threadId } });
+    return;
+  }
+  if (message.method === "thread/fork") {
+    const id = `fake-thread-${++threadSequence}`;
+    knownThreads.add(id);
+    loadedThreads.add(id);
+    response(message.id, { thread: { id, forkedFromThreadId: message.params.threadId } });
+    return;
+  }
+  if (message.method === "thread/archive") {
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    archivedThreads.add(threadId);
+    loadedThreads.delete(threadId);
+    response(message.id, {});
+    return;
+  }
+  if (message.method === "thread/unarchive") {
+    const threadId = message.params.threadId;
+    if (!archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    archivedThreads.delete(threadId);
+    response(message.id, { thread: { id: threadId } });
+    return;
+  }
+  if (message.method === "thread/backgroundTerminals/list") {
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    response(message.id, {
+      data: backgroundTerminals.get(message.params.threadId) || [],
+      nextCursor: null
+    });
+    return;
+  }
+  if (message.method === "thread/backgroundTerminals/terminate") {
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    const terminals = backgroundTerminals.get(message.params.threadId) || [];
+    const remaining = terminals.filter((terminal) => terminal.processId !== message.params.processId);
+    const terminated = remaining.length !== terminals.length;
+    backgroundTerminals.set(message.params.threadId, remaining);
+    response(message.id, { terminated });
     return;
   }
   if (message.method === "turn/start") {
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
     const turnId = `fake-turn-${++turnSequence}`;
     const prompt = message.params.input?.[0]?.text || "";
     const context = {
@@ -277,6 +344,17 @@ function beginTurn(context) {
   if (prompt.includes("interactions")) {
     requestCommand(context);
     return;
+  }
+  if (prompt.includes("leave background terminal")) {
+    backgroundTerminals.set(threadId, [{
+      processId: "background-process-1",
+      itemId: "background-item-1",
+      command: "fixture background command",
+      cwd: process.cwd(),
+      osPid: 43210,
+      cpuPercent: 1.5,
+      rssKb: 2048
+    }]);
   }
   if (prompt.includes("hold")) return;
   if (prompt.includes("report selection")) {

@@ -62,6 +62,16 @@ export type UpstreamWorkerAssignment = {
   threadId?: string;
 };
 
+export type CodexBackgroundTerminal = {
+  processId: string;
+  itemId: string;
+  command: string;
+  cwd: string;
+  osPid?: number;
+  cpuPercent?: number;
+  rssKb?: number;
+};
+
 export type CodexThreadStartRequest = {
   backendKind: CodexBackendKind;
   prompt: string;
@@ -72,6 +82,13 @@ export type CodexThreadStartRequest = {
 };
 
 export type CodexThreadContinueRequest = {
+  backendKind: CodexBackendKind;
+  threadId: string;
+  prompt: string;
+  selection?: ModelSelection;
+};
+
+export type CodexThreadForkRequest = {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
@@ -92,6 +109,22 @@ export type CodexUpstream = {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult>;
+  forkThread?(
+    input: CodexThreadForkRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult>;
+  archiveThread?(threadId: string, backendKind?: CodexBackendKind): Promise<void>;
+  restoreThread?(threadId: string, backendKind?: CodexBackendKind): Promise<void>;
+  listBackgroundTerminals?(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexBackgroundTerminal[]>;
+  terminateBackgroundTerminal?(
+    threadId: string,
+    processId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<{ terminated: boolean }>;
   canResumeThread?(threadId: string, backendKind?: CodexBackendKind): boolean | undefined;
   callTool(
     name: string,

@@ -2,6 +2,7 @@ import type {
   McpServer,
   RegisteredTool
 } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type * as z from "zod/v4";
 
 /**
@@ -12,6 +13,7 @@ export type ModelPolicyChangedEvent = {
   policyRevision: number;
   catalogFingerprint?: string;
   schema: z.ZodType;
+  annotations: ToolAnnotations;
 };
 
 export type ModelPolicyProjectionStatus = {
@@ -52,8 +54,10 @@ export class SdkModelPolicyProjectionAdapter {
       };
     }
     // RegisteredTool.update accepts only a raw Zod shape in this SDK release.
-    // Assigning the public schema property preserves strict-object semantics.
+    // Assigning the public properties preserves strict-object semantics and lets
+    // one tools/list_changed notification cover both policy projections.
     this.tool.inputSchema = event.schema;
+    this.tool.annotations = event.annotations;
     this.lastSignature = signature;
     this.server.sendToolListChanged();
     return {

@@ -31,7 +31,7 @@ describe("Activity SQLite state", () => {
     const [activity] = store.listActivities(SCOPE_A);
     const [job] = store.listJobs() as Array<Record<string, unknown>>;
 
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
     expect(activity).toMatchObject({
       scopeId: SCOPE_A,
       title: "Legacy Codex job legacy-j",
@@ -45,11 +45,32 @@ describe("Activity SQLite state", () => {
     });
     expect(job).toMatchObject({
       activityId: activity.activityId,
+      agentId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      contextMode: "continue",
       threadId: "legacy-thread",
       executionMode: "background",
       backendKind: "mcp-server",
       terminalVersion: 1
     });
+    const [agent] = store.listAgents(SCOPE_A, true);
+    expect(agent).toMatchObject({
+      agentId: job.agentId,
+      scopeId: SCOPE_A,
+      agentName: "Legacy Codex Agent 1",
+      lifecycle: "idle",
+      currentThreadId: "legacy-thread"
+    });
+    expect(store.listAgentThreads(agent.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "legacy-thread",
+        agentId: agent.agentId,
+        contextMode: "continue",
+        isCurrent: true
+      })
+    ]);
+    expect(store.listActivityAgentAssignments(activity.activityId, agent.agentId)).toEqual([
+      expect.objectContaining({ role: "legacy", contextMode: "continue", releasedAt: expect.any(Number) })
+    ]);
     expect(store.getScopeVersion(SCOPE_A)).toBe(1);
     expect(store.listActivityEvents(activity.activityId)).toEqual([
       expect.objectContaining({ eventType: "legacy-job-grouped", scopeVersion: 1 })

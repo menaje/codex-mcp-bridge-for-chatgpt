@@ -60,6 +60,78 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("forks, archives, restores, and resumes exact App Server threads", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const started = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "source context",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      });
+      const sourceThreadId = (started.structuredContent as { threadId: string }).threadId;
+      const forked = await pool.forkThread!({
+        backendKind: "app-server",
+        threadId: sourceThreadId,
+        prompt: "forked context",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      });
+      const forkedThreadId = (forked.structuredContent as { threadId: string }).threadId;
+      expect(sourceThreadId).toBe("fake-thread-1");
+      expect(forkedThreadId).toBe("fake-thread-2");
+      expect(forked.structuredContent).toMatchObject({ backendKind: "app-server", turnStatus: "completed" });
+
+      await expect(pool.archiveThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
+      await expect(pool.restoreThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
+      await expect(pool.listBackgroundTerminals!(forkedThreadId, "app-server")).resolves.toEqual([]);
+      await expect(pool.archiveThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
+      await expect(pool.restoreThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
+      await expect(pool.continueThread!({
+        backendKind: "app-server",
+        threadId: forkedThreadId,
+        prompt: "resumed after restore",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      })).resolves.toMatchObject({
+        structuredContent: { threadId: forkedThreadId, turnStatus: "completed" }
+      });
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
+  it("lists and terminates exact background terminals after a turn completes", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const result = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "leave background terminal",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      });
+      const threadId = (result.structuredContent as { threadId: string }).threadId;
+      await expect(pool.listBackgroundTerminals!(threadId, "app-server")).resolves.toEqual([
+        expect.objectContaining({
+          processId: "background-process-1",
+          itemId: "background-item-1",
+          osPid: 43210
+        })
+      ]);
+      await expect(
+        pool.terminateBackgroundTerminal!(threadId, "background-process-1", "app-server")
+      ).resolves.toEqual({ terminated: true });
+      await expect(pool.listBackgroundTerminals!(threadId, "app-server")).resolves.toEqual([]);
+      await expect(
+        pool.terminateBackgroundTerminal!(threadId, "background-process-1", "app-server")
+      ).resolves.toEqual({ terminated: false });
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
   it("uses the safe App Server handshake and emits only allowlisted public events", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const events: CodexPublicEvent[] = [];

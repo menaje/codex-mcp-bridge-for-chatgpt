@@ -29,11 +29,16 @@ export type CodexModelServiceTier = {
 
 export type CodexModelDescriptor = {
   id: string;
+  catalogId?: string;
   displayName: string;
   description?: string;
   defaultReasoningEffort?: string;
   supportedReasoningEfforts: CodexReasoningEffort[];
+  hidden?: boolean;
   isDefault?: boolean;
+  upgrade?: string;
+  upgradeInfo?: Record<string, unknown>;
+  supportsPersonality?: boolean;
   defaultServiceTier?: string;
   serviceTiers: CodexModelServiceTier[];
   inputModalities: string[];
@@ -91,6 +96,9 @@ const rawModelSchema = z
     ).default([]),
     input_modalities: z.array(z.string().trim().min(1).max(100)).default([]),
     visibility: z.string().optional(),
+    upgrade: z.string().trim().min(1).max(200).optional(),
+    upgrade_info: z.record(z.string(), z.unknown()).optional(),
+    supports_personality: z.boolean().optional(),
     supported_in_api: z.boolean().optional()
   })
   .passthrough();
@@ -121,6 +129,9 @@ const appModelSchema = z.object({
   supportedReasoningEfforts: z.array(appEffortSchema),
   hidden: z.boolean(),
   isDefault: z.boolean(),
+  upgrade: z.string().trim().min(1).max(200).optional().nullable(),
+  upgradeInfo: z.record(z.string(), z.unknown()).optional().nullable(),
+  supportsPersonality: z.boolean().optional(),
   defaultServiceTier: z.string().trim().min(1).optional().nullable(),
   serviceTiers: z.array(appServiceTierSchema).default([]),
   inputModalities: z.array(z.string().trim().min(1).max(100)).default(["text", "image"])
@@ -287,11 +298,16 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
 
     models.push({
       id: model.slug,
+      catalogId: model.slug,
       displayName: model.display_name || model.slug,
       description: model.description,
       defaultReasoningEffort: model.default_reasoning_level || undefined,
       supportedReasoningEfforts,
+      hidden: false,
       isDefault: models.length === 0,
+      upgrade: model.upgrade,
+      upgradeInfo: model.upgrade_info,
+      supportsPersonality: model.supports_personality,
       defaultServiceTier: model.default_service_tier || undefined,
       serviceTiers: model.service_tiers,
       inputModalities: model.input_modalities,
@@ -314,6 +330,7 @@ export function parseAppServerModelCatalog(value: unknown): CodexModelDescriptor
     seen.add(model.model);
     return [{
       id: model.model,
+      catalogId: model.id,
       displayName: model.displayName || model.model,
       ...(model.description ? { description: model.description } : {}),
       defaultReasoningEffort: model.defaultReasoningEffort,
@@ -321,7 +338,11 @@ export function parseAppServerModelCatalog(value: unknown): CodexModelDescriptor
         effort: entry.reasoningEffort,
         ...(entry.description ? { description: entry.description } : {})
       })),
+      hidden: model.hidden,
       isDefault: model.isDefault,
+      ...(model.upgrade ? { upgrade: model.upgrade } : {}),
+      ...(model.upgradeInfo ? { upgradeInfo: model.upgradeInfo } : {}),
+      ...(model.supportsPersonality !== undefined ? { supportsPersonality: model.supportsPersonality } : {}),
       defaultServiceTier: model.defaultServiceTier || undefined,
       serviceTiers: model.serviceTiers,
       inputModalities: model.inputModalities
@@ -432,9 +453,14 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
 export function modelCatalogFingerprint(models: CodexModelDescriptor[]): string {
   const canonical = models.map((model) => ({
     id: model.id,
+    catalogId: model.catalogId || null,
     defaultReasoningEffort: model.defaultReasoningEffort || null,
     supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => entry.effort),
+    hidden: model.hidden || false,
     isDefault: model.isDefault || false,
+    upgrade: model.upgrade || null,
+    upgradeInfo: model.upgradeInfo || null,
+    supportsPersonality: model.supportsPersonality ?? null,
     defaultServiceTier: model.defaultServiceTier || null,
     serviceTiers: model.serviceTiers.map((tier) => tier.id),
     inputModalities: model.inputModalities

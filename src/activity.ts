@@ -71,6 +71,9 @@ export type ActivityVerificationEvidence = {
 export type BridgeActivity = {
   activityId: string;
   scopeId: string;
+  continuationOfActivityId?: string;
+  /** Presentation generation is independent from Agent/thread continuity. */
+  cardGeneration: number;
   title: string;
   kind: ActivityKind;
   executionMode: ActivityExecutionMode;

@@ -18,6 +18,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   filesystem changes are not rolled back.
 - `codex_activity_update` performs server-validated Activity transitions,
   including whole-Activity force-stop and evidence-backed verification.
+- `codex_agent` applies idempotent scope-local Agent rename/detach/archive/restore
+  actions and can terminate one exact App Server background terminal. It never
+  permanently deletes an Agent or rolls back files.
 - `codex_models` returns the target backend's validated selectable catalog,
   source, timestamp, and fingerprint.
 - `codex_settings` returns owner limits and renders the versioned model-policy card.
@@ -25,10 +28,11 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   and atomically persists a changed policy validated against a fresh target-backend
   catalog; an unverified CLI fallback cannot activate policy changes. It cannot
   widen the immutable operator selection ceiling.
-- `codex_task` starts or continues a tracked thread. It exposes
-  `workspace-write` and `danger-full-access` only when the owner enables the
-  corresponding capabilities. Its exact model/effort/service-tier decision is
-  resolved again at runtime and retained with the job.
+- `codex_task` starts, resumes, or forks only through a scope-owned canonical
+  Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
+  sandbox is exposed only for adaptive policy and only within owner-enabled
+  capabilities. Its exact model/effort/service-tier decision is resolved again
+  at runtime and retained with the job.
 
 The bridge does not expose a raw shell tool, process-control tool, arbitrary
 Codex config, or a general Responses API proxy. An explicitly enabled
@@ -39,12 +43,17 @@ the network as the current macOS user.
 
 - Loopback host binding.
 - Real-path allowlist for working directories.
+- One saved default starting folder for every new Activity/fresh context;
+  existing Agent threads keep their admission-time folder. A stale per-call cwd
+  fails explicitly instead of being ignored.
 - Read-only sandbox.
 - `on-request` approval policy.
 - Thirty concurrent jobs at most.
 - Concurrent sessions are allowed in one working directory, including mutating jobs.
 - Overlapping mutations are coordinated by the caller or isolated with worktrees.
-- One active job per Codex thread.
+- Scope-persistent named bridge Agents with immutable IDs, normalized unique
+  aliases, current/history thread links, and Activity assignment history.
+- One active job per Agent/Codex thread.
 - Different Codex threads under the same conversation scope may run
   concurrently in the same working directory; parallelism is created on demand
   rather than configured on the scope in advance.
@@ -59,9 +68,10 @@ the network as the current macOS user.
   stale overrides; automatic mode accepts only exact nested selections. No
   bridge-maintained model aliases are interpreted.
 - 50,000 characters per prompt.
-- Activity-bound compatible-thread selection with no age limit, plus bounded
-  completed-job retention.
+- Exact Activity + Agent routing with explicit `continue`, `fork`, or `fresh`;
+  ambiguous candidates and arbitrary public thread IDs are rejected.
 - Durable sessions, bridge preferences, jobs, bounded results, Activities,
+  Agent/thread history, Activity-Agent assignments, idempotent Agent mutations,
   append-only Activity/job events, scope versions, bridge generations, and a
   completion outbox stored in one user-private transactional SQLite database
   with mode `0600`; job terminal state, Activity derived state, scope version,
@@ -79,8 +89,11 @@ the network as the current macOS user.
 - One user-visible force-stop action with exact worker generation/process-group
   validation, TERM→KILL escalation, collateral confirmation, and terminal state
   only after exit evidence. `termination-failed` remains an active slot.
-- Eight Activity watchers globally and four per conversation scope, admitted
-  separately from the thirty job slots; duplicate mounted-widget leases are rejected.
+- Activity presentation render reservations and mounted-widget leases are
+  in-memory, generation-scoped, refreshed by bounded watches, and released by
+  abort/unmount/TTL or process restart.
+- App Server background terminals left after a turn are observed separately
+  from Agent idle state and require exact process termination before archive.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
   unknown; it does not automatically cancel a job.
 - At most 100 retained jobs and one MiB per retained job result by default.
@@ -110,11 +123,13 @@ ChatGPT's four plugin-permission choices control host-side confirmation before
 an MCP tool call. They do not change the Codex sandbox. A private deployment may
 set Codex approval policy to `never` so the plugin permission is the single
 approval boundary, but doing so removes Codex's independent command prompt.
-With the default `adaptive` strategy, the omitted/default sandbox remains
-`read-only` and ChatGPT must still send an explicit mutation sandbox. A bridge
-user can choose `read-only` or `always-full` in the settings card only within
-owner-enabled capabilities. These preferences are shared by the bridge instance
-because the private no-auth tunnel does not supply per-user identity.
+With the default `adaptive` strategy, omission uses the operator-configured
+default (read-only by default), while ChatGPT may send only an owner-enabled
+mutation sandbox for an authorized task. Fixed `read-only` and `always-full`
+descriptors omit the per-call field and enforce the saved strategy. A bridge
+user can select only owner-enabled strategies. Preferences are shared by the
+bridge instance because the private no-auth tunnel does not supply per-user
+identity.
 
 ## Remaining risks
 
@@ -150,8 +165,9 @@ because the private no-auth tunnel does not supply per-user identity.
   produce an at-least-once retry; the fixed prompt carries a stable bounded
   `handoffBatchId` and never embeds raw Codex output.
 - Codex MCP thread context is worker-process local. Persisted session metadata
-  remains visible after restart, but those rows are marked unavailable and are
-  not resumed; the Activity starts a fresh thread. New App Server threads use a
+  remains visible after restart, but the owning Agent becomes orphaned rather
+  than silently receiving another thread; replacement requires explicit fresh
+  context and preserves history. New App Server threads use a
   separate sticky backend with rich public events, approval/input handling,
   steering, and exact turn interruption. OpenAI currently documents the App
   Server interface as experimental, so it is not represented as a production
@@ -169,11 +185,12 @@ because the private no-auth tunnel does not supply per-user identity.
   as source-sensitive.
 - The 30-job setting is a bridge admission limit. The MCP host, tunnel, Codex,
   account, and machine can impose lower practical limits.
-- Persisted session rows contain scope routing labels, thread ids, backend,
+- Persisted Agent/session rows contain scope routing labels, Agent aliases and
+  immutable IDs, current/history thread ids, Activity assignment history, backend,
   local working-directory paths, and current exact execution selection/revision,
   but not prompts or results. Historical decisions remain on job rows. Pre-scope records are
-  migrated into a legacy scope that automatic selection ignores; obsolete v2
-  task-lane labels are discarded during migration.
+  migrated into deterministic Legacy Agents or a quarantined legacy scope that
+  automatic routing ignores; obsolete v2 task-lane labels are not authorization.
 - Bridge metadata contains the conversation-scope HMAC key. Protect database
   files and backups even though the raw host identifiers are not stored.
 - Persisted job rows contain local paths, lifecycle metadata, progress

@@ -206,14 +206,26 @@ export class SessionRegistry {
   private load(): void {
     if (this.stateStore) {
       const stored = this.stateStore.listSessions();
-      const sessions = stored
+      const decoded = stored
         .map((session) => readPersistedSession(session, 5))
         .filter((session): session is TrackedCodexSession => Boolean(session))
-        .filter((session) => this.isAllowedCwd(session.cwd))
-        .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
-        .slice(-this.maxSessions);
-      for (const session of sessions) this.sessions.set(session.threadId, session);
-      if (sessions.length !== stored.length) this.stateStore.replaceSessions(this.list());
+        .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+      const sessions = decoded.slice(-this.maxSessions);
+      const retained = new Set(sessions.map((session) => session.threadId));
+      const expired = decoded
+        .filter((session) => !retained.has(session.threadId))
+        .map((session) => session.threadId);
+      if (expired.length > 0) {
+        this.stateStore.transaction(() => {
+          for (const threadId of expired) this.stateStore?.deleteSession(threadId);
+        });
+      }
+      for (const session of sessions) {
+        if (this.isAllowedCwd(session.cwd)) this.sessions.set(session.threadId, session);
+      }
+      // A temporarily narrowed or misconfigured allowed-root set must quarantine
+      // persisted sessions, not erase them. A later restart with the original
+      // operator policy must still be able to recover the exact thread state.
       this.importLegacyState();
       return;
     }
@@ -276,9 +288,11 @@ export class SessionRegistry {
       .filter((session) => this.isAllowedCwd(session.cwd))
       .filter((session) => !this.sessions.has(session.threadId));
     this.stateStore.transaction(() => {
-      for (const session of imported) this.sessions.set(session.threadId, session);
-      this.enforceLimit();
-      this.stateStore?.replaceSessions(this.list());
+      for (const session of imported) {
+        this.sessions.set(session.threadId, session);
+        this.stateStore?.upsertSession(session);
+      }
+      for (const threadId of this.enforceLimit()) this.stateStore?.deleteSession(threadId);
       this.stateStore?.setMeta(marker, new Date().toISOString());
     });
   }

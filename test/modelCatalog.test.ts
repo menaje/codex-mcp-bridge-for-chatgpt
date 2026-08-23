@@ -45,6 +45,7 @@ describe("Codex model catalog", () => {
     expect(parseCodexModelCatalog(catalogJson)).toEqual([
       {
         id: "gpt-current",
+        catalogId: "gpt-current",
         displayName: "GPT Current",
         description: "Current selectable model",
         defaultReasoningEffort: "medium",
@@ -52,7 +53,11 @@ describe("Codex model catalog", () => {
           { effort: "low", description: "Fast" },
           { effort: "medium", description: "Balanced" }
         ],
+        hidden: false,
         isDefault: true,
+        upgrade: undefined,
+        upgradeInfo: undefined,
+        supportsPersonality: undefined,
         defaultServiceTier: "priority",
         serviceTiers: [{ id: "priority", name: "Priority" }],
         inputModalities: ["text", "image"],
@@ -190,6 +195,7 @@ describe("Codex model catalog", () => {
     })).toEqual([
       {
         id: "gpt-5.6-sol",
+        catalogId: "display-id",
         displayName: "GPT-5.6-Sol",
         description: "Backend-visible model",
         defaultReasoningEffort: "max",
@@ -197,6 +203,7 @@ describe("Codex model catalog", () => {
           { effort: "high" },
           { effort: "max", description: "Maximum" }
         ],
+        hidden: false,
         isDefault: true,
         defaultServiceTier: "priority",
         serviceTiers: [{ id: "priority", name: "Priority" }],

@@ -4,7 +4,7 @@
   "title": "Codex MCP Bridge for ChatGPT release manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "release"],
+  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "uiResources", "release"],
   "properties": {
     "$schema": {
       "const": "./release-manifest.schema.json"
@@ -68,6 +68,28 @@
         "provider": { "const": "github" },
         "owner": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$" },
         "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 100 }
+      }
+    },
+    "uiResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "hashAlgorithm", "hashLength", "retainPrevious", "resources"],
+      "properties": {
+        "strategy": { "const": "content-hash" },
+        "hashAlgorithm": { "const": "sha256" },
+        "hashLength": { "type": "integer", "minimum": 12, "maximum": 64 },
+        "retainPrevious": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "resources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["settings", "activity"] },
+          "allOf": [
+            { "contains": { "const": "settings" } },
+            { "contains": { "const": "activity" } }
+          ]
+        }
       }
     },
     "release": {

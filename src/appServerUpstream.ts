@@ -6,7 +6,9 @@ import { PRODUCT_INFO } from "./productInfo.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type {
   CodexThreadContinueRequest,
+  CodexThreadForkRequest,
   CodexThreadStartRequest,
+  CodexBackgroundTerminal,
   CodexPendingInteraction,
   CodexProgress,
   CodexPublicEvent,
@@ -72,6 +74,9 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       tools: [
         { name: "codex", description: "Start a Codex App Server thread and turn." },
         { name: "codex-reply", description: "Resume a Codex App Server thread and start a turn." },
+        { name: "thread/fork", description: "Fork a persisted Codex thread and start a turn." },
+        { name: "thread/archive", description: "Archive a persisted Codex thread." },
+        { name: "thread/unarchive", description: "Restore an archived Codex thread." },
         { name: "turn/steer", description: "Steer an active Codex App Server turn." },
         { name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }
       ],
@@ -110,6 +115,54 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       requestArguments(input.prompt, input.selection, { threadId: input.threadId }),
       onProgress,
       onAssigned
+    );
+  }
+
+  async forkThread(
+    input: CodexThreadForkRequest,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    const preferredIndex = this.threadWorkers.get(input.threadId);
+    const worker = preferredIndex === undefined ? this.leastBusyWorker() : this.workers[preferredIndex];
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const result = await connection.forkThreadAndTurn(
+        input.threadId,
+        requestArguments(input.prompt, input.selection, {}),
+        onProgress,
+        (assignment) => {
+          if (assignment.threadId) this.threadWorkers.set(assignment.threadId, worker.index);
+          onAssigned?.(assignment);
+        }
+      );
+      const threadId = structuredString(result, "threadId");
+      if (threadId) this.threadWorkers.set(threadId, worker.index);
+      return result;
+    } finally {
+      worker.activeCalls -= 1;
+    }
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    await this.withThreadWorker(threadId, (connection) => connection.archiveThread(threadId));
+  }
+
+  async restoreThread(threadId: string): Promise<void> {
+    await this.withThreadWorker(threadId, (connection) => connection.restoreThread(threadId));
+  }
+
+  async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    return this.withThreadWorker(threadId, (connection) => connection.listBackgroundTerminals(threadId));
+  }
+
+  async terminateBackgroundTerminal(
+    threadId: string,
+    processId: string
+  ): Promise<{ terminated: boolean }> {
+    return this.withThreadWorker(threadId, (connection) =>
+      connection.terminateBackgroundTerminal(threadId, processId)
     );
   }
 
@@ -216,6 +269,22 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     );
   }
 
+  private async withThreadWorker<T>(
+    threadId: string,
+    operation: (connection: AppServerConnection) => Promise<T>
+  ): Promise<T> {
+    const preferredIndex = this.threadWorkers.get(threadId);
+    const worker = preferredIndex === undefined ? this.leastBusyWorker() : this.workers[preferredIndex];
+    worker.activeCalls += 1;
+    try {
+      const result = await operation(await this.connectionFor(worker));
+      this.threadWorkers.set(threadId, worker.index);
+      return result;
+    } finally {
+      worker.activeCalls -= 1;
+    }
+  }
+
   private async connectionFor(worker: AppWorker): Promise<AppServerConnection> {
     if (this.closing) throw new Error("Codex App Server upstream is closed.");
     if (worker.connection && !worker.connection.exited) return worker.connection;
@@ -310,11 +379,99 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
-    if (!this.loadedThreads.has(threadId)) {
-      await this.rpc.request("thread/resume", { threadId }, { timeoutMs: 30_000 });
-      this.loadedThreads.add(threadId);
-    }
+    await this.ensureThreadLoaded(threadId);
     return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+  }
+
+  async forkThreadAndTurn(
+    sourceThreadId: string,
+    args: Record<string, unknown>,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    const response = await this.rpc.request<Record<string, unknown>>(
+      "thread/fork",
+      { threadId: sourceThreadId },
+      { timeoutMs: 30_000 }
+    );
+    const thread = isRecord(response.thread) ? response.thread : undefined;
+    const threadId = requiredString(thread?.id, "thread/fork thread.id");
+    this.loadedThreads.add(threadId);
+    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    await this.rpc.request("thread/archive", { threadId }, { timeoutMs: 30_000 });
+    this.loadedThreads.delete(threadId);
+  }
+
+  async restoreThread(threadId: string): Promise<void> {
+    const response = await this.rpc.request<Record<string, unknown>>(
+      "thread/unarchive",
+      { threadId },
+      { timeoutMs: 30_000 }
+    );
+    const restoredThread = isRecord(response.thread) ? response.thread : undefined;
+    const restoredThreadId = typeof restoredThread?.id === "string" ? restoredThread.id : undefined;
+    if (restoredThreadId && restoredThreadId !== threadId) {
+      throw new Error("Codex App Server restored a different thread than requested.");
+    }
+    // Unarchive restores persistence but does not guarantee that this App
+    // Server connection has materialized the thread. The next operation must
+    // load it through thread/resume instead of trusting stale local state.
+    this.loadedThreads.delete(threadId);
+  }
+
+  async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    await this.ensureThreadLoaded(threadId);
+    const terminals: CodexBackgroundTerminal[] = [];
+    let cursor: string | null = null;
+    do {
+      const response: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>(
+        "thread/backgroundTerminals/list",
+        { threadId, cursor, limit: 100 },
+        { timeoutMs: 30_000 }
+      );
+      if (!Array.isArray(response.data)) {
+        throw new Error("Codex App Server returned an invalid background terminal list.");
+      }
+      for (const raw of response.data) {
+        if (!isRecord(raw)) throw new Error("Codex App Server returned an invalid background terminal.");
+        terminals.push({
+          processId: requiredString(raw.processId, "background terminal processId"),
+          itemId: requiredString(raw.itemId, "background terminal itemId"),
+          command: requiredString(raw.command, "background terminal command"),
+          cwd: requiredString(raw.cwd, "background terminal cwd"),
+          ...(typeof raw.osPid === "number" ? { osPid: raw.osPid } : {}),
+          ...(typeof raw.cpuPercent === "number" ? { cpuPercent: raw.cpuPercent } : {}),
+          ...(typeof raw.rssKb === "number" ? { rssKb: raw.rssKb } : {})
+        });
+      }
+      cursor = optionalString(response.nextCursor) || null;
+    } while (cursor);
+    return terminals;
+  }
+
+  async terminateBackgroundTerminal(
+    threadId: string,
+    processId: string
+  ): Promise<{ terminated: boolean }> {
+    await this.ensureThreadLoaded(threadId);
+    const response = await this.rpc.request<Record<string, unknown>>(
+      "thread/backgroundTerminals/terminate",
+      { threadId, processId },
+      { timeoutMs: 30_000 }
+    );
+    if (typeof response.terminated !== "boolean") {
+      throw new Error("Codex App Server returned an invalid background terminal termination result.");
+    }
+    return { terminated: response.terminated };
+  }
+
+  private async ensureThreadLoaded(threadId: string): Promise<void> {
+    if (this.loadedThreads.has(threadId)) return;
+    await this.rpc.request("thread/resume", { threadId }, { timeoutMs: 30_000 });
+    this.loadedThreads.add(threadId);
   }
 
   async listModels(): Promise<unknown> {
@@ -701,7 +858,7 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsModelOverrideOnContinue: true,
   supportsEffortOverrideOnContinue: true,
   supportsServiceTierOverrideOnContinue: true,
-  supportsFork: false
+  supportsFork: true
 };
 
 function requestArguments(

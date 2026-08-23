@@ -4,6 +4,8 @@ import { PRODUCT_INFO } from "../src/productInfo.js";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import {
   isUiLocalePreference,
+  missingReasoningEffortTranslations,
+  reasoningEffortPresentation,
   resolvePreferredUiLocale,
   resolveUiLocale,
   serializedUiTranslations,
@@ -84,6 +86,28 @@ describe("human-facing UI localization", () => {
     expect(resolveUiLocale(null)).toBe("en");
   });
 
+  it("separates dynamic effort availability from localized labels and safe unknown-effort fallback", () => {
+    expect(reasoningEffortPresentation("high", "ko", "English upstream description")).toEqual({
+      effort: "high",
+      label: "높음",
+      description: "복잡한 작업을 더 깊게 검토하지만 응답 시간이 늘어날 수 있습니다.",
+      descriptionSource: "localized"
+    });
+    expect(reasoningEffortPresentation("high", "en", "Upstream high description")).toMatchObject({
+      label: "High",
+      description: "Upstream high description",
+      descriptionSource: "upstream"
+    });
+    expect(reasoningEffortPresentation("breakthrough", "ko", "Unlocalized upstream prose")).toEqual({
+      effort: "breakthrough",
+      label: "breakthrough",
+      description: UI_TRANSLATIONS.ko["settings.effortFallbackDescription"],
+      descriptionSource: "fallback"
+    });
+    expect(missingReasoningEffortTranslations(["high", "breakthrough", "breakthrough", "novel"]))
+      .toEqual(["breakthrough", "novel"]);
+  });
+
   it("serializes bundles safely into both self-contained cards", () => {
     const serialized = serializedUiTranslations();
     expect(serialized).not.toContain("<");
@@ -114,11 +138,21 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
     expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
     expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
+    expect(SETTINGS_CARD_HTML).toContain(
+      'id="policy-effort" required aria-describedby="effort-description effort-compatibility"'
+    );
+    expect(SETTINGS_CARD_HTML).toContain('id="effort-description" aria-live="polite"');
+    expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
-    expect(ACTIVITY_CARD_HTML).toContain('document.createElement("datalist")');
+    expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
+    expect(ACTIVITY_CARD_HTML).not.toContain("<details");
+    expect(ACTIVITY_CARD_HTML).toContain('next.viewMode==="activity-summary"');
+    expect(ACTIVITY_CARD_HTML).toContain("renderActivities(next)");
+    expect(ACTIVITY_CARD_HTML).toContain("renderAgents(next)");
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_agent"');
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",{activityView:true');
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",Object.assign({activityView:true,activityLimit:viewLimit}');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
   });

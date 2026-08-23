@@ -1,9 +1,14 @@
-import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_FILENAME = "release-manifest.json";
+const UI_LOCK_FILENAME = "ui-manifest.lock.json";
+const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
+const UI_SNAPSHOT_DIRECTORY = "ui-resources";
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
@@ -32,7 +37,7 @@ export function validateReleaseManifest(value) {
   const root = requiredRecord(value, "release manifest");
   assertKeys(
     root,
-    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "release"],
+    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "uiResources", "release"],
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
@@ -86,6 +91,30 @@ export function validateReleaseManifest(value) {
   if (repository.provider !== "github") fail("repository.provider must be github");
   identifier(repository.owner, "repository.owner", GITHUB_OWNER_PATTERN, 39);
   identifier(repository.name, "repository.name", GITHUB_REPOSITORY_PATTERN, 100);
+
+  const uiResources = requiredRecord(root.uiResources, "uiResources");
+  assertKeys(
+    uiResources,
+    ["strategy", "hashAlgorithm", "hashLength", "retainPrevious", "resources"],
+    "uiResources"
+  );
+  if (uiResources.strategy !== "content-hash") fail("uiResources.strategy must be content-hash");
+  if (uiResources.hashAlgorithm !== "sha256") fail("uiResources.hashAlgorithm must be sha256");
+  if (!Number.isInteger(uiResources.hashLength) || uiResources.hashLength < 12 || uiResources.hashLength > 64) {
+    fail("uiResources.hashLength must be an integer between 12 and 64");
+  }
+  if (!Number.isInteger(uiResources.retainPrevious) || uiResources.retainPrevious < 1 || uiResources.retainPrevious > 5) {
+    fail("uiResources.retainPrevious must be an integer between 1 and 5");
+  }
+  if (
+    !Array.isArray(uiResources.resources) ||
+    uiResources.resources.length !== 2 ||
+    !uiResources.resources.includes("settings") ||
+    !uiResources.resources.includes("activity") ||
+    new Set(uiResources.resources).size !== uiResources.resources.length
+  ) {
+    fail("uiResources.resources must contain settings and activity exactly once");
+  }
 
   const release = requiredRecord(root.release, "release");
   assertKeys(release, ["version", "tagPrefix", "channel", "generateNotes", "assets"], "release");
@@ -153,6 +182,9 @@ export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   if (drift.length > 0) {
     throw new Error(`Release metadata drift in ${drift.join(", ")}. Run npm run release:sync.`);
   }
+  if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
+    checkUiResources(repoRoot, manifest);
+  }
   return deriveReleaseMetadata(manifest);
 }
 
@@ -161,7 +193,136 @@ export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const prepared = preparePackageMetadata(repoRoot, manifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
   writeJsonIfChanged(path.join(repoRoot, "package-lock.json"), prepared.packageLock, prepared.nextPackageLock);
+  if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
+    syncUiResources(repoRoot, manifest);
+  }
   return deriveReleaseMetadata(manifest);
+}
+
+export function deriveUiResourceManifest(manifest, rendered, previous) {
+  validateReleaseManifest(manifest);
+  const config = manifest.uiResources;
+  const resources = {};
+  const seenUris = new Set();
+  for (const name of config.resources) {
+    const html = rendered?.resources?.[name]?.html;
+    if (typeof html !== "string" || !html.trim()) {
+      throw new Error(`Rendered UI resource ${name} is missing final HTML.`);
+    }
+    const metadata = rendered?.resources?.[name]?.metadata;
+    if (!isRecord(metadata)) {
+      throw new Error(`Rendered UI resource ${name} is missing canonical cache metadata.`);
+    }
+    const digest = uiResourceDigest(config.hashAlgorithm, html, metadata);
+    const uri = `ui://${manifest.product.runtimeName}/${name}/${digest.slice(0, config.hashLength)}.html`;
+    const prior = previous?.resources?.[name];
+    const candidates = prior && prior.digest !== digest
+      ? [{ digest: prior.digest, uri: prior.uri, ...(prior.metadata ? { metadata: prior.metadata } : {}) }, ...(Array.isArray(prior.previous) ? prior.previous : [])]
+      : Array.isArray(prior?.previous)
+        ? prior.previous
+        : [];
+    const previousRevisions = [];
+    const seenDigests = new Set([digest]);
+    for (const entry of candidates) {
+      if (!validUiRevision(entry) || seenDigests.has(entry.digest)) continue;
+      seenDigests.add(entry.digest);
+      previousRevisions.push({
+        digest: entry.digest,
+        uri: entry.uri,
+        ...(entry.metadata ? { metadata: entry.metadata } : {})
+      });
+      if (previousRevisions.length >= config.retainPrevious) break;
+    }
+    for (const candidateUri of [uri, ...previousRevisions.map((entry) => entry.uri)]) {
+      if (seenUris.has(candidateUri)) throw new Error(`UI resource URI collision: ${candidateUri}.`);
+      seenUris.add(candidateUri);
+    }
+    resources[name] = { digest, uri, metadata: structuredClone(metadata), previous: previousRevisions };
+  }
+  return {
+    manifestVersion: 1,
+    strategy: config.strategy,
+    hashAlgorithm: config.hashAlgorithm,
+    hashLength: config.hashLength,
+    retainPrevious: config.retainPrevious,
+    resources
+  };
+}
+
+export function syncUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
+  const rendered = renderUiResources(repoRoot);
+  const lockFile = path.join(repoRoot, UI_LOCK_FILENAME);
+  const previous = existsSync(lockFile) ? readJson(lockFile) : undefined;
+  const next = deriveUiResourceManifest(manifest, rendered, previous);
+
+  for (const name of manifest.uiResources.resources) {
+    const entry = next.resources[name];
+    const directory = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name);
+    mkdirSync(directory, { recursive: true });
+    writeTextAtomically(path.join(directory, `${entry.digest}.html`), rendered.resources[name].html);
+    for (const retained of entry.previous) {
+      const retainedFile = path.join(directory, `${retained.digest}.html`);
+      if (!existsSync(retainedFile)) {
+        throw new Error(
+          `Cannot retain previous ${name} UI revision ${retained.digest}: its immutable HTML snapshot is missing.`
+        );
+      }
+    }
+  }
+  writeJsonAtomically(lockFile, next);
+  writeTextAtomically(path.join(repoRoot, UI_GENERATED_SOURCE), generatedUiManifestSource(next));
+  mkdirSync(path.join(repoRoot, "dist"), { recursive: true });
+  writeJsonAtomically(path.join(repoRoot, "dist/ui-manifest.json"), next);
+  return next;
+}
+
+export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
+  const lockFile = path.join(repoRoot, UI_LOCK_FILENAME);
+  if (!existsSync(lockFile)) {
+    throw new Error(`${UI_LOCK_FILENAME} is missing. Run npm run release:sync.`);
+  }
+  const lock = readJson(lockFile);
+  const rendered = renderUiResources(repoRoot);
+  const expected = deriveUiResourceManifest(manifest, rendered, lock);
+  const drift = [];
+  if (!sameJson(lock, expected)) drift.push(UI_LOCK_FILENAME);
+  const generatedFile = path.join(repoRoot, UI_GENERATED_SOURCE);
+  if (!existsSync(generatedFile) || readFileSync(generatedFile, "utf8") !== generatedUiManifestSource(expected)) {
+    drift.push(UI_GENERATED_SOURCE);
+  }
+
+  const descriptorSource = readFileSync(path.join(repoRoot, "src/tools.ts"), "utf8");
+  for (const name of manifest.uiResources.resources) {
+    const entry = expected.resources[name];
+    if (rendered.resources[name].uri !== entry.uri) drift.push(`runtime ${name} resource URI`);
+    for (const revision of [entry, ...entry.previous]) {
+      const snapshotFile = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name, `${revision.digest}.html`);
+      if (!existsSync(snapshotFile)) {
+        drift.push(`${name} snapshot ${revision.digest}`);
+        continue;
+      }
+      const html = readFileSync(snapshotFile, "utf8");
+      if (uiResourceDigest(expected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
+        drift.push(`${name} snapshot digest ${revision.digest}`);
+      }
+      if (revision.digest === entry.digest && html !== rendered.resources[name].html) {
+        drift.push(`${name} current HTML snapshot`);
+      }
+    }
+  }
+  for (const constant of ["SETTINGS_CARD_URI", "ACTIVITY_CARD_URI"]) {
+    const escaped = constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`ui:\\s*\\{[\\s\\S]{0,120}?resourceUri:\\s*${escaped}\\b`).test(descriptorSource)) {
+      drift.push(`${constant} _meta.ui.resourceUri`);
+    }
+    if (!new RegExp(`['\"]openai/outputTemplate['\"]:\\s*${escaped}`).test(descriptorSource)) {
+      drift.push(`${constant} openai/outputTemplate`);
+    }
+  }
+  if (drift.length > 0) {
+    throw new Error(`UI resource drift in ${[...new Set(drift)].join(", ")}. Run npm run release:sync.`);
+  }
+  return expected;
 }
 
 export function setReleaseVersion(requested, repoRoot = DEFAULT_REPO_ROOT) {
@@ -271,14 +432,85 @@ function readJson(file) {
   }
 }
 
+function renderUiResources(repoRoot) {
+  const script = path.join(repoRoot, "scripts/render-ui-resources.ts");
+  let stdout;
+  try {
+    stdout = execFileSync(
+      process.execPath,
+      ["--import", "tsx", script],
+      { cwd: repoRoot, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+    );
+  } catch (error) {
+    throw new Error(`Could not render final UI resources: ${errorMessage(error)}`);
+  }
+  let rendered;
+  try {
+    rendered = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(`UI resource renderer returned invalid JSON: ${errorMessage(error)}`);
+  }
+  for (const name of ["settings", "activity"]) {
+    const resource = rendered?.resources?.[name];
+    if (
+      !isRecord(resource) ||
+      typeof resource.uri !== "string" ||
+      typeof resource.html !== "string" ||
+      !isRecord(resource.metadata)
+    ) {
+      throw new Error(`UI resource renderer omitted ${name}.`);
+    }
+  }
+  return rendered;
+}
+
+function validUiRevision(value) {
+  return isRecord(value) &&
+    typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest) &&
+    typeof value.uri === "string" && value.uri.startsWith("ui://") &&
+    (value.metadata === undefined || isRecord(value.metadata));
+}
+
+function uiResourceDigest(algorithm, html, metadata) {
+  if (metadata === undefined) {
+    // Compatibility with the last pre-envelope generation.
+    return createHash(algorithm).update(html).digest("hex");
+  }
+  return createHash(algorithm)
+    .update(stableJson({ html, metadata }))
+    .digest("hex");
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function generatedUiManifestSource(manifest) {
+  return `/**\n * Generated by \`npm run release:sync\` from the final self-contained card HTML.\n * Do not edit this file by hand.\n */\nexport const UI_RESOURCE_MANIFEST = ${JSON.stringify(manifest, null, 2)} as const;\n\nexport type UiResourceName = keyof typeof UI_RESOURCE_MANIFEST.resources;\n`;
+}
+
 function writeJsonIfChanged(file, current, next) {
   if (!sameJson(current, next)) writeJsonAtomically(file, next);
 }
 
 function writeJsonAtomically(file, value) {
   const temporary = `${file}.tmp-${process.pid}`;
-  const mode = statSync(file).mode & 0o777;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o644;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode });
+  renameSync(temporary, file);
+}
+
+function writeTextAtomically(file, value) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  if (existsSync(file) && readFileSync(file, "utf8") === value) return;
+  const temporary = `${file}.tmp-${process.pid}`;
+  const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o644;
+  writeFileSync(temporary, value, { mode });
   renameSync(temporary, file);
 }
 

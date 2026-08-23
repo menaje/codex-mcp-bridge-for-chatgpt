@@ -24,8 +24,20 @@ import {
   type ActivityVerificationState,
   type BridgeActivity
 } from "./activity.js";
+import {
+  AGENT_CONTEXT_MODES,
+  AGENT_LIFECYCLES,
+  isAgentContextMode,
+  isAgentLifecycle,
+  normalizeAgentName,
+  type ActivityAgentAssignment,
+  type AgentContextMode,
+  type BridgeAgent,
+  type BridgeAgentLifecycle,
+  type BridgeAgentThread
+} from "./agent.js";
 
-const CURRENT_SCHEMA_VERSION = "3";
+const CURRENT_SCHEMA_VERSION = "4";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type SessionRowInput = {
@@ -50,6 +62,8 @@ type JobRowInput = {
   workerGeneration?: number;
   upstreamRequestId?: string;
   terminalVersion?: number;
+  agentId?: string;
+  contextMode?: AgentContextMode;
   sessionDecision?: { threadId?: string };
 };
 
@@ -65,6 +79,8 @@ type JobStorageRow = JsonRow & {
   worker_generation: number | null;
   upstream_request_id: string | null;
   terminal_version: number | null;
+  agent_id: string | null;
+  context_mode: string | null;
 };
 type PreviousJobRow = {
   scope_id: string;
@@ -74,11 +90,15 @@ type PreviousJobRow = {
   backend_kind: string;
   bridge_instance_id: string | null;
   terminal_version: number | null;
+  agent_id: string | null;
+  context_mode: string | null;
   archived_at: number | null;
 };
 type ActivityStorageRow = {
   activity_id: string;
   scope_id: string;
+  continuation_of_activity_id: string | null;
+  card_generation: number;
   title: string;
   kind: string;
   execution_mode: string;
@@ -106,6 +126,7 @@ type ActivityStorageRow = {
 export type CreateActivityInput = {
   activityId?: string;
   scopeId: string;
+  continuationOfActivityId?: string;
   title?: string;
   kind?: ActivityKind;
   executionMode?: ActivityExecutionMode;
@@ -113,6 +134,45 @@ export type CreateActivityInput = {
   completionTrigger?: ActivityCompletionTrigger;
   legacy?: boolean;
   now?: number;
+};
+
+type AgentStorageRow = {
+  agent_id: string;
+  scope_id: string;
+  agent_name: string;
+  normalized_name: string;
+  lifecycle: string;
+  current_thread_id: string | null;
+  current_job_id: string | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+  orphaned_reason: string | null;
+};
+
+type AgentThreadStorageRow = {
+  thread_id: string;
+  agent_id: string;
+  scope_id: string;
+  backend_kind: string;
+  cwd: string;
+  sandbox: string;
+  context_mode: string;
+  is_current: number;
+  linked_at: number;
+  replaced_at: number | null;
+  forked_from_thread_id: string | null;
+};
+
+type ActivityAgentStorageRow = {
+  assignment_id: string;
+  activity_id: string;
+  agent_id: string;
+  role: string;
+  context_mode: string;
+  assigned_at: number;
+  released_at: number | null;
 };
 
 export type ActivityEventRecord = {
@@ -197,6 +257,7 @@ export class BridgeStateStore {
       existingVersion !== undefined &&
       existingVersion !== "1" &&
       existingVersion !== "2" &&
+      existingVersion !== "3" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -208,6 +269,7 @@ export class BridgeStateStore {
       if (existingVersion === undefined) this.setMeta("schema_version", "1");
       if ((existingVersion || "1") === "1") this.migrateV1ToV2();
       if (this.getMeta("schema_version") === "2") this.migrateV2ToV3();
+      if (this.getMeta("schema_version") === "3") this.migrateV3ToV4();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -300,7 +362,7 @@ export class BridgeStateStore {
       .prepare(`
         SELECT payload, activity_id, thread_id, execution_mode, backend_kind,
                bridge_instance_id, worker_id, worker_generation, upstream_request_id,
-               terminal_version
+               terminal_version, agent_id, context_mode
           FROM jobs
          WHERE archived_at IS NULL
          ORDER BY updated_at ASC
@@ -405,10 +467,22 @@ export class BridgeStateStore {
     return this.transaction(() => {
       if (this.getActivityRow(activityId)) throw new Error("Activity id already exists.");
       this.ensureScope(scopeId, now);
+      let continuationOfActivityId: string | undefined;
+      if (input.continuationOfActivityId) {
+        continuationOfActivityId = normalizeUuid(
+          input.continuationOfActivityId,
+          "continuationOfActivityId"
+        );
+        const source = this.requireActivity(continuationOfActivityId);
+        if (source.scopeId !== scopeId) {
+          throw new Error("The continuation Activity belongs to another conversation scope.");
+        }
+      }
       const scopeVersion = this.nextScopeVersion(scopeId, now);
       this.insertActivity({
         activityId,
         scopeId,
+        continuationOfActivityId,
         title: normalizeActivityTitle(input.title || "Codex activity"),
         kind,
         executionMode,
@@ -423,7 +497,14 @@ export class BridgeStateStore {
         scopeVersion,
         eventType: "activity-created",
         createdAt: now,
-        payload: { kind, executionMode, handoffPolicy, completionTrigger }
+        payload: {
+          kind,
+          executionMode,
+          handoffPolicy,
+          completionTrigger,
+          continuationOfActivityId: continuationOfActivityId || null,
+          cardGeneration: 1
+        }
       });
       return this.requireActivity(activityId);
     });
@@ -452,6 +533,366 @@ export class BridgeStateStore {
       ? this.database.prepare("SELECT COUNT(*) AS count FROM activities WHERE scope_id = ?").get(scopeId)
       : this.database.prepare("SELECT COUNT(*) AS count FROM activities").get();
     return Number((row as { count?: number } | undefined)?.count || 0);
+  }
+
+  createAgent(input: {
+    scopeId: string;
+    agentId?: string;
+    agentName?: string;
+    lifecycle?: BridgeAgentLifecycle;
+    now?: number;
+  }): BridgeAgent {
+    const scopeId = normalizeUuid(input.scopeId, "agent scopeId");
+    const agentId = normalizeUuid(input.agentId || randomUUID(), "agentId");
+    const now = input.now ?? Date.now();
+    return this.transaction(() => {
+      this.ensureScope(scopeId, now);
+      if (this.getAgent(agentId)) throw new Error("Agent id already exists.");
+      const requestedName = input.agentName || this.nextAgentName(scopeId);
+      const { agentName, normalizedName } = normalizeAgentName(requestedName);
+      const lifecycle = input.lifecycle || "idle";
+      if (!isAgentLifecycle(lifecycle)) throw new Error("Invalid Agent lifecycle.");
+      try {
+        this.database
+          .prepare(`
+            INSERT INTO agents(
+              agent_id, scope_id, agent_name, normalized_name, lifecycle,
+              current_thread_id, current_job_id, version, created_at, updated_at,
+              archived_at, orphaned_reason
+            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, NULL, NULL)
+          `)
+          .run(agentId, scopeId, agentName, normalizedName, lifecycle, now, now);
+      } catch (error) {
+        if (String(error).includes("agents.scope_id, agents.normalized_name")) {
+          throw new Error("AGENT_NAME_CONFLICT: Agent names must be unique in this conversation.");
+        }
+        throw error;
+      }
+      this.nextScopeVersion(scopeId, now);
+      return this.requireAgent(agentId);
+    });
+  }
+
+  getAgent(agentId: string): BridgeAgent | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM agents WHERE agent_id = ?")
+      .get(agentId) as AgentStorageRow | undefined;
+    return row ? readAgentRow(row) : undefined;
+  }
+
+  getAgentForThread(threadId: string): BridgeAgent | undefined {
+    const row = this.database
+      .prepare(`
+        SELECT a.* FROM agents a
+        JOIN agent_threads t ON t.agent_id = a.agent_id
+        WHERE t.thread_id = ?
+      `)
+      .get(threadId) as AgentStorageRow | undefined;
+    return row ? readAgentRow(row) : undefined;
+  }
+
+  listAgents(scopeId?: string, includeArchived = false, limit = 100, offset = 0): BridgeAgent[] {
+    const boundedLimit = Math.max(0, Math.min(1_000, limit));
+    const boundedOffset = Math.max(0, offset);
+    let sql = "SELECT * FROM agents";
+    const parameters: Array<string | number> = [];
+    const predicates: string[] = [];
+    if (scopeId) {
+      predicates.push("scope_id = ?");
+      parameters.push(normalizeUuid(scopeId, "agent scopeId"));
+    }
+    if (!includeArchived) predicates.push("lifecycle <> 'archived'");
+    if (predicates.length > 0) sql += ` WHERE ${predicates.join(" AND ")}`;
+    sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?";
+    parameters.push(boundedLimit, boundedOffset);
+    return (this.database.prepare(sql).all(...parameters) as AgentStorageRow[]).map(readAgentRow);
+  }
+
+  countAgents(scopeId?: string, includeArchived = false): number {
+    let sql = "SELECT COUNT(*) AS count FROM agents";
+    const parameters: string[] = [];
+    const predicates: string[] = [];
+    if (scopeId) {
+      predicates.push("scope_id = ?");
+      parameters.push(normalizeUuid(scopeId, "agent scopeId"));
+    }
+    if (!includeArchived) predicates.push("lifecycle <> 'archived'");
+    if (predicates.length > 0) sql += ` WHERE ${predicates.join(" AND ")}`;
+    return Number((this.database.prepare(sql).get(...parameters) as CountRow).count);
+  }
+
+  listAgentThreads(agentId: string): BridgeAgentThread[] {
+    return (this.database
+      .prepare("SELECT * FROM agent_threads WHERE agent_id = ? ORDER BY linked_at ASC")
+      .all(agentId) as AgentThreadStorageRow[]).map(readAgentThreadRow);
+  }
+
+  linkAgentThread(input: {
+    agentId: string;
+    threadId: string;
+    backendKind: string;
+    cwd: string;
+    sandbox: string;
+    contextMode: AgentContextMode;
+    forkedFromThreadId?: string;
+    now?: number;
+  }): BridgeAgentThread {
+    const now = input.now ?? Date.now();
+    return this.transaction(() => {
+      const agent = this.requireAgent(input.agentId);
+      if (!isAgentContextMode(input.contextMode)) throw new Error("Invalid Agent context mode.");
+      const threadId = normalizeRequiredString(input.threadId, "threadId", 200);
+      const owner = this.getAgentForThread(threadId);
+      if (owner && owner.agentId !== agent.agentId) {
+        throw new Error("The Codex thread is already owned by another bridge Agent.");
+      }
+      const forkedFromThreadId = input.forkedFromThreadId
+        ? normalizeRequiredString(input.forkedFromThreadId, "forkedFromThreadId", 200)
+        : undefined;
+      this.database
+        .prepare(`
+          UPDATE agent_threads
+             SET is_current = 0, replaced_at = COALESCE(replaced_at, ?)
+           WHERE agent_id = ? AND is_current = 1 AND thread_id <> ?
+        `)
+        .run(now, agent.agentId, threadId);
+      this.database
+        .prepare(`
+          INSERT INTO agent_threads(
+            thread_id, agent_id, scope_id, backend_kind, cwd, sandbox, context_mode,
+            is_current, linked_at, replaced_at, forked_from_thread_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)
+          ON CONFLICT(thread_id) DO UPDATE SET
+            backend_kind = excluded.backend_kind,
+            cwd = excluded.cwd,
+            sandbox = excluded.sandbox,
+            context_mode = excluded.context_mode,
+            is_current = 1,
+            replaced_at = NULL,
+            forked_from_thread_id = COALESCE(excluded.forked_from_thread_id, agent_threads.forked_from_thread_id)
+        `)
+        .run(
+          threadId,
+          agent.agentId,
+          agent.scopeId,
+          normalizeRequiredString(input.backendKind, "backend kind", 100),
+          normalizeRequiredString(input.cwd, "working directory", 4_000),
+          normalizeRequiredString(input.sandbox, "sandbox", 100),
+          input.contextMode,
+          now,
+          forkedFromThreadId || null
+        );
+      this.database
+        .prepare(`
+          UPDATE agents
+             SET current_thread_id = ?, lifecycle = CASE WHEN lifecycle = 'orphaned' THEN 'idle' ELSE lifecycle END,
+                 orphaned_reason = NULL, version = version + 1, updated_at = ?
+           WHERE agent_id = ?
+        `)
+        .run(threadId, now, agent.agentId);
+      this.nextScopeVersion(agent.scopeId, now);
+      const row = this.database
+        .prepare("SELECT * FROM agent_threads WHERE thread_id = ?")
+        .get(threadId) as AgentThreadStorageRow;
+      return readAgentThreadRow(row);
+    });
+  }
+
+  assignAgent(input: {
+    activityId: string;
+    agentId: string;
+    contextMode: AgentContextMode;
+    role?: string;
+    now?: number;
+  }): ActivityAgentAssignment {
+    const now = input.now ?? Date.now();
+    return this.transaction(() => {
+      const activity = this.requireActivity(input.activityId);
+      const agent = this.requireAgent(input.agentId);
+      if (activity.scopeId !== agent.scopeId) {
+        throw new Error("The Activity and Agent belong to different conversation scopes.");
+      }
+      if (agent.lifecycle === "archived") {
+        throw new Error("The selected Agent is archived. Restore it before assigning work.");
+      }
+      if (!isAgentContextMode(input.contextMode)) throw new Error("Invalid Agent context mode.");
+      const existing = this.database
+        .prepare(`
+          SELECT * FROM activity_agents
+           WHERE activity_id = ? AND agent_id = ? AND released_at IS NULL
+        `)
+        .get(activity.activityId, agent.agentId) as ActivityAgentStorageRow | undefined;
+      if (existing) return readActivityAgentRow(existing);
+      const assignmentId = randomUUID();
+      this.database
+        .prepare(`
+          INSERT INTO activity_agents(
+            assignment_id, activity_id, agent_id, role, context_mode, assigned_at, released_at
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+        `)
+        .run(
+          assignmentId,
+          activity.activityId,
+          agent.agentId,
+          normalizeOptionalBoundedText(input.role, 80) || "primary",
+          input.contextMode,
+          now
+        );
+      this.nextScopeVersion(activity.scopeId, now);
+      return readActivityAgentRow(
+        this.database
+          .prepare("SELECT * FROM activity_agents WHERE assignment_id = ?")
+          .get(assignmentId) as ActivityAgentStorageRow
+      );
+    });
+  }
+
+  listActivityAgentAssignments(activityId?: string, agentId?: string): ActivityAgentAssignment[] {
+    let sql = "SELECT * FROM activity_agents";
+    const parameters: string[] = [];
+    const predicates: string[] = [];
+    if (activityId) {
+      predicates.push("activity_id = ?");
+      parameters.push(activityId);
+    }
+    if (agentId) {
+      predicates.push("agent_id = ?");
+      parameters.push(agentId);
+    }
+    if (predicates.length > 0) sql += ` WHERE ${predicates.join(" AND ")}`;
+    sql += " ORDER BY assigned_at ASC";
+    return (this.database.prepare(sql).all(...parameters) as ActivityAgentStorageRow[])
+      .map(readActivityAgentRow);
+  }
+
+  releaseAgentAssignment(activityId: string, agentId: string, now = Date.now()): ActivityAgentAssignment | undefined {
+    return this.transaction(() => {
+      const activity = this.requireActivity(activityId);
+      const agent = this.requireAgent(agentId);
+      if (activity.scopeId !== agent.scopeId) {
+        throw new Error("The Activity and Agent belong to different conversation scopes.");
+      }
+      const row = this.database
+        .prepare(`
+          SELECT * FROM activity_agents
+           WHERE activity_id = ? AND agent_id = ? AND released_at IS NULL
+        `)
+        .get(activityId, agentId) as ActivityAgentStorageRow | undefined;
+      if (!row) return undefined;
+      this.database
+        .prepare("UPDATE activity_agents SET released_at = ? WHERE assignment_id = ?")
+        .run(now, row.assignment_id);
+      this.nextScopeVersion(activity.scopeId, now);
+      return { ...readActivityAgentRow(row), releasedAt: now };
+    });
+  }
+
+  setAgentExecutionState(
+    agentId: string,
+    lifecycle: Extract<BridgeAgentLifecycle, "idle" | "active" | "waiting-input" | "orphaned">,
+    options: { currentJobId?: string; orphanedReason?: string; now?: number } = {}
+  ): BridgeAgent {
+    const now = options.now ?? Date.now();
+    return this.transaction(() => {
+      const agent = this.requireAgent(agentId);
+      if (agent.lifecycle === "archived") {
+        throw new Error("An archived Agent must be restored before its execution state can change.");
+      }
+      const currentJobId = lifecycle === "active" || lifecycle === "waiting-input"
+        ? normalizeRequiredString(options.currentJobId, "current job id", 200)
+        : undefined;
+      const orphanedReason = lifecycle === "orphaned"
+        ? normalizeRequiredString(options.orphanedReason, "orphaned reason", 1_000)
+        : undefined;
+      this.database
+        .prepare(`
+          UPDATE agents SET lifecycle = ?, current_job_id = ?, orphaned_reason = ?,
+                            version = version + 1, updated_at = ?
+           WHERE agent_id = ?
+        `)
+        .run(lifecycle, currentJobId || null, orphanedReason || null, now, agent.agentId);
+      this.nextScopeVersion(agent.scopeId, now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
+  renameAgent(agentId: string, name: string, now = Date.now()): BridgeAgent {
+    return this.transaction(() => {
+      const agent = this.requireAgent(agentId);
+      const { agentName, normalizedName } = normalizeAgentName(name);
+      try {
+        this.database
+          .prepare(`
+            UPDATE agents SET agent_name = ?, normalized_name = ?, version = version + 1, updated_at = ?
+             WHERE agent_id = ?
+          `)
+          .run(agentName, normalizedName, now, agent.agentId);
+      } catch (error) {
+        if (String(error).includes("agents.scope_id, agents.normalized_name")) {
+          throw new Error("AGENT_NAME_CONFLICT: Agent names must be unique in this conversation.");
+        }
+        throw error;
+      }
+      this.nextScopeVersion(agent.scopeId, now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
+  archiveAgent(agentId: string, now = Date.now()): BridgeAgent {
+    return this.transaction(() => {
+      const agent = this.requireAgent(agentId);
+      if (agent.lifecycle === "archived") return agent;
+      if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
+        throw new Error(
+          `AGENT_BUSY: Agent has active job ${agent.currentJobId || "unknown"}. Force-stop that job before archiving; filesystem changes are not rolled back.`
+        );
+      }
+      this.database
+        .prepare(`
+          UPDATE agents SET lifecycle = 'archived', archived_at = ?, version = version + 1,
+                            updated_at = ? WHERE agent_id = ?
+        `)
+        .run(now, now, agent.agentId);
+      this.nextScopeVersion(agent.scopeId, now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
+  restoreAgent(agentId: string, now = Date.now()): BridgeAgent {
+    return this.transaction(() => {
+      const agent = this.requireAgent(agentId);
+      if (agent.lifecycle !== "archived") return agent;
+      this.database
+        .prepare(`
+          UPDATE agents SET lifecycle = CASE WHEN orphaned_reason IS NULL THEN 'idle' ELSE 'orphaned' END,
+                            archived_at = NULL, version = version + 1, updated_at = ?
+           WHERE agent_id = ?
+        `)
+        .run(now, agent.agentId);
+      this.nextScopeVersion(agent.scopeId, now);
+      return this.requireAgent(agent.agentId);
+    });
+  }
+
+  getAgentMutation(scopeId: string, requestId: string): { actionHash: string; result: unknown } | undefined {
+    const row = this.database
+      .prepare("SELECT action_hash, result FROM agent_mutations WHERE scope_id = ? AND request_id = ?")
+      .get(scopeId, requestId) as { action_hash: string; result: string } | undefined;
+    return row
+      ? {
+          actionHash: row.action_hash,
+          result: parsePayload({ payload: row.result }, "Agent mutation result")
+        }
+      : undefined;
+  }
+
+  recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown, now = Date.now()): void {
+    this.database
+      .prepare(`
+        INSERT INTO agent_mutations(scope_id, request_id, action_hash, result, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(scopeId, requestId, actionHash, JSON.stringify(result), now);
   }
 
   setActivityPolicy(
@@ -1301,7 +1742,7 @@ export class BridgeStateStore {
           CREATE INDEX jobs_thread_recent ON jobs(thread_id, updated_at DESC);
         `);
         const now = Date.now();
-        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_version", "3");
         this.setMeta("schema_v3_migrated_at", new Date(now).toISOString());
       });
     } finally {
@@ -1310,6 +1751,256 @@ export class BridgeStateStore {
     const violations = this.database.pragma("foreign_key_check") as unknown[];
     if (violations.length > 0) {
       throw new Error("Bridge state schema v3 migration produced foreign-key violations.");
+    }
+  }
+
+  private migrateV3ToV4(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(`
+          CREATE TABLE agents (
+            agent_id TEXT PRIMARY KEY,
+            scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+            agent_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            lifecycle TEXT NOT NULL CHECK(lifecycle IN ('idle','active','waiting-input','archived','orphaned')),
+            current_thread_id TEXT,
+            current_job_id TEXT,
+            version INTEGER NOT NULL CHECK(version >= 1),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            archived_at INTEGER,
+            orphaned_reason TEXT,
+            UNIQUE(scope_id, normalized_name)
+          ) STRICT;
+          CREATE INDEX agents_scope_state_recent
+            ON agents(scope_id, lifecycle, updated_at DESC);
+
+          CREATE TABLE agent_threads (
+            thread_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
+            scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+            backend_kind TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            sandbox TEXT NOT NULL,
+            context_mode TEXT NOT NULL CHECK(context_mode IN ('continue','fork','fresh')),
+            is_current INTEGER NOT NULL CHECK(is_current IN (0,1)),
+            linked_at INTEGER NOT NULL,
+            replaced_at INTEGER,
+            forked_from_thread_id TEXT
+          ) STRICT;
+          CREATE INDEX agent_threads_agent_history
+            ON agent_threads(agent_id, linked_at ASC);
+          CREATE UNIQUE INDEX agent_threads_one_current
+            ON agent_threads(agent_id) WHERE is_current = 1;
+
+          CREATE TABLE activity_agents (
+            assignment_id TEXT PRIMARY KEY,
+            activity_id TEXT NOT NULL REFERENCES activities(activity_id) ON DELETE RESTRICT,
+            agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,
+            role TEXT NOT NULL,
+            context_mode TEXT NOT NULL CHECK(context_mode IN ('continue','fork','fresh')),
+            assigned_at INTEGER NOT NULL,
+            released_at INTEGER
+          ) STRICT;
+          CREATE INDEX activity_agents_activity_history
+            ON activity_agents(activity_id, assigned_at ASC);
+          CREATE INDEX activity_agents_agent_history
+            ON activity_agents(agent_id, assigned_at ASC);
+          CREATE UNIQUE INDEX activity_agents_active_pair
+            ON activity_agents(activity_id, agent_id) WHERE released_at IS NULL;
+
+          CREATE TABLE agent_mutations (
+            scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+            request_id TEXT NOT NULL,
+            action_hash TEXT NOT NULL,
+            result TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY(scope_id, request_id)
+          ) STRICT;
+
+          ALTER TABLE activities ADD COLUMN continuation_of_activity_id TEXT REFERENCES activities(activity_id);
+          ALTER TABLE activities ADD COLUMN card_generation INTEGER NOT NULL DEFAULT 1 CHECK(card_generation >= 1);
+          CREATE INDEX activities_continuation
+            ON activities(continuation_of_activity_id, created_at ASC);
+
+          ALTER TABLE jobs ADD COLUMN agent_id TEXT REFERENCES agents(agent_id);
+          ALTER TABLE jobs ADD COLUMN context_mode TEXT CHECK(context_mode IN ('continue','fork','fresh'));
+          CREATE INDEX jobs_agent_recent ON jobs(agent_id, updated_at DESC);
+        `);
+
+        const jobRows = this.database
+          .prepare(`
+            SELECT job_id, scope_id, activity_id, thread_id, backend_kind, status,
+                   updated_at, payload
+              FROM jobs ORDER BY updated_at ASC, job_id ASC
+          `)
+          .all() as Array<{
+            job_id: string;
+            scope_id: string;
+            activity_id: string;
+            thread_id: string | null;
+            backend_kind: string;
+            status: string;
+            updated_at: number;
+            payload: string;
+          }>;
+        const sessionRows = this.database
+          .prepare("SELECT thread_id, scope_id, cwd, last_used_at, payload FROM sessions ORDER BY last_used_at ASC")
+          .all() as Array<{
+            thread_id: string;
+            scope_id: string;
+            cwd: string;
+            last_used_at: number;
+            payload: string;
+          }>;
+        const sessionsByThread = new Map(sessionRows.map((row) => [row.thread_id, row]));
+        const agentByLegacyKey = new Map<string, string>();
+        const nameCounters = new Map<string, number>();
+        const ensureLegacyAgent = (
+          scopeId: string,
+          legacyKey: string,
+          threadId: string | undefined,
+          job: (typeof jobRows)[number] | undefined,
+          session: (typeof sessionRows)[number] | undefined
+        ): string => {
+          const mapKey = `${scopeId}\0${legacyKey}`;
+          const existing = agentByLegacyKey.get(mapKey);
+          if (existing) return existing;
+          const agentId = stableUuid("bridge-agent-v4", scopeId, legacyKey);
+          const index = (nameCounters.get(scopeId) || 0) + 1;
+          nameCounters.set(scopeId, index);
+          const agentName = `Legacy Codex Agent ${index}`;
+          const normalizedName = normalizeAgentName(agentName).normalizedName;
+          const activeJob = threadId
+            ? [...jobRows].reverse().find(
+                (candidate) =>
+                  candidate.scope_id === scopeId &&
+                  candidate.thread_id === threadId &&
+                  isActiveActivityJobStatus(candidate.status)
+              )
+            : job && isActiveActivityJobStatus(job.status)
+              ? job
+              : undefined;
+          const createdAt = Math.min(
+            job?.updated_at ?? Number.MAX_SAFE_INTEGER,
+            session?.last_used_at ?? Number.MAX_SAFE_INTEGER
+          );
+          const updatedAt = Math.max(job?.updated_at || 0, session?.last_used_at || 0, Date.now());
+          this.database
+            .prepare(`
+              INSERT INTO agents(
+                agent_id, scope_id, agent_name, normalized_name, lifecycle,
+                current_thread_id, current_job_id, version, created_at, updated_at,
+                archived_at, orphaned_reason
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, NULL)
+            `)
+            .run(
+              agentId,
+              scopeId,
+              agentName,
+              normalizedName,
+              activeJob ? "active" : "idle",
+              threadId || null,
+              activeJob?.job_id || null,
+              Number.isFinite(createdAt) ? createdAt : updatedAt,
+              updatedAt
+            );
+          if (threadId) {
+            const jobPayload = job
+              ? parsePayload({ payload: job.payload }, "legacy job") as Record<string, unknown>
+              : undefined;
+            const sessionPayload = session
+              ? parsePayload({ payload: session.payload }, "legacy session") as Record<string, unknown>
+              : undefined;
+            const cwd = normalizeOptionalString(session?.cwd) ||
+              normalizeOptionalString(jobPayload?.cwd) ||
+              normalizeOptionalString(sessionPayload?.cwd) ||
+              ".";
+            const sandbox = normalizeOptionalString(jobPayload?.sandbox) ||
+              normalizeOptionalString(sessionPayload?.sandbox) ||
+              "read-only";
+            const backendKind = job?.backend_kind ||
+              normalizeOptionalString(sessionPayload?.backendKind) ||
+              "mcp-server";
+            this.database
+              .prepare(`
+                INSERT INTO agent_threads(
+                  thread_id, agent_id, scope_id, backend_kind, cwd, sandbox, context_mode,
+                  is_current, linked_at, replaced_at, forked_from_thread_id
+                ) VALUES (?, ?, ?, ?, ?, ?, 'continue', 1, ?, NULL, NULL)
+              `)
+              .run(
+                threadId,
+                agentId,
+                scopeId,
+                backendKind,
+                cwd,
+                sandbox,
+                session?.last_used_at || job?.updated_at || updatedAt
+              );
+          }
+          agentByLegacyKey.set(mapKey, agentId);
+          return agentId;
+        };
+
+        for (const job of jobRows) {
+          const session = job.thread_id ? sessionsByThread.get(job.thread_id) : undefined;
+          const agentId = ensureLegacyAgent(
+            job.scope_id,
+            job.thread_id ? `thread:${job.thread_id}` : `job:${job.job_id}`,
+            job.thread_id || undefined,
+            job,
+            session
+          );
+          this.database
+            .prepare("UPDATE jobs SET agent_id = ?, context_mode = 'continue' WHERE job_id = ?")
+            .run(agentId, job.job_id);
+          const activity = this.database
+            .prepare("SELECT lifecycle, created_at, updated_at FROM activities WHERE activity_id = ?")
+            .get(job.activity_id) as { lifecycle: string; created_at: number; updated_at: number };
+          const assignmentId = stableUuid("activity-agent-v4", job.activity_id, agentId);
+          this.database
+            .prepare(`
+              INSERT OR IGNORE INTO activity_agents(
+                assignment_id, activity_id, agent_id, role, context_mode, assigned_at, released_at
+              ) VALUES (?, ?, ?, 'legacy', 'continue', ?, ?)
+            `)
+            .run(
+              assignmentId,
+              job.activity_id,
+              agentId,
+              activity.created_at,
+              isTerminalActivityJobStatus(job.status) ||
+                activity.lifecycle === "completed" ||
+                activity.lifecycle === "cancelled" ||
+                activity.lifecycle === "abandoned"
+                ? Math.max(job.updated_at, activity.updated_at)
+                : null
+            );
+        }
+        for (const session of sessionRows) {
+          if (agentByLegacyKey.has(`${session.scope_id}\0thread:${session.thread_id}`)) continue;
+          ensureLegacyAgent(
+            session.scope_id,
+            `thread:${session.thread_id}`,
+            session.thread_id,
+            undefined,
+            session
+          );
+        }
+
+        const now = Date.now();
+        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_v4_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+    const violations = this.database.pragma("foreign_key_check") as unknown[];
+    if (violations.length > 0) {
+      throw new Error("Bridge state schema v4 migration produced foreign-key violations.");
     }
   }
 
@@ -1329,7 +2020,7 @@ export class BridgeStateStore {
             instance_id, started_at, stopped_at, termination_reason, process_id, payload
           ) VALUES (?, ?, NULL, NULL, ?, ?)
         `)
-        .run(this.currentInstanceId, now, process.pid, JSON.stringify({ schemaVersion: 3 }));
+        .run(this.currentInstanceId, now, process.pid, JSON.stringify({ schemaVersion: 4 }));
     });
   }
 
@@ -1360,7 +2051,7 @@ export class BridgeStateStore {
     const previous = this.database
       .prepare(`
         SELECT scope_id, activity_id, thread_id, status, backend_kind, bridge_instance_id,
-               terminal_version, archived_at
+               terminal_version, agent_id, context_mode, archived_at
           FROM jobs WHERE job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
@@ -1370,6 +2061,23 @@ export class BridgeStateStore {
     if (previous && previous.activity_id !== activityId) {
       throw new Error("A persisted Codex job cannot move to another Activity.");
     }
+    const agentId = job.agentId
+      ? normalizeUuid(job.agentId, "job agentId")
+      : previous?.agent_id || undefined;
+    if (previous?.agent_id && agentId !== previous.agent_id) {
+      throw new Error("A persisted Codex job cannot move to another Agent.");
+    }
+    if (agentId) {
+      const agent = this.getAgent(agentId);
+      if (!agent || agent.scopeId !== scopeId) {
+        throw new Error("The persisted Codex job Agent belongs to another scope or does not exist.");
+      }
+    }
+    const contextMode = job.contextMode ||
+      (previous?.context_mode && isAgentContextMode(previous.context_mode)
+        ? previous.context_mode
+        : undefined);
+    if (contextMode && !isAgentContextMode(contextMode)) throw new Error("Invalid job context mode.");
     const requestCollision = this.database
       .prepare(`
         SELECT job_id, archived_at FROM jobs
@@ -1426,6 +2134,8 @@ export class BridgeStateStore {
     job.threadId = threadId;
     job.executionMode = executionMode;
     job.backendKind = backendKind;
+    job.agentId = agentId;
+    job.contextMode = contextMode;
     job.bridgeInstanceId = bridgeInstanceId;
     job.terminalVersion = terminalVersion;
 
@@ -1434,8 +2144,8 @@ export class BridgeStateStore {
         INSERT INTO jobs(
           job_id, scope_id, request_id, activity_id, thread_id, status, execution_mode,
           backend_kind, bridge_instance_id, worker_id, worker_generation, upstream_request_id,
-          terminal_version, updated_at, archived_at, payload
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+          terminal_version, agent_id, context_mode, updated_at, archived_at, payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
         ON CONFLICT(job_id) DO UPDATE SET
           scope_id = excluded.scope_id,
           request_id = excluded.request_id,
@@ -1449,6 +2159,8 @@ export class BridgeStateStore {
           worker_generation = excluded.worker_generation,
           upstream_request_id = excluded.upstream_request_id,
           terminal_version = excluded.terminal_version,
+          agent_id = excluded.agent_id,
+          context_mode = excluded.context_mode,
           updated_at = excluded.updated_at,
           archived_at = NULL,
           payload = excluded.payload
@@ -1467,14 +2179,19 @@ export class BridgeStateStore {
         Number.isInteger(job.workerGeneration) ? job.workerGeneration : null,
         normalizeOptionalString(job.upstreamRequestId) || null,
         terminalVersion || null,
+        agentId || null,
+        contextMode || null,
         job.updatedAt,
         JSON.stringify(job)
       );
 
+    const agentStateChanged = agentId
+      ? this.syncAgentForJob(job, agentId, activityId, job.updatedAt)
+      : false;
     const statusChanged = !previous || previous.status !== job.status;
     const threadChanged = (previous?.thread_id || undefined) !== threadId;
     const restoredFromArchive = Boolean(previous?.archived_at);
-    if (!activityCreated && !statusChanged && !threadChanged && !restoredFromArchive) return;
+    if (!activityCreated && !statusChanged && !threadChanged && !restoredFromArchive && !agentStateChanged) return;
 
     const scopeVersion = this.nextScopeVersion(scopeId, job.updatedAt);
     if (activityCreated) {
@@ -1505,10 +2222,64 @@ export class BridgeStateStore {
       payload: {
         threadLinked: Boolean(threadId),
         terminalVersion: terminalVersion || null,
-        backendKind
+        backendKind,
+        agentId: agentId || null,
+        contextMode: contextMode || null
       }
     });
     this.reconcileActivity(activityId, scopeVersion, job.updatedAt);
+  }
+
+  private syncAgentForJob(
+    job: JobRowInput,
+    agentId: string,
+    activityId: string,
+    now: number
+  ): boolean {
+    const agent = this.requireAgent(agentId);
+    if (agent.lifecycle === "archived") {
+      throw new Error("An archived Agent cannot own a running Codex job.");
+    }
+    let lifecycle: BridgeAgentLifecycle;
+    let currentJobId: string | undefined;
+    let assignmentReleased = false;
+    if (isActiveActivityJobStatus(job.status)) {
+      const pending = (job as JobRowInput & { pendingInteractions?: unknown }).pendingInteractions;
+      lifecycle = Array.isArray(pending) && pending.length > 0 ? "waiting-input" : "active";
+      currentJobId = job.jobId;
+    } else {
+      const active = this.database
+        .prepare(`
+          SELECT job_id, payload FROM jobs
+           WHERE agent_id = ? AND archived_at IS NULL
+             AND status IN ('running','terminating','termination-failed')
+           ORDER BY updated_at DESC LIMIT 1
+        `)
+        .get(agentId) as { job_id: string; payload: string } | undefined;
+      if (active) {
+        const payload = parsePayload({ payload: active.payload }, "active Agent job") as Record<string, unknown>;
+        lifecycle = Array.isArray(payload.pendingInteractions) && payload.pendingInteractions.length > 0
+          ? "waiting-input"
+          : "active";
+        currentJobId = active.job_id;
+      } else {
+        lifecycle = agent.lifecycle === "orphaned" ? "orphaned" : "idle";
+      }
+      assignmentReleased = this.database
+        .prepare(`
+          UPDATE activity_agents SET released_at = COALESCE(released_at, ?)
+           WHERE activity_id = ? AND agent_id = ? AND released_at IS NULL
+        `)
+        .run(now, activityId, agentId).changes > 0;
+    }
+    if (agent.lifecycle === lifecycle && agent.currentJobId === currentJobId) return assignmentReleased;
+    this.database
+      .prepare(`
+        UPDATE agents SET lifecycle = ?, current_job_id = ?, version = version + 1, updated_at = ?
+         WHERE agent_id = ?
+      `)
+      .run(lifecycle, currentJobId || null, now, agentId);
+    return true;
   }
 
   private reconcileActivity(activityId: string, scopeVersion: number, now: number): void {
@@ -1608,6 +2379,7 @@ export class BridgeStateStore {
   private insertActivity(input: {
     activityId: string;
     scopeId: string;
+    continuationOfActivityId?: string;
     title: string;
     kind: ActivityKind;
     executionMode: ActivityExecutionMode;
@@ -1620,20 +2392,56 @@ export class BridgeStateStore {
     counts?: ActivityJobCounts;
   }): void {
     const counts = input.counts || countsForSingleStatus(undefined);
+    if (!this.tableHasColumn("activities", "card_generation")) {
+      this.database
+        .prepare(`
+          INSERT INTO activities(
+            activity_id, scope_id, title, kind, execution_mode, handoff_policy,
+            completion_trigger, lifecycle, waiting_on, verification, version,
+            completion_version, legacy, created_at, updated_at, sealed_at, completed_at,
+            total_jobs, running_jobs, completed_jobs, failed_jobs, interrupted_jobs,
+            cancelled_jobs, terminal_jobs
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, 'not-required', 1, 0, ?, ?, ?, NULL, NULL,
+                    ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          input.activityId,
+          input.scopeId,
+          normalizeActivityTitle(input.title),
+          input.kind,
+          input.executionMode,
+          input.handoffPolicy,
+          input.completionTrigger,
+          input.waitingOn || "none",
+          input.legacy ? 1 : 0,
+          input.now,
+          input.updatedAt ?? input.now,
+          counts.total,
+          counts.running,
+          counts.completed,
+          counts.failed,
+          counts.interrupted,
+          counts.cancelled,
+          counts.terminal
+        );
+      return;
+    }
     this.database
       .prepare(`
         INSERT INTO activities(
-          activity_id, scope_id, title, kind, execution_mode, handoff_policy,
+          activity_id, scope_id, continuation_of_activity_id, card_generation,
+          title, kind, execution_mode, handoff_policy,
           completion_trigger, lifecycle, waiting_on, verification, version,
           completion_version, legacy, created_at, updated_at, sealed_at, completed_at,
           total_jobs, running_jobs, completed_jobs, failed_jobs, interrupted_jobs,
           cancelled_jobs, terminal_jobs
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, 'not-required', 1, 0, ?, ?, ?, NULL, NULL,
+        ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'open', ?, 'not-required', 1, 0, ?, ?, ?, NULL, NULL,
                   ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.activityId,
         input.scopeId,
+        input.continuationOfActivityId || null,
         normalizeActivityTitle(input.title),
         input.kind,
         input.executionMode,
@@ -1651,6 +2459,11 @@ export class BridgeStateStore {
         counts.cancelled,
         counts.terminal
       );
+  }
+
+  private tableHasColumn(table: string, column: string): boolean {
+    return (this.database.pragma(`table_info(${table})`) as Array<{ name: string }>)
+      .some((entry) => entry.name === column);
   }
 
   private touchActivity(
@@ -1763,6 +2576,25 @@ export class BridgeStateStore {
       .get(activityId) as ActivityStorageRow | undefined;
   }
 
+  private requireAgent(agentId: string): BridgeAgent {
+    const agent = this.getAgent(agentId);
+    if (!agent) throw new Error("Unknown Agent id in this conversation scope.");
+    return agent;
+  }
+
+  private nextAgentName(scopeId: string): string {
+    const normalizedNames = new Set(
+      (this.database
+        .prepare("SELECT normalized_name FROM agents WHERE scope_id = ?")
+        .all(scopeId) as Array<{ normalized_name: string }>).map((row) => row.normalized_name)
+    );
+    for (let index = 1; index <= 100_000; index += 1) {
+      const candidate = `Codex Agent ${index}`;
+      if (!normalizedNames.has(normalizeAgentName(candidate).normalizedName)) return candidate;
+    }
+    throw new Error("Could not allocate a unique Agent name in this conversation.");
+  }
+
   private requireActivity(activityId: string): BridgeActivity {
     const activity = this.getActivity(activityId);
     if (!activity) throw new Error("Unknown Activity id.");
@@ -1872,7 +2704,9 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     workerId: row.worker_id || undefined,
     workerGeneration: row.worker_generation ?? undefined,
     upstreamRequestId: row.upstream_request_id || undefined,
-    terminalVersion: row.terminal_version ?? undefined
+    terminalVersion: row.terminal_version ?? undefined,
+    agentId: row.agent_id || undefined,
+    contextMode: isAgentContextMode(row.context_mode) ? row.context_mode : undefined
   };
 }
 
@@ -1896,6 +2730,8 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
   return {
     activityId: row.activity_id,
     scopeId: row.scope_id,
+    continuationOfActivityId: row.continuation_of_activity_id || undefined,
+    cardGeneration: row.card_generation,
     title: row.title,
     kind: row.kind,
     executionMode: normalizeActivityExecutionMode(row.execution_mode),
@@ -1920,6 +2756,60 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
       cancelled: row.cancelled_jobs,
       terminal: row.terminal_jobs
     }
+  };
+}
+
+function readAgentRow(row: AgentStorageRow): BridgeAgent {
+  if (!isAgentLifecycle(row.lifecycle)) {
+    throw new Error(`Invalid Agent lifecycle in bridge state: ${row.agent_id}.`);
+  }
+  return {
+    agentId: row.agent_id,
+    scopeId: row.scope_id,
+    agentName: row.agent_name,
+    normalizedName: row.normalized_name,
+    lifecycle: row.lifecycle,
+    currentThreadId: row.current_thread_id || undefined,
+    currentJobId: row.current_job_id || undefined,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    archivedAt: row.archived_at ?? undefined,
+    orphanedReason: row.orphaned_reason || undefined
+  };
+}
+
+function readAgentThreadRow(row: AgentThreadStorageRow): BridgeAgentThread {
+  if (!isAgentContextMode(row.context_mode)) {
+    throw new Error(`Invalid Agent thread context mode: ${row.thread_id}.`);
+  }
+  return {
+    threadId: row.thread_id,
+    agentId: row.agent_id,
+    scopeId: row.scope_id,
+    backendKind: row.backend_kind,
+    cwd: row.cwd,
+    sandbox: row.sandbox,
+    contextMode: row.context_mode,
+    isCurrent: row.is_current === 1,
+    linkedAt: row.linked_at,
+    replacedAt: row.replaced_at ?? undefined,
+    forkedFromThreadId: row.forked_from_thread_id || undefined
+  };
+}
+
+function readActivityAgentRow(row: ActivityAgentStorageRow): ActivityAgentAssignment {
+  if (!isAgentContextMode(row.context_mode)) {
+    throw new Error(`Invalid Activity Agent context mode: ${row.assignment_id}.`);
+  }
+  return {
+    assignmentId: row.assignment_id,
+    activityId: row.activity_id,
+    agentId: row.agent_id,
+    role: row.role,
+    contextMode: row.context_mode,
+    assignedAt: row.assigned_at,
+    releasedAt: row.released_at ?? undefined
   };
 }
 
@@ -2003,6 +2893,28 @@ function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim();
   return normalized || undefined;
+}
+
+function normalizeRequiredString(value: unknown, label: string, maximum: number): string {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized || normalized.length > maximum || /[\r\n]/.test(normalized)) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return normalized;
+}
+
+function stableUuid(namespace: string, ...parts: string[]): string {
+  const hex = createHash("sha256")
+    .update(namespace)
+    .update("\0")
+    .update(parts.join("\0"))
+    .digest("hex")
+    .slice(0, 32)
+    .split("");
+  hex[12] = "4";
+  hex[16] = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  const value = hex.join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
 }
 
 function normalizeEventType(value: string): string {
