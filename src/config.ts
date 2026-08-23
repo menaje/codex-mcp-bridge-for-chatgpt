@@ -277,7 +277,8 @@ async function scanSensitiveFiles(root: string, maxFindings: number): Promise<st
     ".next",
     ".turbo",
     ".vscode-test",
-    ".build"
+    ".build",
+    "target"
   ]);
   const deniedBasenames = new Set([
     ".env",

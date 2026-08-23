@@ -310,10 +310,13 @@ describe("config policy", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const vscodeTest = path.join(root, ".vscode-test", "runtime");
     const swiftBuild = path.join(root, ".build", "checkouts", "fixture");
+    const rustBuild = path.join(root, "target", "checkouts", "fixture");
     mkdirSync(vscodeTest, { recursive: true });
     mkdirSync(swiftBuild, { recursive: true });
+    mkdirSync(rustBuild, { recursive: true });
     writeFileSync(path.join(vscodeTest, ".npmrc"), "registry=https://registry.npmjs.org\n");
     writeFileSync(path.join(swiftBuild, "test-pubkey.pem"), "public test fixture\n");
+    writeFileSync(path.join(rustBuild, "test-pubkey.pem"), "public test fixture\n");
 
     expect(await findSensitiveFiles(root)).toEqual([]);
   });
