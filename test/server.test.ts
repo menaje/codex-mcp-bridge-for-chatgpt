@@ -118,6 +118,9 @@ afterEach(() => {
 describe("http server", () => {
   it("publishes the Agent-first public routing contract in server instructions", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS.slice(0, 512)).toContain("scope-owned Agent");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("activityTitle, activityKind, agentRole");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("AGENT_METADATA_REQUIRED");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("ACTIVITY_METADATA_REQUIRED");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("continuationOfActivityId");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("contextMode='continue'");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("saved default working folder");
@@ -237,7 +240,10 @@ describe("http server", () => {
           scopeId: SCOPE_A,
           requestId: REQUEST_A,
           prompt: "slow",
+          activityTitle: "Slow HTTP task",
+          activityKind: "implementation",
           agentName: "HTTP Agent",
+          agentRole: "implementation",
           contextMode: "fresh"
         }
       })
@@ -272,7 +278,11 @@ describe("http server", () => {
       arguments: {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         prompt: "derive scope",
-        sessionMode: "new",
+        activityTitle: "Derive HTTP scope",
+        activityKind: "investigation",
+        agentName: "HTTP Derived Agent",
+        agentRole: "investigation",
+        contextMode: "fresh",
         executionMode: "foreground"
       },
       _meta: metadata
@@ -332,7 +342,9 @@ describe("http server", () => {
         scopeId: SCOPE_A,
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         prompt: "persist Activity",
-        sessionMode: "new",
+        agentName: "HTTP Persistent Agent",
+        agentRole: "review",
+        contextMode: "fresh",
         executionMode: "foreground",
         activityTitle: "Persistent Activity",
         activityKind: "review",

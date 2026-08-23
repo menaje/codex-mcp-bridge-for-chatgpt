@@ -78,8 +78,10 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 - UI language;
 - concurrent-job limit;
 - card visibility;
-- card layout (`agent-list` by default or `activity-summary`);
 - optional completion handoff.
+
+There is one conversation-scoped flat Activity feed. Retired saved layout
+values map to this feed and are not selectable in Settings.
 
 With one allowed root the default folder starts as that root. With multiple allowed roots, save one folder before starting a new Activity. The card cannot widen operator roots/capabilities, change tunnel credentials, or change the Codex approval policy.
 
@@ -103,7 +105,7 @@ If a saved effort is no longer supported, Settings warns instead of rewriting it
 
 Call `codex_status` and confirm:
 
-- the saved `defaultCwd`, `accessStrategy`, card layout/visibility, and language;
+- the saved `defaultCwd`, `accessStrategy`, card visibility, and language;
 - operator roots and mutation capability flags;
 - default backend and active build ID;
 - settings schema/model policy and catalog source/fingerprint/LKG status;
@@ -126,11 +128,22 @@ Use these routes:
 ```json
 {
   "activityTitle": "Implement the agreed design",
-  "agentName": "Implementation Agent",
+  "activityKind": "implementation",
+  "agentName": "Mina",
+  "agentRole": "implementation",
   "contextMode": "fresh",
   "prompt": "Implement the design and run the relevant checks"
 }
 ```
+
+GPT must submit a complete creation envelope. Every new Activity requires
+`activityTitle`, `activityKind`, `agentRole`, and `contextMode`; every new Agent
+also requires a unique, human-friendly `agentName`. The bridge returns all
+missing fields together under `AGENT_NAME_REQUIRED`, `AGENT_METADATA_REQUIRED`,
+or `ACTIVITY_METADATA_REQUIRED` instead of inventing them. Retry with a new
+`requestId` and every listed field. Preserve the Agent name when continuing,
+forking, or starting another Activity with that Agent, and keep role text in
+`agentRole` rather than encoding it in the name.
 
 The result returns immutable `activityId` and `agentId`. A same-goal follow-up uses both exact IDs and `continue`:
 
@@ -151,6 +164,8 @@ A new but dependent goal creates a linked Activity without reopening the complet
   "agentId": "...",
   "contextMode": "continue",
   "activityTitle": "Follow-up integration",
+  "activityKind": "implementation",
+  "agentRole": "integration",
   "prompt": "Integrate the completed work with the next component"
 }
 ```
@@ -165,9 +180,11 @@ If the backend cannot resume the current thread, the Agent becomes `orphaned`. U
 
 When a task result says `bridgeActivity.shouldRenderActivityCard: true`, call `codex_activity` once with its Activity ID and card generation. The mounted card owns refreshes through one scope-version long poll; do not fixed-interval poll each job.
 
-The default Agent list prioritizes input/approval, errors/interruption, background-process attention, active work, verification, and recent completion. Idle/archived rows are filtered, and bounded completion history uses **Show more**. It shows only state, Agent identity, Activity title, timing, force-stop, background-process stop, archive/restore, and necessary approval/input controls.
+The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 
-The card deliberately omits Activity `<details>`, timelines, full job/thread IDs, cwd, backend/worker data, command output, and steering. Detailed diagnostics remain available in `codex_status`.
+The feed shows only Activity title, GPT-chosen Agent name, separate role, localized state, kind, timing, final project-folder name when multiple projects are relevant, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input.
+
+The card deliberately omits a KPI dashboard, card-grid Agent list, layout selector, Activity `<details>`, timelines, Agent/job/thread IDs, full working paths, backend/worker data, command output, and general steering. Detailed diagnostics remain available in `codex_status`.
 
 Automatic duplicate suppression is scoped to the current Activity presentation generation. The server uses a short render reservation followed by an in-memory lease keyed by `openai/widgetSessionId`. The card renews that lease on reload/watch; abort/unmount/TTL releases it. A new or linked Activity can render a new generation even while continuing the same Agent/thread. An explicit user request may set `forceNewCard` to bypass suppression.
 
@@ -191,10 +208,11 @@ In a new ChatGPT conversation:
 4. choose **Restore default settings**, confirm, and verify the card rerenders;
 5. confirm `codex_task` has no `cwd` and fixed access modes have no `sandbox`;
 6. start a narrow foreground read-only Activity and confirm it uses the saved folder;
-7. open the Agent-list Activity card and verify no path/backend/thread/timeline detail appears;
+7. open the flat Activity feed and verify there is no KPI/card grid/layout selector or path/backend/ID/timeline detail;
 8. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
-9. complete/archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
-10. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
+9. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
+10. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
+11. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
 
 In an existing pre-refresh conversation:
 

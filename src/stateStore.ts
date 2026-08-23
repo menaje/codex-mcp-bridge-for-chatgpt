@@ -538,7 +538,7 @@ export class BridgeStateStore {
   createAgent(input: {
     scopeId: string;
     agentId?: string;
-    agentName?: string;
+    agentName: string;
     lifecycle?: BridgeAgentLifecycle;
     now?: number;
   }): BridgeAgent {
@@ -548,8 +548,7 @@ export class BridgeStateStore {
     return this.transaction(() => {
       this.ensureScope(scopeId, now);
       if (this.getAgent(agentId)) throw new Error("Agent id already exists.");
-      const requestedName = input.agentName || this.nextAgentName(scopeId);
-      const { agentName, normalizedName } = normalizeAgentName(requestedName);
+      const { agentName, normalizedName } = normalizeAgentName(input.agentName);
       const lifecycle = input.lifecycle || "idle";
       if (!isAgentLifecycle(lifecycle)) throw new Error("Invalid Agent lifecycle.");
       try {
@@ -2580,19 +2579,6 @@ export class BridgeStateStore {
     const agent = this.getAgent(agentId);
     if (!agent) throw new Error("Unknown Agent id in this conversation scope.");
     return agent;
-  }
-
-  private nextAgentName(scopeId: string): string {
-    const normalizedNames = new Set(
-      (this.database
-        .prepare("SELECT normalized_name FROM agents WHERE scope_id = ?")
-        .all(scopeId) as Array<{ normalized_name: string }>).map((row) => row.normalized_name)
-    );
-    for (let index = 1; index <= 100_000; index += 1) {
-      const candidate = `Codex Agent ${index}`;
-      if (!normalizedNames.has(normalizeAgentName(candidate).normalizedName)) return candidate;
-    }
-    throw new Error("Could not allocate a unique Agent name in this conversation.");
   }
 
   private requireActivity(activityId: string): BridgeActivity {

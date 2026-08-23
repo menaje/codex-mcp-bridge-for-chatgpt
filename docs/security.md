@@ -11,8 +11,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_status` returns policy plus scope-filtered metadata-only session
   summaries and retained asynchronous results. An explicit operator-audit flag
   can return all scopes.
-- `codex_activity` renders a scope-filtered localized Activity card. Its private
-  metadata remains bounded and redacted; it is not a secret store.
+- `codex_activity` renders a scope-filtered localized flat Activity feed. Its
+  private metadata remains bounded and redacted; public rows omit Agent/job/thread
+  IDs and expose only final folder names when multiple projects must be distinguished,
+  never full working paths.
 - `codex_cancel` force-stops one scope-owned running job through exact App
   Server turn interruption or the tracked worker process group; partial
   filesystem changes are not rolled back.
@@ -51,8 +53,12 @@ the network as the current macOS user.
 - Thirty concurrent jobs at most.
 - Concurrent sessions are allowed in one working directory, including mutating jobs.
 - Overlapping mutations are coordinated by the caller or isolated with worktrees.
-- Scope-persistent named bridge Agents with immutable IDs, normalized unique
-  aliases, current/history thread links, and Activity assignment history.
+- Scope-persistent named bridge Agents with immutable IDs, GPT-supplied normalized
+  unique human-friendly aliases, separate assignment roles, current/history thread
+  links, and Activity assignment history. The bridge does not invent public names
+  or creation metadata. New Agent/Activity admission validates the complete
+  conditional metadata envelope before writing state and returns a structured,
+  retryable list of every missing field.
 - One active job per Agent/Codex thread.
 - Different Codex threads under the same conversation scope may run
   concurrently in the same working directory; parallelism is created on demand

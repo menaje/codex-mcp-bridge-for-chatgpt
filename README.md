@@ -118,8 +118,11 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - UI language;
 - active-job limit;
 - Activity-card visibility: `always`, `background-only`, or `never`;
-- Activity-card layout: `agent-list` (default) or `activity-summary`;
 - completion handoff: `off` or `auto-handoff` while a card is mounted.
+
+The Activity card has one conversation-scoped flat-feed layout. Older saved
+`agent-list` and `activity-summary` values are migrated to that same feed; there
+is no layout selector.
 
 The saved default folder is the only start path for a new Activity or explicit fresh Agent context. Existing Agent threads keep their admission-time folder and sandbox even after Settings changes. The folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
 
@@ -161,8 +164,10 @@ Routing fields are:
 - omit `activityId` to create a new Activity;
 - pass the exact returned `activityId` for another turn in the same open Activity;
 - pass `continuationOfActivityId` to create a linked Activity without reopening a terminal source Activity;
-- pass exact `agentId` to reuse a bridge-managed Agent; `agentName` creates a new Agent and is only a human alias;
-- choose `contextMode: continue`, `fork`, or `fresh`.
+- pass exact `agentId` to reuse a bridge-managed Agent;
+- for every new Activity, GPT must supply `activityTitle`, `activityKind`, `agentRole`, and an explicit `contextMode`;
+- when creating a new Agent, GPT must also choose a unique human-friendly `agentName`; keep the assignment in the separate `agentRole` field;
+- when adding a new Agent to an existing Activity, supply `agentName`, `agentRole`, and `contextMode`.
 
 Recommended mappings:
 
@@ -171,7 +176,7 @@ Recommended mappings:
 - independent verification/alternative: another Agent with `fork` or `fresh`;
 - unrelated goal: new Activity + new Agent + `fresh`.
 
-One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an Activity has multiple Agent candidates, the bridge requires an exact `agentId` instead of guessing. Agent names are Unicode-normalized and case-insensitively unique within a scope.
+One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an Activity has multiple Agent candidates, the bridge requires an exact `agentId` instead of guessing. The bridge never invents public identity metadata: GPT supplies a person-like display name such as `Mina`, while `agentRole` can say `implementation` or `review`. Missing creation fields are reported together through `AGENT_NAME_REQUIRED`, `AGENT_METADATA_REQUIRED`, or `ACTIVITY_METADATA_REQUIRED`, so GPT can retry once with a complete envelope and a new `requestId`. Existing Agent/Activity follow-ups reuse stored metadata. Agent names are Unicode-normalized and case-insensitively unique within a scope.
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If a persisted backend thread is no longer resumable, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable.
 
@@ -187,9 +192,11 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 ## Activity card lifecycle
 
-The default `agent-list` card shows one lightweight row per bridge-managed Agent: name, short immutable ID, current Activity, localized state, elapsed/last-change times, and only the action needed now. Idle and archived Agents are behind filters; completed history is bounded and has **Show more**. The optional `activity-summary` layout is a reduced goal summary.
+The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
-The card does not expose event timelines, full job/thread IDs, working paths, backend/worker details, command output, or general steering. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
+Truly completed work moves into a collapsed **Completed Codex** group that reports both distinct Agent count and completed Activity count. Idle and ended Agents have separate collapsed groups. A completed Activity remains in the current feed while verification, a handoff, a tracked job, an interaction, or an App Server background process is still pending. Reusing the same Agent for a new Activity removes it from completed history and shows the new current Activity instead.
+
+The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show only their final folder names. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
 
 Card duplication is suppressed per `scopeId + activityId + cardGeneration`. A short render reservation closes the first-render race. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore it. A new or linked Activity gets a new presentation generation even when it reuses the same Agent/thread. An explicit user request with `forceNewCard` bypasses automatic suppression.
 

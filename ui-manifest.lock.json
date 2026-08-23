@@ -6,8 +6,8 @@
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "3dd540df9e5575d6787dc4a80bdd11dfc11ef7f727b6e163d2e482498b209114",
-      "uri": "ui://codex-mcp-bridge/settings/3dd540df9e55.html",
+      "digest": "e8791478f08999127d129b033f917ef39e6f6d6751d530120460813560ae0220",
+      "uri": "ui://codex-mcp-bridge/settings/e8791478f089.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -34,18 +34,42 @@
       },
       "previous": [
         {
-          "digest": "2981022940143a702df0faf958b6e6354565c537d0f4f8be4a7390548f507f53",
-          "uri": "ui://codex-mcp-bridge/settings/298102294014.html"
+          "digest": "b171a44e02afcee0549d556c0372172ddd0bb8503895f54f9e712dc157c3ed9d",
+          "uri": "ui://codex-mcp-bridge/settings/b171a44e02af.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure saved access, exact model execution policy, working-directory, interface-language, and concurrency preferences for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+            }
+          }
         }
       ]
     },
     "activity": {
-      "digest": "2d6ac1e37c8d825bc076242c2047e4a11f14d8f0ffaed645dddd75541987af7e",
-      "uri": "ui://codex-mcp-bridge/activity/2d6ac1e37c8d.html",
+      "digest": "6d2f0121022217d99c8b7b56979e5efc444d557756f8cf28a13824fe478c6fe7",
+      "uri": "ui://codex-mcp-bridge/activity/6d2f01210222.html",
       "metadata": {
         "descriptor": {
-          "title": "Codex MCP Bridge for ChatGPT Agent Activity",
-          "description": "Localized lightweight status and controls for bridge-managed Codex Agents.",
+          "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+          "description": "Localized flat feed for the current conversation's Codex Activities and Agents.",
           "mimeType": "text/html;profile=mcp-app"
         },
         "content": {
@@ -57,7 +81,7 @@
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Shows bridge-managed Codex Agents, current Activity status, and only the actions needed now.",
+          "openai/widgetDescription": "Shows the current conversation's Codex work as a flat feed, with completed and idle Agents collapsed.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             "connect_domains": [],
@@ -68,8 +92,32 @@
       },
       "previous": [
         {
-          "digest": "6d26b4bcacc3e44b12763674586bc568bcad9b1aa93d66ff1fa55094543957bb",
-          "uri": "ui://codex-mcp-bridge/activity/6d26b4bcacc3.html"
+          "digest": "bdf3f560713a2398bf4ad7eea62948fe4da6a882e824e117376066ff342cbded",
+          "uri": "ui://codex-mcp-bridge/activity/bdf3f560713a.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+              "description": "Localized flat feed for the current conversation's Codex Activities and Agents.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows the current conversation's Codex work as a flat feed, with completed and idle Agents collapsed.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+            }
+          }
         }
       ]
     }

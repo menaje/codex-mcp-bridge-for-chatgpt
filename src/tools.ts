@@ -599,7 +599,7 @@ export class CodexJobRegistry {
     return this.activityStore.countActivities(scopeId);
   }
 
-  createAgent(input: { scopeId: string; agentName?: string }): BridgeAgent {
+  createAgent(input: { scopeId: string; agentName: string }): BridgeAgent {
     const agent = this.activityStore.createAgent(input);
     this.notifyScope(agent.scopeId);
     return agent;
@@ -3023,7 +3023,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Use exact agentId routing after creation, especially when an Activity has multiple Agents, and choose contextMode='continue', 'fork', or 'fresh' explicitly when needed. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical turn and reuse it only for an exact retry. When bridgeActivity.shouldRenderActivityCard is true, call codex_activity once; the mounted card owns refreshes for that Activity generation.",
+        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical turn and reuse it only for an exact retry. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId. When bridgeActivity.shouldRenderActivityCard is true, call codex_activity once; the mounted card owns refreshes for that Activity generation.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -3182,6 +3182,9 @@ export function registerBridgeTools(
           agentRole: agentResolution.role
         });
       } catch (error) {
+        if (error instanceof TaskCreationMetadataError) {
+          return taskCreationMetadataErrorResult(error);
+        }
         if (error instanceof ModelPolicyError) return modelPolicyErrorResult(error);
         throw error;
       }
@@ -3213,6 +3216,27 @@ type CodexTaskArgs = {
   modelPolicyRevision?: number;
   selection?: ModelSelection;
 };
+
+type TaskCreationMetadataErrorCode =
+  | "AGENT_NAME_REQUIRED"
+  | "AGENT_METADATA_REQUIRED"
+  | "ACTIVITY_METADATA_REQUIRED";
+
+class TaskCreationMetadataError extends Error {
+  constructor(
+    readonly code: TaskCreationMetadataErrorCode,
+    readonly subject: string,
+    readonly missingFields: string[],
+    readonly requiredFields: string[]
+  ) {
+    super(
+      `${code}: ${subject} requires complete GPT-supplied identity metadata. ` +
+      `Missing fields: ${missingFields.join(", ")}. Retry with a new requestId and every listed field. ` +
+      "Keep the human-friendly agentName, agentRole, activityTitle, and activityKind separate, and set contextMode explicitly."
+    );
+    this.name = "TaskCreationMetadataError";
+  }
+}
 
 function rejectStaleTaskModelInputs(
   args: CodexTaskArgs,
@@ -3265,12 +3289,19 @@ type ActivityTaskRequest = Pick<
   | "completionTrigger"
 >;
 
-type AgentTaskResolution = {
-  agent?: BridgeAgent;
-  newAgentName?: string;
-  contextMode: AgentContextMode;
-  role?: string;
-};
+type AgentTaskResolution =
+  | {
+      agent: BridgeAgent;
+      newAgentName?: never;
+      contextMode: AgentContextMode;
+      role?: string;
+    }
+  | {
+      agent?: never;
+      newAgentName: string;
+      contextMode: "fresh";
+      role?: string;
+    };
 
 function resolveAgentForTask(
   args: CodexTaskArgs,
@@ -3301,14 +3332,20 @@ function resolveAgentForTask(
       if (candidateIds.length === 1) agent = jobs.getAgent(candidateIds[0]);
     }
   }
+
+  requireTaskCreationMetadata(args, {
+    createsActivity: !activityRequest.activityId,
+    createsAgent: !agent
+  });
+
   if (!agent) {
-    const contextMode = args.contextMode || "fresh";
+    const contextMode = args.contextMode as AgentContextMode;
     if (contextMode !== "fresh") {
       throw new Error(
         `AGENT_CONTEXT_UNAVAILABLE: A new Agent has no current thread to ${contextMode}. Use contextMode='fresh'.`
       );
     }
-    return { contextMode, role: args.agentRole, newAgentName: args.agentName };
+    return { contextMode, role: args.agentRole, newAgentName: args.agentName as string };
   }
   if (agent.lifecycle === "archived") {
     throw new Error("The selected Agent is archived. Restore it with codex_agent before assigning work.");
@@ -3325,6 +3362,36 @@ function resolveAgentForTask(
     );
   }
   return { agent, contextMode, role: args.agentRole };
+}
+
+function requireTaskCreationMetadata(
+  args: CodexTaskArgs,
+  creation: { createsActivity: boolean; createsAgent: boolean }
+): void {
+  if (!creation.createsActivity && !creation.createsAgent) return;
+
+  const required: string[] = [];
+  if (creation.createsAgent) required.push("agentName");
+  required.push("agentRole");
+  if (creation.createsActivity) required.push("activityTitle", "activityKind");
+  required.push("contextMode");
+  const missing: string[] = [];
+  for (const field of required) {
+    if (!args[field as keyof CodexTaskArgs]) missing.push(field);
+  }
+  if (missing.length === 0) return;
+
+  const code = missing.includes("agentName")
+    ? "AGENT_NAME_REQUIRED"
+    : creation.createsActivity
+      ? "ACTIVITY_METADATA_REQUIRED"
+      : "AGENT_METADATA_REQUIRED";
+  const subject = creation.createsActivity && creation.createsAgent
+    ? "New Agent and Activity creation"
+    : creation.createsActivity
+      ? "New Activity creation"
+      : "New Agent creation";
+  throw new TaskCreationMetadataError(code, subject, missing, required);
 }
 
 function requireAgentSession(
@@ -4239,7 +4306,7 @@ function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<
   };
 }
 
-async function buildActivityView(
+async function buildLegacyActivityView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
   _config: BridgeConfig,
@@ -4455,6 +4522,335 @@ async function buildActivityView(
   };
 }
 
+async function buildActivityView(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  config: BridgeConfig,
+  preferences: BridgeUserSettings,
+  scopeId: string,
+  limit: number,
+  selectedActivityId?: string,
+  wait?: { scopeVersion: number; changed: boolean; timedOut: boolean; waitedMs: number }
+) {
+  const legacy = await buildLegacyActivityView(
+    jobs,
+    upstream,
+    config,
+    preferences,
+    scopeId,
+    limit,
+    selectedActivityId,
+    wait
+  );
+  const now = Date.now();
+  const allActivities = jobs.listActivities(scopeId, 1_000, 0);
+  const allAgents = jobs.listAgents(scopeId, true, 1_000, 0);
+  const activityById = new Map(allActivities.map((activity) => [activity.activityId, activity]));
+  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
+  const scopeJobs = jobs.listForScope(scopeId, config.maxRetainedJobs, 0);
+  const jobsByActivity = new Map<string, CodexJob[]>();
+  for (const job of scopeJobs) {
+    const entries = jobsByActivity.get(job.activityId) || [];
+    entries.push(job);
+    jobsByActivity.set(job.activityId, entries);
+  }
+  for (const entries of jobsByActivity.values()) {
+    entries.sort((left, right) => left.createdAt - right.createdAt);
+  }
+
+  const assignments = jobs
+    .listActivityAgentAssignments()
+    .filter((assignment) => activityById.has(assignment.activityId) && agentById.has(assignment.agentId));
+  const assignmentsByActivity = new Map<string, ActivityAgentAssignment[]>();
+  const assignmentsByAgent = new Map<string, ActivityAgentAssignment[]>();
+  for (const assignment of assignments) {
+    const activityEntries = assignmentsByActivity.get(assignment.activityId) || [];
+    activityEntries.push(assignment);
+    assignmentsByActivity.set(assignment.activityId, activityEntries);
+    const agentEntries = assignmentsByAgent.get(assignment.agentId) || [];
+    agentEntries.push(assignment);
+    assignmentsByAgent.set(assignment.agentId, agentEntries);
+  }
+
+  const legacyAgents = [...legacy.structured.agents, ...legacy.structured.archivedAgents];
+  const legacyAgentById = new Map(legacyAgents.map((agent) => [agent.agentId, agent]));
+  const pendingCompletionRecords = jobs.listPendingCompletionOutbox(scopeId, 1_000);
+  const pendingHandoffActivityIds = new Set(
+    pendingCompletionRecords.map((record) => record.activityId)
+  );
+
+  const assignmentFor = (activityId: string, agentId: string): ActivityAgentAssignment | undefined =>
+    [...(assignmentsByActivity.get(activityId) || [])]
+      .reverse()
+      .find((assignment) => assignment.agentId === agentId);
+  const workspacesFor = (activityId: string): string[] =>
+    [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
+      path.basename(job.cwd)
+    ))];
+
+  const activityRows = allActivities.map((activity) => {
+    const activityJobs = jobsByActivity.get(activity.activityId) || [];
+    const activeJobs = activityJobs.filter((job) => isActiveActivityJobStatus(job.status));
+    const latestJob = activityJobs.at(-1);
+    const activityAssignments = assignmentsByActivity.get(activity.activityId) || [];
+    const hasOpenAssignment = activityAssignments.some(
+      (assignment) => assignment.releasedAt === undefined
+    );
+    const participantIds = [...new Set(activityAssignments.map((assignment) => assignment.agentId))];
+    const relevantAgentRows = participantIds
+      .map((agentId) => legacyAgentById.get(agentId))
+      .filter((agent): agent is NonNullable<typeof agent> =>
+        Boolean(agent && agent.activityId === activity.activityId)
+      );
+    const activeInteractions = activeJobs.flatMap((job) => job.pendingInteractions || []);
+    const hasInput = activeInteractions.some((interaction) => interaction.kind === "user-input");
+    const hasApproval = activeInteractions.some((interaction) => interaction.kind !== "user-input");
+    const relevantStates = new Set(relevantAgentRows.map((agent) => agent.displayState));
+    const hasBackgroundProcesses = relevantAgentRows.some(
+      (agent) => agent.backgroundProcessState === "running"
+    );
+    const hasUnknownBackgroundProcesses = relevantAgentRows.some(
+      (agent) => agent.backgroundProcessState === "unavailable"
+    );
+    const pendingHandoff = pendingHandoffActivityIds.has(activity.activityId);
+    let displayState: string;
+    if (hasInput || activity.waitingOn === "user") displayState = "input-required";
+    else if (hasApproval) displayState = "approval-required";
+    else if (relevantStates.has("termination-failed")) displayState = "termination-failed";
+    else if (relevantStates.has("orphaned")) displayState = "orphaned";
+    else if (hasUnknownBackgroundProcesses) displayState = "background-unavailable";
+    else if (activeJobs.some((job) => job.status === "terminating")) displayState = "terminating";
+    else if (activeJobs.length > 0 || hasBackgroundProcesses || activity.waitingOn === "codex") {
+      displayState = "running";
+    } else if (
+      activity.verification === "pending" ||
+      activity.verification === "verifying" ||
+      activity.waitingOn === "verification"
+    ) displayState = "verification";
+    else if (pendingHandoff) displayState = "waiting-gpt";
+    else if (hasOpenAssignment) displayState = "waiting-gpt";
+    else if (
+      activity.lifecycle === "completed" &&
+      (activity.verification === "verified" || activity.verification === "not-required")
+    ) displayState = "completed";
+    else if (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") {
+      displayState = "ended";
+    } else if (
+      activity.verification === "failed" ||
+      activity.counts.failed > 0 ||
+      relevantStates.has("failed")
+    ) displayState = "failed";
+    else if (activity.counts.interrupted + activity.counts.cancelled > 0) {
+      displayState = "interrupted";
+    } else if (activity.waitingOn === "orchestrator") displayState = "waiting-gpt";
+    else displayState = "idle";
+
+    const participants = participantIds.map((agentId) => {
+      const agent = agentById.get(agentId) as BridgeAgent;
+      const current = legacyAgentById.get(agentId);
+      const assignment = assignmentFor(activity.activityId, agentId);
+      const currentForActivity = current?.activityId === activity.activityId;
+      return {
+        agentId,
+        agentName: agent.agentName,
+        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+        contextMode: assignment?.contextMode || null,
+        displayState: currentForActivity ? current.displayState : displayState,
+        canForceStop: Boolean(currentForActivity && current.canForceStop),
+        backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
+        backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0
+      };
+    });
+    const activeStartedAt = activeJobs.length > 0
+      ? Math.min(...activeJobs.map((job) => job.createdAt))
+      : latestJob?.createdAt || activity.createdAt;
+    return {
+      rowType: "activity" as const,
+      activityId: activity.activityId,
+      title: activity.title,
+      kind: activity.kind,
+      lifecycle: activity.lifecycle,
+      waitingOn: activity.waitingOn,
+      verification: activity.verification,
+      displayState,
+      counts: activity.counts,
+      agents: participants,
+      workspaceLabels: workspacesFor(activity.activityId),
+      continued: Boolean(activity.continuationOfActivityId),
+      pendingHandoff,
+      canRequestVerification: displayState === "verification",
+      canRetry: displayState === "failed" || displayState === "interrupted" || displayState === "termination-failed",
+      elapsedMs: Math.max(0, now - activeStartedAt),
+      createdAt: new Date(activity.createdAt).toISOString(),
+      updatedAt: new Date(activity.updatedAt).toISOString(),
+      completedAt: activity.completedAt ? new Date(activity.completedAt).toISOString() : null
+    };
+  });
+  const hasMultipleWorkspaces = new Set(
+    activityRows.flatMap((row) => row.workspaceLabels)
+  ).size > 1;
+  if (!hasMultipleWorkspaces) {
+    for (const row of activityRows) row.workspaceLabels = [];
+  }
+
+  const activityPriority = (row: (typeof activityRows)[number]): number => {
+    if (["input-required", "approval-required", "verification", "waiting-gpt"].includes(row.displayState)) return 0;
+    if (["failed", "interrupted", "termination-failed", "orphaned", "background-unavailable"].includes(row.displayState)) return 1;
+    if (["running", "terminating"].includes(row.displayState)) return 2;
+    return 3;
+  };
+  const activeRows = activityRows
+    .filter((row) => row.displayState !== "completed" && row.displayState !== "ended")
+    .sort((left, right) =>
+      activityPriority(left) - activityPriority(right) ||
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    );
+  const activeAgentIds = new Set(activeRows.flatMap((row) => row.agents.map((agent) => agent.agentId)));
+  for (const agent of legacyAgents) {
+    if ([
+      "input-required",
+      "approval-required",
+      "termination-failed",
+      "failed",
+      "interrupted",
+      "orphaned",
+      "terminating",
+      "running",
+      "verification"
+    ].includes(agent.displayState) || agent.backgroundProcessState !== "none") {
+      activeAgentIds.add(agent.agentId);
+    }
+  }
+
+  const completedActivityRows = new Map(
+    activityRows
+      .filter((row) => row.displayState === "completed" && !row.pendingHandoff)
+      .map((row) => [row.activityId, row])
+  );
+  const endedActivityRows = new Map(
+    activityRows.filter((row) => row.displayState === "ended").map((row) => [row.activityId, row])
+  );
+  const completedAgentRows: Array<{
+    agentId: string;
+    agentName: string;
+    role: string | null;
+    latestActivityId: string;
+    latestActivityTitle: string;
+    latestActivityKind: ActivityKind;
+    activityCount: number;
+    activityIds: string[];
+    workspaceLabels: string[];
+    verification: string;
+    updatedAt: string;
+  }> = [];
+  const idleAgentRows: Array<Record<string, unknown>> = [];
+  const endedAgentRows: Array<Record<string, unknown>> = [];
+
+  for (const agent of allAgents) {
+    if (activeAgentIds.has(agent.agentId)) continue;
+    const agentAssignments = assignmentsByAgent.get(agent.agentId) || [];
+    const assignedActivities = [...new Set(agentAssignments.map((assignment) => assignment.activityId))]
+      .map((activityId) => activityById.get(activityId))
+      .filter((activity): activity is BridgeActivity => Boolean(activity))
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+    const latestActivity = assignedActivities[0];
+    const completedActivities = assignedActivities.filter((activity) =>
+      completedActivityRows.has(activity.activityId)
+    );
+    if (latestActivity && completedActivityRows.has(latestActivity.activityId)) {
+      const assignment = assignmentFor(latestActivity.activityId, agent.agentId);
+      completedAgentRows.push({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+        latestActivityId: latestActivity.activityId,
+        latestActivityTitle: latestActivity.title,
+        latestActivityKind: latestActivity.kind,
+        activityCount: completedActivities.length,
+        activityIds: completedActivities.map((activity) => activity.activityId),
+        workspaceLabels: hasMultipleWorkspaces ? workspacesFor(latestActivity.activityId) : [],
+        verification: latestActivity.verification,
+        updatedAt: new Date(latestActivity.completedAt || latestActivity.updatedAt).toISOString()
+      });
+      continue;
+    }
+    if (
+      (latestActivity && endedActivityRows.has(latestActivity.activityId)) ||
+      agent.lifecycle === "archived"
+    ) {
+      const assignment = latestActivity
+        ? assignmentFor(latestActivity.activityId, agent.agentId)
+        : undefined;
+      endedAgentRows.push({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+        latestActivityTitle: latestActivity?.title || null,
+        displayState: latestActivity?.lifecycle || "archived",
+        updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
+      });
+      continue;
+    }
+    const assignment = latestActivity
+      ? assignmentFor(latestActivity.activityId, agent.agentId)
+      : undefined;
+    idleAgentRows.push({
+      agentId: agent.agentId,
+      agentName: agent.agentName,
+      role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+      latestActivityTitle: latestActivity?.title || null,
+      updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
+    });
+  }
+
+  completedAgentRows.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  idleAgentRows.sort((left, right) => Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)));
+  endedAgentRows.sort((left, right) => Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)));
+  const completedActivityIds = new Set(completedAgentRows.flatMap((row) => row.activityIds));
+  const visibleCompletedAgents = completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row);
+  const visibleActiveRows = activeRows.slice(0, limit);
+  const visibleIdleAgents = idleAgentRows.slice(0, limit);
+  const visibleEndedAgents = endedAgentRows.slice(0, limit);
+  const hasMore =
+    activeRows.length > visibleActiveRows.length ||
+    completedAgentRows.length > visibleCompletedAgents.length ||
+    idleAgentRows.length > visibleIdleAgents.length ||
+    endedAgentRows.length > visibleEndedAgents.length;
+
+  return {
+    ...legacy,
+    structured: {
+      ...legacy.structured,
+      // Both retired preference values intentionally resolve to the one flat feed.
+      viewMode: "agent-list" as const,
+      feed: {
+        activeCount: activeRows.length,
+        active: visibleActiveRows,
+        completed: {
+          agentCount: completedAgentRows.length,
+          activityCount: completedActivityIds.size,
+          rows: visibleCompletedAgents,
+          hasMore: completedAgentRows.length > visibleCompletedAgents.length
+        },
+        idle: {
+          agentCount: idleAgentRows.length,
+          rows: visibleIdleAgents,
+          hasMore: idleAgentRows.length > visibleIdleAgents.length
+        },
+        ended: {
+          agentCount: endedAgentRows.length,
+          rows: visibleEndedAgents,
+          hasMore: endedAgentRows.length > visibleEndedAgents.length
+        },
+        pagination: {
+          limit,
+          hasMore
+        }
+      }
+    }
+  };
+}
+
 function activityViewResult(
   view: Awaited<ReturnType<typeof buildActivityView>>,
   locale?: string
@@ -4468,6 +4864,23 @@ function activityViewResult(
         text: JSON.stringify(
           {
             scopeVersion: view.structured.scopeVersion,
+            feed: {
+              activeCount: view.structured.feed.activeCount,
+              active: view.structured.feed.active.map((row) => ({
+                activityId: row.activityId,
+                title: row.title,
+                kind: row.kind,
+                displayState: row.displayState,
+                agentNames: row.agents.map((agent) => agent.agentName),
+                counts: row.counts
+              })),
+              completed: {
+                agentCount: view.structured.feed.completed.agentCount,
+                activityCount: view.structured.feed.completed.activityCount
+              },
+              idleAgentCount: view.structured.feed.idle.agentCount,
+              endedAgentCount: view.structured.feed.ended.agentCount
+            },
             aggregates: view.structured.aggregates,
             agents: view.structured.agents.map((agent) => ({
               agentId: agent.agentId,
@@ -4508,13 +4921,6 @@ function activityViewResult(
 
 function appServerTurnId(job: CodexJob): string | undefined {
   return job.backendKind === "app-server" ? job.upstreamRequestId : undefined;
-}
-
-function relativeWorkingDirectory(cwd: string, allowedRoots: string[]): string {
-  const root = allowedRoots.find((candidate) => cwd === candidate || cwd.startsWith(candidate + path.sep));
-  if (!root) return path.basename(cwd);
-  const relative = path.relative(root, cwd);
-  return relative ? `${path.basename(root)}/${relative}` : path.basename(root);
 }
 
 function metadataString(meta: unknown, key: string): string | undefined {
@@ -4655,9 +5061,9 @@ function codexTaskInputSchema(
       .optional()
       .describe("Exact prior Activity id when creating a new linked Activity. The source Activity remains immutable."),
     activityTitle: z.string().trim().min(1).max(120).optional()
-      .describe("User-facing title for a newly created Activity. Not accepted with activityId."),
+      .describe("GPT-supplied user-facing title required whenever activityId is omitted and a new Activity is created. Not accepted with activityId."),
     activityKind: z.enum(ACTIVITY_KINDS).optional()
-      .describe("Classification for a newly created Activity; it does not grant permission or imply completion."),
+      .describe("GPT-supplied classification required whenever activityId is omitted and a new Activity is created; it does not grant permission or imply completion."),
     executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional()
       .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."),
     handoffPolicy: z.enum(ACTIVITY_HANDOFF_POLICIES).optional()
@@ -4667,11 +5073,11 @@ function codexTaskInputSchema(
     agentId: scopeIdSchema().optional()
       .describe("Exact bridge-managed Agent id. Required when an Activity has multiple prior Agents."),
     agentName: z.string().trim().min(1).max(80).optional()
-      .describe("Optional display name when creating a new Agent; never used as a routing or authorization id."),
+      .describe("GPT-chosen display name required when this call creates a new Agent. Keep role information in agentRole; the name is never used as a routing or authorization id."),
     agentRole: z.string().trim().min(1).max(80).optional()
-      .describe("Optional Activity assignment role for audit and display."),
+      .describe("GPT-supplied Activity assignment role required for every new Activity or new Agent. Existing Agent/Activity follow-ups reuse the stored role."),
     contextMode: z.enum(AGENT_CONTEXT_MODES).optional()
-      .describe("Codex context choice: continue the Agent's current thread, fork it, or start fresh context.")
+      .describe("Explicit Codex context choice required for every new Activity or new Agent: continue the Agent's current thread, fork it, or start fresh context. Existing Agent/Activity follow-ups may omit it.")
   };
   const adaptiveSandbox = settings.accessStrategy === "adaptive"
     ? {
@@ -5721,6 +6127,27 @@ function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
       message: error.message.replace(`${error.code}: `, ""),
       policyRevision: error.policyRevision,
       nextActions: error.nextActions
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function taskCreationMetadataErrorResult(error: TaskCreationMetadataError): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      retryable: true,
+      missingFields: error.missingFields,
+      requiredFields: error.requiredFields,
+      nextActions: [
+        "Choose all missing identity metadata without inventing bridge IDs or combining the Agent name with its role.",
+        "Retry the logical turn once with a new requestId and every field listed in missingFields."
+      ]
     }
   };
   return {

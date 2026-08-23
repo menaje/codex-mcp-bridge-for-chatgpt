@@ -119,6 +119,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
     expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
     expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
     expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
@@ -146,9 +147,14 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
     expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
     expect(ACTIVITY_CARD_HTML).not.toContain("<details");
-    expect(ACTIVITY_CARD_HTML).toContain('next.viewMode==="activity-summary"');
-    expect(ACTIVITY_CARD_HTML).toContain("renderActivities(next)");
-    expect(ACTIVITY_CARD_HTML).toContain("renderAgents(next)");
+    expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
+    expect(ACTIVITY_CARD_HTML).toContain("next.feed");
+    expect(ACTIVITY_CARD_HTML).toContain('renderGroup("completed"');
+    expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
+    expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");
+    expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');
+    expect(ACTIVITY_CARD_HTML).not.toContain("renderActivities(next)");
+    expect(ACTIVITY_CARD_HTML).not.toContain("renderAgents(next)");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_agent"');
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");

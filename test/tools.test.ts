@@ -410,6 +410,110 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("requires complete GPT-supplied creation metadata and preserves it across follow-ups", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const missingName = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "10101010-1010-4010-8010-101010101010",
+        prompt: "review the design",
+        executionMode: "foreground"
+      }
+    });
+    expect(missingName.isError).toBe(true);
+    const missingNameText = JSON.stringify(missingName);
+    expect(missingNameText).toContain("AGENT_NAME_REQUIRED");
+    for (const field of ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"]) {
+      expect(missingNameText).toContain(field);
+    }
+    expect((missingName as { structuredContent?: Record<string, any> }).structuredContent?.error)
+      .toMatchObject({
+        code: "AGENT_NAME_REQUIRED",
+        retryable: true,
+        missingFields: ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"],
+        requiredFields: ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"],
+        nextActions: expect.any(Array)
+      });
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+
+    const incompleteMetadata = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "20202020-2020-4020-8020-202020202020",
+        prompt: "review the design",
+        agentName: "민아",
+        contextMode: "fresh",
+        executionMode: "foreground"
+      }
+    });
+    const incompleteMetadataText = JSON.stringify(incompleteMetadata);
+    expect(incompleteMetadata.isError).toBe(true);
+    expect(incompleteMetadataText).toContain("ACTIVITY_METADATA_REQUIRED");
+    for (const field of ["agentRole", "activityTitle", "activityKind"]) {
+      expect(incompleteMetadataText).toContain(field);
+    }
+    expect((incompleteMetadata as { structuredContent?: Record<string, any> }).structuredContent?.error)
+      .toMatchObject({
+        retryable: true,
+        missingFields: ["agentRole", "activityTitle", "activityKind"]
+      });
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+
+    const named = await runTask(client, {
+      prompt: "review the design",
+      activityTitle: "Design review",
+      activityKind: "review",
+      agentName: "민아",
+      agentRole: "design reviewer",
+      contextMode: "fresh"
+    });
+    const agentId = (named as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId as string;
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
+    expect(jobs.listActivityAgentAssignments(undefined, agentId)).toEqual([
+      expect.objectContaining({ role: "design reviewer" })
+    ]);
+
+    await runTask(client, {
+      prompt: "continue the review",
+      activityId: taskActivityId(named),
+      agentId
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+
+    const incompleteSecondAgent = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "30303030-3030-4030-8030-303030303030",
+        prompt: "independent review",
+        activityId: taskActivityId(named),
+        agentName: "준"
+      }
+    });
+    const incompleteSecondAgentText = JSON.stringify(incompleteSecondAgent);
+    expect(incompleteSecondAgent.isError).toBe(true);
+    expect(incompleteSecondAgentText).toContain("AGENT_METADATA_REQUIRED");
+    expect(incompleteSecondAgentText).toContain("agentRole");
+    expect(incompleteSecondAgentText).toContain("contextMode");
+    expect((incompleteSecondAgent as { structuredContent?: Record<string, any> }).structuredContent?.error)
+      .toMatchObject({
+        retryable: true,
+        missingFields: ["agentRole", "contextMode"],
+        requiredFields: ["agentName", "agentRole", "contextMode"]
+      });
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    await close();
+  });
+
   it("serves the self-contained MCP Apps settings card resource", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
@@ -1961,6 +2065,16 @@ describe("bridge tools", () => {
       verification: "pending",
       completionVersion: 1
     });
+    const pendingVerificationView = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId }
+    });
+    expect((pendingVerificationView as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed).toMatchObject({
+        activeCount: 1,
+        active: [expect.objectContaining({ activityId, displayState: "verification" })],
+        completed: { agentCount: 0, activityCount: 0 }
+      });
     const illegalComplete = await client.callTool({
       name: "codex_activity_update",
       arguments: { activityId, action: "complete" }
@@ -1990,6 +2104,19 @@ describe("bridge tools", () => {
       verification: "verified",
       waitingOn: "none"
     });
+    const verifiedView = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId, forceNewCard: true }
+    });
+    expect((verifiedView as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed).toMatchObject({
+        activeCount: 0,
+        completed: {
+          agentCount: 1,
+          activityCount: 1,
+          rows: [expect.objectContaining({ latestActivityId: activityId, verification: "verified" })]
+        }
+      });
     await close();
   });
 
@@ -2408,7 +2535,11 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new",
+        activityTitle: "Derived scope task",
+        activityKind: "investigation",
+        agentName: "Derived Scope Agent",
+        agentRole: "investigation",
+        contextMode: "fresh",
         executionMode: "foreground"
       },
       _meta: metadataA
@@ -2424,7 +2555,11 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new",
+        activityTitle: "Derived scope task",
+        activityKind: "investigation",
+        agentName: "Derived Scope Agent",
+        agentRole: "investigation",
+        contextMode: "fresh",
         executionMode: "foreground"
       },
       _meta: metadataA
@@ -2527,7 +2662,11 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "abababab-abab-4aba-8aba-abababababab",
         prompt: "compatibility scope",
-        sessionMode: "new"
+        activityTitle: "Compatibility scope task",
+        activityKind: "other",
+        agentName: "Compatibility Agent",
+        agentRole: "compatibility test",
+        contextMode: "fresh"
       }
     });
     expect((compatible as { structuredContent?: Record<string, any> }).structuredContent)
@@ -2549,7 +2688,11 @@ describe("bridge tools", () => {
         arguments: {
           requestId: "acacacac-acac-4aca-8aca-acacacacacac",
           prompt: "cancel derived job",
-          sessionMode: "new"
+          activityTitle: "Cancelable derived task",
+          activityKind: "implementation",
+          agentName: "Cancellation Agent",
+          agentRole: "implementation",
+          contextMode: "fresh"
         },
         _meta: metadata
       })
@@ -2742,6 +2885,11 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       prompt: "same raw request with an omitted mode",
+      activityTitle: "Stable exact-selection retry",
+      activityKind: "investigation" as const,
+      agentName: "Stable Retry Agent",
+      agentRole: "investigation",
+      contextMode: "fresh" as const,
       selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
     };
 
@@ -3267,6 +3415,13 @@ describe("bridge tools", () => {
       realpathSync(second)
     ]);
     expect(upstream.calls[2]?.args.sandbox).toBe("workspace-write");
+    const card = await client.callTool({ name: "codex_activity", arguments: {} });
+    const cardView = (card as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(new Set(cardView.feed.active.flatMap(
+      (activity: { workspaceLabels: string[] }) => activity.workspaceLabels
+    ))).toEqual(new Set([path.basename(first), path.basename(second)]));
+    expect(JSON.stringify(card)).not.toContain(realpathSync(first));
+    expect(JSON.stringify(card)).not.toContain(realpathSync(second));
     await close();
   });
 
@@ -3316,7 +3471,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("projects the saved Activity card layout into the lightweight card view", async () => {
+  it("maps retired Activity layouts to one scoped flat feed and folds completed work by Agent", async () => {
     const root = temporaryRoot();
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
@@ -3331,6 +3486,7 @@ describe("bridge tools", () => {
     const started = await runTask(client, {
       prompt: "render a summary",
       agentName: "Summary Agent",
+      activityTitle: "Render summary",
       contextMode: "fresh"
     });
     const startedStructured = (started as { structuredContent?: Record<string, any> })
@@ -3343,8 +3499,22 @@ describe("bridge tools", () => {
     });
     const summary = (summaryResult as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(summary).toMatchObject({
-      viewMode: "activity-summary",
-      activities: [expect.objectContaining({ activityId })]
+      viewMode: "agent-list",
+      feed: {
+        activeCount: 1,
+        active: [expect.objectContaining({
+          activityId,
+          title: "Render summary",
+          displayState: "waiting-gpt",
+          agents: [expect.objectContaining({ agentName: "Summary Agent" })]
+        })],
+        completed: { agentCount: 0, activityCount: 0 }
+      }
+    });
+
+    await client.callTool({
+      name: "codex_activity_update",
+      arguments: { activityId, action: "complete" }
     });
     settings.update({ activityCardView: "agent-list" }, settings.current.revision);
     const agentsResult = await client.callTool({
@@ -3353,6 +3523,40 @@ describe("bridge tools", () => {
     });
     const agents = (agentsResult as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(agents.viewMode).toBe("agent-list");
+    expect(agents.feed).toMatchObject({
+      activeCount: 0,
+      completed: {
+        agentCount: 1,
+        activityCount: 1,
+        rows: [expect.objectContaining({
+          agentName: "Summary Agent",
+          latestActivityId: activityId,
+          latestActivityTitle: "Render summary",
+          activityCount: 1
+        })]
+      }
+    });
+
+    const agentId = startedStructured.bridgeActivity.agentId as string;
+    const resumed = await runTask(client, {
+      prompt: "start the next scoped activity",
+      agentId,
+      contextMode: "continue",
+      activityTitle: "Next activity"
+    });
+    const resumedActivityId = (resumed as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId as string;
+    const resumedResult = await client.callTool({ name: "codex_activity", arguments: {} });
+    const resumedFeed = (resumedResult as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed;
+    expect(resumedFeed).toMatchObject({
+      activeCount: 1,
+      active: [expect.objectContaining({
+        activityId: resumedActivityId,
+        agents: [expect.objectContaining({ agentName: "Summary Agent" })]
+      })],
+      completed: { agentCount: 0, activityCount: 0 }
+    });
     await close();
   });
 
@@ -4342,12 +4546,50 @@ async function connectTestClient(
     ) => {
       const arguments_ = request.arguments || {};
       if (request.name === "codex_task") {
+        const requestId = typeof arguments_.requestId === "string"
+          ? arguments_.requestId
+          : nextRequestId();
+        const createsActivity = !arguments_.activityId;
+        const createsUnattachedAgent =
+          !arguments_.agentId &&
+          !arguments_.agentName &&
+          createsActivity &&
+          !arguments_.continuationOfActivityId &&
+          !arguments_.threadId;
+        const testAgentName = `Test Agent ${requestId.replaceAll("-", "").slice(-8)}`;
+        const createsNamedAgent = Boolean(arguments_.agentName && !arguments_.agentId);
+        const needsCreationMetadata = createsActivity || createsNamedAgent;
+        const selectedAgent = typeof arguments_.agentId === "string"
+          ? jobRegistry.getAgent(arguments_.agentId)
+          : undefined;
+        const inferredContextMode = arguments_.sessionMode === "continue" || arguments_.threadId
+          ? "continue"
+          : arguments_.sessionMode === "new" || arguments_.agentName || createsUnattachedAgent
+            ? "fresh"
+            : selectedAgent?.currentThreadId
+              ? "continue"
+              : arguments_.continuationOfActivityId
+                ? "continue"
+                : "fresh";
         return rawCallTool(
           {
             ...request,
             arguments: {
               scopeId: SCOPE_A,
-              requestId: nextRequestId(),
+              requestId,
+              ...(createsUnattachedAgent ? { agentName: testAgentName } : {}),
+              ...(needsCreationMetadata && !arguments_.agentRole
+                ? { agentRole: "test role" }
+                : {}),
+              ...(createsActivity && !arguments_.activityTitle
+                ? { activityTitle: `Test Activity ${requestId.replaceAll("-", "").slice(-8)}` }
+                : {}),
+              ...(createsActivity && !arguments_.activityKind
+                ? { activityKind: "other" }
+                : {}),
+              ...(needsCreationMetadata && !arguments_.contextMode
+                ? { contextMode: inferredContextMode }
+                : {}),
               ...arguments_
             }
           },
