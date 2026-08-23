@@ -349,7 +349,8 @@ export class CodexJobRegistry {
   private readonly activityCardLeases = new Map<string, number>();
   private readonly activityCardReservations = new Map<string, number>();
   private readonly activityCardLeaseTtlMs = 75_000;
-  private readonly activityCardReservationTtlMs = 15_000;
+  // Cover one 55s scope watch plus host render/network jitter until the widget lease registers.
+  private readonly activityCardReservationTtlMs = 75_000;
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;

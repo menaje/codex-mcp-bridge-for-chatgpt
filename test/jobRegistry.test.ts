@@ -314,6 +314,13 @@ describe("CodexJobRegistry persistence", () => {
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
 
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+
       registry.touchActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-one");
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "active-lease" });
