@@ -118,7 +118,9 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - the default working folder inside allowed roots;
 - UI language;
 - active-job limit;
-- Activity-card visibility: `always`, `background-only`, or `never`;
+- Activity-card visibility: `always` means one automatic card per GPT response,
+  `background-only` means one per response that has eligible background work,
+  and `never` disables automatic cards;
 - completion handoff: `off` or `auto-handoff` while a card is mounted.
 
 In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary model/effort entries; no synthetic `all` value is persisted or exposed to GPT. Catalog-visible mode stays dynamic and can include later catalog additions.
@@ -199,7 +201,9 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 ## Activity card lifecycle
 
-`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether this exact turn should display; the widget then attaches its own bounded `codex_status` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is internally suppressed. `codex_activity` remains available only for an explicit user-requested open or reopen.
+`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded `codex_status` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
+
+`requestId` and `activityPresentationId` have deliberately different scopes. GPT creates one `requestId` for each logical Codex call. When automatic UI is enabled, GPT also creates one `activityPresentationId` UUID for the current assistant response, reuses it for every `codex_task` in that response even across Agents or Activities, and creates a new value for the next response. An exact retry reuses both IDs. A current automatic-UI descriptor requires the presentation ID; a stale descriptor that omits it receives retryable `ACTIVITY_PRESENTATION_ID_REQUIRED` instead of silently falling back to Activity-generation grouping. The saved visibility policy remains authoritative and cannot be overridden by the ID.
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
@@ -207,9 +211,9 @@ Truly completed work moves into a collapsed **Completed Codex** group that repor
 
 The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show only their final folder names. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
 
-Card duplication is suppressed per `scopeId + activityId + cardGeneration`. A short render reservation closes the first-render race. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore it. A new or linked Activity gets a new presentation generation even when it reuses the same Agent/thread. An explicit user request with `forceNewCard` bypasses automatic suppression.
+Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-The mounted card runs one bounded scope-version long poll and maintains completion handoff. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` correlates a mounted widget instance only; it is not treated as an assistant-response ID. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 

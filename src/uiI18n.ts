@@ -78,9 +78,9 @@ const ENGLISH = {
   "settings.languageHint": "Automatic follows the host application's language.",
   "settings.concurrency": "Maximum concurrent jobs",
   "settings.cardVisibility": "Activity card",
-  "settings.cardVisibility.always": "Always show",
-  "settings.cardVisibility.background": "Background work only",
-  "settings.cardVisibility.never": "Do not show automatically",
+  "settings.cardVisibility.always": "One card per GPT response",
+  "settings.cardVisibility.background": "One card per response with background work",
+  "settings.cardVisibility.never": "No automatic cards",
   "settings.handoff": "Completion handoff",
   "settings.handoff.off": "Off",
   "settings.handoff.auto": "Automatic GPT handoff while card is open",
@@ -131,6 +131,7 @@ const ENGLISH = {
   "activity.terminationFailed": "Worker termination could not be confirmed.",
   "activity.unread": "Unread completion",
   "activity.manualRefresh": "Live updates paused; refresh manually.",
+  "activity.superseded": "A newer Activity card now owns live updates. This snapshot will remain available.",
   "activity.partialChanges": "Force stop does not roll back changes already written to disk.",
   "activity.jobs": "jobs",
   "activity.threads": "threads",
@@ -917,14 +918,68 @@ const ISSUE21_OVERRIDES: Partial<
   }
 };
 
+const ISSUE24_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "settings.cardVisibility.always": "GPT 응답마다 카드 1개",
+    "settings.cardVisibility.background": "백그라운드 작업이 있는 응답마다 카드 1개",
+    "settings.cardVisibility.never": "자동 카드 표시 안 함",
+    "activity.superseded": "더 최신 Activity 카드가 실시간 갱신을 맡았습니다. 이 스냅샷은 그대로 볼 수 있습니다."
+  },
+  ja: {
+    "settings.cardVisibility.always": "GPT 応答ごとにカード 1 枚",
+    "settings.cardVisibility.background": "バックグラウンド作業を含む応答ごとにカード 1 枚",
+    "settings.cardVisibility.never": "自動カードを表示しない",
+    "activity.superseded": "新しい Activity カードがライブ更新を引き継ぎました。このスナップショットは引き続き表示できます。"
+  },
+  "zh-Hans": {
+    "settings.cardVisibility.always": "每个 GPT 回复一张卡片",
+    "settings.cardVisibility.background": "每个含后台任务的回复一张卡片",
+    "settings.cardVisibility.never": "不自动显示卡片",
+    "activity.superseded": "较新的 Activity 卡片已接管实时更新。此快照仍可查看。"
+  },
+  "zh-Hant": {
+    "settings.cardVisibility.always": "每個 GPT 回覆一張卡片",
+    "settings.cardVisibility.background": "每個含背景工作的回覆一張卡片",
+    "settings.cardVisibility.never": "不自動顯示卡片",
+    "activity.superseded": "較新的 Activity 卡片已接管即時更新。此快照仍可查看。"
+  },
+  es: {
+    "settings.cardVisibility.always": "Una tarjeta por respuesta de GPT",
+    "settings.cardVisibility.background": "Una tarjeta por respuesta con trabajo en segundo plano",
+    "settings.cardVisibility.never": "Sin tarjetas automáticas",
+    "activity.superseded": "Una tarjeta de Activity más reciente controla ahora las actualizaciones en vivo. Esta instantánea seguirá disponible."
+  },
+  fr: {
+    "settings.cardVisibility.always": "Une carte par réponse GPT",
+    "settings.cardVisibility.background": "Une carte par réponse avec travail en arrière-plan",
+    "settings.cardVisibility.never": "Aucune carte automatique",
+    "activity.superseded": "Une carte Activity plus récente gère désormais les mises à jour en direct. Cet instantané reste disponible."
+  },
+  de: {
+    "settings.cardVisibility.always": "Eine Karte pro GPT-Antwort",
+    "settings.cardVisibility.background": "Eine Karte pro Antwort mit Hintergrundarbeit",
+    "settings.cardVisibility.never": "Keine automatischen Karten",
+    "activity.superseded": "Eine neuere Activity-Karte übernimmt jetzt die Live-Aktualisierung. Dieser Snapshot bleibt verfügbar."
+  },
+  pt: {
+    "settings.cardVisibility.always": "Um cartão por resposta do GPT",
+    "settings.cardVisibility.background": "Um cartão por resposta com trabalho em segundo plano",
+    "settings.cardVisibility.never": "Sem cartões automáticos",
+    "activity.superseded": "Um cartão de Activity mais recente agora controla as atualizações ao vivo. Este instantâneo continuará disponível."
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

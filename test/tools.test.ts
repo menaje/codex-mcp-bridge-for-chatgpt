@@ -362,7 +362,7 @@ describe("bridge tools", () => {
       "openai/outputTemplate": ACTIVITY_CARD_URI
     });
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "prompt"])
+      required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
@@ -379,7 +379,8 @@ describe("bridge tools", () => {
       contextMode: { enum: ["continue", "fork", "fresh"] },
       agentId: expect.any(Object),
       agentName: expect.any(Object),
-      continuationOfActivityId: expect.any(Object)
+      continuationOfActivityId: expect.any(Object),
+      activityPresentationId: expect.any(Object)
     });
     expect(byName.get("codex_agent")?.inputSchema.properties).toMatchObject({
       action: { enum: ["archive", "restore", "rename", "detach", "terminate-background-process"] },
@@ -421,6 +422,47 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("returns an identifiable retryable error for a stale automatic-card descriptor missing presentation id", async () => {
+    const root = temporaryRoot();
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const missing = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000001",
+        prompt: "stale descriptor call",
+        activityTitle: "Stale descriptor",
+        activityKind: "investigation",
+        agentName: "Stale Descriptor Agent",
+        agentRole: "investigation",
+        contextMode: "fresh"
+      }
+    });
+    expect(missing.isError).toBe(true);
+    expect((missing as { structuredContent?: Record<string, any> }).structuredContent?.error)
+      .toMatchObject({
+        code: "ACTIVITY_PRESENTATION_ID_REQUIRED",
+        retryable: true,
+        missingFields: ["activityPresentationId"],
+        nextActions: expect.any(Array)
+      });
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+
+    const invalid = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000002",
+        activityPresentationId: "not-a-uuid",
+        prompt: "invalid presentation UUID"
+      }
+    });
+    expect(invalid.isError).toBe(true);
+    expect(JSON.stringify(invalid)).toContain("UUID-formatted");
+    await close();
+  });
+
   it("requires complete GPT-supplied creation metadata and preserves it across follow-ups", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -431,6 +473,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "10101010-1010-4010-8010-101010101010",
+        activityPresentationId: "10101010-1010-4010-8010-101010101010",
         prompt: "review the design",
         executionMode: "foreground"
       }
@@ -457,6 +500,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "20202020-2020-4020-8020-202020202020",
+        activityPresentationId: "20202020-2020-4020-8020-202020202020",
         prompt: "review the design",
         agentName: "민아",
         contextMode: "fresh",
@@ -505,6 +549,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "30303030-3030-4030-8030-303030303030",
+        activityPresentationId: "30303030-3030-4030-8030-303030303030",
         prompt: "independent review",
         activityId: taskActivityId(named),
         agentName: "준"
@@ -605,7 +650,7 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
       CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
     });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const { client, rawCallTool, close } = await connectTestClient(config, new FakeUpstream());
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
 
     expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -1406,7 +1451,7 @@ describe("bridge tools", () => {
   it("keeps Activity card visibility independent from foreground/background execution", async () => {
     const root = temporaryRoot();
     const config = configFor(root);
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const { client, rawCallTool, close } = await connectTestClient(config, new FakeUpstream());
 
     const alwaysForeground = await client.callTool({
       name: "codex_task",
@@ -1431,18 +1476,29 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: { expectedRevision: 0, activityCardVisibility: "background-only" }
     });
-    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+    const backgroundOnlyTools = await client.listTools();
+    expect(backgroundOnlyTools.tools.find((tool) => tool.name === "codex_task")?._meta)
       .toMatchObject({ "openai/outputTemplate": ACTIVITY_CARD_URI });
+    const groupedPresentation = "24242424-0000-4000-8000-000000000010";
     const backgroundOnlyForeground = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "foreground without automatic card", sessionMode: "new", executionMode: "foreground" }
+      arguments: {
+        prompt: "foreground without automatic card",
+        sessionMode: "new",
+        executionMode: "foreground",
+        activityPresentationId: groupedPresentation
+      }
     });
     expect((backgroundOnlyForeground as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({ bridgeActivity: { shouldRenderActivityCard: false } });
 
     const backgroundOnlyBackground = parseToolJson(await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "background with automatic card", sessionMode: "new" }
+      arguments: {
+        prompt: "background with automatic card",
+        sessionMode: "new",
+        activityPresentationId: groupedPresentation
+      }
     }));
     expect(backgroundOnlyBackground).toMatchObject({
       status: "running",
@@ -1450,24 +1506,64 @@ describe("bridge tools", () => {
       bridgeActivity: {
         activityCardVisibility: "background-only",
         shouldRenderActivityCard: true,
+        activityPresentationId: groupedPresentation,
         renderTiming: "immediate"
       }
+    });
+    const groupedBackgroundDuplicate = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "same response second background call",
+        sessionMode: "new",
+        activityPresentationId: groupedPresentation
+      }
+    }));
+    expect(groupedBackgroundDuplicate.bridgeActivity).toMatchObject({
+      activityPresentationId: groupedPresentation,
+      shouldRenderActivityCard: false,
+      renderReason: "render-reserved"
     });
 
     await client.callTool({
       name: "codex_update_settings",
       arguments: { expectedRevision: 1, activityCardVisibility: "never", completionHandoff: "off" }
     });
-    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+    const neverTools = await client.listTools();
+    expect(neverTools.tools.find((tool) => tool.name === "codex_task")?._meta)
       .toBeUndefined();
+    const neverTaskDescriptor = neverTools.tools.find((tool) => tool.name === "codex_task");
+    expect((neverTaskDescriptor?.inputSchema as { required?: string[] }).required)
+      .not.toContain("activityPresentationId");
     const neverBackground = parseToolJson(await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "background without automatic card", sessionMode: "new" }
+      arguments: {
+        prompt: "background without automatic card",
+        sessionMode: "new",
+        activityPresentationId: "24242424-0000-4000-8000-000000000011"
+      }
     }));
     expect(neverBackground.bridgeActivity).toMatchObject({
       activityCardVisibility: "never",
       shouldRenderActivityCard: false,
       explicitRenderAllowed: true
+    });
+    const neverWithoutPresentation = parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000012",
+        prompt: "never accepts a stale descriptor without presentation",
+        activityTitle: "Never visibility compatibility",
+        activityKind: "other",
+        agentName: "Never Visibility Agent",
+        agentRole: "compatibility",
+        contextMode: "fresh"
+      }
+    }));
+    expect(neverWithoutPresentation.bridgeActivity).toMatchObject({
+      activityCardVisibility: "never",
+      shouldRenderActivityCard: false,
+      renderReason: "visibility-disabled"
     });
     const explicitCard = await client.callTool({
       name: "codex_activity",
@@ -2629,6 +2725,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
         activityTitle: "Derived scope task",
         activityKind: "investigation",
@@ -2649,6 +2746,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_B,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
         activityTitle: "Derived scope task",
         activityKind: "investigation",
@@ -2679,6 +2777,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        activityPresentationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         prompt: "continue derived scope",
         executionMode: "foreground",
         activityId: (started as { structuredContent?: Record<string, any> }).structuredContent
@@ -2756,6 +2855,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "abababab-abab-4aba-8aba-abababababab",
+        activityPresentationId: "abababab-abab-4aba-8aba-abababababab",
         prompt: "compatibility scope",
         activityTitle: "Compatibility scope task",
         activityKind: "other",
@@ -2782,6 +2882,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           requestId: "acacacac-acac-4aca-8aca-acacacacacac",
+          activityPresentationId: "acacacac-acac-4aca-8aca-acacacacacac",
           prompt: "cancel derived job",
           activityTitle: "Cancelable derived task",
           activityKind: "implementation",
@@ -2929,6 +3030,16 @@ describe("bridge tools", () => {
     );
     expect(retry.jobId).toBe(first.jobId);
     expect(retry.activityId).toBe(first.activityId);
+    expect(first.bridgeActivity).toMatchObject({
+      activityPresentationId: requestId,
+      shouldRenderActivityCard: true,
+      renderReason: "new-presentation"
+    });
+    expect(retry.bridgeActivity).toMatchObject({
+      activityPresentationId: requestId,
+      shouldRenderActivityCard: false,
+      renderReason: "render-reserved"
+    });
     expect(upstream.calls).toHaveLength(1);
 
     const changed = await client.callTool({
@@ -2943,6 +3054,15 @@ describe("bridge tools", () => {
     });
     expect(changedActivity.isError).toBe(true);
     expect(JSON.stringify(changedActivity)).toContain("already used for a different Codex task");
+    const changedPresentation = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        activityPresentationId: "24242424-0000-4000-8000-000000000099"
+      }
+    });
+    expect(changedPresentation.isError).toBe(true);
+    expect(JSON.stringify(changedPresentation)).toContain("already used for a different Codex task");
 
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
@@ -2979,6 +3099,7 @@ describe("bridge tools", () => {
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       prompt: "same raw request with an omitted mode",
       activityTitle: "Stable exact-selection retry",
       activityKind: "investigation" as const,
@@ -3292,14 +3413,16 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("reuses one mounted card for parallel Agents and lets an explicit display bypass suppression", async () => {
+  it("deduplicates parallel Agents by one response presentation and keeps explicit cards distinct", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const activityPresentationId = "24242424-2424-4424-8424-242424242424";
     const first = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "first Agent",
+        activityPresentationId,
         agentName: "Card Agent One",
         contextMode: "fresh",
         executionMode: "background"
@@ -3307,28 +3430,34 @@ describe("bridge tools", () => {
     }));
     expect(first.bridgeActivity).toMatchObject({
       shouldRenderActivityCard: true,
-      renderReason: "new-generation",
-      cardGeneration: 1
+      renderReason: "new-presentation",
+      cardGeneration: 1,
+      activityPresentationId
     });
 
     const mounted = await rawCallTool({
-      name: "codex_activity",
+      name: "codex_status",
       arguments: {
         scopeId: SCOPE_A,
-        activityId: first.activityId,
-        cardGeneration: 1
+        activityView: true,
+        mountedActivityId: first.activityId,
+        cardGeneration: 1,
+        presentationKind: "automatic",
+        activityPresentationId
       },
       _meta: { "openai/widgetSessionId": "mounted-card" }
     });
     expect((mounted as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
       mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
-      presentation: { shouldRenderActivityCard: false, renderReason: "active-lease" }
+      mountedPresentation: { kind: "automatic", activityPresentationId },
+      watcherPolicy: { live: true, ownsCompletionHandoff: true }
     });
 
     const parallel = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "parallel Agent",
+        activityPresentationId,
         activityId: first.activityId,
         agentName: "Card Agent Two",
         contextMode: "fresh",
@@ -3338,6 +3467,23 @@ describe("bridge tools", () => {
     expect(parallel.bridgeActivity).toMatchObject({
       activityId: first.activityId,
       cardGeneration: 1,
+      shouldRenderActivityCard: false,
+      renderReason: "active-lease"
+    });
+
+    const differentActivity = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "different Activity in the same assistant response",
+        activityPresentationId,
+        agentName: "Card Agent Three",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    expect(differentActivity.activityId).not.toBe(first.activityId);
+    expect(differentActivity.bridgeActivity).toMatchObject({
+      activityPresentationId,
       shouldRenderActivityCard: false,
       renderReason: "active-lease"
     });
@@ -3353,14 +3499,73 @@ describe("bridge tools", () => {
       _meta: { "openai/widgetSessionId": "explicit-card" }
     });
     expect((explicit as { structuredContent?: Record<string, any> }).structuredContent?.presentation)
-      .toMatchObject({ shouldRenderActivityCard: true, renderReason: "explicit" });
+      .toMatchObject({
+        shouldRenderActivityCard: true,
+        renderReason: "explicit",
+        presentationKind: "explicit"
+      });
+    expect((explicit as { structuredContent?: Record<string, any> }).structuredContent?.watcherPolicy)
+      .toMatchObject({ live: true, ownsCompletionHandoff: false, maxExplicitPerScope: 3 });
 
     upstream.resolveNext(fakeCodexResult("card-thread-1"));
     upstream.resolveNext(fakeCodexResult("card-thread-2"));
+    upstream.resolveNext(fakeCodexResult("card-thread-3"));
     await Promise.all([
       waitForJobStatus(client, first.jobId, "completed"),
-      waitForJobStatus(client, parallel.jobId, "completed")
+      waitForJobStatus(client, parallel.jobId, "completed"),
+      waitForJobStatus(client, differentActivity.jobId, "completed")
     ]);
+    const nextPresentationId = "24242424-2424-4424-8424-242424242425";
+    const nextResponse = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "same Activity in the next assistant response",
+        activityId: first.activityId,
+        agentId: first.agentId,
+        contextMode: "continue",
+        executionMode: "background",
+        activityPresentationId: nextPresentationId
+      }
+    }));
+    expect(nextResponse.bridgeActivity).toMatchObject({
+      activityId: first.activityId,
+      cardGeneration: 1,
+      activityPresentationId: nextPresentationId,
+      shouldRenderActivityCard: true,
+      renderReason: "new-presentation"
+    });
+    const stoppedOldPresentation = await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: first.activityId,
+        cardGeneration: 1,
+        presentationKind: "automatic",
+        activityPresentationId,
+        afterVersion: (mounted as { structuredContent?: Record<string, any> }).structuredContent
+          ?.scopeVersion,
+        waitFor: "change",
+        waitMs: 1_000
+      },
+      _meta: { "openai/widgetSessionId": "mounted-card" }
+    });
+    expect((stoppedOldPresentation as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        watcherPolicy: {
+          live: false,
+          stopped: true,
+          stopReason: "presentation-superseded",
+          ownsCompletionHandoff: false
+        },
+        wait: {
+          stopped: true,
+          timedOut: false,
+          stopReason: "presentation-superseded"
+        }
+      });
+    upstream.resolveNext(fakeCodexResult("card-thread-1"));
+    await waitForJobStatus(client, nextResponse.jobId, "completed");
     await close();
   });
 
@@ -3400,9 +3605,29 @@ describe("bridge tools", () => {
       "Notify once"
     );
     const secondActivity = await createNotifyActivity("second private payload", "Notify twice");
-    const view = await client.callTool({
+    const explicitView = await client.callTool({
       name: "codex_activity",
       arguments: { scopeId: SCOPE_A }
+    });
+    expect((explicitView as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        pendingHandoffs: [],
+        watcherPolicy: { presentationKind: "explicit", ownsCompletionHandoff: false }
+      });
+    const presentationArgs = {
+      presentationKind: "automatic" as const,
+      activityPresentationId: secondActivity.activityPresentationId
+    };
+    const view = await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: secondActivity.activityId,
+        cardGeneration: secondActivity.cardGeneration,
+        ...presentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const pending = (view as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs;
     expect(pending).toEqual(expect.arrayContaining([
@@ -3413,12 +3638,12 @@ describe("bridge tools", () => {
 
     const first = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
       _meta: { "openai/widgetSessionId": "widget-one" }
     }));
     const second = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
       _meta: { "openai/widgetSessionId": "widget-two" }
     }));
     expect(first).toMatchObject({
@@ -3439,28 +3664,39 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         action: "delivered-batch",
-        outboxIds: [outboxIds[0], 999_999_999]
+        outboxIds: [outboxIds[0], 999_999_999],
+        ...presentationArgs
       },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     expect(failedBatch.isError).toBe(true);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds, ...presentationArgs },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const reclaimed = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
       _meta: { "openai/widgetSessionId": "widget-two" }
     }));
     expect(reclaimed.events).toHaveLength(2);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds, ...presentationArgs },
       _meta: { "openai/widgetSessionId": "widget-two" }
     });
-    const after = await client.callTool({ name: "codex_activity", arguments: { scopeId: SCOPE_A } });
+    const after = await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: secondActivity.activityId,
+        cardGeneration: secondActivity.cardGeneration,
+        ...presentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-one" }
+    });
     expect((after as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs).toEqual([]);
     await close();
   });
@@ -4646,6 +4882,10 @@ async function connectTestClient(
         const requestId = typeof arguments_.requestId === "string"
           ? arguments_.requestId
           : nextRequestId();
+        const activityPresentationId =
+          typeof arguments_.activityPresentationId === "string"
+            ? arguments_.activityPresentationId
+            : requestId;
         const createsActivity = !arguments_.activityId;
         const createsUnattachedAgent =
           !arguments_.agentId &&
@@ -4674,6 +4914,7 @@ async function connectTestClient(
             arguments: {
               scopeId: SCOPE_A,
               requestId,
+              activityPresentationId,
               ...(createsUnattachedAgent ? { agentName: testAgentName } : {}),
               ...(needsCreationMetadata && !arguments_.agentRole
                 ? { agentRole: "test role" }

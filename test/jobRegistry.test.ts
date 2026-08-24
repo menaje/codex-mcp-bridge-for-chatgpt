@@ -23,6 +23,7 @@ describe("CodexJobRegistry persistence", () => {
 
     expect(loaded).toMatchObject({
       status: "completed",
+      activityPresentationId: REQUEST_A,
       executionDecision: {
         policyRevision: 3,
         effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
@@ -296,62 +297,204 @@ describe("CodexJobRegistry persistence", () => {
     await Promise.all(watches);
   });
 
-  it("suppresses duplicate Activity generations with reservations and in-memory widget leases", async () => {
+  it("suppresses automatic cards by response presentation while retaining Activity-generation validity", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
     try {
       const registry = new CodexJobRegistry();
       const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Card generation" });
       const preferences = { activityCardVisibility: "always" as const };
+      const firstPresentation = "10101010-1010-4010-8010-101010101010";
+      const secondPresentation = "20202020-2020-4020-8020-202020202020";
 
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      }))
         .toMatchObject({
           activityId: activity.activityId,
           cardGeneration: 1,
           shouldRenderActivityCard: true,
-          renderReason: "new-generation"
+          renderReason: "new-presentation",
+          activityPresentationId: firstPresentation
         });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      }))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
 
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+      await vi.advanceTimersByTimeAsync(75_001);
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      }))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
-      await vi.advanceTimersByTimeAsync(15_001);
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
 
-      registry.touchActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-one");
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
+      registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        1,
+        "widget-one",
+        { kind: "automatic", activityPresentationId: firstPresentation }
+      );
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      }))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "active-lease" });
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, { explicit: true }))
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        presentationKind: "explicit"
+      }))
         .toMatchObject({ shouldRenderActivityCard: true, renderReason: "explicit" });
 
-      registry.releaseActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-one");
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
-      await vi.advanceTimersByTimeAsync(15_001);
-      registry.touchActivityCardLease(SCOPE_A, activity.activityId, 1, "widget-two");
-      await vi.advanceTimersByTimeAsync(75_001);
-      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: secondPresentation
+      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
+        kind: "automatic",
+        activityPresentationId: firstPresentation
+      })).toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
+        kind: "automatic",
+        activityPresentationId: secondPresentation
+      })).toMatchObject({ live: true, stopped: false, ownsCompletionHandoff: true });
 
       const root = temporaryRoot();
       const databaseFile = path.join(root, "state.sqlite");
       const firstStore = new BridgeStateStore({ file: databaseFile });
       const beforeRestart = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root] });
       const persistentActivity = beforeRestart.createActivity({ scopeId: SCOPE_A, title: "Restart lease" });
-      beforeRestart.touchActivityCardLease(SCOPE_A, persistentActivity.activityId, 1, "widget-persist");
+      beforeRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      });
       firstStore.close();
 
       const secondStore = new BridgeStateStore({ file: databaseFile });
       const afterRestart = new CodexJobRegistry({ stateStore: secondStore, allowedRoots: [root] });
-      expect(afterRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences))
-        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-generation" });
+      expect(afterRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation
+      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
       secondStore.close();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("hands live-watch ownership across 10 sequential response presentations without leaking watcher slots", async () => {
+    const registry = new CodexJobRegistry();
+    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Sequential cards" });
+    const preferences = { activityCardVisibility: "always" as const };
+    let previousWatch: Promise<Awaited<ReturnType<typeof registry.waitForScopeVersion>>> | undefined;
+    let previousPresentation: string | undefined;
+    let finalController: AbortController | undefined;
+
+    for (let index = 1; index <= 10; index += 1) {
+      const activityPresentationId = `24242424-2424-4424-8424-${index.toString(16).padStart(12, "0")}`;
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId
+      })).toMatchObject({
+        shouldRenderActivityCard: true,
+        renderReason: "new-presentation",
+        activityPresentationId
+      });
+
+      if (previousWatch) {
+        await expect(previousWatch).resolves.toMatchObject({
+          stopped: true,
+          timedOut: false,
+          stopReason: "presentation-superseded"
+        });
+        expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
+          kind: "automatic",
+          activityPresentationId: previousPresentation as string
+        })).toMatchObject({ live: false, ownsCompletionHandoff: false });
+      }
+
+      const presentation = { kind: "automatic" as const, activityPresentationId };
+      registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        `automatic-widget-${index}`,
+        presentation
+      );
+      const controller = new AbortController();
+      previousWatch = registry.waitForScopeVersion(
+        SCOPE_A,
+        registry.getScopeVersion(SCOPE_A),
+        10_000,
+        `automatic-widget-${index}`,
+        controller.signal,
+        presentation
+      );
+      previousPresentation = activityPresentationId;
+      finalController = controller;
+    }
+
+    finalController?.abort();
+    await expect(previousWatch).rejects.toThrow(/cancelled by the host/);
+
+    const verificationController = new AbortController();
+    const verificationWatch = registry.waitForScopeVersion(
+      SCOPE_A,
+      registry.getScopeVersion(SCOPE_A),
+      10_000,
+      "automatic-widget-verification",
+      verificationController.signal,
+      { kind: "automatic", activityPresentationId: previousPresentation as string }
+    );
+    verificationController.abort();
+    await expect(verificationWatch).rejects.toThrow(/cancelled by the host/);
+  });
+
+  it("reserves three explicit watcher slots while preserving one latest automatic owner", async () => {
+    const registry = new CodexJobRegistry();
+    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Watcher ownership" });
+    const activityPresentationId = "25252525-2525-4525-8525-252525252525";
+    registry.activityCardRenderHint(
+      activity.activityId,
+      "background",
+      { activityCardVisibility: "always" },
+      { activityPresentationId }
+    );
+
+    const explicitControllers = [new AbortController(), new AbortController(), new AbortController()];
+    const explicitWatches = explicitControllers.map((controller, index) =>
+      registry.waitForScopeVersion(
+        SCOPE_A,
+        registry.getScopeVersion(SCOPE_A),
+        10_000,
+        `explicit-widget-${index}`,
+        controller.signal,
+        { kind: "explicit" }
+      )
+    );
+    await expect(registry.waitForScopeVersion(
+      SCOPE_A,
+      registry.getScopeVersion(SCOPE_A),
+      10_000,
+      "explicit-widget-overflow",
+      undefined,
+      { kind: "explicit" }
+    )).rejects.toThrow(/explicit-card watcher limit is 3/);
+
+    const automaticController = new AbortController();
+    const automaticWatch = registry.waitForScopeVersion(
+      SCOPE_A,
+      registry.getScopeVersion(SCOPE_A),
+      10_000,
+      "automatic-widget",
+      automaticController.signal,
+      { kind: "automatic", activityPresentationId }
+    );
+    expect(registry.activityPresentationWatcherPolicy(SCOPE_A, { kind: "explicit" }))
+      .toMatchObject({ live: true, ownsCompletionHandoff: false, maxExplicitPerScope: 3 });
+    expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
+      kind: "automatic",
+      activityPresentationId
+    })).toMatchObject({ live: true, ownsCompletionHandoff: true, maxAutomaticPerScope: 1 });
+
+    for (const controller of explicitControllers) controller.abort();
+    automaticController.abort();
+    const settled = await Promise.allSettled([...explicitWatches, automaticWatch]);
+    expect(settled.every((entry) => entry.status === "rejected")).toBe(true);
   });
 
   it("restores a terminal result that arrives while an unconfirmed force-stop is pending", async () => {
@@ -510,6 +653,7 @@ function jobInput(root: string) {
     sandbox: "read-only" as const,
     scopeId: SCOPE_A,
     requestId: REQUEST_A,
+    activityPresentationId: REQUEST_A,
     requestHash: "a".repeat(64),
     requestHashVersion: 2 as const,
     selectionKey: "selection-a",

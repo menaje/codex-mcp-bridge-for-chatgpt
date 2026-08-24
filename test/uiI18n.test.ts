@@ -41,6 +41,14 @@ describe("human-facing UI localization", () => {
       expect(UI_TRANSLATIONS[locale]["settings.cardVisibility"]).not.toBe(
         UI_TRANSLATIONS.en["settings.cardVisibility"]
       );
+      for (const key of [
+        "settings.cardVisibility.always",
+        "settings.cardVisibility.background",
+        "settings.cardVisibility.never",
+        "activity.superseded"
+      ] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
       expect(UI_TRANSLATIONS[locale]["settings.conflict"]).not.toBe(
         UI_TRANSLATIONS.en["settings.conflict"]
       );
@@ -192,6 +200,10 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
     expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
+    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
+    expect(ACTIVITY_CARD_HTML).toContain("next.watcherPolicy.live===false");
+    expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");

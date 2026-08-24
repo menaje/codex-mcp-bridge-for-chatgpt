@@ -241,6 +241,7 @@ describe("http server", () => {
         arguments: {
           scopeId: SCOPE_A,
           requestId: REQUEST_A,
+          activityPresentationId: REQUEST_A,
           prompt: "slow",
           activityTitle: "Slow HTTP task",
           activityKind: "implementation",
@@ -279,6 +280,7 @@ describe("http server", () => {
       name: "codex_task",
       arguments: {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        activityPresentationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         prompt: "derive scope",
         activityTitle: "Derive HTTP scope",
         activityKind: "investigation",
@@ -343,6 +345,7 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         prompt: "persist Activity",
         agentName: "HTTP Persistent Agent",
         agentRole: "review",
@@ -404,6 +407,7 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "must not attach to completed Activity",
         sessionMode: "new",
         activityId

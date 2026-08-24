@@ -99,9 +99,15 @@ the network as the current macOS user.
 - One user-visible force-stop action with exact worker generation/process-group
   validation, TERM→KILL escalation, collateral confirmation, and terminal state
   only after exit evidence. `termination-failed` remains an active slot.
-- Activity presentation render reservations and mounted-widget leases are
-  in-memory, generation-scoped, refreshed by bounded watches, and released by
-  abort/unmount/TTL or process restart.
+- Automatic Activity render reservations are in-memory and keyed by the
+  host-derived conversation scope plus GPT-supplied assistant-response
+  `activityPresentationId`; Activity id/generation remains a validity check,
+  not the presentation boundary. Only the newest automatic presentation owns
+  scope watch and completion handoff. Superseded cards stop normally and
+  release admission; at most three explicit user-opened cards may watch beside
+  the automatic owner, without claiming automatic handoff. Widget instance
+  leases use `openai/widgetSessionId` and are released by abort/unmount/TTL or
+  process restart.
 - App Server background terminals left after a turn are observed separately
   from Agent idle state and require exact process termination before archive.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly

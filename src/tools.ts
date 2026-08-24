@@ -234,7 +234,22 @@ type SessionDecision = {
 type CodexRouting = {
   scopeId: string;
   requestId: string;
+  activityPresentationId?: string;
   requestHash: string;
+};
+
+type ActivityCardPresentationContext =
+  | { kind: "automatic"; activityPresentationId: string }
+  | { kind: "explicit" }
+  | { kind: "legacy-automatic" };
+
+type ActivityScopeWatchResult = {
+  scopeVersion: number;
+  changed: boolean;
+  timedOut: boolean;
+  waitedMs: number;
+  stopped: boolean;
+  stopReason?: "presentation-superseded";
 };
 
 type CodexJob = {
@@ -262,6 +277,7 @@ type CodexJob = {
   sandbox: SandboxMode;
   scopeId: string;
   requestId: string;
+  activityPresentationId?: string;
   requestHash: string;
   requestHashVersion: 1 | 2;
   selectionKey?: string;
@@ -331,6 +347,7 @@ type CodexJobStartInput = Omit<
 export type CodexJobRegistryOptions = {
   maxConcurrentJobs?: number;
   ttlMs?: number;
+  activityPresentationTtlMs?: number;
   maxJobs?: number;
   maxResultBytes?: number;
   staleAfterMs?: number;
@@ -354,9 +371,15 @@ export class CodexJobRegistry {
   private readonly watcherLeases = new Set<string>();
   private readonly activityCardLeases = new Map<string, number>();
   private readonly activityCardReservations = new Map<string, number>();
+  private readonly latestAutomaticPresentationByScope = new Map<
+    string,
+    { activityPresentationId: string; expiresAt: number }
+  >();
   private readonly activityCardLeaseTtlMs = 75_000;
-  // Cover one 55s scope watch plus host render/network jitter until the widget lease registers.
-  private readonly activityCardReservationTtlMs = 75_000;
+  // A response correlation must outlive render/network jitter and exact retries.
+  // It is intentionally in-memory: a bridge restart retains the existing safe
+  // fallback in which mounted cards re-establish ownership.
+  private readonly activityCardReservationTtlMs: number;
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;
@@ -368,8 +391,11 @@ export class CodexJobRegistry {
   private readonly allowedRoots: string[];
   private readonly maxConcurrentWatchers = 8;
   private readonly maxConcurrentWatchersPerScope = 4;
+  private readonly maxConcurrentExplicitWatchersPerScope = 3;
   private activeWatchers = 0;
   private readonly activeWatchersByScope = new Map<string, number>();
+  private readonly activeAutomaticWatchersByScope = new Map<string, number>();
+  private readonly activeExplicitWatchersByScope = new Map<string, number>();
   private upstream?: CodexUpstream;
   private readonly terminations = new Map<string, Promise<CodexJob>>();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
@@ -382,6 +408,8 @@ export class CodexJobRegistry {
     this.maxJobs = options.maxJobs ?? 100;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
+    this.activityCardReservationTtlMs =
+      options.activityPresentationTtlMs ?? 6 * 60 * 60 * 1000;
     this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
@@ -417,32 +445,55 @@ export class CodexJobRegistry {
     activityId: string,
     executionMode: ActivityExecutionMode,
     preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
-    options: { explicit?: boolean; reserve?: boolean } = {}
+    options: {
+      explicit?: boolean;
+      reserve?: boolean;
+      activityPresentationId?: string;
+      presentationKind?: "automatic" | "explicit";
+    } = {}
   ) {
     this.pruneActivityCardLeases();
     const activity = this.getActivity(activityId);
     const generation = activity?.cardGeneration || 1;
-    const baseKey = `${activity?.scopeId || "unknown"}\0${activityId}\0${generation}`;
+    const scopeId = activity?.scopeId || "unknown";
     const visibility = preferences?.activityCardVisibility || "always";
     const visible =
       visibility === "always" ||
       (visibility === "background-only" && executionMode === "background");
+    const presentationKind = options.presentationKind || "automatic";
+    const activityPresentationId = options.activityPresentationId;
     let shouldRenderActivityCard = false;
-    let renderReason: "explicit" | "visibility-disabled" | "active-lease" | "render-reserved" | "new-generation";
-    if (options.explicit) {
+    let renderReason:
+      | "explicit"
+      | "visibility-disabled"
+      | "presentation-unavailable"
+      | "active-lease"
+      | "render-reserved"
+      | "new-presentation";
+    if (presentationKind === "explicit") {
       shouldRenderActivityCard = true;
       renderReason = "explicit";
     } else if (!visible) {
       renderReason = "visibility-disabled";
-    } else if ([...this.activityCardLeases.keys()].some((key) => key.startsWith(`${baseKey}\0`))) {
+    } else if (!activityPresentationId) {
+      renderReason = "presentation-unavailable";
+    } else if ([...this.activityCardLeases.keys()].some((key) =>
+      key.startsWith(`${scopeId}\0automatic\0${activityPresentationId}\0`)
+    )) {
       renderReason = "active-lease";
-    } else if ((this.activityCardReservations.get(baseKey) || 0) > Date.now()) {
+    } else if (
+      (this.activityCardReservations.get(this.activityPresentationKey(scopeId, activityPresentationId)) || 0) > Date.now()
+    ) {
       renderReason = "render-reserved";
     } else {
       shouldRenderActivityCard = true;
-      renderReason = "new-generation";
+      renderReason = "new-presentation";
       if (options.reserve !== false) {
-        this.activityCardReservations.set(baseKey, Date.now() + this.activityCardReservationTtlMs);
+        this.activateAutomaticPresentation(scopeId, activityPresentationId);
+        this.activityCardReservations.set(
+          this.activityPresentationKey(scopeId, activityPresentationId),
+          Date.now() + this.activityCardReservationTtlMs
+        );
       }
     }
     return {
@@ -455,6 +506,8 @@ export class CodexJobRegistry {
       activityCardVisibility: visibility,
       activityId,
       cardGeneration: generation,
+      presentationKind,
+      ...(activityPresentationId ? { activityPresentationId } : {}),
       shouldRenderActivityCard,
       renderReason,
       renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
@@ -465,28 +518,139 @@ export class CodexJobRegistry {
     scopeId: string,
     activityId: string,
     cardGeneration: number,
-    widgetSessionId: string
-  ): void {
+    widgetSessionId: string,
+    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
+  ): { stopped: boolean; stopReason?: "presentation-superseded" } {
     const activity = this.getActivity(activityId);
     if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
       throw new Error("The mounted Activity card generation is no longer valid in this scope.");
     }
     this.pruneActivityCardLeases();
-    const baseKey = `${scopeId}\0${activityId}\0${cardGeneration}`;
-    this.activityCardReservations.delete(baseKey);
+    if (this.isPresentationSuperseded(scopeId, presentation)) {
+      this.releaseActivityCardLease(scopeId, activityId, cardGeneration, widgetSessionId, presentation);
+      return { stopped: true, stopReason: "presentation-superseded" };
+    }
+    if (presentation.kind === "automatic") {
+      const now = Date.now();
+      if (!this.latestAutomaticPresentationByScope.has(scopeId)) {
+        this.latestAutomaticPresentationByScope.set(scopeId, {
+          activityPresentationId: presentation.activityPresentationId,
+          expiresAt: now + this.activityCardReservationTtlMs
+        });
+      } else {
+        const latest = this.latestAutomaticPresentationByScope.get(scopeId) as {
+          activityPresentationId: string;
+          expiresAt: number;
+        };
+        latest.expiresAt = now + this.activityCardReservationTtlMs;
+      }
+    }
     this.activityCardLeases.set(
-      `${baseKey}\0${widgetSessionId}`,
+      this.activityCardLeaseKey(
+        scopeId,
+        activityId,
+        cardGeneration,
+        widgetSessionId,
+        presentation
+      ),
       Date.now() + this.activityCardLeaseTtlMs
     );
+    return { stopped: false };
   }
 
   releaseActivityCardLease(
     scopeId: string,
     activityId: string,
     cardGeneration: number,
-    widgetSessionId: string
+    widgetSessionId: string,
+    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
   ): void {
-    this.activityCardLeases.delete(`${scopeId}\0${activityId}\0${cardGeneration}\0${widgetSessionId}`);
+    this.activityCardLeases.delete(
+      this.activityCardLeaseKey(
+        scopeId,
+        activityId,
+        cardGeneration,
+        widgetSessionId,
+        presentation
+      )
+    );
+  }
+
+  activityPresentationWatcherPolicy(
+    scopeId: string,
+    presentation: ActivityCardPresentationContext
+  ) {
+    const stopped = this.isPresentationSuperseded(scopeId, presentation);
+    return {
+      presentationKind: presentation.kind,
+      ...(presentation.kind === "automatic"
+        ? { activityPresentationId: presentation.activityPresentationId }
+        : {}),
+      live: !stopped,
+      stopped,
+      ...(stopped ? { stopReason: "presentation-superseded" as const } : {}),
+      ownsCompletionHandoff:
+        !stopped && presentation.kind !== "explicit",
+      maxAutomaticPerScope: 1,
+      maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
+    };
+  }
+
+  canClaimCompletionHandoff(
+    scopeId: string,
+    presentation: ActivityCardPresentationContext
+  ): boolean {
+    return this.activityPresentationWatcherPolicy(scopeId, presentation).ownsCompletionHandoff;
+  }
+
+  private activityPresentationKey(scopeId: string, activityPresentationId: string): string {
+    return `${scopeId}\0${activityPresentationId}`;
+  }
+
+  private activityCardLeaseKey(
+    scopeId: string,
+    activityId: string,
+    cardGeneration: number,
+    widgetSessionId: string,
+    presentation: ActivityCardPresentationContext
+  ): string {
+    if (presentation.kind === "automatic") {
+      return `${scopeId}\0automatic\0${presentation.activityPresentationId}\0${widgetSessionId}`;
+    }
+    return `${scopeId}\0${presentation.kind}\0${activityId}\0${cardGeneration}\0${widgetSessionId}`;
+  }
+
+  private isPresentationSuperseded(
+    scopeId: string,
+    presentation: ActivityCardPresentationContext
+  ): boolean {
+    this.pruneActivityCardLeases();
+    const latest = this.latestAutomaticPresentationByScope.get(scopeId);
+    if (presentation.kind === "explicit") return false;
+    if (presentation.kind === "legacy-automatic") return Boolean(latest);
+    return Boolean(latest && latest.activityPresentationId !== presentation.activityPresentationId);
+  }
+
+  private activateAutomaticPresentation(scopeId: string, activityPresentationId: string): void {
+    const now = Date.now();
+    const previous = this.latestAutomaticPresentationByScope.get(scopeId);
+    this.latestAutomaticPresentationByScope.set(scopeId, {
+      activityPresentationId,
+      expiresAt: now + this.activityCardReservationTtlMs
+    });
+    if (previous && previous.activityPresentationId === activityPresentationId) return;
+    for (const key of [...this.activityCardLeases.keys()]) {
+      if (
+        key.startsWith(`${scopeId}\0automatic\0`) &&
+        !key.startsWith(`${scopeId}\0automatic\0${activityPresentationId}\0`)
+      ) {
+        this.activityCardLeases.delete(key);
+      }
+    }
+    // Scope waiters re-check presentation ownership as well as persisted scope
+    // version, so this releases a superseded long poll without fabricating a
+    // domain-state version change.
+    this.notifyScope(scopeId);
   }
 
   private pruneActivityCardLeases(): void {
@@ -496,6 +660,9 @@ export class CodexJobRegistry {
     }
     for (const [key, expiresAt] of this.activityCardReservations) {
       if (expiresAt <= now) this.activityCardReservations.delete(key);
+    }
+    for (const [scopeId, latest] of this.latestAutomaticPresentationByScope) {
+      if (latest.expiresAt <= now) this.latestAutomaticPresentationByScope.delete(scopeId);
     }
   }
 
@@ -768,12 +935,30 @@ export class CodexJobRegistry {
     afterVersion: number,
     waitMs: number,
     watcherId?: string,
-    signal?: AbortSignal
-  ): Promise<{ scopeVersion: number; changed: boolean; timedOut: boolean; waitedMs: number }> {
+    signal?: AbortSignal,
+    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
+  ): Promise<ActivityScopeWatchResult> {
     const startedAt = Date.now();
+    const initialPolicy = this.activityPresentationWatcherPolicy(scopeId, presentation);
+    if (initialPolicy.stopped) {
+      return {
+        scopeVersion: this.getScopeVersion(scopeId),
+        changed: false,
+        timedOut: false,
+        waitedMs: 0,
+        stopped: true,
+        stopReason: "presentation-superseded"
+      };
+    }
     const current = this.getScopeVersion(scopeId);
     if (current > afterVersion) {
-      return { scopeVersion: current, changed: true, timedOut: false, waitedMs: 0 };
+      return {
+        scopeVersion: current,
+        changed: true,
+        timedOut: false,
+        waitedMs: 0,
+        stopped: false
+      };
     }
     if (this.activeWatchers >= this.maxConcurrentWatchers) {
       throw new Error(`Too many Activity watchers are open. The watcher limit is ${this.maxConcurrentWatchers}.`);
@@ -784,6 +969,21 @@ export class CodexJobRegistry {
         `Too many Activity watchers are open for this conversation. The per-scope watcher limit is ${this.maxConcurrentWatchersPerScope}.`
       );
     }
+    const explicitWatcherCount = this.activeExplicitWatchersByScope.get(scopeId) || 0;
+    const automaticWatcherCount = this.activeAutomaticWatchersByScope.get(scopeId) || 0;
+    if (presentation.kind === "automatic" && automaticWatcherCount >= 1) {
+      throw new Error(
+        "The latest automatic Activity presentation already has its one live watcher."
+      );
+    }
+    if (
+      presentation.kind === "explicit" &&
+      explicitWatcherCount >= this.maxConcurrentExplicitWatchersPerScope
+    ) {
+      throw new Error(
+        `Too many explicit Activity cards are watching this conversation. The explicit-card watcher limit is ${this.maxConcurrentExplicitWatchersPerScope}.`
+      );
+    }
     const leaseKey = watcherId ? `${scopeId}\0${watcherId}` : undefined;
     if (leaseKey && this.watcherLeases.has(leaseKey)) {
       throw new Error("This mounted Activity widget already has an active watch request.");
@@ -791,6 +991,12 @@ export class CodexJobRegistry {
     if (signal?.aborted) throw new Error("The Activity watch was cancelled before it started.");
     this.activeWatchers += 1;
     this.activeWatchersByScope.set(scopeId, scopeWatcherCount + 1);
+    if (presentation.kind === "automatic") {
+      this.activeAutomaticWatchersByScope.set(scopeId, automaticWatcherCount + 1);
+    }
+    if (presentation.kind === "explicit") {
+      this.activeExplicitWatchersByScope.set(scopeId, explicitWatcherCount + 1);
+    }
     if (leaseKey) this.watcherLeases.add(leaseKey);
     try {
       const changed = await new Promise<boolean>((resolve, reject) => {
@@ -815,17 +1021,36 @@ export class CodexJobRegistry {
         if (this.getScopeVersion(scopeId) > afterVersion) finish(true);
         else if (signal?.aborted) onAbort();
       });
+      const stopped = this.isPresentationSuperseded(scopeId, presentation);
       return {
         scopeVersion: this.getScopeVersion(scopeId),
         changed,
-        timedOut: !changed,
-        waitedMs: Date.now() - startedAt
+        timedOut: !changed && !stopped,
+        waitedMs: Date.now() - startedAt,
+        stopped,
+        ...(stopped ? { stopReason: "presentation-superseded" as const } : {})
       };
     } finally {
       this.activeWatchers -= 1;
       const remainingForScope = (this.activeWatchersByScope.get(scopeId) || 1) - 1;
       if (remainingForScope > 0) this.activeWatchersByScope.set(scopeId, remainingForScope);
       else this.activeWatchersByScope.delete(scopeId);
+      if (presentation.kind === "automatic") {
+        const remainingAutomatic = (this.activeAutomaticWatchersByScope.get(scopeId) || 1) - 1;
+        if (remainingAutomatic > 0) {
+          this.activeAutomaticWatchersByScope.set(scopeId, remainingAutomatic);
+        } else {
+          this.activeAutomaticWatchersByScope.delete(scopeId);
+        }
+      }
+      if (presentation.kind === "explicit") {
+        const remainingExplicit = (this.activeExplicitWatchersByScope.get(scopeId) || 1) - 1;
+        if (remainingExplicit > 0) {
+          this.activeExplicitWatchersByScope.set(scopeId, remainingExplicit);
+        } else {
+          this.activeExplicitWatchersByScope.delete(scopeId);
+        }
+      }
       if (leaseKey) this.watcherLeases.delete(leaseKey);
     }
   }
@@ -1695,7 +1920,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for MCP hosts that do not provide it. Pass a jobId for one result, an exact Activity/thread id for detail, or activityView=true with afterVersion for the mounted card's one scope-wide bounded watch. A bridge-wide audit is available only to compatibility/admin hosts without ChatGPT session metadata.",
+        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for MCP hosts that do not provide it. Pass a jobId for one result, an exact Activity/thread id for detail, or activityView=true with afterVersion for a mounted card's bounded scope watch. The newest automatic response presentation owns automatic live watch and completion handoff; superseded automatic cards receive a normal stop result, while explicit cards have separate bounded admission. A bridge-wide audit is available only to compatibility/admin hosts without ChatGPT session metadata.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
@@ -1737,7 +1962,11 @@ export function registerBridgeTools(
         mountedActivityId: scopeIdSchema().optional()
           .describe("App-only Activity id for refreshing one mounted presentation lease."),
         cardGeneration: z.number().int().min(1).optional()
-          .describe("App-only presentation generation paired with mountedActivityId."),
+          .describe("App-only Activity generation paired with mountedActivityId for validity checks."),
+        activityPresentationId: scopeIdSchema().optional()
+          .describe("App-only assistant-response presentation UUID for an automatic mounted card."),
+        presentationKind: z.enum(["automatic", "explicit"]).optional()
+          .describe("App-only mounted-card kind. Explicit cards have independent bounded watcher admission."),
         afterVersion: z
           .number()
           .int()
@@ -1800,8 +2029,22 @@ export function registerBridgeTools(
       if ((args.mountedActivityId === undefined) !== (args.cardGeneration === undefined)) {
         throw new Error("mountedActivityId and cardGeneration must be provided together.");
       }
-      if ((args.mountedActivityId || args.cardGeneration) && !args.activityView) {
+      if (
+        (args.mountedActivityId || args.cardGeneration || args.activityPresentationId || args.presentationKind) &&
+        !args.activityView
+      ) {
         throw new Error("Mounted card lease fields require activityView=true.");
+      }
+      if (args.activityPresentationId && args.presentationKind !== "automatic") {
+        throw new Error("activityPresentationId requires presentationKind='automatic'.");
+      }
+      if (
+        args.presentationKind === "automatic" &&
+        (!args.activityPresentationId || !args.mountedActivityId || !args.cardGeneration)
+      ) {
+        throw new Error(
+          "An automatic mounted card requires activityPresentationId, mountedActivityId, and cardGeneration."
+        );
       }
       for (const [offset, cursor, label] of [
         [args.sessionOffset, args.sessionCursor, "session"],
@@ -1817,12 +2060,20 @@ export function registerBridgeTools(
           throw new Error("Activity view requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
         }
         const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+        const presentation: ActivityCardPresentationContext = args.presentationKind === "automatic"
+          ? { kind: "automatic", activityPresentationId: args.activityPresentationId as string }
+          : args.presentationKind === "explicit"
+            ? { kind: "explicit" }
+            : args.mountedActivityId
+              ? { kind: "legacy-automatic" }
+              : { kind: "explicit" };
         if (args.mountedActivityId && args.cardGeneration && widgetSessionId) {
           jobs.touchActivityCardLease(
             scopeId,
             args.mountedActivityId,
             args.cardGeneration,
-            widgetSessionId
+            widgetSessionId,
+            presentation
           );
           signal?.addEventListener(
             "abort",
@@ -1830,7 +2081,8 @@ export function registerBridgeTools(
               scopeId,
               args.mountedActivityId as string,
               args.cardGeneration as number,
-              widgetSessionId
+              widgetSessionId,
+              presentation
             ),
             { once: true }
           );
@@ -1841,7 +2093,8 @@ export function registerBridgeTools(
               args.afterVersion,
               args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
               widgetSessionId,
-              signal
+              signal,
+              presentation
             )
           : undefined;
         return activityViewResult(
@@ -1853,7 +2106,8 @@ export function registerBridgeTools(
             scopeId,
             args.activityLimit || 30,
             args.mountedActivityId,
-            wait
+            wait,
+            presentation
           ),
           metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
         );
@@ -2156,16 +2410,16 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description:
-        "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic presentation and must not be followed by codex_activity. Mounted cards refresh through one scope-wide bounded watch; this presentation tool never changes execution or lifecycle policy.",
+        "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic response presentation and must not be followed by codex_activity. Explicit cards use up to three separate scope watcher slots and never compete for automatic completion handoff; this tool never changes execution, visibility, or lifecycle policy.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
           .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        activityId: scopeIdSchema().optional().describe("Optional Activity presentation generation to mount or refresh."),
+        activityId: scopeIdSchema().optional().describe("Optional exact Activity to validate, mount, or refresh in the explicit card."),
         cardGeneration: z.number().int().min(1).optional()
           .describe("Expected presentation generation for the mounted Activity."),
         forceNewCard: z.boolean().optional()
-          .describe("Explicit user-requested display override. It bypasses automatic lease/reservation suppression."),
+          .describe("Compatibility flag for an explicit user-requested card. Explicit cards never consume automatic presentation grouping."),
         sinceVersion: z.number().int().min(0).optional(),
         waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
         limit: z.number().int().min(1).max(100).optional()
@@ -2198,12 +2452,14 @@ export function registerBridgeTools(
         throw new Error("The requested Activity card generation is stale. Refresh authoritative Activity state.");
       }
       const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      const presentation: ActivityCardPresentationContext = { kind: "explicit" };
       if (selected && widgetSessionId) {
         jobs.touchActivityCardLease(
           scope.scopeId,
           selected.activityId,
           selected.cardGeneration,
-          widgetSessionId
+          widgetSessionId,
+          presentation
         );
         signal?.addEventListener(
           "abort",
@@ -2211,7 +2467,8 @@ export function registerBridgeTools(
             scope.scopeId,
             selected.activityId,
             selected.cardGeneration,
-            widgetSessionId
+            widgetSessionId,
+            presentation
           ),
           { once: true }
         );
@@ -2222,7 +2479,8 @@ export function registerBridgeTools(
             args.sinceVersion,
             args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
             widgetSessionId,
-            signal
+            signal,
+            presentation
           )
         : undefined;
       const view = await buildActivityView(
@@ -2233,14 +2491,15 @@ export function registerBridgeTools(
         scope.scopeId,
         args.limit || 30,
         args.activityId,
-        wait
+        wait,
+        presentation
       );
       if (selected) {
         (view.structured as Record<string, unknown>).presentation = jobs.activityCardRenderHint(
           selected.activityId,
           selected.executionMode,
           userSettings.current,
-          { explicit: args.forceNewCard === true, reserve: false }
+          { explicit: args.forceNewCard === true, reserve: false, presentationKind: "explicit" }
         );
       }
       return activityViewResult(
@@ -2254,7 +2513,7 @@ export function registerBridgeTools(
     "codex_activity_handoff",
     {
       title: "Deliver Codex Activity Handoff",
-      description: "App-only transactional outbox lease used by the mounted Activity card.",
+      description: "App-only transactional outbox lease owned by the latest automatic Activity presentation.",
       inputSchema: {
         scopeId: scopeIdSchema().optional(),
         action: z.enum([
@@ -2266,7 +2525,9 @@ export function registerBridgeTools(
           "release-batch"
         ]),
         outboxId: z.number().int().positive().optional(),
-        outboxIds: z.array(z.number().int().positive()).min(1).max(20).optional()
+        outboxIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+        activityPresentationId: scopeIdSchema().optional(),
+        presentationKind: z.enum(["automatic", "explicit"]).optional()
       },
       annotations: {
         readOnlyHint: false,
@@ -2288,6 +2549,30 @@ export function registerBridgeTools(
       );
       const leaseOwner = metadataString(_meta, "openai/widgetSessionId");
       if (!leaseOwner) throw new Error("Completion handoff requires a mounted widget session id.");
+      if (args.activityPresentationId && args.presentationKind !== "automatic") {
+        throw new Error("activityPresentationId requires presentationKind='automatic'.");
+      }
+      if (args.presentationKind === "automatic" && !args.activityPresentationId) {
+        throw new Error("Automatic completion handoff requires activityPresentationId.");
+      }
+      const presentation: ActivityCardPresentationContext = args.presentationKind === "automatic"
+        ? { kind: "automatic", activityPresentationId: args.activityPresentationId as string }
+        : args.presentationKind === "explicit"
+          ? { kind: "explicit" }
+          : { kind: "legacy-automatic" };
+      const claimAction = args.action === "claim" || args.action === "claim-batch";
+      if (claimAction && !jobs.canClaimCompletionHandoff(scope.scopeId, presentation)) {
+        return textResult({
+          claimed: false,
+          handoffBatchId: null,
+          handoffDepth: 0,
+          events: [],
+          stopped: true,
+          stopReason: presentation.kind === "explicit"
+            ? "explicit-presentation-does-not-own-handoff"
+            : "presentation-superseded"
+        });
+      }
       if (args.action.endsWith("-batch")) {
         if (!args.outboxIds || args.outboxId !== undefined) {
           throw new Error(`${args.action} requires outboxIds and does not accept outboxId.`);
@@ -3047,7 +3332,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical turn and reuse it only for an exact retry. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId. Automatic Activity presentation is attached to this result according to the saved visibility setting; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. An exact logical-call retry reuses both IDs. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -3064,6 +3349,7 @@ export function registerBridgeTools(
           args.scopeId,
           "Codex task execution"
         );
+        requireTaskActivityPresentation(args, preferences);
         if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
           resolveTaskCwd(config, preferences, args.cwd);
         }
@@ -3207,6 +3493,9 @@ export function registerBridgeTools(
           agentRole: agentResolution.role
         });
       } catch (error) {
+        if (error instanceof ActivityPresentationContractError) {
+          return activityPresentationContractErrorResult(error);
+        }
         if (error instanceof TaskCreationMetadataError) {
           return taskCreationMetadataErrorResult(error);
         }
@@ -3221,6 +3510,7 @@ export function registerBridgeTools(
 type CodexTaskArgs = {
   scopeId?: string;
   requestId: string;
+  activityPresentationId?: string;
   prompt: string;
   activityId?: string;
   continuationOfActivityId?: string;
@@ -3260,6 +3550,29 @@ class TaskCreationMetadataError extends Error {
       "Keep the human-friendly agentName, agentRole, activityTitle, and activityKind separate, and set contextMode explicitly."
     );
     this.name = "TaskCreationMetadataError";
+  }
+}
+
+class ActivityPresentationContractError extends Error {
+  readonly code = "ACTIVITY_PRESENTATION_ID_REQUIRED";
+
+  constructor() {
+    super(
+      "ACTIVITY_PRESENTATION_ID_REQUIRED: Automatic Activity cards require one UUID " +
+      "activityPresentationId for the current ChatGPT assistant response. Refresh the tool " +
+      "descriptor, generate the UUID once, reuse it for every codex_task in this response, " +
+      "and reuse both requestId and activityPresentationId for an exact logical-call retry."
+    );
+    this.name = "ActivityPresentationContractError";
+  }
+}
+
+function requireTaskActivityPresentation(
+  args: CodexTaskArgs,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+): void {
+  if (preferences.activityCardVisibility !== "never" && !args.activityPresentationId) {
+    throw new ActivityPresentationContractError();
   }
 }
 
@@ -4019,6 +4332,7 @@ async function runCodex(input: {
         sandbox: input.sandbox,
         scopeId: input.routing.scopeId,
         requestId: input.routing.requestId,
+        activityPresentationId: input.routing.activityPresentationId,
         requestHash: input.routing.requestHash,
         requestHashVersion: 2,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
@@ -4110,12 +4424,15 @@ function formatJobStatus(
   const activity = formatJobActivity(job, staleAfterMs);
   const activityTracking = registry
     ? registry.activityCardRenderHint(
-        job.activityId,
-        job.executionMode,
-        preferences,
-        { reserve: reserveActivityCard }
-      )
-    : activityCardRenderHint(job.executionMode, preferences);
+      job.activityId,
+      job.executionMode,
+      preferences,
+      {
+        reserve: reserveActivityCard,
+        activityPresentationId: job.activityPresentationId
+      }
+    )
+    : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId);
   const common = {
     status: job.status,
     terminal: isTerminalActivityJobStatus(job.status),
@@ -4135,11 +4452,13 @@ function formatJobStatus(
     executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
+    activityPresentationId: job.activityPresentationId || null,
     session: job.sessionDecision,
     bridgeSession: {
       ...job.sessionDecision,
       scopeId: job.scopeId,
-      requestId: job.requestId
+      requestId: job.requestId,
+      activityPresentationId: job.activityPresentationId || null
     },
     bridgeActivity: {
       activityId: job.activityId,
@@ -4228,11 +4547,13 @@ function formatJobStatus(
 
 function activityCardRenderHint(
   executionMode: ActivityExecutionMode,
-  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">
+  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
+  activityPresentationId?: string
 ) {
   const visibility = preferences?.activityCardVisibility || "always";
   const shouldRenderActivityCard =
-    visibility === "always" || (visibility === "background-only" && executionMode === "background");
+    Boolean(activityPresentationId) &&
+    (visibility === "always" || (visibility === "background-only" && executionMode === "background"));
   return {
     statusTool: "codex_status",
     automaticRenderTool: "codex_task",
@@ -4242,8 +4563,15 @@ function activityCardRenderHint(
     explicitRenderAllowed: true,
     activityCardVisibility: visibility,
     cardGeneration: 1,
+    presentationKind: "automatic",
+    ...(activityPresentationId ? { activityPresentationId } : {}),
     shouldRenderActivityCard,
-    renderReason: shouldRenderActivityCard ? "new-generation" : "visibility-disabled",
+    renderReason: shouldRenderActivityCard
+      ? "new-presentation"
+      : visibility === "never" ||
+          (visibility === "background-only" && executionMode !== "background")
+        ? "visibility-disabled"
+        : "presentation-unavailable",
     renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
   };
 }
@@ -4265,6 +4593,7 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
+    activityPresentationId: job.activityPresentationId || null,
     session: job.sessionDecision,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
@@ -4334,7 +4663,8 @@ async function buildLegacyActivityView(
   scopeId: string,
   limit: number,
   selectedActivityId?: string,
-  wait?: { scopeVersion: number; changed: boolean; timedOut: boolean; waitedMs: number }
+  wait?: ActivityScopeWatchResult,
+  presentation: ActivityCardPresentationContext = { kind: "explicit" }
 ) {
   const now = Date.now();
   const allAgents = jobs.listAgents(scopeId, true, 1_000, 0);
@@ -4483,7 +4813,10 @@ async function buildLegacyActivityView(
     idle: agentRows.filter((row) => row.displayState === "idle").length,
     archived: archivedAgentTotal
   };
-  const pendingHandoffs = preferences.completionHandoff !== "auto-handoff"
+  const presentationPolicy = jobs.activityPresentationWatcherPolicy(scopeId, presentation);
+  const pendingHandoffs =
+    preferences.completionHandoff !== "auto-handoff" ||
+    !presentationPolicy.ownsCompletionHandoff
     ? []
     : jobs.listPendingCompletionOutbox(scopeId, 20).map((record) => ({
         outboxId: record.outboxId,
@@ -4526,12 +4859,19 @@ async function buildLegacyActivityView(
             cardGeneration: selectedActivity.cardGeneration
           }
         : null,
+      mountedPresentation: {
+        kind: presentation.kind,
+        ...(presentation.kind === "automatic"
+          ? { activityPresentationId: presentation.activityPresentationId }
+          : {})
+      },
       uiLocalePreference: preferences.uiLocalePreference,
       watcherPolicy: {
         mode: "scope-version-long-poll",
         maxWaitMs: MAX_CODEX_STATUS_WAIT_MS,
         suggestedWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS,
-        separateFromJobLimit: true
+        separateFromJobLimit: true,
+        ...presentationPolicy
       },
       ...(wait ? { wait } : {})
     },
@@ -4549,7 +4889,8 @@ async function buildActivityView(
   scopeId: string,
   limit: number,
   selectedActivityId?: string,
-  wait?: { scopeVersion: number; changed: boolean; timedOut: boolean; waitedMs: number }
+  wait?: ActivityScopeWatchResult,
+  presentation: ActivityCardPresentationContext = { kind: "explicit" }
 ) {
   const legacy = await buildLegacyActivityView(
     jobs,
@@ -4559,7 +4900,8 @@ async function buildActivityView(
     scopeId,
     limit,
     selectedActivityId,
-    wait
+    wait,
+    presentation
   );
   const now = Date.now();
   const allActivities = jobs.listActivities(scopeId, 1_000, 0);
@@ -5095,6 +5437,19 @@ function codexTaskInputSchema(
     contextMode: z.enum(AGENT_CONTEXT_MODES).optional()
       .describe("Explicit Codex context choice required for every new Activity or new Agent: continue the Agent's current thread, fork it, or start fresh context. Existing Agent/Activity follow-ups may omit it.")
   };
+  const activityPresentationDescription =
+    "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. " +
+    "Generate it once for the response, reuse it for every codex_task in that response even " +
+    "across different Activities or Agents, and generate a new value for the next response. " +
+    "An exact logical-call retry reuses both this value and requestId; requestId deduplicates " +
+    "one Codex call while activityPresentationId deduplicates one response's card.";
+  const publicPresentation = {
+    activityPresentationId: settings.activityCardVisibility === "never"
+      ? scopeIdSchema().optional().describe(
+          `${activityPresentationDescription} Automatic display is currently disabled, so this value cannot override the saved visibility policy.`
+        )
+      : scopeIdSchema().describe(activityPresentationDescription)
+  };
   const adaptiveSandbox = settings.accessStrategy === "adaptive"
     ? {
         sandbox: sandboxSchema(config).optional()
@@ -5120,11 +5475,17 @@ function codexTaskInputSchema(
         )
       }
     : {};
-  const projected = z.strictObject({ ...publicCommon, ...adaptiveSandbox, ...publicModel });
+  const projected = z.strictObject({
+    ...publicCommon,
+    ...publicPresentation,
+    ...adaptiveSandbox,
+    ...publicModel
+  });
   // Runtime parsing recognizes retired fields so the bridge can return an
   // identifiable refresh/migration error instead of silently dropping them.
   const runtime = z.strictObject({
     ...publicCommon,
+    activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
     modelPolicyRevision: z.number().int().min(0).optional(),
     selection: modelChoiceZod().optional(),
@@ -5225,6 +5586,7 @@ function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting 
     .update(
       JSON.stringify({
         scopeId,
+        activityPresentationId: args.activityPresentationId || null,
         sessionMode: args.sessionMode || null,
         prompt: args.prompt,
         threadId: args.threadId || null,
@@ -5254,6 +5616,7 @@ function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting 
   return {
     scopeId,
     requestId: args.requestId,
+    activityPresentationId: args.activityPresentationId,
     requestHash
   };
 }
@@ -5852,6 +6215,11 @@ function readPersistedJob(
     ? createHash("sha256").update(String(requestId)).digest("hex")
     : value.requestHash;
   const requestHashVersion = stateVersion >= 4 ? value.requestHashVersion : 1;
+  const activityPresentationId =
+    typeof value.activityPresentationId === "string" &&
+    SCOPE_ID_PATTERN.test(value.activityPresentationId)
+      ? value.activityPresentationId.toLowerCase()
+      : undefined;
   const activityId =
     typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
       ? value.activityId.toLowerCase()
@@ -5893,6 +6261,7 @@ function readPersistedJob(
     !SCOPE_ID_PATTERN.test(scopeId) ||
     typeof requestId !== "string" ||
     !requestId ||
+    (value.activityPresentationId !== undefined && !activityPresentationId) ||
     typeof requestHash !== "string" ||
     !/^[0-9a-f]{64}$/i.test(requestHash) ||
     (requestHashVersion !== 1 && requestHashVersion !== 2) ||
@@ -5953,6 +6322,7 @@ function readPersistedJob(
     sandbox,
     scopeId: scopeId.toLowerCase(),
     requestId,
+    activityPresentationId,
     requestHash,
     requestHashVersion,
     selectionKey: value.selectionKey,
@@ -6254,7 +6624,8 @@ function forwardResult(
       bridgeSession: {
         ...job.sessionDecision,
         scopeId: job.scopeId,
-        requestId: job.requestId
+        requestId: job.requestId,
+        activityPresentationId: job.activityPresentationId || null
       },
       bridgeActivity: {
         activityId: job.activityId,
@@ -6262,8 +6633,11 @@ function forwardResult(
         agentId: job.agentId || null,
         executionMode: job.executionMode,
         ...(registry
-          ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, { reserve: true })
-          : activityCardRenderHint(job.executionMode, preferences))
+          ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {
+              reserve: true,
+              activityPresentationId: job.activityPresentationId
+            })
+          : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
       },
       executionDecision: job.executionDecision || null
     }
@@ -6284,6 +6658,29 @@ function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
       message: error.message.replace(`${error.code}: `, ""),
       policyRevision: error.policyRevision,
       nextActions: error.nextActions
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function activityPresentationContractErrorResult(
+  error: ActivityPresentationContractError
+): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      retryable: true,
+      missingFields: ["activityPresentationId"],
+      nextActions: [
+        "Refresh the codex_task descriptor.",
+        "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
+        "For an exact logical-call retry, reuse both requestId and activityPresentationId."
+      ]
     }
   };
   return {

@@ -21,7 +21,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure saved access, model/effort policy, independent Priority processing, working-directory, interface-language, and concurrency preferences for ${PRODUCT_INFO.displayName}.`,
+    `Configure saved access, model/effort policy, independent Priority processing, working-directory, interface-language, concurrency, and per-response Activity-card visibility for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": true,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
