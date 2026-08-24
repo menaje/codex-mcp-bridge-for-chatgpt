@@ -6,6 +6,7 @@ import {
   CodexAppServerUpstreamPool,
   type CodexAppServerLateResponse
 } from "../src/appServerUpstream.js";
+import { SUPPORTED_CODEX_CLI_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
 import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
@@ -36,6 +37,106 @@ describe("CodexAppServerUpstreamPool", () => {
     });
     expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
   });
+
+  it("rejects an unsupported configured CLI before admitting an App Server worker", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
+      versionProbe: async () => "0.144.0"
+    });
+    try {
+      await expect(pool.listModels()).rejects.toThrow(
+        `Configured Codex executable ${JSON.stringify(FIXTURE)} reported version 0.144.0; ` +
+        `this bridge supports exactly Codex CLI ${SUPPORTED_CODEX_CLI_VERSION}`
+      );
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it("deduplicates concurrent version probes for one worker admission", async () => {
+    let probes = 0;
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
+      versionProbe: async () => {
+        probes += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return SUPPORTED_CODEX_CLI_VERSION;
+      }
+    });
+    try {
+      await Promise.all([pool.listModels(), pool.listModels()]);
+      expect(probes).toBe(1);
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it("cancels an in-flight executable admission check when the pool closes", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
+      versionProbe: async (_command, _timeoutMs, signal) => {
+        observedSignal = signal;
+        return new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("fixture admission aborted")), { once: true });
+        });
+      }
+    });
+    const rejected = expect(pool.listModels()).rejects.toThrow(/could not be verified with --version/);
+    await eventually(() => Boolean(observedSignal));
+    await pool.close();
+    await rejected;
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it("closes a starting worker immediately and clears its initialize request", async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    const pool = new CodexAppServerUpstreamPool(
+      protocolFixture("init-timeout"),
+      1,
+      { initializeTimeoutMs: 750, requestTimeoutMs: 2_000 },
+      { versionProbe: async () => SUPPORTED_CODEX_CLI_VERSION }
+    );
+    const running = pool.listModels();
+    const settled = running.then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error })
+    );
+    const workers = (pool as unknown as {
+      workers: Array<{
+        startingConnection?: {
+          rpc: {
+            identity?: JsonRpcProcessIdentity;
+            pendingRequestCount: number;
+          };
+        };
+      }>;
+    }).workers;
+
+    try {
+      await eventually(() => workers[0]?.startingConnection?.rpc.pendingRequestCount === 1);
+      const rpc = workers[0]!.startingConnection!.rpc;
+      const identity = rpc.identity;
+      expect(identity).toBeDefined();
+
+      const startedAt = Date.now();
+      await pool.close();
+      expect(Date.now() - startedAt).toBeLessThan(500);
+
+      const result = await settled;
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") {
+        expect(result.error).toBeInstanceOf(Error);
+        expect((result.error as Error).message).toContain("process was closed");
+      }
+      expect(rpc.pendingRequestCount).toBe(0);
+      await eventually(() => !processIdentityAlive(identity!));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      await pool.close();
+    }
+  }, 5_000);
 
   it.each([
     ["init-error", 2_000, "fixture initialization rejected"],

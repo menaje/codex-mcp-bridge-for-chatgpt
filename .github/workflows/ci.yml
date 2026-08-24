@@ -28,6 +28,10 @@ jobs:
           cache: npm
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
+      - name: Install supported Codex CLI
+        run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
+      - name: Check App Server protocol schemas
+        run: npm run app-server:compat:check
       - run: npm run check
       - run: npm audit --omit=dev
 

@@ -28,6 +28,7 @@ describe("release manifest", () => {
       binaryName: "codex-mcp-bridge",
       nodeVersion: "22",
       npmVersion: "10.9.3",
+      codexCliVersion: "0.145.0",
       repositorySlug: "menaje/codex-mcp-bridge-for-chatgpt",
       pluginName: "codex-mcp-bridge",
       pluginDisplayName: "Codex MCP Bridge for ChatGPT",
@@ -165,12 +166,28 @@ describe("release manifest", () => {
     writeJson(path.join(root, "release-manifest.json"), manifest);
     expect(() => loadReleaseManifest(root)).toThrow(/safe relative package path/);
   });
+
+  it("fails the release check when the App Server schema lock targets another CLI", () => {
+    const root = fixtureRoot();
+    syncReleaseMetadata(root);
+    const lock = readJson(path.join(root, "app-server-schema.lock.json"));
+    lock.supportedCodexCliVersion = "0.144.0";
+    writeJson(path.join(root, "app-server-schema.lock.json"), lock);
+
+    expect(() => checkReleaseMetadata(root)).toThrow(
+      /schema lock targets Codex CLI 0\.144\.0.*supports 0\.145\.0/
+    );
+  });
 });
 
 function fixtureRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "codex-release-manifest-"));
   const manifest = loadReleaseManifest(REPO_ROOT);
   writeJson(path.join(root, "release-manifest.json"), manifest);
+  writeJson(
+    path.join(root, "app-server-schema.lock.json"),
+    readJson(path.join(REPO_ROOT, "app-server-schema.lock.json"))
+  );
   writeJson(path.join(root, "package.json"), {
     name: "drifted-package",
     version: "9.9.9",

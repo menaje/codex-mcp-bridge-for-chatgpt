@@ -31,7 +31,8 @@
   },
   "toolchain": {
     "node": "22",
-    "npm": "10.9.3"
+    "npm": "10.9.3",
+    "codexCli": "0.145.0"
   },
   "repository": {
     "provider": "github",

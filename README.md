@@ -58,12 +58,15 @@ These are policy controls, not OS isolation. Use a staging copy, separate OS use
 ## Requirements and install
 
 - Node.js 22 or later.
-- Codex CLI installed and authenticated.
+- Codex CLI installed and authenticated. The experimental App Server backend
+  is admitted only with the exact CLI version pinned in
+  `release-manifest.json` (currently `0.145.0`).
 - `tunnel-client` plus an OpenAI Secure MCP Tunnel for ChatGPT access.
 
 ```bash
 npm ci
 npm run check
+npm run app-server:compat:check # when the pinned Codex CLI is installed
 ```
 
 Official references:
@@ -251,7 +254,7 @@ App Server threads can be resumed by exact ID. MCP Server thread context is work
 
 Work on `dev`. The GitHub workflow runs only on `main`; do not promote or push to `main` without explicit instruction.
 
-`release-manifest.json` controls product/package identity, personal/local plugin metadata, toolchain, repository, SemVer/release assets, and UI resource policy. Normal version change:
+`release-manifest.json` controls product/package identity, personal/local plugin metadata, the exact supported App Server CLI, toolchain, repository, SemVer/release assets, and UI resource policy. Normal version change:
 
 ```bash
 npm run release:version -- patch
@@ -279,7 +282,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_PORT` | `8765` | Direct-server port; launcher defaults to `8876` |
 | `CODEX_MCP_BRIDGE_TOKEN` | unset | Bearer token unless loopback no-auth is used |
 | `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Allowed only on loopback |
-| `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI command |
+| `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI command; App Server requires the manifest-pinned exact version |
 | `CODEX_MCP_BRIDGE_ROOTS` | current directory | Comma-separated absolute starting-root allowlist |
 | `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | Adaptive omission/default sandbox |
 | `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial saved access strategy |

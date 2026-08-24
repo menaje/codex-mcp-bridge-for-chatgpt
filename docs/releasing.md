@@ -23,6 +23,7 @@ The manifest controls:
 - public display name and description;
 - npm package name, retained executable name, and packaged file list;
 - Node and npm versions used by local package metadata and GitHub Actions;
+- the exact Codex CLI version admitted for the experimental App Server;
 - GitHub owner and repository name;
 - personal/local plugin identity, descriptions, developer, category,
   capabilities, starter prompts, and registered ChatGPT app connection;
@@ -74,6 +75,42 @@ metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
 template drift. Do not edit generated manifests or snapshots by hand. A SemVer
 change with identical cards preserves the URIs; a card or relevant metadata
 change produces new URIs even before the next version bump.
+
+## App Server protocol compatibility
+
+`release-manifest.json`'s `toolchain.codexCli` is the single supported-version
+authority. Runtime App Server admission executes the configured Codex
+executable with `--version` before starting each new worker generation and
+fails closed on an unavailable, malformed, or different version. The MCP
+backend remains independent from this experimental admission gate.
+
+`app-server-schema.lock.json` stores only the supported-version metadata, file
+counts, and aggregate SHA-256 fingerprints for the official experimental JSON
+Schema and TypeScript generators. JSON objects are recursively canonicalized
+because generated definition order is not stable; TypeScript line endings and
+trailing whitespace are normalized for cross-platform comparison. Full
+multi-megabyte generated trees are never committed.
+
+After installing the manifest-pinned CLI, verify the lock without network
+access:
+
+```bash
+npm run app-server:compat:check
+```
+
+When intentionally changing `toolchain.codexCli`, inspect that CLI's generated
+protocol first, then update and review the small lock:
+
+```bash
+npm run app-server:compat:update
+npm run release:check
+npm run app-server:compat:check
+```
+
+`release:check` rejects a lock whose version metadata differs from the
+manifest. Main CI installs the exact manifest version and regenerates both
+schema formats before build/test, so ordinary unit tests remain offline and
+fixture-driven.
 
 ### Legacy runtime namespace
 
@@ -143,7 +180,8 @@ record that limitation and use a new conversation. See
 
 Only a push to `main` starts `.github/workflows/ci.yml`. The workflow:
 
-1. installs locked dependencies and runs the build, full test suite, and
+1. installs locked dependencies and the manifest-pinned Codex CLI, checks both
+   App Server schema fingerprints, then runs the build, full test suite, and
    production dependency audit;
 2. derives repository, tag, title, channel, and asset names from the manifest;
 3. refuses to release when the manifest repository differs from

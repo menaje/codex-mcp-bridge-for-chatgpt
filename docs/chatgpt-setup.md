@@ -10,6 +10,10 @@ codex mcp-server --help
 codex app-server --help
 ```
 
+The App Server path fails closed unless `codex --version` matches the exact
+`toolchain.codexCli` value in `release-manifest.json` (currently `0.145.0`).
+The stable MCP backend does not perform this App Server admission check.
+
 Install and verify the bridge:
 
 ```bash

@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import {
+  DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
+  probeCodexCliVersion,
+  verifySupportedCodexCli,
+  type CodexCliVersionProbe
+} from "./appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
   JsonRpcProcess,
@@ -46,6 +52,8 @@ export type CodexAppServerLateResponse = JsonRpcLateResponse & {
 };
 
 export type CodexAppServerProtocolOptions = {
+  /** Deadline for checking the configured executable before each worker admission. */
+  versionCheckTimeoutMs?: number;
   /** Deadline for bounded control requests; completed turns remain timer-free. */
   requestTimeoutMs?: number;
   /** Defaults to requestTimeoutMs when omitted. */
@@ -57,10 +65,15 @@ export type CodexAppServerProtocolOptions = {
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
+  versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
   initializeTimeoutMs: number;
   interruptTimeoutMs: number;
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
+};
+
+export type CodexAppServerDependencies = {
+  versionProbe?: CodexCliVersionProbe;
 };
 
 type TurnContext = {
@@ -88,6 +101,7 @@ type AppWorker = {
   activeCalls: number;
   generation: number;
   connection?: AppServerConnection;
+  startingConnection?: AppServerConnection;
   connecting?: Promise<AppServerConnection>;
 };
 
@@ -95,17 +109,22 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly workers: AppWorker[];
   private readonly threadWorkers = new Map<string, number>();
   private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
+  private readonly versionProbe: CodexCliVersionProbe;
+  private compatibilityCheck?: Promise<string>;
+  private compatibilityAbort?: AbortController;
   private closing = false;
 
   constructor(
     private readonly codexCommand: string,
     poolSize = 4,
-    protocolOptions: CodexAppServerProtocolOptions = {}
+    protocolOptions: CodexAppServerProtocolOptions = {},
+    dependencies: CodexAppServerDependencies = {}
   ) {
     if (!Number.isInteger(poolSize) || poolSize <= 0) {
       throw new Error("Codex App Server pool size must be a positive integer.");
     }
     this.protocolOptions = resolveProtocolOptions(protocolOptions);
+    this.versionProbe = dependencies.versionProbe || probeCodexCliVersion;
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
       index,
       activeCalls: 0,
@@ -299,9 +318,23 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   async close(): Promise<void> {
     this.closing = true;
     this.threadWorkers.clear();
+    const compatibilityCheck = this.compatibilityCheck;
+    this.compatibilityAbort?.abort();
+    if (compatibilityCheck) {
+      try {
+        await compatibilityCheck;
+      } catch {
+        // Closing intentionally cancels an in-flight executable admission check.
+      }
+    }
     await Promise.all(
       this.workers.map(async (worker) => {
-        if (worker.connection) await worker.connection.close();
+        const connections = new Set(
+          [worker.connection, worker.startingConnection].filter(
+            (connection): connection is AppServerConnection => Boolean(connection)
+          )
+        );
+        await Promise.all([...connections].map((connection) => connection.close()));
         if (!worker.connecting) return;
         try {
           await worker.connecting;
@@ -341,27 +374,57 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     if (this.closing) throw new Error("Codex App Server upstream is closed.");
     if (worker.connection && !worker.connection.exited) return worker.connection;
     if (!worker.connecting) {
-      const generation = ++worker.generation;
-      worker.connecting = AppServerConnection.create(
-        this.codexCommand,
-        `app-${worker.index}`,
-        generation,
-        this.protocolOptions
-      ).then(async (connection) => {
-        if (this.closing) {
-          await connection.close();
-          throw new Error("Codex App Server upstream closed during worker startup.");
-        }
-        worker.connection = connection;
-        return connection;
-      });
+      await this.ensureCompatibleExecutable();
+      if (this.closing) throw new Error("Codex App Server upstream is closed.");
+      if (worker.connection && !worker.connection.exited) return worker.connection;
+      if (!worker.connecting) {
+        const generation = ++worker.generation;
+        const connection = AppServerConnection.spawn(
+          this.codexCommand,
+          `app-${worker.index}`,
+          generation,
+          this.protocolOptions
+        );
+        worker.startingConnection = connection;
+        worker.connecting = connection.initializeForAdmission().then(async (initialized) => {
+          if (this.closing) {
+            await initialized.close();
+            throw new Error("Codex App Server upstream closed during worker startup.");
+          }
+          worker.connection = initialized;
+          return initialized;
+        });
+      }
     }
     const pending = worker.connecting;
+    const starting = worker.startingConnection;
     try {
       return await pending;
     } finally {
       if (worker.connecting === pending) worker.connecting = undefined;
+      if (worker.startingConnection === starting) worker.startingConnection = undefined;
     }
+  }
+
+  private ensureCompatibleExecutable(): Promise<string> {
+    if (this.compatibilityCheck) return this.compatibilityCheck;
+    const controller = new AbortController();
+    const check = verifySupportedCodexCli(
+      this.codexCommand,
+      this.protocolOptions.versionCheckTimeoutMs,
+      this.versionProbe,
+      controller.signal
+    );
+    this.compatibilityCheck = check;
+    this.compatibilityAbort = controller;
+    const clear = () => {
+      if (this.compatibilityCheck === check) {
+        this.compatibilityCheck = undefined;
+        this.compatibilityAbort = undefined;
+      }
+    };
+    void check.then(clear, clear);
+    return check;
   }
 
   private forgetWorkerThreads(workerIndex: number): void {
@@ -401,21 +464,24 @@ class AppServerConnection {
     });
   }
 
-  static async create(
+  static spawn(
     command: string,
     workerId: string,
     generation: number,
     protocolOptions: ResolvedCodexAppServerProtocolOptions
-  ): Promise<AppServerConnection> {
-    const connection = new AppServerConnection(command, workerId, generation, protocolOptions);
+  ): AppServerConnection {
+    return new AppServerConnection(command, workerId, generation, protocolOptions);
+  }
+
+  async initializeForAdmission(): Promise<AppServerConnection> {
     try {
-      await connection.initialize();
-      return connection;
+      await this.initialize();
+      return this;
     } catch (error) {
-      const identity = connection.rpc.identity;
+      const identity = this.rpc.identity;
       const initializationError = appServerInitializationError(error, identity);
       try {
-        await connection.close();
+        await this.close();
       } catch (cleanupError) {
         throw new AggregateError(
           [initializationError, cleanupError],
@@ -956,6 +1022,10 @@ function resolveProtocolOptions(
     "requestTimeoutMs"
   );
   return {
+    versionCheckTimeoutMs: positiveTimeout(
+      options.versionCheckTimeoutMs ?? DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
+      "versionCheckTimeoutMs"
+    ),
     requestTimeoutMs,
     initializeTimeoutMs: positiveTimeout(
       options.initializeTimeoutMs ?? requestTimeoutMs,

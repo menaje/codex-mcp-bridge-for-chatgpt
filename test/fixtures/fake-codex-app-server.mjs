@@ -4,6 +4,11 @@ import readline from "node:readline";
 
 const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
 
+if (process.argv.includes("--version")) {
+  process.stdout.write(`codex-cli ${manifest.toolchain.codexCli}\n`);
+  process.exit(0);
+}
+
 const lines = readline.createInterface({ input: process.stdin });
 const activeTurns = new Map();
 const pendingServerRequests = new Map();

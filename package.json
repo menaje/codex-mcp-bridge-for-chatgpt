@@ -19,6 +19,8 @@
     "release-manifest.schema.json"
   ],
   "scripts": {
+    "app-server:compat:check": "tsx scripts/app-server-schema.ts check",
+    "app-server:compat:update": "tsx scripts/app-server-schema.ts update",
     "release:check": "node scripts/release-manifest.mjs check",
     "release:sync": "node scripts/release-manifest.mjs sync",
     "release:version": "node scripts/release-manifest.mjs version",

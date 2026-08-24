@@ -11,6 +11,7 @@ const APP_MANIFEST_FILENAME = ".app.json";
 const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
+const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
@@ -88,9 +89,10 @@ export function validateReleaseManifest(value) {
   if (new Set(keywords).size !== keywords.length) fail("package.keywords must be unique");
 
   const toolchain = requiredRecord(root.toolchain, "toolchain");
-  assertKeys(toolchain, ["node", "npm"], "toolchain");
+  assertKeys(toolchain, ["node", "npm", "codexCli"], "toolchain");
   identifier(toolchain.node, "toolchain.node", /^(?:[2-9]\d*)$/, 3);
   identifier(toolchain.npm, "toolchain.npm", /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/, 30);
+  identifier(toolchain.codexCli, "toolchain.codexCli", SEMVER_PATTERN, 50);
 
   const repository = requiredRecord(root.repository, "repository");
   assertKeys(repository, ["provider", "owner", "name"], "repository");
@@ -208,6 +210,7 @@ export function deriveReleaseMetadata(manifest) {
     nodeVersion: manifest.toolchain.node,
     nodeEngine: `>=${manifest.toolchain.node}`,
     npmVersion: manifest.toolchain.npm,
+    codexCliVersion: manifest.toolchain.codexCli,
     version,
     tag,
     releaseTitle: `${manifest.product.displayName} ${tag}`,
@@ -282,10 +285,34 @@ export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   if (drift.length > 0) {
     throw new Error(`Release metadata drift in ${drift.join(", ")}. Run npm run release:sync.`);
   }
+  const appServerSchemaLock = readJson(path.join(repoRoot, APP_SERVER_SCHEMA_LOCK));
+  validateAppServerSchemaLockMetadata(appServerSchemaLock, manifest.toolchain.codexCli);
   if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
     checkUiResources(repoRoot, manifest);
   }
   return deriveReleaseMetadata(manifest);
+}
+
+export function validateAppServerSchemaLockMetadata(value, expectedCodexCliVersion) {
+  const lock = requiredRecord(value, "App Server schema lock");
+  assertKeys(
+    lock,
+    ["lockVersion", "supportedCodexCliVersion", "includeExperimental", "jsonSchema", "typescript"],
+    "App Server schema lock"
+  );
+  if (lock.lockVersion !== 1) throw new Error("Invalid App Server schema lock: lockVersion must be 1.");
+  if (lock.supportedCodexCliVersion !== expectedCodexCliVersion) {
+    throw new Error(
+      `App Server schema lock targets Codex CLI ${String(lock.supportedCodexCliVersion)} but ` +
+      `release-manifest.json supports ${expectedCodexCliVersion}. Run npm run app-server:compat:update.`
+    );
+  }
+  if (lock.includeExperimental !== true) {
+    throw new Error("Invalid App Server schema lock: includeExperimental must be true.");
+  }
+  validateSchemaFingerprint(lock.jsonSchema, "jsonSchema");
+  validateSchemaFingerprint(lock.typescript, "typescript");
+  return value;
 }
 
 export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
@@ -532,6 +559,17 @@ function identifier(value, label, pattern, maxLength) {
   return value;
 }
 
+function validateSchemaFingerprint(value, label) {
+  const fingerprint = requiredRecord(value, `App Server schema lock ${label}`);
+  assertKeys(fingerprint, ["fileCount", "sha256"], `App Server schema lock ${label}`);
+  if (!Number.isSafeInteger(fingerprint.fileCount) || fingerprint.fileCount <= 0) {
+    throw new Error(`Invalid App Server schema lock: ${label}.fileCount must be a positive integer.`);
+  }
+  if (typeof fingerprint.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(fingerprint.sha256)) {
+    throw new Error(`Invalid App Server schema lock: ${label}.sha256 must be a SHA-256 digest.`);
+  }
+}
+
 function readJson(file) {
   try {
     return JSON.parse(readFileSync(file, "utf8"));
@@ -657,6 +695,7 @@ function printGithubOutput(metadata) {
     node_version: metadata.nodeVersion,
     node_engine: metadata.nodeEngine,
     npm_version: metadata.npmVersion,
+    codex_cli_version: metadata.codexCliVersion,
     version: metadata.version,
     tag: metadata.tag,
     release_title: metadata.releaseTitle,
