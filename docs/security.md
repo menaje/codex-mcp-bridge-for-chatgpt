@@ -13,8 +13,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   can return all scopes.
 - `codex_task` conditionally binds the Activity UI according to the saved card
   visibility setting; the widget consumes only the task's scoped Activity identity
-  and obtains its feed through the same scope-filtered status path. `codex_activity`
-  explicitly opens that localized flat Activity feed. Its
+  and obtains its feed through the app-private `codex_activity_snapshot` contract.
+  That contract establishes or renews an exact Activity/generation/presentation
+  lease correlated to the mounted widget session. `codex_activity` explicitly
+  opens that localized flat Activity feed. Its
   private metadata remains bounded and redacted; public rows omit Agent/job/thread
   IDs and expose only final folder names when multiple projects must be distinguished,
   never full working paths.
@@ -22,7 +24,17 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   Server turn interruption or the tracked worker process group; partial
   filesystem changes are not rolled back.
 - `codex_activity_update` performs server-validated Activity transitions,
-  including whole-Activity force-stop and evidence-backed verification.
+  including whole-Activity force-stop and evidence-backed verification. App Server
+  interaction and steering fields are excluded from its model-visible schema.
+- `codex_interaction_respond` and `codex_job_steer` are app-private and require
+  an active exact card lease plus exact scope, Job, Activity, Agent, and optimistic
+  Job-version ownership. Their request UUIDs are idempotent; interaction resolution
+  is additionally serialized by Job and interaction ID so concurrent requests
+  cannot send two responses. Raw answers and steering prompts are reduced to hashes
+  for replay identity and are not persisted in mutation results.
+- `codex_activity_handoff` exposes batch operations only to the current card and
+  requires the exact newest automatic presentation lease. Single-item and flat
+  presentation fields remain runtime-only for the one retained UI generation.
 - `codex_agent` applies only idempotent scope-local Agent rename/archive/restore
   actions. It never permanently deletes an Agent or rolls back files.
 - `codex_background_process_terminate` is app-private and destructive. It
@@ -239,7 +251,8 @@ identity.
   generation and JSON-RPC request ID. `serverRequest/resolved` dismisses a
   request without sending a duplicate response; `autoResolutionMs` has a local
   expiry guard. Only protocol-advertised decisions are accepted, including
-  `acceptForSession` when available. Persisted/UI context uses bounded labels,
+  `acceptForSession` when available. A response is one-shot even under concurrent
+  retries, and answer keys must match the exact pending question IDs. Persisted/UI context uses bounded labels,
   counts, hosts, and protocols; raw permission paths remain only in the
   transient upstream request needed to form the response.
 - Public App Server telemetry classifies errors, warnings/config notices, model

@@ -33,7 +33,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 ## Tools
 
 - `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, and own automatic Activity-card presentation.
-- `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state or make a bounded watch.
+- `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state or make a bounded job wait.
 - `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
 - `codex_activity_update`: apply one validated Activity lifecycle or verification transition.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
@@ -41,7 +41,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
 - `codex_settings`: render saved named projects, policy, and preferences.
 
-`codex_update_settings` and `codex_activity_handoff` are app-only actions used by the cards. `codex_background_process_terminate` is a destructive app-private control bound to an exact mounted-card lease, Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
+`codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity controls require an exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
 ## Security defaults
 
@@ -253,7 +253,7 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 ## Activity card lifecycle
 
-`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded `codex_status` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
+`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
 `requestId` and `activityPresentationId` have deliberately different scopes. GPT creates one `requestId` for each logical Codex call. When automatic UI is enabled, GPT also creates one `activityPresentationId` UUID for the current assistant response, reuses it for every `codex_task` in that response even across Agents or Activities, and creates a new value for the next response. An exact retry reuses both IDs. A current automatic-UI descriptor requires the presentation ID; a stale descriptor that omits it receives retryable `ACTIVITY_PRESENTATION_ID_REQUIRED` instead of silently falling back to Activity-generation grouping. The saved visibility policy remains authoritative and cannot be overridden by the ID.
 
@@ -263,11 +263,11 @@ Truly completed work moves into a collapsed **Completed Codex** group that repor
 
 Agent archive/restore is bridge-local logical state. It never calls App Server `thread/archive` or `thread/unarchive`, so archiving one logical Agent cannot implicitly archive another Agent's descendant fork.
 
-The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show their user-defined labels. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
+The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show their user-defined labels. Approval/user-input controls are sent only in a minimal UI-only metadata payload and answered through the one-shot app-private interaction contract; raw answers are not persisted. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` correlates a mounted widget instance only; it is not treated as an assistant-response ID. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The immediately previous content-hashed Activity resource remains registered as the sole compatibility generation, with its old status/control calls accepted only from an active scoped card lease. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 

@@ -60,7 +60,7 @@ class FakeUpstream implements CodexUpstream {
 
 class DeferredUpstream extends FakeUpstream {
   public aborts = 0;
-  private pending: Array<{
+  protected pending: Array<{
     resolve: (result: ToolResult) => void;
     reject: (error: Error) => void;
     onProgress?: (progress: CodexProgress) => void;
@@ -202,12 +202,38 @@ class InteractionUpstream extends DeferredUpstream {
     interactionId: string;
     response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> };
   }> = [];
+  public steeringRequests: Array<{ threadId: string; prompt: string }> = [];
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: "app-interaction-0",
+      workerGeneration: 1,
+      workerPid: 999_002,
+      processGroupId: 999_002,
+      upstreamRequestId: "app-interaction-turn-1",
+      threadId: "thread-1"
+    });
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+    });
+  }
 
   async respondToInteraction(
     interactionId: string,
     response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void> {
     this.interactionResponses.push({ interactionId, response });
+  }
+
+  async steerThread(threadId: string, prompt: string): Promise<void> {
+    this.steeringRequests.push({ threadId, prompt });
   }
 }
 
@@ -376,11 +402,14 @@ describe("bridge tools", () => {
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "codex_activity",
       "codex_activity_handoff",
+      "codex_activity_snapshot",
       "codex_activity_update",
       "codex_agent",
       "codex_agent_recovery_detach",
       "codex_background_process_terminate",
       "codex_cancel",
+      "codex_interaction_respond",
+      "codex_job_steer",
       "codex_models",
       "codex_settings",
       "codex_status",
@@ -399,6 +428,19 @@ describe("bridge tools", () => {
         waitMs: { maximum: 60000 }
       }
     });
+    for (const hiddenCardField of [
+      "activityView",
+      "mountedActivityId",
+      "cardGeneration",
+      "activityPresentationId",
+      "presentationKind",
+      "afterVersion"
+    ]) {
+      expect(byName.get("codex_status")?.inputSchema.properties)
+        .not.toHaveProperty(hiddenCardField);
+    }
+    expect(Object.keys(byName.get("codex_activity")?.inputSchema.properties || {}).sort())
+      .toEqual(["activityId", "scopeId"]);
     expect(byName.get("codex_task")?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
@@ -460,6 +502,34 @@ describe("bridge tools", () => {
       "openai/widgetAccessible": true,
       "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
     });
+    for (const appTool of [
+      "codex_activity_snapshot",
+      "codex_interaction_respond",
+      "codex_job_steer"
+    ]) {
+      expect(byName.get(appTool)?._meta).toMatchObject({
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      });
+    }
+    expect(byName.get("codex_activity_snapshot")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["card"]),
+      properties: {
+        afterVersion: { minimum: 0 },
+        waitMs: { maximum: 60000 },
+        card: expect.any(Object)
+      }
+    });
+    expect(byName.get("codex_activity_handoff")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["action", "outboxIds", "card"]),
+      properties: {
+        action: { enum: ["claim-batch", "delivered-batch", "release-batch"] }
+      }
+    });
+    expect(byName.get("codex_activity_handoff")?.inputSchema.properties)
+      .not.toHaveProperty("outboxId");
     expect(byName.get("codex_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
       .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
     expect(byName.get("codex_activity_update")?.inputSchema.properties?.acknowledgeAffectedJobIds)
@@ -470,6 +540,29 @@ describe("bridge tools", () => {
       idempotentHint: false,
       openWorldHint: false
     });
+    expect(byName.get("codex_activity_update")?.inputSchema.properties?.action).toMatchObject({
+      enum: [
+        "seal",
+        "complete",
+        "abandon",
+        "cancel",
+        "start-verification",
+        "verification-passed",
+        "verification-failed",
+        "set-policy"
+      ]
+    });
+    for (const hiddenControlField of [
+      "jobId",
+      "expectedJobVersion",
+      "interactionId",
+      "interactionDecision",
+      "interactionAnswers",
+      "steeringPrompt"
+    ]) {
+      expect(byName.get("codex_activity_update")?.inputSchema.properties)
+        .not.toHaveProperty(hiddenControlField);
+    }
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": SETTINGS_CARD_URI,
@@ -539,17 +632,11 @@ describe("bridge tools", () => {
             "activityId",
             "activityLimit",
             "activityOffset",
-            "activityPresentationId",
-            "activityView",
-            "afterVersion",
-            "cardGeneration",
             "includeAllScopes",
             "jobCursor",
             "jobId",
             "jobLimit",
             "jobOffset",
-            "mountedActivityId",
-            "presentationKind",
             "scopeId",
             "sessionCursor",
             "sessionLimit",
@@ -558,8 +645,8 @@ describe("bridge tools", () => {
             "waitFor",
             "waitMs",
           ],
-          "propertyCount": 22,
-          "schemaBytes": 3368,
+          "propertyCount": 16,
+          "schemaBytes": 1679,
           "visibility": {
             "app": false,
             "model": true,
@@ -576,18 +663,36 @@ describe("bridge tools", () => {
           "name": "codex_activity",
           "properties": [
             "activityId",
-            "cardGeneration",
-            "forceNewCard",
-            "limit",
             "scopeId",
-            "sinceVersion",
-            "waitMs",
           ],
-          "propertyCount": 7,
-          "schemaBytes": 987,
+          "propertyCount": 2,
+          "schemaBytes": 531,
           "visibility": {
             "app": true,
             "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_activity_snapshot",
+          "properties": [
+            "afterVersion",
+            "card",
+            "limit",
+            "scopeId",
+            "waitMs",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 1141,
+          "visibility": {
+            "app": true,
+            "model": false,
             "operatorCapability": false,
           },
         },
@@ -601,14 +706,12 @@ describe("bridge tools", () => {
           "name": "codex_activity_handoff",
           "properties": [
             "action",
-            "activityPresentationId",
-            "outboxId",
+            "card",
             "outboxIds",
-            "presentationKind",
             "scopeId",
           ],
-          "propertyCount": 6,
-          "schemaBytes": 719,
+          "propertyCount": 4,
+          "schemaBytes": 1057,
           "visibility": {
             "app": true,
             "model": false,
@@ -710,6 +813,55 @@ describe("bridge tools", () => {
         {
           "annotations": {
             "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_interaction_respond",
+          "properties": [
+            "card",
+            "expectedJobVersion",
+            "interactionId",
+            "jobId",
+            "requestId",
+            "response",
+            "scopeId",
+          ],
+          "propertyCount": 7,
+          "schemaBytes": 1868,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_job_steer",
+          "properties": [
+            "card",
+            "expectedJobVersion",
+            "jobId",
+            "prompt",
+            "requestId",
+            "scopeId",
+          ],
+          "propertyCount": 6,
+          "schemaBytes": 1385,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
             "idempotent": false,
             "openWorld": false,
             "readOnly": false,
@@ -723,19 +875,13 @@ describe("bridge tools", () => {
             "completionTrigger",
             "evidence",
             "executionMode",
-            "expectedJobVersion",
             "expectedVersion",
             "handoffPolicy",
-            "interactionAnswers",
-            "interactionDecision",
-            "interactionId",
-            "jobId",
             "reason",
             "scopeId",
-            "steeringPrompt",
           ],
-          "propertyCount": 17,
-          "schemaBytes": 2976,
+          "propertyCount": 11,
+          "schemaBytes": 2110,
           "visibility": {
             "app": false,
             "model": true,
@@ -1081,9 +1227,15 @@ describe("bridge tools", () => {
           if (index === 0) {
             expect(html).toContain('callTool("codex_background_process_terminate"');
             expect(html).not.toContain('callTool("codex_agent"');
+            expect(html).toContain('callTool("codex_activity_snapshot"');
+            expect(html).toContain('callTool("codex_interaction_respond"');
           } else {
-            expect(html).toContain('callTool("codex_agent"');
-            expect(html).not.toContain('callTool("codex_background_process_terminate"');
+            expect(html).toContain('callTool("codex_background_process_terminate"');
+            expect(html).not.toContain('callTool("codex_agent"');
+            expect(html).toContain('callTool("codex_status",Object.assign({activityView:true');
+            expect(html).toContain('callTool("codex_activity_update"');
+            expect(html).not.toContain('callTool("codex_activity_snapshot"');
+            expect(html).not.toContain('callTool("codex_interaction_respond"');
           }
         }
         expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
@@ -3112,6 +3264,44 @@ describe("bridge tools", () => {
         executionMode: "background"
       }
     }));
+    const widgetSessionId = "widget-interaction";
+    const card = {
+      activityId: started.activityId,
+      generation: started.bridgeActivity.cardGeneration,
+      presentation: {
+        kind: "automatic" as const,
+        activityPresentationId: started.activityPresentationId
+      }
+    };
+    await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+
+    const steeringRequest = {
+      requestId: "91919191-9191-4191-8191-919191919191",
+      jobId: started.jobId,
+      expectedJobVersion: jobs.get(started.jobId)?.version,
+      prompt: "Focus on the exact pending interaction.",
+      card
+    };
+    const steered = parseToolJson(await client.callTool({
+      name: "codex_job_steer",
+      arguments: steeringRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    const steeringReplay = parseToolJson(await client.callTool({
+      name: "codex_job_steer",
+      arguments: steeringRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(steered).toMatchObject({ ok: true, action: "steer", promptPersistedByBridge: false });
+    expect(steeringReplay).toEqual(steered);
+    expect(upstream.steeringRequests).toEqual([
+      { threadId: "thread-1", prompt: "Focus on the exact pending interaction." }
+    ]);
+
     const approval = {
       interactionId: "interaction-approval-1",
       kind: "command-approval" as const,
@@ -3141,7 +3331,7 @@ describe("bridge tools", () => {
     });
     expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([approval]);
 
-    const unavailableDecision = await client.callTool({
+    const movedLegacyControl = await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: started.activityId,
@@ -3151,24 +3341,92 @@ describe("bridge tools", () => {
         interactionDecision: "accept"
       }
     });
+    expect(movedLegacyControl.isError).toBe(true);
+    expect(JSON.stringify(movedLegacyControl)).toContain("ACTIVITY_CONTROL_MOVED");
+
+    const unavailableDecision = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "92929292-9292-4292-8292-929292929292",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: approval.interactionId,
+        response: { decision: "accept" },
+        card
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
     expect(unavailableDecision.isError).toBe(true);
     expect(JSON.stringify(unavailableDecision)).toContain("decision is not available");
     expect(upstream.interactionResponses).toEqual([]);
 
-    await client.callTool({
-      name: "codex_activity_update",
-      arguments: {
-        activityId: started.activityId,
-        action: "respond-interaction",
-        jobId: started.jobId,
-        interactionId: approval.interactionId,
-        interactionDecision: "acceptForSession"
-      }
+    const responseRequest = {
+      requestId: "93939393-9393-4393-8393-939393939393",
+      jobId: started.jobId,
+      expectedJobVersion: jobs.get(started.jobId)?.version,
+      interactionId: approval.interactionId,
+      response: { decision: "acceptForSession" as const },
+      card
+    };
+    const [respondedResult, concurrentResult] = await Promise.all([
+      client.callTool({
+        name: "codex_interaction_respond",
+        arguments: responseRequest,
+        _meta: { "openai/widgetSessionId": widgetSessionId }
+      }),
+      client.callTool({
+        name: "codex_interaction_respond",
+        arguments: {
+          ...responseRequest,
+          requestId: "93939393-9393-4393-8393-939393939394"
+        },
+        _meta: { "openai/widgetSessionId": widgetSessionId }
+      })
+    ]);
+    const responded = parseToolJson(respondedResult);
+    const concurrentResponse = parseToolJson(concurrentResult);
+    const responseReplay = parseToolJson(await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: responseRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(responded).toMatchObject({
+      ok: true,
+      action: "respond-interaction",
+      activityId: started.activityId,
+      promptOrAnswersPersisted: false
     });
+    expect(concurrentResponse).toEqual(responded);
+    expect(responseReplay).toEqual(responded);
     expect(upstream.interactionResponses).toEqual([
       { interactionId: approval.interactionId, response: { decision: "acceptForSession" } }
     ]);
     expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    const reusedRequestId = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        ...responseRequest,
+        response: { decision: "decline" }
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(reusedRequestId.isError).toBe(true);
+    expect(JSON.stringify(reusedRequestId)).toContain("requestId was already used");
+
+    const withoutMountedCard = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "94949494-9494-4494-8494-949494949494",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: approval.interactionId,
+        response: { decision: "decline" },
+        card
+      }
+    });
+    expect(withoutMountedCard.isError).toBe(true);
+    expect(JSON.stringify(withoutMountedCard)).toContain("CARD_LEASE_REQUIRED");
 
     const input = {
       interactionId: "interaction-input-2",
@@ -3215,6 +3473,54 @@ describe("bridge tools", () => {
       }
     });
     expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    const secretInput = {
+      interactionId: "interaction-input-secret-3",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-3",
+      summary: "Codex requires a transient secret",
+      questions: [{
+        id: "password",
+        header: "Secret",
+        question: "Enter the transient value",
+        isSecret: true
+      }]
+    };
+    upstream.progressNext({
+      progress: 5,
+      message: secretInput.summary,
+      event: {
+        eventId: "secret-input-waiting",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: secretInput.summary,
+        details: { interaction: secretInput }
+      }
+    });
+    const secretRequestId = "95959595-9595-4595-8595-959595959595";
+    const secretValue = "transient-secret-value";
+    const secretResponse = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: secretRequestId,
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: secretInput.interactionId,
+        response: { answers: { password: [secretValue] } },
+        card
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(JSON.stringify(secretResponse)).not.toContain(secretValue);
+    expect(JSON.stringify(jobs.getAgentMutation(SCOPE_A, secretRequestId))).not.toContain(secretValue);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+    expect(upstream.interactionResponses.at(-1)).toEqual({
+      interactionId: secretInput.interactionId,
+      response: { answers: { password: [secretValue] } }
+    });
 
     upstream.resolveNext(fakeCodexResult("thread-1"));
     await waitForJobStatus(client, started.jobId, "completed");
@@ -3345,7 +3651,7 @@ describe("bridge tools", () => {
     });
     const verifiedView = await client.callTool({
       name: "codex_activity",
-      arguments: { activityId, forceNewCard: true }
+      arguments: { activityId }
     });
     expect((verifiedView as { structuredContent?: Record<string, any> })
       .structuredContent?.feed).toMatchObject({
@@ -4395,7 +4701,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("uses codex_status as the lightweight card watch API without private execution details", async () => {
+  it("uses the app-private Activity snapshot as the lightweight card watch API", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
@@ -4431,17 +4737,20 @@ describe("bridge tools", () => {
     expect(cardPayload).not.toContain('"cwd"');
     expect(cardPayload).not.toContain('"backendKind"');
     expect(cardPayload).not.toContain('"threadId"');
+    const card = {
+      activityId: initial.mountedActivity.activityId,
+      generation: initial.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
 
     const watchPromise = client.callTool({
-      name: "codex_status",
+      name: "codex_activity_snapshot",
       arguments: {
-        scopeId: SCOPE_A,
-        activityView: true,
+        card,
         afterVersion: initial.scopeVersion,
-        waitFor: "change",
         waitMs: 1_000
       },
-      _meta: { "openai/widgetSessionId": "widget-watch" }
+      _meta: { "openai/widgetSessionId": "widget-render" }
     });
     await Promise.resolve();
     upstream.progressNext({
@@ -4490,7 +4799,25 @@ describe("bridge tools", () => {
       activityPresentationId
     });
 
+    const automaticCard = {
+      activityId: first.activityId,
+      generation: 1,
+      presentation: { kind: "automatic" as const, activityPresentationId }
+    };
     const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCard
+      },
+      _meta: { "openai/widgetSessionId": "mounted-card" }
+    });
+    expect((mounted as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
+      mountedPresentation: { kind: "automatic", activityPresentationId },
+      watcherPolicy: { live: true, ownsCompletionHandoff: true }
+    });
+    const retainedGenerationSnapshot = await rawCallTool({
       name: "codex_status",
       arguments: {
         scopeId: SCOPE_A,
@@ -4500,13 +4827,10 @@ describe("bridge tools", () => {
         presentationKind: "automatic",
         activityPresentationId
       },
-      _meta: { "openai/widgetSessionId": "mounted-card" }
+      _meta: { "openai/widgetSessionId": "retained-generation-card" }
     });
-    expect((mounted as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
-      mountedPresentation: { kind: "automatic", activityPresentationId },
-      watcherPolicy: { live: true, ownsCompletionHandoff: true }
-    });
+    expect((retainedGenerationSnapshot as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ mountedActivity: { activityId: first.activityId, cardGeneration: 1 } });
 
     const parallel = parseToolJson(await client.callTool({
       name: "codex_task",
@@ -4590,17 +4914,12 @@ describe("bridge tools", () => {
       renderReason: "new-presentation"
     });
     const stoppedOldPresentation = await rawCallTool({
-      name: "codex_status",
+      name: "codex_activity_snapshot",
       arguments: {
         scopeId: SCOPE_A,
-        activityView: true,
-        mountedActivityId: first.activityId,
-        cardGeneration: 1,
-        presentationKind: "automatic",
-        activityPresentationId,
+        card: automaticCard,
         afterVersion: (mounted as { structuredContent?: Record<string, any> }).structuredContent
           ?.scopeVersion,
-        waitFor: "change",
         waitMs: 1_000
       },
       _meta: { "openai/widgetSessionId": "mounted-card" }
@@ -4669,18 +4988,19 @@ describe("bridge tools", () => {
         pendingHandoffs: [],
         watcherPolicy: { presentationKind: "explicit", ownsCompletionHandoff: false }
       });
-    const presentationArgs = {
-      presentationKind: "automatic" as const,
-      activityPresentationId: secondActivity.activityPresentationId
+    const card = {
+      activityId: secondActivity.activityId,
+      generation: secondActivity.cardGeneration,
+      presentation: {
+        kind: "automatic" as const,
+        activityPresentationId: secondActivity.activityPresentationId
+      }
     };
     const view = await rawCallTool({
-      name: "codex_status",
+      name: "codex_activity_snapshot",
       arguments: {
         scopeId: SCOPE_A,
-        activityView: true,
-        mountedActivityId: secondActivity.activityId,
-        cardGeneration: secondActivity.cardGeneration,
-        ...presentationArgs
+        card
       },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
@@ -4690,15 +5010,35 @@ describe("bridge tools", () => {
       expect.objectContaining({ activityId: secondActivity.activityId, channel: "notify" })
     ]));
     const outboxIds = pending.map((event: Record<string, any>) => event.outboxId);
+    await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": "widget-two" }
+    });
+    const retainedPresentationArgs = {
+      presentationKind: "automatic" as const,
+      activityPresentationId: secondActivity.activityPresentationId
+    };
+    await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: secondActivity.activityId,
+        cardGeneration: secondActivity.cardGeneration,
+        ...retainedPresentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-retained" }
+    });
 
     const first = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-one" }
     }));
     const second = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-two" }
     }));
     expect(first).toMatchObject({
@@ -4712,6 +5052,17 @@ describe("bridge tools", () => {
       ])
     });
     expect(second).toMatchObject({ claimed: false, handoffDepth: 0, events: [] });
+    const retainedGenerationClaim = parseToolJson(await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: {
+        scopeId: SCOPE_A,
+        action: "claim-batch",
+        outboxIds,
+        ...retainedPresentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-retained" }
+    }));
+    expect(retainedGenerationClaim).toMatchObject({ claimed: false, events: [] });
     expect(JSON.stringify(first)).not.toContain("notification payload must not be copied");
 
     const failedBatch = await rawCallTool({
@@ -4720,35 +5071,32 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         action: "delivered-batch",
         outboxIds: [outboxIds[0], 999_999_999],
-        ...presentationArgs
+        card
       },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     expect(failedBatch.isError).toBe(true);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds, ...presentationArgs },
+      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const reclaimed = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, ...presentationArgs },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-two" }
     }));
     expect(reclaimed.events).toHaveLength(2);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds, ...presentationArgs },
+      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-two" }
     });
     const after = await rawCallTool({
-      name: "codex_status",
+      name: "codex_activity_snapshot",
       arguments: {
         scopeId: SCOPE_A,
-        activityView: true,
-        mountedActivityId: secondActivity.activityId,
-        cardGeneration: secondActivity.cardGeneration,
-        ...presentationArgs
+        card
       },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
@@ -5187,7 +5535,7 @@ describe("bridge tools", () => {
     });
     const agentsResult = await client.callTool({
       name: "codex_activity",
-      arguments: { activityId, forceNewCard: true }
+      arguments: { activityId }
     });
     const agents = (agentsResult as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(agents).not.toHaveProperty("viewMode");
@@ -6417,10 +6765,14 @@ async function connectTestClient(
         (
           request.name === "codex_status" ||
           request.name === "codex_activity" ||
+          request.name === "codex_activity_snapshot" ||
+          request.name === "codex_activity_handoff" ||
           request.name === "codex_activity_update" ||
           request.name === "codex_agent" ||
           request.name === "codex_agent_recovery_detach" ||
-          request.name === "codex_background_process_terminate"
+          request.name === "codex_background_process_terminate" ||
+          request.name === "codex_interaction_respond" ||
+          request.name === "codex_job_steer"
         ) &&
         !arguments_.scopeId &&
         !arguments_.includeAllScopes
