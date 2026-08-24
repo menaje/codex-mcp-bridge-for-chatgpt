@@ -229,7 +229,9 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
-Truly completed work moves into a collapsed **Completed Codex** group that reports both distinct Agent count and completed Activity count. Idle and ended Agents have separate collapsed groups. A completed Activity remains in the current feed while verification, a handoff, a tracked job, an interaction, or an App Server background process is still pending. Reusing the same Agent for a new Activity removes it from completed history and shows the new current Activity instead.
+Truly completed work moves into a collapsed **Completed Codex** group that reports both distinct Agent count and completed Activity count. Idle and ended Agents have separate collapsed groups. When more than one project is relevant, its label remains visible in current and collapsed history rows without exposing the folder path. A completed Activity remains in the current feed while verification, a handoff, a tracked job, an interaction, or an App Server background process is still pending. Reusing the same Agent for a new Activity removes it from completed history and shows the new current Activity instead.
+
+Agent archive/restore is bridge-local logical state. It never calls App Server `thread/archive` or `thread/unarchive`, so archiving one logical Agent cannot implicitly archive another Agent's descendant fork.
 
 The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show their user-defined labels. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
 

@@ -232,6 +232,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
     expect(ACTIVITY_CARD_HTML).toContain("next.feed");
     expect(ACTIVITY_CARD_HTML).toContain('renderGroup("completed"');
+    expect(ACTIVITY_CARD_HTML).toContain("renderHistoryRow(item,kind,showWorkspace)");
+    expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
+    expect(ACTIVITY_CARD_HTML).toContain("summary.push(...(item.workspaceLabels||[]))");
     expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
     expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");
     expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');

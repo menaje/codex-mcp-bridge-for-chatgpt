@@ -214,9 +214,12 @@ identity.
   method/outcome, timing, worker generation, numeric error code, and validated
   thread/turn identifiers; raw result/error payloads, messages, prompts, paths,
   and command output are never copied into that journal. `/healthz` exposes only
-  identifier-free aggregate counters. Late archive/unarchive success updates an
-  Agent only when the same App Server thread is still current and the lifecycle
-  remains safe; otherwise the journal records a conflict for explicit recovery.
+  identifier-free aggregate counters. Late archive/unarchive success never
+  changes logical Agent state; the journal records it as a conflict for explicit
+  upstream recovery.
+- Logical Agent archive/restore never invokes App Server thread archive/unarchive.
+  This keeps bridge lifecycle management from cascading through an upstream fork
+  graph and affecting another logical Agent.
 - Tool results and retained jobs can contain repository content. They are
   stripped of result `_meta`, token/password/key patterns, and configured-root
   absolute prefixes, then bounded in memory and persisted to the private state

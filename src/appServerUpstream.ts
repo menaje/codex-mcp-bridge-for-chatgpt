@@ -863,32 +863,34 @@ class AppServerConnection {
     this.activeTurns.set(turnId, context);
     this.threadTurns.set(threadId, turnId);
     const identity = this.rpc.identity;
+    const assignment: UpstreamWorkerAssignment = {
+      backendKind: "app-server",
+      workerId: this.workerId,
+      workerGeneration: this.generation,
+      ...(identity ? { workerPid: identity.pid } : {}),
+      ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
+        ? { processGroupId: identity.processGroupId }
+        : {}),
+      upstreamRequestId: turnId,
+      threadId
+    };
     try {
-      onAssigned?.({
-        backendKind: "app-server",
-        workerId: this.workerId,
-        workerGeneration: this.generation,
-        ...(identity ? { workerPid: identity.pid } : {}),
-        ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
-          ? { processGroupId: identity.processGroupId }
-          : {}),
-        upstreamRequestId: turnId,
-        threadId
-      });
+      onAssigned?.(assignment);
     } catch (error) {
-      this.activeTurns.delete(turnId);
-      if (this.threadTurns.get(threadId) === turnId) this.threadTurns.delete(threadId);
       try {
-        await this.rpc.request(
-          "turn/interrupt",
-          { threadId, turnId },
-          {
-            timeoutMs: this.protocolOptions.interruptTimeoutMs,
-            lateResponseContext: { threadId, turnId }
-          }
-        );
+        // Keep the TurnContext and per-thread lock until terminal evidence is
+        // observed. interruptOrTerminate waits for turn/completed and falls
+        // back to terminating the worker process when confirmation is absent.
+        await this.interruptOrTerminate(assignment);
       } catch {
-        // Assignment persistence is the originating failure and must remain observable.
+        // A missing process identity is the only expected helper failure. Make
+        // one direct containment attempt while preserving the originating
+        // assignment-persistence error for the caller.
+        try {
+          await this.rpc.forceTerminate();
+        } catch {
+          // The retained TurnContext/thread lock still prevents overlapping work.
+        }
       }
       throw error;
     }

@@ -380,22 +380,33 @@ describe("CodexAppServerUpstreamPool", () => {
     const assignmentFailure = new Error("fixture assignment persistence failed");
     let assignment: UpstreamWorkerAssignment | undefined;
     try {
-      await expect(
-        pool.callTool(
-          "codex",
-          task("hold for assignment persistence failure"),
-          undefined,
-          (value) => {
-            assignment = value;
-            throw assignmentFailure;
-          }
-        )
-      ).rejects.toBe(assignmentFailure);
+      const failedCall = pool.callTool(
+        "codex",
+        task("hold for assignment persistence failure with delayed interrupt"),
+        undefined,
+        (value) => {
+          assignment = value;
+          throw assignmentFailure;
+        }
+      );
+      const observedFailure = failedCall.then(
+        () => undefined,
+        (error: unknown) => error
+      );
+
+      await eventually(() => Boolean(assignment));
 
       expect(assignment).toMatchObject({
         threadId: "fake-thread-1",
         upstreamRequestId: "fake-turn-1"
       });
+      await expect(
+        pool.callTool("codex-reply", {
+          ...task("must remain serialized until interrupted completion"),
+          threadId: assignment!.threadId
+        })
+      ).rejects.toThrow("already active for this thread");
+      expect(await observedFailure).toBe(assignmentFailure);
       await expect(pool.steerThread(assignment!.threadId!, "should not steer")).rejects.toThrow(
         "has no active turn to steer"
       );

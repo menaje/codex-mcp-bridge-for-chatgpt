@@ -149,30 +149,11 @@ export class AppServerLateResponseJournal {
 
     const agent = this.stateStore.getAgentForThread(record.threadId);
     if (!agent) return "thread-untracked";
-    const thread = this.stateStore
-      .listAgentThreads(agent.agentId)
-      .find((candidate) => candidate.threadId === record.threadId);
-    if (
-      !thread ||
-      !thread.isCurrent ||
-      thread.backendKind !== "app-server" ||
-      agent.currentThreadId !== record.threadId
-    ) {
-      return "state-conflict";
-    }
-
-    if (record.method === "thread/archive") {
-      if (agent.lifecycle === "archived") return "already-consistent";
-      if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
-        return "state-conflict";
-      }
-      this.stateStore.archiveAgent(agent.agentId, record.receivedAt);
-      return "agent-archived";
-    }
-
-    if (agent.lifecycle !== "archived") return "already-consistent";
-    this.stateStore.restoreAgent(agent.agentId, record.receivedAt);
-    return "agent-restored";
+    // Logical Agent archive/restore is deliberately bridge-local. A timed-out
+    // upstream archive response can still reveal that upstream state changed,
+    // but it must never replay that side effect into the Agent lifecycle. Mark
+    // every tracked late archive/unarchive success for explicit reconciliation.
+    return "state-conflict";
   }
 
   private loadState(): PersistedLateResponseState {

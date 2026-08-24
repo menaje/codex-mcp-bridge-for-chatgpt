@@ -64,8 +64,8 @@
       ]
     },
     "activity": {
-      "digest": "741348023dcce38036fa753a73a7ae372d0d1e659971dcc1065976e5ca0e61cb",
-      "uri": "ui://codex-mcp-bridge/activity/741348023dcc.html",
+      "digest": "9df1e6f82a4d29e4a16d49a7f054272286e008c91ccf9fddac2a4cdf36539c5d",
+      "uri": "ui://codex-mcp-bridge/activity/9df1e6f82a4d.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -92,8 +92,8 @@
       },
       "previous": [
         {
-          "digest": "6d013bf16010ca93a6068d7c06344c09dd584babdd549aa7b69cd0dabd96c1bd",
-          "uri": "ui://codex-mcp-bridge/activity/6d013bf16010.html",
+          "digest": "c52ad0349aaf64e774a0cd843cdde1151acb9c7db4c1712235c3c2c5f435a9e3",
+          "uri": "ui://codex-mcp-bridge/activity/c52ad0349aaf.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",

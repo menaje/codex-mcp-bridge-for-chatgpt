@@ -3373,7 +3373,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. An exact logical-call retry reuses both IDs. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. An exact logical-call retry reuses both IDs. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4310,6 +4310,26 @@ async function startNewSession(input: {
   });
 }
 
+function resolvePinnedAgentCwd(input: {
+  session: TrackedCodexSession;
+  config: BridgeConfig;
+}): string {
+  let currentCwd: string;
+  try {
+    currentCwd = resolveAllowedCwd(input.session.cwd, input.config.allowedRoots);
+  } catch {
+    throw new Error(
+      "PROJECT_UNAVAILABLE: The Agent thread project folder is unavailable or outside the operator-allowed roots. Restore the admitted folder/root or use contextMode='fresh' in an available project."
+    );
+  }
+  if (currentCwd !== input.session.cwd) {
+    throw new Error(
+      "PROJECT_UNAVAILABLE: The Agent thread project identity changed. Restore the admitted folder or use contextMode='fresh' in an available project."
+    );
+  }
+  return currentCwd;
+}
+
 async function continueTrackedSession(input: {
   prompt: string;
   requestedMode: SessionMode;
@@ -4343,10 +4363,7 @@ async function continueTrackedSession(input: {
       `Continuing a ${input.session.sandbox} thread requires sandbox='${input.session.sandbox}' on this call.`
     );
   }
-  const currentCwd = resolveAllowedCwd(input.session.cwd, input.config.allowedRoots);
-  if (currentCwd !== input.session.cwd) {
-    throw new Error("The selected Codex thread no longer resolves to its recorded allowed working directory.");
-  }
+  const currentCwd = resolvePinnedAgentCwd(input);
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
   }
@@ -4476,13 +4493,7 @@ async function forkTrackedSession(input: {
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
     );
   }
-  const currentCwd = resolveAllowedCwd(input.session.cwd, input.config.allowedRoots);
-  if (currentCwd !== input.session.cwd) {
-    input.jobs.setAgentExecutionState(input.agent.agentId, "orphaned", {
-      orphanedReason: "The Agent thread working folder is no longer inside an allowed root."
-    });
-    throw new Error("AGENT_ORPHANED: The Agent thread working folder is no longer allowed.");
-  }
+  const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
   const forcedSandbox = forcedSandboxForStrategy(input.preferences);
   if (forcedSandbox && forcedSandbox !== input.session.sandbox) {
@@ -5502,6 +5513,9 @@ async function buildActivityView(
         agentName: agent.agentName,
         role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
         latestActivityTitle: latestActivity?.title || null,
+        workspaceLabels: hasMultipleWorkspaces && latestActivity
+          ? workspacesFor(latestActivity.activityId)
+          : [],
         displayState: latestActivity?.lifecycle || "archived",
         updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
       });
@@ -5515,6 +5529,9 @@ async function buildActivityView(
       agentName: agent.agentName,
       role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
       latestActivityTitle: latestActivity?.title || null,
+      workspaceLabels: hasMultipleWorkspaces && latestActivity
+        ? workspacesFor(latestActivity.activityId)
+        : [],
       updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
     });
   }
@@ -5538,6 +5555,7 @@ async function buildActivityView(
     structured: {
       ...legacy.structured,
       feed: {
+        showWorkspaceLabels: hasMultipleWorkspaces,
         activeCount: activeRows.length,
         active: visibleActiveRows,
         completed: {

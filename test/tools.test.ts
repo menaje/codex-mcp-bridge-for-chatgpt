@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -4024,9 +4024,17 @@ describe("bridge tools", () => {
     );
 
     settings.update({ defaultCwd: first }, settings.current.revision);
-    await runTask(client, { prompt: "first", agentName: "First Root", contextMode: "fresh" });
+    const firstResult = await runTask(client, {
+      prompt: "first",
+      agentName: "First Root",
+      contextMode: "fresh"
+    });
     settings.update({ defaultCwd: second }, settings.current.revision);
-    await runTask(client, { prompt: "other cwd", agentName: "Second Root", contextMode: "fresh" });
+    const secondResult = await runTask(client, {
+      prompt: "other cwd",
+      agentName: "Second Root",
+      contextMode: "fresh"
+    });
     await runTask(client, {
       prompt: "write",
       agentName: "Writer",
@@ -4055,6 +4063,21 @@ describe("bridge tools", () => {
     ))).toEqual(new Set([path.basename(first), path.basename(second)]));
     expect(JSON.stringify(card)).not.toContain(realpathSync(first));
     expect(JSON.stringify(card)).not.toContain(realpathSync(second));
+
+    for (const result of [firstResult, secondResult]) {
+      const activityId = (result as { structuredContent?: Record<string, any> })
+        .structuredContent?.bridgeActivity?.activityId;
+      await client.callTool({
+        name: "codex_activity_update",
+        arguments: { activityId, action: "complete", reason: "accepted for history rendering" }
+      });
+    }
+    const historyCard = await client.callTool({ name: "codex_activity", arguments: {} });
+    const historyView = (historyCard as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(historyView.feed.showWorkspaceLabels).toBe(true);
+    expect(new Set(historyView.feed.completed.rows.flatMap(
+      (row: { workspaceLabels: string[] }) => row.workspaceLabels
+    ))).toEqual(new Set([path.basename(first), path.basename(second)]));
     await close();
   });
 
@@ -4204,6 +4227,58 @@ describe("bridge tools", () => {
     expect(JSON.stringify(removed)).toContain("PROJECT_NOT_FOUND");
     await close();
   });
+
+  it.each(["continue", "fork"] as const)(
+    "redacts an unavailable pinned project path during %s and recovers after restoration",
+    async (contextMode) => {
+      const root = temporaryRoot();
+      const movedRoot = `${root}-moved`;
+      const upstream = new ForkLifecycleUpstream();
+      const { client, jobs, close } = await connectTestClient(
+        configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+        upstream
+      );
+      const started = await runTask(client, {
+        prompt: "seed pinned project",
+        agentName: `Unavailable ${contextMode} Agent`,
+        contextMode: "fresh"
+      });
+      const agentId = (started as { structuredContent?: Record<string, any> })
+        .structuredContent?.bridgeActivity?.agentId as string;
+
+      renameSync(root, movedRoot);
+      try {
+        const result = await client.callTool({
+          name: "codex_task",
+          arguments: { prompt: "reuse unavailable project", agentId, contextMode }
+        });
+        const serialized = JSON.stringify(result);
+        expect(result.isError).toBe(true);
+        expect(serialized).toContain("PROJECT_UNAVAILABLE");
+        expect(serialized).not.toContain(root);
+        expect(serialized).not.toContain(movedRoot);
+        expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+        expect(upstream.calls).toHaveLength(1);
+      } finally {
+        if (existsSync(movedRoot)) renameSync(movedRoot, root);
+      }
+
+      try {
+        const recovered = await runTask(client, {
+          prompt: "reuse restored project",
+          agentId,
+          contextMode
+        });
+        expect((recovered as { isError?: boolean }).isError).not.toBe(true);
+        expect(upstream.calls.map((call) => call.name)).toEqual([
+          "codex",
+          contextMode === "continue" ? "codex-reply" : "codex-fork"
+        ]);
+      } finally {
+        await close();
+      }
+    }
+  );
 
   it("keeps an omitted effective project stable across idempotent retries", async () => {
     const first = temporaryRoot();

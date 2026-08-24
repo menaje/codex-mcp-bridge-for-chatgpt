@@ -203,7 +203,7 @@ A new but dependent goal creates a linked Activity without reopening the complet
 
 For independent verification, create another named Agent with `fork` or `fresh`. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without exact `agentId`.
 
-Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. `codex_agent` provides idempotent `rename`, `detach`, `archive`, `restore`, and exact `terminate-background-process` actions. Active/waiting Agents and Agents with App Server background terminals cannot be archived. There is no GPT-facing permanent delete.
+Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. `codex_agent` provides idempotent `rename`, `detach`, `archive`, `restore`, and exact `terminate-background-process` actions. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. There is no GPT-facing permanent delete.
 
 If the backend cannot resume the current thread, the Agent becomes `orphaned`. Use explicit `fresh` to replace its current thread; the original stays in thread history.
 
@@ -215,7 +215,7 @@ For automatic UI, generate one UUID `activityPresentationId` at the first `codex
 
 The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_status` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. A foreground call does not consume a `background-only` presentation; a later background call in the same response may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
-The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
+The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. When multiple projects are relevant, project labels remain visible across both current and collapsed history rows; full paths remain private. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 
 The feed shows only Activity title, GPT-chosen Agent name, separate role, localized state, kind, timing, final project-folder name when multiple projects are relevant, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input.
 
@@ -245,13 +245,14 @@ In a new ChatGPT conversation:
 4. change a harmless preference and save;
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
-7. confirm `codex_task` has no `cwd` or `projectId` in this phase and fixed access modes have no `sandbox`;
-8. start a narrow foreground read-only Activity and confirm it uses the default/sole project folder;
-9. open the flat Activity feed and verify there is no KPI/card grid/layout selector or path/backend/ID/timeline detail;
-10. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
-11. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
-12. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
-13. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
+7. confirm `codex_task` has no `cwd`, projects only the registered selectable `projectId` values/labels, and fixed access modes have no `sandbox`;
+8. start narrow foreground read-only Activities in each project, then omit `projectId` and confirm the configured default/sole-project rule;
+9. try a conflicting project on an existing Activity/thread and confirm `PROJECT_CONTEXT_CONFLICT` without another Codex call;
+10. open the flat Activity feed and verify project labels appear only when useful and there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
+11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
+12. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
+13. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
+14. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source; use `fresh` plus another project to verify an explicit linked-project switch.
 
 In an existing pre-refresh conversation:
 

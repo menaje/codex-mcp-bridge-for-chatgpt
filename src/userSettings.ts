@@ -40,7 +40,7 @@ export type BridgeUserSettings = {
   legacyPreferredModel?: string;
   projects: ProjectTarget[];
   defaultProjectId: string | null;
-  /** Compatibility mirror used until all execution paths route by project ID. */
+  /** Legacy persistence/UI compatibility mirror for the effective default project. */
   defaultCwd: string | null;
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;

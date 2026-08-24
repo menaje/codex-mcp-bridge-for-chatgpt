@@ -20,7 +20,7 @@ const FIXTURE = fileURLToPath(
 );
 
 describe("AppServerLateResponseJournal", () => {
-  it("records late start identifiers and reconciles safe archive state without retaining payloads", async () => {
+  it("records late identifiers without replaying upstream archive state into logical Agents", async () => {
     const store = new BridgeStateStore({ file: stateFile() });
     const archiveAgent = store.createAgent({ scopeId: SCOPE_ID, agentName: "Late Archive" });
     store.linkAgentThread({
@@ -59,7 +59,8 @@ describe("AppServerLateResponseJournal", () => {
         code: -32001,
         method: "thread/archive"
       });
-      await eventually(() => store.getAgent(archiveAgent.agentId)?.lifecycle === "archived");
+      await eventually(() => journal.status().totals.observed === 1);
+      expect(store.getAgent(archiveAgent.agentId)?.lifecycle).toBe("idle");
 
       await expect(pool.archiveThread!("late-archive-error", "app-server")).rejects.toMatchObject({
         code: -32001,
@@ -71,7 +72,8 @@ describe("AppServerLateResponseJournal", () => {
         code: -32001,
         method: "thread/unarchive"
       });
-      await eventually(() => store.getAgent(restoreAgent.agentId)?.lifecycle === "idle");
+      await eventually(() => journal.status().totals.observed === 3);
+      expect(store.getAgent(restoreAgent.agentId)?.lifecycle).toBe("archived");
 
       await expect(pool.startThread!({
         backendKind: "app-server",
@@ -100,8 +102,8 @@ describe("AppServerLateResponseJournal", () => {
           error: 1,
           malformed: 0,
           identified: 5,
-          stateReconciled: 2,
-          stateConflicts: 0,
+          stateReconciled: 0,
+          stateConflicts: 2,
           untracked: 0,
           evicted: 0
         }
@@ -113,7 +115,7 @@ describe("AppServerLateResponseJournal", () => {
           method: "thread/archive",
           threadId: "late-archive-success",
           outcome: "success",
-          reconciliation: "agent-archived"
+          reconciliation: "state-conflict"
         }),
         expect.objectContaining({
           method: "thread/archive",
@@ -126,7 +128,7 @@ describe("AppServerLateResponseJournal", () => {
           method: "thread/unarchive",
           threadId: "late-unarchive-success",
           outcome: "success",
-          reconciliation: "agent-restored"
+          reconciliation: "state-conflict"
         }),
         expect.objectContaining({
           method: "thread/start",
