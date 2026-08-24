@@ -2200,7 +2200,7 @@ describe("bridge tools", () => {
       }
     }));
     expect(archived).toMatchObject({ ok: true, agent: { agentId, lifecycle: "archived" } });
-    expect(upstream.archivedThreads).toEqual(["managed-thread"]);
+    expect(upstream.archivedThreads).toEqual([]);
     const card = await client.callTool({ name: "codex_activity", arguments: {} });
     const cardView = (card as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(cardView.agents).not.toEqual(expect.arrayContaining([expect.objectContaining({ agentId })]));
@@ -2220,7 +2220,7 @@ describe("bridge tools", () => {
       ok: true,
       agent: { agentId, agentName: "Renamed Agent", lifecycle: "idle", threadHistoryCount: 1 }
     });
-    expect(upstream.restoredThreads).toEqual(["managed-thread"]);
+    expect(upstream.restoredThreads).toEqual([]);
 
     const crossScope = await rawCallTool({
       name: "codex_agent",
@@ -2238,6 +2238,78 @@ describe("bridge tools", () => {
       currentThreadId: "managed-thread",
       agentName: "Renamed Agent"
     });
+    await close();
+  });
+
+  it("archives a logical Agent without archiving an upstream thread that has a fork descendant", async () => {
+    const root = temporaryRoot();
+    const upstream = new ManagedDeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const sourceAgent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Source Agent" });
+    jobs.linkAgentThread({
+      agentId: sourceAgent.agentId,
+      threadId: "source-thread",
+      backendKind: "app-server",
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fresh"
+    });
+    const forkAgent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Fork Agent" });
+    jobs.linkAgentThread({
+      agentId: forkAgent.agentId,
+      threadId: "fork-thread",
+      backendKind: "app-server",
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fork",
+      forkedFromThreadId: "source-thread"
+    });
+
+    const archived = parseToolJson(await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "61616161-6161-4161-8161-616161616161",
+        agentId: sourceAgent.agentId,
+        action: "archive"
+      }
+    }));
+    expect(archived).toMatchObject({
+      ok: true,
+      agent: { agentId: sourceAgent.agentId, lifecycle: "archived", threadHistoryCount: 1 }
+    });
+    expect(upstream.archivedThreads).toEqual([]);
+    expect(jobs.getAgent(forkAgent.agentId)).toMatchObject({
+      lifecycle: "idle",
+      currentThreadId: "fork-thread"
+    });
+    expect(jobs.listAgentThreads(forkAgent.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "fork-thread",
+        forkedFromThreadId: "source-thread",
+        isCurrent: true
+      })
+    ]);
+
+    const restored = parseToolJson(await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "62626262-6262-4262-8262-626262626262",
+        agentId: sourceAgent.agentId,
+        action: "restore"
+      }
+    }));
+    expect(restored).toMatchObject({
+      ok: true,
+      agent: { agentId: sourceAgent.agentId, lifecycle: "idle", threadHistoryCount: 1 }
+    });
+    expect(upstream.restoredThreads).toEqual([]);
+    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({
+      lifecycle: "idle",
+      currentThreadId: "source-thread"
+    });
+    expect(jobs.listAgentThreads(sourceAgent.agentId)).toEqual([
+      expect.objectContaining({ threadId: "source-thread", isCurrent: true })
+    ]);
     await close();
   });
 

@@ -2804,13 +2804,6 @@ export function registerBridgeTools(
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
         return textResult(mutationResult);
       }
-      if (args.action === "archive" && agent.lifecycle !== "archived" && currentThread && upstream.archiveThread) {
-        await upstream.archiveThread(currentThread.threadId, currentThread.backendKind as CodexBackendKind);
-      }
-      if (args.action === "restore" && agent.lifecycle === "archived" && currentThread && upstream.restoreThread) {
-        await upstream.restoreThread(currentThread.threadId, currentThread.backendKind as CodexBackendKind);
-      }
-
       let updated: BridgeAgent = agent;
       let detached: ActivityAgentAssignment | undefined;
       const result = jobs.activityTransaction(() => {
