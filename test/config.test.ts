@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { enforceSandbox, findSensitiveFiles, loadConfig, requireAllowedCwd } from "../src/config.js";
+import {
+  enforceSandbox,
+  findSensitiveFiles,
+  isPathWithinRoot,
+  loadConfig,
+  requireAllowedCwd
+} from "../src/config.js";
 
 describe("config policy", () => {
   it("defaults to current directory as the only allowed root", () => {
@@ -241,6 +247,15 @@ describe("config policy", () => {
 
     expect(requireAllowedCwd(root, [realpathSync(root)])).toBe(realpathSync(root));
     expect(() => requireAllowedCwd(other, [realpathSync(root)])).toThrow(/outside allowed roots/);
+  });
+
+  it("treats the filesystem root as a valid containment ceiling", () => {
+    expect(requireAllowedCwd(tmpdir(), [path.parse(tmpdir()).root])).toBe(realpathSync(tmpdir()));
+  });
+
+  it("handles Windows drive roots without a doubled-separator boundary", () => {
+    expect(isPathWithinRoot("C:\\workspace\\project", "C:\\", path.win32)).toBe(true);
+    expect(isPathWithinRoot("D:\\workspace", "C:\\", path.win32)).toBe(false);
   });
 
   it("blocks write sandboxes unless explicitly enabled", () => {

@@ -234,11 +234,23 @@ export function requireAllowedCwd(input: string, allowedRoots: string[]): string
   }
 
   const cwd = realpathSync(input);
-  const match = allowedRoots.some((root) => cwd === root || cwd.startsWith(root + path.sep));
+  const match = allowedRoots.some((root) => isPathWithinRoot(cwd, root));
   if (!match) {
     throw new Error(`cwd is outside allowed roots: ${cwd}`);
   }
   return cwd;
+}
+
+export function isPathWithinRoot(
+  candidate: string,
+  root: string,
+  pathApi: Pick<typeof path, "relative" | "isAbsolute" | "sep"> = path
+): boolean {
+  const relative = pathApi.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!pathApi.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${pathApi.sep}`))
+  );
 }
 
 export function resolveAllowedCwd(input: string | undefined, allowedRoots: string[]): string {
