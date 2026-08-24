@@ -203,7 +203,7 @@ A new but dependent goal creates a linked Activity without reopening the complet
 
 For independent verification, create another named Agent with `fork` or `fresh`. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without exact `agentId`.
 
-Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only idempotent `rename`, `archive`, and `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
+Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
@@ -231,7 +231,7 @@ Only the newest automatic presentation owns the scope live watch and completion 
 `executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
 
 ```json
-{ "jobId": "...", "waitFor": "terminal", "waitMs": 55000 }
+{ "query": { "kind": "job", "id": "...", "waitFor": "terminal", "waitMs": 55000 } }
 ```
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts the exact App Server turn or tracked worker process and records cancellation only after exit evidence; it never rolls back changes.

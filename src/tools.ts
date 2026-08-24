@@ -2156,7 +2156,33 @@ export function registerBridgeTools(
     }
   };
 
+  const codexStatusQueryInput = z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("job"),
+      id: z.string().trim().min(1).max(200).describe("Exact job id returned by codex_task."),
+      waitFor: z.enum(["change", "terminal"]).optional()
+        .describe("Optionally wait for the next change or a terminal state."),
+      waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional()
+        .describe(`Bounded wait duration; defaults to ${DEFAULT_CODEX_STATUS_WAIT_MS} milliseconds.`)
+    }),
+    z.strictObject({
+      kind: z.literal("activity"),
+      id: scopeIdSchema().describe("Exact Activity id in the current conversation scope.")
+    }),
+    z.strictObject({
+      kind: z.literal("thread"),
+      id: z.string().trim().min(1).max(200)
+        .describe("Exact Codex thread id in the current conversation scope.")
+    }),
+    z.strictObject({
+      kind: z.literal("page"),
+      collection: z.enum(["sessions", "jobs", "activities"]),
+      limit: z.number().int().min(1).max(100).optional(),
+      cursor: z.string().trim().min(1).max(200).optional()
+    })
+  ]);
   const codexStatusRuntimeInput = z.strictObject({
+    query: codexStatusQueryInput.optional(),
     scopeId: scopeIdSchema()
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
@@ -2207,38 +2233,9 @@ export function registerBridgeTools(
     activityCursor: z.string().trim().min(1).max(200).optional()
   });
   const codexStatusPublicInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    includeAllScopes: z
-      .boolean()
-      .optional()
-      .describe(
-        "Compatibility/admin audit across every scope. Unavailable to ordinary ChatGPT conversation calls."
-      ),
-    jobId: z.string().trim().min(1).optional().describe("Optional job id returned by codex_task."),
-    activityId: scopeIdSchema().optional().describe("Optional exact Activity id for a UI-independent detail view."),
-    threadId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe("Optional exact Codex thread id with its related Activities, turns, and jobs."),
-    waitFor: z
-      .enum(["change", "terminal"])
-      .optional()
-      .describe("With jobId, wait for a progress/status change or terminal state."),
-    waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
-    sessionLimit: z.number().int().min(1).max(100).optional(),
-    sessionOffset: z.number().int().min(0).optional(),
-    sessionCursor: z.string().trim().min(1).max(200).optional(),
-    jobLimit: z.number().int().min(1).max(100).optional(),
-    jobOffset: z.number().int().min(0).optional(),
-    jobCursor: z.string().trim().min(1).max(200).optional(),
-    activityLimit: z.number().int().min(1).max(100).optional(),
-    activityOffset: z.number().int().min(0).optional(),
-    activityCursor: z.string().trim().min(1).max(200).optional()
+    query: codexStatusQueryInput.optional().describe(
+      "Exact detail, bounded job wait, or one cursor-paginated collection. Omit for the current scoped overview."
+    )
   });
 
   server.registerTool(
@@ -2246,7 +2243,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. ChatGPT scope is derived from host metadata; scopeId is only a compatibility input for MCP hosts that do not provide it. Pass a jobId for one result or an exact Activity/thread id for detail. A bridge-wide audit is available only to compatibility/admin hosts without ChatGPT session metadata. Mounted cards use the app-private Activity snapshot capability.",
+        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
       annotations: {
         readOnlyHint: true,
@@ -2256,6 +2253,54 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta, signal }) => {
+      if (args.query) {
+        const legacyQueryFields = [
+          "includeAllScopes",
+          "jobId",
+          "activityId",
+          "threadId",
+          "waitFor",
+          "waitMs",
+          "activityView",
+          "mountedActivityId",
+          "cardGeneration",
+          "activityPresentationId",
+          "presentationKind",
+          "afterVersion",
+          "sessionLimit",
+          "sessionOffset",
+          "sessionCursor",
+          "jobLimit",
+          "jobOffset",
+          "jobCursor",
+          "activityLimit",
+          "activityOffset",
+          "activityCursor"
+        ].filter((field) => Object.prototype.hasOwnProperty.call(args, field));
+        if (legacyQueryFields.length > 0) {
+          throw new Error(
+            `STATUS_QUERY_CONFLICT: query cannot be combined with legacy flat fields: ${legacyQueryFields.join(", ")}.`
+          );
+        }
+        if (args.query.kind === "job") {
+          args.jobId = args.query.id;
+          args.waitFor = args.query.waitFor;
+          args.waitMs = args.query.waitMs;
+        } else if (args.query.kind === "activity") {
+          args.activityId = args.query.id;
+        } else if (args.query.kind === "thread") {
+          args.threadId = args.query.id;
+        } else if (args.query.collection === "sessions") {
+          args.sessionLimit = args.query.limit;
+          args.sessionCursor = args.query.cursor;
+        } else if (args.query.collection === "jobs") {
+          args.jobLimit = args.query.limit;
+          args.jobCursor = args.query.cursor;
+        } else {
+          args.activityLimit = args.query.limit;
+          args.activityCursor = args.query.cursor;
+        }
+      }
       const scopeResolution = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
       const scopeId = scopeResolution?.scopeId;
       if (scopeResolution?.source === "host-metadata" && args.includeAllScopes) {
@@ -2263,6 +2308,11 @@ export function registerBridgeTools(
       }
       if (scopeId && args.includeAllScopes) {
         throw new Error("scopeId and includeAllScopes cannot be used together.");
+      }
+      if (args.query?.kind === "page" && !scopeId) {
+        throw new Error(
+          "Status pagination requires ChatGPT conversation metadata or an explicit compatibility scopeId."
+        );
       }
       if ((args.waitFor || args.waitMs) && !args.jobId && args.afterVersion === undefined) {
         throw new Error("waitFor and waitMs require a jobId or an Activity afterVersion.");
@@ -2457,13 +2507,6 @@ export function registerBridgeTools(
         });
       }
 
-      let upstreamTools: unknown = null;
-      let upstreamError: string | null = null;
-      try {
-        upstreamTools = await upstream.listTools();
-      } catch (error) {
-        upstreamError = error instanceof Error ? error.message : String(error);
-      }
       const preferences = userSettings.current;
       const sessionLimit = args.sessionLimit ?? 10;
       const sessionOffset = args.sessionCursor
@@ -2521,6 +2564,69 @@ export function registerBridgeTools(
         : scopeId
           ? jobs.orphanedAgentCount(scopeId)
           : 0;
+      const statusScopeView = args.includeAllScopes
+        ? { mode: "all" as const }
+        : scopeResolution
+          ? {
+              mode: "scoped" as const,
+              scopeId,
+              source: scopeResolution.source,
+              keyVersion: scopeResolution.keyVersion,
+              explicitInputIgnored: scopeResolution.explicitInputIgnored
+            }
+          : {
+              mode: "policy-only" as const,
+              hostMetadataOrCompatibilityScopeRequiredForDetails: true
+            };
+      const scopeCounts = {
+        sessions: scopedSessionCount,
+        jobs: scopedJobCount,
+        runningJobs: scopedRunningCount,
+        activities: scopedActivityCount,
+        agents: scopedAgentCount,
+        orphanedAgents: scopedOrphanedAgentCount
+      };
+      const pagination = {
+        sessions: pageSummary("sessions", sessionOffset, sessionLimit, visibleSessions.length, scopedSessionCount),
+        jobs: pageSummary("jobs", jobOffset, jobLimit, visibleJobs.length, scopedJobCount),
+        activities: pageSummary("activities", activityOffset, activityLimit, visibleActivities.length, scopedActivityCount)
+      };
+      const sessionRows = visibleSessions.map((session) => ({
+        ...formatSessionSummary(session),
+        resumeAvailability:
+          upstream.canResumeThread?.(session.threadId, session.backendKind) === false
+            ? "unavailable-after-worker-restart"
+            : upstream.canResumeThread?.(session.threadId, session.backendKind) === true
+              ? "available"
+              : "unknown"
+      }));
+      const jobRows = visibleJobs.map((job) => formatJobSummary(job, jobs.staleThresholdMs));
+      const activityRows = visibleActivities.map((activity) => ({
+        ...formatActivitySummary(activity),
+        threadIds: [...new Set(jobs.listForActivity(activity.activityId).map((job) => job.threadId).filter(Boolean))],
+        jobIds: jobs.listForActivity(activity.activityId).map((job) => job.jobId)
+      }));
+      if (args.query?.kind === "page") {
+        const collection = args.query.collection;
+        return textResult({
+          query: { kind: "page", collection },
+          scopeView: statusScopeView,
+          scopeCounts,
+          pagination: pagination[collection],
+          items: collection === "sessions"
+            ? sessionRows
+            : collection === "jobs"
+              ? jobRows
+              : activityRows
+        });
+      }
+      let upstreamTools: unknown = null;
+      let upstreamError: string | null = null;
+      try {
+        upstreamTools = await upstream.listTools();
+      } catch (error) {
+        upstreamError = error instanceof Error ? error.message : String(error);
+      }
       const cachedCatalog = modelCatalog.getCachedCatalog?.({
         backendKind: config.defaultBackend
       });
@@ -2638,33 +2744,9 @@ export function registerBridgeTools(
           mcpThreadLifetime: "active-upstream-worker-generation",
           restartBehavior: "resume-an-exact-available-activity-thread-or-start-new"
         },
-        scopeView: args.includeAllScopes
-          ? { mode: "all" }
-          : scopeResolution
-            ? {
-                mode: "scoped",
-                scopeId,
-                source: scopeResolution.source,
-                keyVersion: scopeResolution.keyVersion,
-                explicitInputIgnored: scopeResolution.explicitInputIgnored
-              }
-            : {
-                mode: "policy-only",
-                hostMetadataOrCompatibilityScopeRequiredForDetails: true
-              },
-        scopeCounts: {
-          sessions: scopedSessionCount,
-          jobs: scopedJobCount,
-          runningJobs: scopedRunningCount,
-          activities: scopedActivityCount,
-          agents: scopedAgentCount,
-          orphanedAgents: scopedOrphanedAgentCount
-        },
-        pagination: {
-          sessions: pageSummary("sessions", sessionOffset, sessionLimit, visibleSessions.length, scopedSessionCount),
-          jobs: pageSummary("jobs", jobOffset, jobLimit, visibleJobs.length, scopedJobCount),
-          activities: pageSummary("activities", activityOffset, activityLimit, visibleActivities.length, scopedActivityCount)
-        },
+        scopeView: statusScopeView,
+        scopeCounts,
+        pagination,
         settingsPolicy: {
           persistent: userSettings.persistent,
           revision: preferences.revision,
@@ -2672,21 +2754,9 @@ export function registerBridgeTools(
           warnings: userSettings.loadWarnings
         },
         operatorWarnings: config.startupWarnings,
-        sessions: visibleSessions.map((session) => ({
-          ...formatSessionSummary(session),
-          resumeAvailability:
-            upstream.canResumeThread?.(session.threadId, session.backendKind) === false
-              ? "unavailable-after-worker-restart"
-              : upstream.canResumeThread?.(session.threadId, session.backendKind) === true
-                ? "available"
-                : "unknown"
-        })),
-        jobs: visibleJobs.map((job) => formatJobSummary(job, jobs.staleThresholdMs)),
-        activities: visibleActivities.map((activity) => ({
-          ...formatActivitySummary(activity),
-          threadIds: [...new Set(jobs.listForActivity(activity.activityId).map((job) => job.threadId).filter(Boolean))],
-          jobIds: jobs.listForActivity(activity.activityId).map((job) => job.jobId)
-        })),
+        sessions: sessionRows,
+        jobs: jobRows,
+        activities: activityRows,
         agents: visibleAgents.map((agent) => ({
           ...formatAgentSummary(agent, jobs),
           currentThread: formatAgentThreadSummary(
@@ -3078,25 +3148,32 @@ export function registerBridgeTools(
     }
   );
 
+  const codexAgentOperationInput = z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("archive") }),
+    z.strictObject({ kind: z.literal("restore") }),
+    z.strictObject({
+      kind: z.literal("rename"),
+      name: z.string().trim().min(1).max(80).describe("New human-friendly Agent display name.")
+    })
+  ]);
   const codexAgentRuntimeInput = z.strictObject({
     scopeId: scopeIdSchema().optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
     agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
-    action: z.enum(["archive", "restore", "rename", "detach", "terminate-background-process"]),
+    operation: codexAgentOperationInput.optional(),
+    action: z.enum(["archive", "restore", "rename", "detach", "terminate-background-process"]).optional(),
     agentName: z.string().trim().min(1).max(80).optional(),
     activityId: scopeIdSchema().optional(),
     expectedAgentVersion: z.number().int().min(1).optional(),
     processId: z.string().trim().min(1).max(200).optional()
   });
   const codexAgentPublicInput = z.strictObject({
-    scopeId: scopeIdSchema().optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
     agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
-    action: z.enum(["archive", "restore", "rename"]),
-    agentName: z.string().trim().min(1).max(80).optional()
-      .describe("New display name, required only for action='rename'.")
+    operation: codexAgentOperationInput.describe(
+      "One reversible management operation. Rename alone accepts a new display name."
+    )
   });
 
   server.registerTool(
@@ -3104,7 +3181,7 @@ export function registerBridgeTools(
     {
       title: "Manage Codex Agent",
       description:
-        "Apply one idempotent scope-local management action to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. Recovery detach and destructive background-process control use separate restricted tools.",
+        "Apply one idempotent scope-local operation to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. ChatGPT scope is host-derived. Recovery detach and destructive background-process control use separate restricted tools.",
       inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
       annotations: {
         readOnlyHint: false,
@@ -3115,6 +3192,27 @@ export function registerBridgeTools(
       _meta: { "openai/widgetAccessible": true }
     },
     async (args, { _meta }) => {
+      if (args.operation) {
+        const legacyFields = [
+          "action",
+          "agentName",
+          "activityId",
+          "expectedAgentVersion",
+          "processId"
+        ].filter((field) => Object.prototype.hasOwnProperty.call(args, field));
+        if (legacyFields.length > 0) {
+          throw new Error(
+            `AGENT_OPERATION_CONFLICT: operation cannot be combined with legacy fields: ${legacyFields.join(", ")}.`
+          );
+        }
+        args.action = args.operation.kind;
+        args.agentName = args.operation.kind === "rename" ? args.operation.name : undefined;
+      }
+      if (!args.action) {
+        throw new Error(
+          "AGENT_OPERATION_REQUIRED: Refresh the tool descriptor and choose archive, restore, or rename."
+        );
+      }
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,

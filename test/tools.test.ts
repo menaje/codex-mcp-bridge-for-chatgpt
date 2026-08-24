@@ -424,11 +424,42 @@ describe("bridge tools", () => {
     });
     expect(byName.get("codex_status")?.inputSchema).toMatchObject({
       properties: {
-        waitFor: { enum: ["change", "terminal"] },
-        waitMs: { maximum: 60000 }
+        query: {
+          oneOf: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                kind: { type: "string", const: "job" },
+                waitFor: { type: "string", enum: ["change", "terminal"], description: expect.any(String) },
+                waitMs: expect.objectContaining({ maximum: 60000 })
+              })
+            }),
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                kind: { type: "string", const: "page" },
+                collection: { type: "string", enum: ["sessions", "jobs", "activities"] }
+              })
+            })
+          ])
+        }
       }
     });
     for (const hiddenCardField of [
+      "scopeId",
+      "includeAllScopes",
+      "jobId",
+      "activityId",
+      "threadId",
+      "waitFor",
+      "waitMs",
+      "sessionLimit",
+      "sessionOffset",
+      "sessionCursor",
+      "jobLimit",
+      "jobOffset",
+      "jobCursor",
+      "activityLimit",
+      "activityOffset",
+      "activityCursor",
       "activityView",
       "mountedActivityId",
       "cardGeneration",
@@ -477,15 +508,29 @@ describe("bridge tools", () => {
       continuationOfActivityId: expect.any(Object),
       activityPresentationId: expect.any(Object)
     });
-    expect(byName.get("codex_agent")?.inputSchema.properties).toMatchObject({
-      action: { enum: ["archive", "restore", "rename"] },
+    const agentInputProperties = byName.get("codex_agent")?.inputSchema.properties as
+      | Record<string, any>
+      | undefined;
+    expect(agentInputProperties).toMatchObject({
       agentId: expect.any(Object),
-      requestId: expect.any(Object)
+      requestId: expect.any(Object),
+      operation: expect.any(Object)
     });
+    const agentOperationVariants = agentInputProperties?.operation?.oneOf as
+      | Array<Record<string, any>>
+      | undefined;
+    expect(agentOperationVariants?.map((variant) => variant.properties?.kind?.const).sort())
+      .toEqual(["archive", "rename", "restore"]);
+    expect(agentOperationVariants?.find((variant) => variant.properties?.kind?.const === "rename"))
+      .toMatchObject({
+        required: expect.arrayContaining(["kind", "name"]),
+        properties: { name: expect.any(Object) }
+      });
+    expect(Object.keys(byName.get("codex_agent")?.inputSchema.properties || {}).sort())
+      .toEqual(["agentId", "operation", "requestId"]);
     expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("activityId");
     expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("processId");
-    expect((byName.get("codex_agent")?.inputSchema.properties?.action as { enum?: string[] }).enum)
-      .not.toContain("delete");
+    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("action");
     expect(byName.get("codex_agent_recovery_detach")?._meta).toMatchObject({
       ui: { visibility: ["app"] },
       "openai/visibility": "private"
@@ -628,25 +673,10 @@ describe("bridge tools", () => {
           },
           "name": "codex_status",
           "properties": [
-            "activityCursor",
-            "activityId",
-            "activityLimit",
-            "activityOffset",
-            "includeAllScopes",
-            "jobCursor",
-            "jobId",
-            "jobLimit",
-            "jobOffset",
-            "scopeId",
-            "sessionCursor",
-            "sessionLimit",
-            "sessionOffset",
-            "threadId",
-            "waitFor",
-            "waitMs",
+            "query",
           ],
-          "propertyCount": 16,
-          "schemaBytes": 1679,
+          "propertyCount": 1,
+          "schemaBytes": 1613,
           "visibility": {
             "app": false,
             "model": true,
@@ -727,14 +757,12 @@ describe("bridge tools", () => {
           },
           "name": "codex_agent",
           "properties": [
-            "action",
             "agentId",
-            "agentName",
+            "operation",
             "requestId",
-            "scopeId",
           ],
-          "propertyCount": 5,
-          "schemaBytes": 923,
+          "propertyCount": 3,
+          "schemaBytes": 1137,
           "visibility": {
             "app": true,
             "model": true,
@@ -2905,8 +2933,7 @@ describe("bridge tools", () => {
     const renameArguments = {
       requestId: "30303030-3030-4030-8030-303030303030",
       agentId,
-      action: "rename",
-      agentName: "Renamed Agent"
+      operation: { kind: "rename", name: "Renamed Agent" }
     } as const;
     const renamed = parseToolJson(await client.callTool({ name: "codex_agent", arguments: renameArguments }));
     const renameReplay = parseToolJson(await client.callTool({ name: "codex_agent", arguments: renameArguments }));
@@ -2920,10 +2947,24 @@ describe("bridge tools", () => {
     });
     const changedRetry = await client.callTool({
       name: "codex_agent",
-      arguments: { ...renameArguments, agentName: "Different Name" }
+      arguments: {
+        ...renameArguments,
+        operation: { kind: "rename", name: "Different Name" }
+      }
     });
     expect(changedRetry.isError).toBe(true);
     expect(JSON.stringify(changedRetry)).toContain("already used for a different Agent mutation");
+    const mixedContract = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "31313131-3131-4131-8131-313131313131",
+        agentId,
+        operation: { kind: "rename", name: "Nested Name" },
+        agentName: "Legacy Name"
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("AGENT_OPERATION_CONFLICT");
 
     jobs.setAgentExecutionState(agentId, "orphaned", {
       orphanedReason: "Transient session metadata was unavailable before recovery."
@@ -2934,7 +2975,7 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "40404040-4040-4040-8040-404040404040",
         agentId,
-        action: "archive"
+        operation: { kind: "archive" }
       }
     }));
     expect(archived).toMatchObject({ ok: true, agent: { agentId, lifecycle: "archived" } });
@@ -2951,7 +2992,7 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "50505050-5050-4050-8050-505050505050",
         agentId,
-        action: "restore"
+        operation: { kind: "restore" }
       }
     }));
     expect(restored).toMatchObject({
@@ -2966,7 +3007,7 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "60606060-6060-4060-8060-606060606060",
         agentId,
-        action: "archive"
+        operation: { kind: "archive" }
       }
     });
     expect(crossScope.isError).toBe(true);
@@ -4775,6 +4816,41 @@ describe("bridge tools", () => {
       sessions: { offset: 10, returned: 4, total: 14, hasMore: false, nextOffset: null },
       jobs: { offset: 2, returned: 1, total: 3, hasMore: false, nextOffset: null }
     });
+    const compactJobs = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "page", collection: "jobs", limit: 2 } }
+      })
+    );
+    expect(Object.keys(compactJobs).sort()).toEqual([
+      "items",
+      "pagination",
+      "query",
+      "scopeCounts",
+      "scopeView"
+    ]);
+    expect(compactJobs).toMatchObject({
+      query: { kind: "page", collection: "jobs" },
+      pagination: { offset: 0, returned: 2, total: 3, hasMore: true },
+      items: [expect.objectContaining({ scopeId: SCOPE_A }), expect.objectContaining({ scopeId: SCOPE_A })]
+    });
+    const compactNext = parseToolJson(
+      await client.callTool({
+        name: "codex_status",
+        arguments: {
+          query: {
+            kind: "page",
+            collection: "jobs",
+            limit: 2,
+            cursor: compactJobs.pagination.nextCursor
+          }
+        }
+      })
+    );
+    expect(compactNext).toMatchObject({
+      pagination: { offset: 2, returned: 1, total: 3, hasMore: false },
+      items: [expect.objectContaining({ scopeId: SCOPE_A })]
+    });
     const malformed = await client.callTool({
       name: "codex_status",
       arguments: { scopeId: SCOPE_A, sessionCursor: "not-a-valid-cursor" }
@@ -4809,7 +4885,7 @@ describe("bridge tools", () => {
 
     const detail = parseToolJson(await client.callTool({
       name: "codex_status",
-      arguments: { threadId: "thread-1" }
+      arguments: { query: { kind: "thread", id: "thread-1" } }
     }));
     expect(detail.activities.map((activity: { activityId: string }) => activity.activityId).sort()).toEqual(
       [first.activityId, second.activityId].sort()
@@ -4817,13 +4893,30 @@ describe("bridge tools", () => {
     expect(detail.jobs).toHaveLength(2);
     const firstJobDetail = parseToolJson(await client.callTool({
       name: "codex_status",
-      arguments: { jobId: first.jobId }
+      arguments: { query: { kind: "job", id: first.jobId } }
     }));
     expect(firstJobDetail).toMatchObject({
       jobId: first.jobId,
       threadId: "thread-1",
       session: { threadId: "thread-1" }
     });
+    const firstActivityDetail = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "activity", id: first.activityId } }
+    }));
+    expect(firstActivityDetail).toMatchObject({
+      activity: { activityId: first.activityId },
+      jobs: [expect.objectContaining({ jobId: first.jobId })]
+    });
+    const mixedContract = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        query: { kind: "job", id: first.jobId },
+        jobId: first.jobId
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("STATUS_QUERY_CONFLICT");
     expect(detail.turns).toEqual([
       expect.objectContaining({ jobId: first.jobId, turnId: null, status: "completed" }),
       expect.objectContaining({ jobId: second.jobId, turnId: null, status: "completed" })
@@ -5903,7 +5996,9 @@ describe("bridge tools", () => {
 
     const waiting = client.callTool({
       name: "codex_status",
-      arguments: { jobId: started.jobId, waitFor: "terminal", waitMs: 1000 }
+      arguments: {
+        query: { kind: "job", id: started.jobId, waitFor: "terminal", waitMs: 1000 }
+      }
     });
     setTimeout(() => upstream.resolveNext(), 10);
     const completed = parseToolJson(await waiting);

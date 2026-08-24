@@ -33,13 +33,28 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 ## Tools
 
 - `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, and own automatic Activity-card presentation.
-- `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state or make a bounded job wait.
+- `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state through one optional discriminated `query`.
 - `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
 - `codex_activity_update`: apply one validated Activity lifecycle or verification transition.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
 - `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
 - `codex_settings`: render saved named projects, policy, and preferences.
+
+Omit `query` for the scoped status overview. Otherwise choose exactly one detail,
+wait, or cursor page:
+
+```json
+{ "query": { "kind": "job", "id": "...", "waitFor": "terminal", "waitMs": 55000 } }
+```
+
+```json
+{ "query": { "kind": "page", "collection": "activities", "limit": 20, "cursor": "..." } }
+```
+
+The prior flat status fields remain runtime compatibility inputs but are not
+published to the model. `scopeId` is likewise host-derived in ChatGPT and
+runtime-only for compatibility hosts.
 
 `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity controls require an exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
@@ -243,11 +258,16 @@ One Agent/thread admits only one active turn. Different Agents/threads can run i
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
-When a turn becomes terminal, its Agent returns to `idle`, releases the active Activity assignment, and remains reusable. `codex_agent` provides idempotent scope-local actions:
+When a turn becomes terminal, its Agent returns to `idle`, releases the active Activity assignment, and remains reusable. `codex_agent` accepts one idempotent scope-local `operation`:
 
 - `rename`: changes the alias only;
 - `archive`: hides an idle Agent while preserving its current/history threads and assignments;
 - `restore`: returns that exact archived Agent.
+
+For example, rename with `{ "operation": { "kind": "rename", "name": "Reviewer" } }`
+or archive with `{ "operation": { "kind": "archive" } }`, together with the
+required `requestId` and `agentId`. The former flat action/name fields remain
+runtime compatibility inputs but are not published to the model.
 
 Active/waiting Agents and Agents with a remaining background process cannot be archived. A mounted Activity card stops one exact remaining App Server terminal through the separate destructive `codex_background_process_terminate` capability. Exceptional assignment repair uses `codex_agent_recovery_detach`, requires exact Activity/Agent/version preconditions, rechecks idle state transactionally, and is disabled by default. Force-stop, background-process termination, recovery detach, and archive are distinct operations; none rolls back filesystem changes. Permanent Agent/thread deletion is not exposed.
 
@@ -267,7 +287,7 @@ The card does not expose event timelines, Agent/job/thread IDs, full working pat
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The immediately previous content-hashed Activity resource remains registered as the sole compatibility generation, with its old status/control calls accepted only from an active scoped card lease. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The immediately previous content-hashed Activity resource remains registered as the sole compatibility generation, with its old status/control calls accepted only from an active scoped card lease. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 

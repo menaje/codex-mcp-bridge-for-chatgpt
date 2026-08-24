@@ -8,9 +8,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 
 ## Exposed capabilities
 
-- `codex_status` returns policy plus scope-filtered metadata-only session
-  summaries and retained asynchronous results. An explicit operator-audit flag
-  can return all scopes.
+- `codex_status` publishes one optional discriminated `query` for an exact
+  job/Activity/thread detail, bounded job wait, or cursor page; omission returns
+  the scoped overview. Legacy flat fields and the all-scope operator audit remain
+  runtime-only compatibility paths.
 - `codex_task` conditionally binds the Activity UI according to the saved card
   visibility setting; the widget consumes only the task's scoped Activity identity
   and obtains its feed through the app-private `codex_activity_snapshot` contract.
@@ -35,8 +36,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_activity_handoff` exposes batch operations only to the current card and
   requires the exact newest automatic presentation lease. Single-item and flat
   presentation fields remain runtime-only for the one retained UI generation.
-- `codex_agent` applies only idempotent scope-local Agent rename/archive/restore
-  actions. It never permanently deletes an Agent or rolls back files.
+- `codex_agent` publishes one discriminated `operation` containing only
+  idempotent scope-local Agent rename/archive/restore behavior. Legacy flat
+  fields remain runtime-only; it never permanently deletes an Agent or rolls
+  back files.
 - `codex_background_process_terminate` is app-private and destructive. It
   requires a host-correlated mounted-card lease plus exact Activity generation,
   presentation, Agent version, current App Server thread, and freshly listed
