@@ -1,0 +1,172 @@
+{
+  "inventoryVersion": 1,
+  "issue": 25,
+  "tranche": "25-K",
+  "comparisonBaselineCommit": "d57f94083dc1bc3f5427042c80e7ce5e67279ad7",
+  "generatedOn": "2026-08-25",
+  "profile": {
+    "accessStrategy": "adaptive",
+    "modelPolicy": "automatic",
+    "activityCardVisibility": "always",
+    "projects": 1
+  },
+  "measurement": {
+    "propertyCount": "Object.keys(inputSchema.properties).length",
+    "schemaBytes": "Buffer.byteLength(JSON.stringify(inputSchema), 'utf8')",
+    "visibility": "derived from ui.visibility, openai/visibility, and openai/widgetAccessible"
+  },
+  "summary": {
+    "toolCount": 16,
+    "modelVisibleToolCount": 9,
+    "modelVisibleTopLevelPropertyCount": 26,
+    "baselineModelVisibleTopLevelPropertyCount": 78
+  },
+  "uiContractWindow": {
+    "activity": { "current": 4, "retained": 3, "expired": [2] },
+    "settings": { "current": 3, "retained": 2, "expired": [1] }
+  },
+  "tools": [
+    {
+      "name": "codex_status",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["query"],
+      "schemaBytes": 1613,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["activityId"],
+      "schemaBytes": 327,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_snapshot",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 5,
+      "properties": ["afterVersion", "card", "limit", "scopeId", "waitMs"],
+      "schemaBytes": 1141,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_handoff",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 3,
+      "properties": ["action", "card", "outboxIds"],
+      "schemaBytes": 954,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_agent",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 3,
+      "properties": ["agentId", "operation", "requestId"],
+      "schemaBytes": 1137,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_agent_recovery_detach",
+      "visibility": { "model": false, "app": true, "operatorCapability": true },
+      "propertyCount": 5,
+      "properties": ["activityId", "agentId", "expectedAgentVersion", "requestId", "scopeId"],
+      "schemaBytes": 1037,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_background_process_terminate",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 6,
+      "properties": ["agentId", "card", "expectedAgentVersion", "processId", "requestId", "scopeId"],
+      "schemaBytes": 1586,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_cancel",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 3,
+      "properties": ["acknowledgeAffectedJobIds", "expectedVersion", "jobId"],
+      "schemaBytes": 549,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_interaction_respond",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 7,
+      "properties": ["card", "expectedJobVersion", "interactionId", "jobId", "requestId", "response", "scopeId"],
+      "schemaBytes": 1868,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_job_steer",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 6,
+      "properties": ["card", "expectedJobVersion", "jobId", "prompt", "requestId", "scopeId"],
+      "schemaBytes": 1385,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_update",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 3,
+      "properties": ["activityId", "expectedVersion", "operation"],
+      "schemaBytes": 2476,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": false, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_cancel",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 5,
+      "properties": ["acknowledgeAffectedJobIds", "activityId", "expectedVersion", "reason", "requestId"],
+      "schemaBytes": 971,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_models",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["refresh"],
+      "schemaBytes": 215,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": true }
+    },
+    {
+      "name": "codex_settings",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["refreshModels"],
+      "schemaBytes": 203,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": true }
+    },
+    {
+      "name": "codex_update_settings",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 2,
+      "properties": ["expectedRevision", "operation"],
+      "schemaBytes": 4294,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": false, "openWorld": false }
+    },
+    {
+      "name": "codex_task",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 8,
+      "properties": ["activity", "agent", "executionMode", "projectId", "prompt", "requestId", "sandbox", "selection"],
+      "schemaBytes": 4540,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": false, "openWorld": false }
+    }
+  ],
+  "remainingRuntimeOnlyAuthority": {
+    "scope": "Explicit scopeId remains available only where a non-ChatGPT compatibility host cannot supply conversation metadata.",
+    "audit": "codex_status includeAllScopes remains an operator audit input and is never model-visible.",
+    "dynamicAdmission": "codex_task runtime parsing remains broader only for projectId, sandbox, and selection so current settings and catalog policy can return authoritative stale-descriptor errors."
+  },
+  "expiredRuntimeCompatibility": {
+    "codex_status": ["flat detail/wait fields", "direct offsets", "flat Activity-card watch fields"],
+    "codex_activity": ["cardGeneration", "forceNewCard", "limit", "sinceVersion", "waitMs"],
+    "codex_activity_handoff": ["single-item actions", "outboxId", "flat presentation fields"],
+    "codex_agent": ["flat action/name fields", "detach", "terminate-background-process"],
+    "codex_activity_update": ["flat lifecycle/policy fields", "cancel", "interaction response", "steering"],
+    "codex_update_settings": ["flat reset/patch fields", "projects replacement", "defaultCwd"],
+    "codex_task": ["flat Activity/Agent routing", "caller presentation", "policy revision", "session/thread/cwd routing", "top-level model selection"]
+  }
+}

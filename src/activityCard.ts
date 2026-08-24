@@ -8,8 +8,8 @@ import {
 } from "./uiResources.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
-export const ACTIVITY_CARD_CONTRACT_GENERATION = 3;
-export const LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION = 2;
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 4;
+export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 3;
 export const ACTIVITY_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const ACTIVITY_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Activity Feed`,
@@ -47,7 +47,7 @@ export function registerActivityCardResource(server: McpServer): void {
               "codex/uiContractGeneration": revision.contractGeneration ||
                 (index === 0
                   ? ACTIVITY_CARD_CONTRACT_GENERATION
-                  : LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION)
+                  : RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION)
             }
           }
         ]

@@ -235,10 +235,15 @@ describe("http server", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 0,
-        modelPolicy: {
-          mode: "fixed",
-          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-          constraints: { allowDelegation: true }
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
         }
       }
     });
@@ -291,13 +296,13 @@ describe("http server", () => {
         arguments: {
           scopeId: SCOPE_A,
           requestId: REQUEST_A,
-          activityPresentationId: REQUEST_A,
           prompt: "slow",
-          activityTitle: "Slow HTTP task",
-          activityKind: "implementation",
-          agentName: "HTTP Agent",
-          agentRole: "implementation",
-          contextMode: "fresh"
+          activity: {
+            mode: "new",
+            title: "Slow HTTP task",
+            policy: { kind: "implementation" }
+          },
+          agent: { mode: "new", name: "HTTP Agent" }
         }
       })
     );
@@ -330,13 +335,13 @@ describe("http server", () => {
       name: "codex_task",
       arguments: {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        activityPresentationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         prompt: "derive scope",
-        activityTitle: "Derive HTTP scope",
-        activityKind: "investigation",
-        agentName: "HTTP Derived Agent",
-        agentRole: "investigation",
-        contextMode: "fresh",
+        activity: {
+          mode: "new",
+          title: "Derive HTTP scope",
+          policy: { kind: "investigation" }
+        },
+        agent: { mode: "new", name: "HTTP Derived Agent" },
         executionMode: "foreground"
       },
       _meta: metadata
@@ -395,16 +400,14 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         prompt: "persist Activity",
-        agentName: "HTTP Persistent Agent",
-        agentRole: "review",
-        contextMode: "fresh",
+        agent: { mode: "new", name: "HTTP Persistent Agent" },
         executionMode: "foreground",
-        activityTitle: "Persistent Activity",
-        activityKind: "review",
-        handoffPolicy: "none",
-        completionTrigger: "manual"
+        activity: {
+          mode: "new",
+          title: "Persistent Activity",
+          policy: { kind: "review", handoff: "none", completion: "manual" }
+        }
       }
     });
     const activityId = (started as { structuredContent?: Record<string, any> })
@@ -420,13 +423,17 @@ describe("http server", () => {
     );
     const secondClient = new Client({ name: "http-activity-client", version: "0.0.0" });
     await secondClient.connect(new StreamableHTTPClientTransport(new URL(`${secondUrl}/mcp`)));
+    const beforeUpdate = parseToolJson(await secondClient.callTool({
+      name: "codex_status",
+      arguments: { scopeId: SCOPE_A, query: { kind: "activity", id: activityId } }
+    }));
     const updated = parseToolJson(await secondClient.callTool({
       name: "codex_activity_update",
       arguments: {
         scopeId: SCOPE_A,
         activityId,
-        action: "set-policy",
-        handoffPolicy: "notify"
+        expectedVersion: beforeUpdate.activity.version,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
       }
     }));
     expect(updated.activity).toMatchObject({
@@ -439,7 +446,12 @@ describe("http server", () => {
     });
     const completed = parseToolJson(await secondClient.callTool({
       name: "codex_activity_update",
-      arguments: { scopeId: SCOPE_A, activityId, action: "complete" }
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId,
+        expectedVersion: updated.activity.version,
+        operation: { kind: "complete" }
+      }
     }));
     expect(completed.activity).toMatchObject({ lifecycle: "completed", completionVersion: 1 });
     await secondClient.close();
@@ -457,10 +469,8 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "must not attach to completed Activity",
-        sessionMode: "new",
-        activityId
+        activity: { mode: "existing", id: activityId }
       }
     });
     expect(deniedAttachment.isError).toBe(true);
@@ -516,7 +526,7 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
         name: "codex_status",
         arguments: {
           scopeId: SCOPE_A,
-          jobId
+          query: { kind: "job", id: jobId }
         }
       })
     );

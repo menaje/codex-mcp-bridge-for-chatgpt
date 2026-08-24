@@ -27,7 +27,6 @@ export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number]
 export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
-export const CWD_OVERRIDE_RETIRED = "CWD_OVERRIDE_RETIRED";
 export const DEFAULT_CWD_REQUIRED = "DEFAULT_CWD_REQUIRED";
 export const DEFAULT_CWD_NOT_ALLOWED = "DEFAULT_CWD_NOT_ALLOWED";
 
@@ -281,12 +280,7 @@ export class UserSettingsStore {
     return enforceSandbox(this.config, requested);
   }
 
-  resolveCwd(requested?: string): string {
-    if (requested !== undefined) {
-      throw new Error(
-        `${CWD_OVERRIDE_RETIRED}: Per-call cwd is retired. Refresh the tool list and save the default working folder in Codex settings.`
-      );
-    }
+  resolveCwd(): string {
     if (this.unavailableDefaultCwd !== undefined) {
       throw new Error(
         `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is no longer inside an allowed root. Update Codex settings before starting a new Activity.`

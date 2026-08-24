@@ -10,8 +10,8 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 
 - `codex_status` publishes one optional discriminated `query` for an exact
   job/Activity/thread detail, bounded job wait, or cursor page; omission returns
-  the scoped overview. Legacy flat fields and the all-scope operator audit remain
-  runtime-only compatibility paths.
+  the scoped overview. The expired flat query envelope is rejected. Explicit
+  compatibility scope and the all-scope operator audit remain runtime-only.
 - `codex_task` conditionally binds the Activity UI according to the saved card
   visibility setting; the widget consumes only the task's scoped Activity identity
   and obtains its feed through the app-private `codex_activity_snapshot` contract.
@@ -26,8 +26,8 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   filesystem changes are not rolled back.
 - `codex_activity_update` publishes one exact-version discriminated operation
   for non-cancelling lifecycle, policy, and evidence-backed verification
-  transitions. It is not annotated destructive. Legacy flat lifecycle fields
-  remain runtime-only, and a legacy cancel request returns a moved-contract error.
+  transitions. It is not annotated destructive. Expired flat lifecycle and
+  cancellation fields are rejected.
 - `codex_activity_cancel` is the separately annotated destructive whole-Activity
   force-stop. It requires a replay UUID, exact Activity version, scope ownership,
   and the complete affected-job acknowledgement when workers are shared.
@@ -38,12 +38,11 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   cannot send two responses. Raw answers and steering prompts are reduced to hashes
   for replay identity and are not persisted in mutation results.
 - `codex_activity_handoff` exposes batch operations only to the current card and
-  requires the exact newest automatic presentation lease. Single-item and flat
-  presentation fields remain runtime-only for the one retained UI generation.
+  requires the exact newest automatic presentation lease and nested card proof.
+  Single-item and flat presentation inputs are rejected.
 - `codex_agent` publishes one discriminated `operation` containing only
-  idempotent scope-local Agent rename/archive/restore behavior. Legacy flat
-  fields remain runtime-only; it never permanently deletes an Agent or rolls
-  back files.
+  idempotent scope-local Agent rename/archive/restore behavior. Expired flat
+  fields are rejected; it never permanently deletes an Agent or rolls back files.
 - `codex_background_process_terminate` is app-private and destructive. It
   requires a host-correlated mounted-card lease plus exact Activity generation,
   presentation, Agent version, current App Server thread, and freshly listed
@@ -67,8 +66,8 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   activate policy changes. Project folders are resolved with `realpath`, checked
   against immutable allowed roots, and rejected on normalized-ID or canonical-path
   collisions. The operation cannot widen either the root policy or model-selection
-  ceiling. Flat generation-1 Settings inputs remain runtime-only until that sole
-  retained resource is evicted by the next Settings generation.
+  ceiling. Settings generation 3 is current and retained generation 2 uses the
+  same operation contract; generation-1 flat inputs are rejected.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
@@ -100,8 +99,8 @@ the network as the current macOS user.
   registered project IDs, resolves paths internally, and pins the admitted
   identity to the Activity, job, session, and Agent thread. An optional default
   (or sole project) handles omission; existing Activities and continued/forked
-  threads cannot silently switch projects. A stale per-call cwd fails explicitly
-  instead of being ignored.
+  threads cannot silently switch projects. Per-call cwd is absent from and
+  rejected by the strict Task contract.
 - Recovery-only project metadata is retained when a saved folder disappears or
   no longer satisfies a narrowed root policy. It is marked unavailable in the
   Settings view and cannot admit work; saving requires fixing or
@@ -136,8 +135,7 @@ the network as the current macOS user.
 - 50,000 characters per prompt.
 - Discriminated nested Activity + Agent routing with exact existing IDs and optional
   `continue`, `fork`, or `fresh` intent; ambiguous candidates and arbitrary public
-  thread IDs are rejected. Flat routing remains runtime-only and cannot be mixed
-  with the nested contract.
+  thread IDs are rejected. The expired flat routing contract is rejected.
 - Durable sessions, bridge preferences, jobs, bounded results, Activities,
   Agent/thread history, Activity-Agent assignments, idempotent Agent mutations,
   append-only Activity/job events, scope versions, bridge generations, and a

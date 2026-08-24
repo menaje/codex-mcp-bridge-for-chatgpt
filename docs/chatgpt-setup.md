@@ -110,14 +110,13 @@ preferences are safely discarded and are not selectable in Settings.
 
 The **Projects** section lists bridge-allowed roots separately from registered projects. Each project has a stable normalized ID, a Unicode display label, and an absolute folder. New or edited folders are canonicalized with `realpath` and must remain inside an allowed root. The card reports normalized-ID and canonical-path collisions inline. Saved IDs are read-only in the card; edit the label or folder, or remove and add the entry only when a new identity is intended.
 
-Settings card generation 2 sends `expectedRevision` and exactly one `reset` or
+Settings card generation 3 sends `expectedRevision` and exactly one `reset` or
 `patch` operation. A patch groups the ordinary settings and a bounded atomic list
 of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
 the whole saved project array. The bridge checks the revision both before a fresh
-model-catalog lookup and immediately before commit. The sole retained generation-1
-card continues through a runtime-only flat compatibility parser. That parser is
-eligible for removal once a later Settings generation evicts generation 1 from the
-one-revision UI retention window.
+model-catalog lookup and immediately before commit. The sole retained generation-2
+card uses the same operation contract. Generation 1 and its former flat payload
+have been evicted from the one-revision UI retention window and are rejected.
 
 The bundled launcher accepts disjoint operator roots as repeated `--root <path>` options. Those roots are a security ceiling, not selectable project entries, and the card cannot widen them or change tunnel credentials, operator capabilities, or the Codex approval policy.
 
@@ -129,7 +128,7 @@ The compatibility default project and access strategy are independent:
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. A new Activity/fresh context uses an explicit `projectId`, the configured default, or the sole project. Existing Activities and continued/forked Agent threads keep their admission-time project and sandbox after Settings changes, and conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
+The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. A new Activity/fresh context uses an explicit `projectId`, the configured default, or the sole project. Existing Activities and continued/forked Agent threads keep their admission-time project and sandbox after Settings changes, and conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
 
 ### Dynamic model/effort behavior
 
@@ -213,11 +212,11 @@ A new but dependent goal creates a linked Activity without reopening the complet
 }
 ```
 
-For independent verification, create another fresh Agent or explicitly fork an existing Agent. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without an exact nested Agent ID. The former flat routing fields remain runtime-compatible for stale clients but are not advertised and cannot be mixed with nested routing.
+For independent verification, create another fresh Agent or explicitly fork an existing Agent. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without an exact nested Agent ID. The former flat routing fields have expired and are rejected.
 
 Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
-Activity lifecycle changes require the exact version from authoritative status. `codex_activity_update` accepts one non-cancelling `operation`: seal, complete, abandon, start verification, pass/fail verification, or set policy. Each operation exposes only its relevant payload. Whole-Activity force-stop is the separate destructive and idempotent `codex_activity_cancel`, which additionally requires a unique `requestId`; retry that UUID only for the exact same cancellation. A shared-worker impact must be confirmed with the complete affected-job list. The old flat update form remains a runtime compatibility path, while flat `action: "cancel"` returns `ACTIVITY_CANCEL_MOVED` without stopping work.
+Activity lifecycle changes require the exact version from authoritative status. `codex_activity_update` accepts one non-cancelling `operation`: seal, complete, abandon, start verification, pass/fail verification, or set policy. Each operation exposes only its relevant payload. Whole-Activity force-stop is the separate destructive and idempotent `codex_activity_cancel`, which additionally requires a unique `requestId`; retry that UUID only for the exact same cancellation. A shared-worker impact must be confirmed with the complete affected-job list. The old flat update and cancellation forms have expired and are rejected.
 
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
@@ -228,7 +227,7 @@ only for a confirmed orphan; the original stays in thread history.
 
 `codex_task` owns automatic card presentation. When saved visibility is `always` or `background-only`, its descriptor points directly to the same Activity UI resource as `codex_activity`. Call `codex_task` directly—not through programmatic tool calling or an exec wrapper—so ChatGPT preserves that native UI. Do not call `codex_activity` afterward.
 
-`requestId` remains per logical Codex call and must be reused only for the same execution retry. Presentation correlation is absent from the public schema. A host can attach one response-level UUID as `codex/activityPresentationId` metadata to group several calls; otherwise the bridge uses each request ID as a stable per-call fallback. V4 replay excludes this presentation state, and it cannot select or bypass the saved visibility setting. Only stale flat callers can still submit the former argument at runtime.
+`requestId` remains per logical Codex call and must be reused only for the same execution retry. Presentation correlation is absent from the public schema. A host can attach one response-level UUID as `codex/activityPresentationId` metadata to group several calls; otherwise the bridge uses each request ID as a stable per-call fallback. V4 replay excludes this presentation state, and it cannot select or bypass the saved visibility setting. The former caller-authored presentation argument has expired and is rejected.
 
 The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call in the same response may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
@@ -240,7 +239,7 @@ The card deliberately omits a KPI dashboard, card-grid Agent list, layout select
 
 Automatic duplicate suppression is keyed by `scopeId + activityPresentationId`; `activityId + cardGeneration` is retained only to validate a mounted Activity reference. The first eligible result for a presentation reserves it across all Agents, Activities, and exact retries. A new presentation can render even while an older card for the same Activity remains mounted.
 
-Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. The immediately previous content-hashed Activity resource is the only retained compatibility generation, and its legacy calls require an active scoped widget lease. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
+Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. Activity generation 4 is current and generation 3 is the sole retained content-hashed resource; both use the exact app-private snapshot, proof, control, and batch-handoff contracts. Generation 2 and its legacy calls have expired. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
 
 `executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
 
@@ -250,7 +249,7 @@ Only the newest automatic presentation owns the scope live watch and completion 
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. `codex_activity_cancel` force-stops every active job in one exact-version Activity. Both record cancellation only after exit evidence and never roll back changes.
 
-App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. The immediately previous content-hashed Activity resource remains available for one compatibility revision, and its legacy process call is accepted only from an active scoped widget lease.
+App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. Both current and retained Activity resources call this dedicated tool; the former Agent-operation shortcut has expired.
 
 ## 8. Smoke checklist after Plugin Refresh
 
@@ -298,8 +297,8 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - `DEFAULT_CWD_REQUIRED`: choose a default project (or keep exactly one available project) in Settings.
 - `PROJECT_DUPLICATE_ID` / `PROJECT_DUPLICATE_PATH`: correct the highlighted duplicate project values.
 - `PROJECT_UNAVAILABLE`: fix or remove the **Needs recovery** project before saving or admitting work.
-- `CWD_OVERRIDE_RETIRED`: refresh the plugin/tool list; do not resend per-call cwd.
-- `SANDBOX_OVERRIDE_RETIRED`: refresh tools; the fixed saved access strategy is authoritative.
+- Unrecognized Task `cwd`: refresh the plugin/tool list; select a registered `projectId` instead.
+- `SANDBOX_OVERRIDE_UNAVAILABLE`: refresh tools; the fixed saved access strategy is authoritative.
 - Repository refused: remove common secret files from the exposed copy or use a sanitized staging copy.
 - Write/full access refused: start the bridge with the needed operator capability, then Refresh the plugin.
 - `AGENT_ID_REQUIRED`: inspect current Activity Agents and retry with the exact intended ID.

@@ -78,7 +78,7 @@ import {
   registerActivityCardResource,
   ACTIVITY_CARD_URI
 } from "./activityCard.js";
-import type { ScopeResolution, ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
+import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
   legacyActivityIdForJob,
@@ -171,12 +171,6 @@ const bridgeUserSettingsOutputSchema = z.object({
   maxConcurrentJobs: z.number().int().positive(),
   activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
-});
-
-const projectTargetInputSchema = z.strictObject({
-  id: z.string().min(1).max(256),
-  label: z.string().min(1).max(1_000),
-  cwd: z.string().min(1).max(4_096)
 });
 
 const catalogModelOutputSchema = z.object({
@@ -287,8 +281,7 @@ type TaskProjectAdmission = {
 
 type ActivityCardPresentationContext =
   | { kind: "automatic"; activityPresentationId: string }
-  | { kind: "explicit" }
-  | { kind: "legacy-automatic" };
+  | { kind: "explicit" };
 
 const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -317,7 +310,7 @@ type ActivityCardProofInput = z.infer<typeof activityCardProofInputSchema>;
 
 function presentationFromActivityCardProof(
   card: ActivityCardProofInput
-): Exclude<ActivityCardPresentationContext, { kind: "legacy-automatic" }> {
+): ActivityCardPresentationContext {
   return card.presentation.kind === "automatic"
     ? {
         kind: "automatic",
@@ -619,7 +612,7 @@ export class CodexJobRegistry {
     activityId: string,
     cardGeneration: number,
     widgetSessionId: string,
-    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
+    presentation: ActivityCardPresentationContext
   ): { stopped: boolean; stopReason?: "presentation-superseded" } {
     const activity = this.getActivity(activityId);
     if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
@@ -663,7 +656,7 @@ export class CodexJobRegistry {
     activityId: string,
     cardGeneration: number,
     widgetSessionId: string,
-    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
+    presentation: ActivityCardPresentationContext
   ): void {
     this.activityCardLeases.delete(
       this.activityCardLeaseKey(
@@ -699,18 +692,6 @@ export class CodexJobRegistry {
       presentation
     );
     if ((this.activityCardLeases.get(key) || 0) <= Date.now()) {
-      throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
-    }
-  }
-
-  requireActivityCardSession(scopeId: string, widgetSessionId: string): void {
-    this.pruneActivityCardLeases();
-    const prefix = `${scopeId}\0`;
-    const suffix = `\0${widgetSessionId}`;
-    const active = [...this.activityCardLeases].some(
-      ([key, expiresAt]) => key.startsWith(prefix) && key.endsWith(suffix) && expiresAt > Date.now()
-    );
-    if (!active) {
       throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
     }
   }
@@ -766,7 +747,6 @@ export class CodexJobRegistry {
     this.pruneActivityCardLeases();
     const latest = this.latestAutomaticPresentationByScope.get(scopeId);
     if (presentation.kind === "explicit") return false;
-    if (presentation.kind === "legacy-automatic") return Boolean(latest);
     return Boolean(latest && latest.activityPresentationId !== presentation.activityPresentationId);
   }
 
@@ -1055,10 +1035,6 @@ export class CodexJobRegistry {
     return this.activityStore.listPendingCompletionOutbox(scopeId, limit);
   }
 
-  claimCompletionOutbox(outboxId: number, scopeId: string, leaseOwner: string) {
-    return this.activityStore.claimCompletionOutbox(outboxId, scopeId, leaseOwner);
-  }
-
   claimCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string) {
     return this.activityTransaction(() =>
       [...new Set(outboxIds)].sort((a, b) => a - b).flatMap((outboxId) => {
@@ -1066,12 +1042,6 @@ export class CodexJobRegistry {
         return record ? [record] : [];
       })
     );
-  }
-
-  markCompletionOutboxDelivered(outboxId: number, scopeId: string, leaseOwner: string) {
-    const record = this.activityStore.markCompletionOutboxDelivered(outboxId, scopeId, leaseOwner);
-    this.notifyScope(scopeId);
-    return record;
   }
 
   markCompletionOutboxBatchDelivered(outboxIds: number[], scopeId: string, leaseOwner: string) {
@@ -1082,10 +1052,6 @@ export class CodexJobRegistry {
     );
     this.notifyScope(scopeId);
     return records;
-  }
-
-  releaseCompletionOutbox(outboxId: number, scopeId: string, leaseOwner: string): void {
-    this.activityStore.releaseCompletionOutbox(outboxId, scopeId, leaseOwner);
   }
 
   releaseCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string): void {
@@ -1100,9 +1066,9 @@ export class CodexJobRegistry {
     scopeId: string,
     afterVersion: number,
     waitMs: number,
-    watcherId?: string,
-    signal?: AbortSignal,
-    presentation: ActivityCardPresentationContext = { kind: "legacy-automatic" }
+    watcherId: string | undefined,
+    signal: AbortSignal | undefined,
+    presentation: ActivityCardPresentationContext
   ): Promise<ActivityScopeWatchResult> {
     const startedAt = Date.now();
     const initialPolicy = this.activityPresentationWatcherPolicy(scopeId, presentation);
@@ -2194,47 +2160,8 @@ export function registerBridgeTools(
       .boolean()
       .optional()
       .describe(
-        "Compatibility/admin audit across every scope. Unavailable to ordinary ChatGPT conversation calls."
-      ),
-    jobId: z.string().trim().min(1).optional().describe("Optional job id returned by codex_task."),
-    activityId: scopeIdSchema().optional().describe("Optional exact Activity id for a UI-independent detail view."),
-    threadId: z
-      .string()
-      .trim()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe("Optional exact Codex thread id with its related Activities, turns, and jobs."),
-    waitFor: z
-      .enum(["change", "terminal"])
-      .optional()
-      .describe(
-        "With jobId, wait for the next progress/status change or for a terminal completed/failed/interrupted/cancelled status."
-      ),
-    waitMs: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_CODEX_STATUS_WAIT_MS)
-      .optional()
-      .describe(
-        `Bounded long-poll duration when waitFor is set. Defaults to ${DEFAULT_CODEX_STATUS_WAIT_MS} and cannot exceed ${MAX_CODEX_STATUS_WAIT_MS} milliseconds.`
-      ),
-    activityView: z.boolean().optional(),
-    mountedActivityId: scopeIdSchema().optional(),
-    cardGeneration: z.number().int().min(1).optional(),
-    activityPresentationId: scopeIdSchema().optional(),
-    presentationKind: z.enum(["automatic", "explicit"]).optional(),
-    afterVersion: z.number().int().min(0).optional(),
-    sessionLimit: z.number().int().min(1).max(100).optional(),
-    sessionOffset: z.number().int().min(0).optional(),
-    sessionCursor: z.string().trim().min(1).max(200).optional(),
-    jobLimit: z.number().int().min(1).max(100).optional(),
-    jobOffset: z.number().int().min(0).optional(),
-    jobCursor: z.string().trim().min(1).max(200).optional(),
-    activityLimit: z.number().int().min(1).max(100).optional(),
-    activityOffset: z.number().int().min(0).optional(),
-    activityCursor: z.string().trim().min(1).max(200).optional()
+        "Admin audit across every scope. Unavailable to ordinary ChatGPT conversation calls."
+      )
   });
   const codexStatusPublicInput = z.strictObject({
     query: codexStatusQueryInput.optional().describe(
@@ -2257,54 +2184,11 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta, signal }) => {
-      if (args.query) {
-        const legacyQueryFields = [
-          "includeAllScopes",
-          "jobId",
-          "activityId",
-          "threadId",
-          "waitFor",
-          "waitMs",
-          "activityView",
-          "mountedActivityId",
-          "cardGeneration",
-          "activityPresentationId",
-          "presentationKind",
-          "afterVersion",
-          "sessionLimit",
-          "sessionOffset",
-          "sessionCursor",
-          "jobLimit",
-          "jobOffset",
-          "jobCursor",
-          "activityLimit",
-          "activityOffset",
-          "activityCursor"
-        ].filter((field) => Object.prototype.hasOwnProperty.call(args, field));
-        if (legacyQueryFields.length > 0) {
-          throw new Error(
-            `STATUS_QUERY_CONFLICT: query cannot be combined with legacy flat fields: ${legacyQueryFields.join(", ")}.`
-          );
-        }
-        if (args.query.kind === "job") {
-          args.jobId = args.query.id;
-          args.waitFor = args.query.waitFor;
-          args.waitMs = args.query.waitMs;
-        } else if (args.query.kind === "activity") {
-          args.activityId = args.query.id;
-        } else if (args.query.kind === "thread") {
-          args.threadId = args.query.id;
-        } else if (args.query.collection === "sessions") {
-          args.sessionLimit = args.query.limit;
-          args.sessionCursor = args.query.cursor;
-        } else if (args.query.collection === "jobs") {
-          args.jobLimit = args.query.limit;
-          args.jobCursor = args.query.cursor;
-        } else {
-          args.activityLimit = args.query.limit;
-          args.activityCursor = args.query.cursor;
-        }
-      }
+      const query = args.query;
+      const jobQuery = query?.kind === "job" ? query : undefined;
+      const activityQuery = query?.kind === "activity" ? query : undefined;
+      const threadQuery = query?.kind === "thread" ? query : undefined;
+      const pageQuery = query?.kind === "page" ? query : undefined;
       const scopeResolution = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
       const scopeId = scopeResolution?.scopeId;
       if (scopeResolution?.source === "host-metadata" && args.includeAllScopes) {
@@ -2313,139 +2197,36 @@ export function registerBridgeTools(
       if (scopeId && args.includeAllScopes) {
         throw new Error("scopeId and includeAllScopes cannot be used together.");
       }
-      if (args.query?.kind === "page" && !scopeId) {
+      if (pageQuery && !scopeId && !args.includeAllScopes) {
         throw new Error(
-          "Status pagination requires ChatGPT conversation metadata or an explicit compatibility scopeId."
+          "Status pagination requires ChatGPT conversation metadata, an explicit compatibility scopeId, or an admin all-scope audit."
         );
       }
-      if ((args.waitFor || args.waitMs) && !args.jobId && args.afterVersion === undefined) {
-        throw new Error("waitFor and waitMs require a jobId or an Activity afterVersion.");
-      }
-      if ([args.jobId, args.activityId, args.threadId].filter(Boolean).length > 1) {
-        throw new Error("jobId, activityId, and threadId detail lookups cannot be combined.");
-      }
-      if (args.waitMs && !args.waitFor) {
+      if (jobQuery?.waitMs && !jobQuery.waitFor) {
         throw new Error("waitMs requires waitFor='change' or waitFor='terminal'.");
       }
-      if (args.afterVersion !== undefined && (!args.activityView || args.waitFor !== "change")) {
-        throw new Error("afterVersion requires activityView=true and waitFor='change'.");
-      }
-      if (args.activityView && (args.jobId || args.activityId || args.threadId || args.includeAllScopes)) {
-        throw new Error("activityView cannot be combined with a detail id or includeAllScopes.");
-      }
-      if ((args.mountedActivityId === undefined) !== (args.cardGeneration === undefined)) {
-        throw new Error("mountedActivityId and cardGeneration must be provided together.");
-      }
-      if (
-        (args.mountedActivityId || args.cardGeneration || args.activityPresentationId || args.presentationKind) &&
-        !args.activityView
-      ) {
-        throw new Error("Mounted card lease fields require activityView=true.");
-      }
-      if (args.activityPresentationId && args.presentationKind !== "automatic") {
-        throw new Error("activityPresentationId requires presentationKind='automatic'.");
-      }
-      if (
-        args.presentationKind === "automatic" &&
-        (!args.activityPresentationId || !args.mountedActivityId || !args.cardGeneration)
-      ) {
-        throw new Error(
-          "An automatic mounted card requires activityPresentationId, mountedActivityId, and cardGeneration."
-        );
-      }
-      for (const [offset, cursor, label] of [
-        [args.sessionOffset, args.sessionCursor, "session"],
-        [args.jobOffset, args.jobCursor, "job"],
-        [args.activityOffset, args.activityCursor, "activity"]
-      ] as const) {
-        if (offset !== undefined && cursor !== undefined) {
-          throw new Error(`${label}Offset and ${label}Cursor cannot be combined.`);
-        }
-      }
-      if (args.activityView) {
-        if (!scopeId) {
-          throw new Error("Activity view requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
-        }
-        const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
-        if (!widgetSessionId) {
-          throw new Error(
-            "ACTIVITY_SNAPSHOT_MOVED: Mounted-card snapshots now use codex_activity_snapshot. This compatibility path requires a retained mounted widget session."
-          );
-        }
-        const presentation: ActivityCardPresentationContext = args.presentationKind === "automatic"
-          ? { kind: "automatic", activityPresentationId: args.activityPresentationId as string }
-          : args.presentationKind === "explicit"
-            ? { kind: "explicit" }
-            : args.mountedActivityId
-              ? { kind: "legacy-automatic" }
-              : { kind: "explicit" };
-        if (args.mountedActivityId && args.cardGeneration) {
-          jobs.touchActivityCardLease(
-            scopeId,
-            args.mountedActivityId,
-            args.cardGeneration,
-            widgetSessionId,
-            presentation
-          );
-          signal?.addEventListener(
-            "abort",
-            () => jobs.releaseActivityCardLease(
-              scopeId,
-              args.mountedActivityId as string,
-              args.cardGeneration as number,
-              widgetSessionId,
-              presentation
-            ),
-            { once: true }
-          );
-        }
-        const wait = args.afterVersion !== undefined
-          ? await jobs.waitForScopeVersion(
-              scopeId,
-              args.afterVersion,
-              args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-              widgetSessionId,
-              signal,
-              presentation
-            )
-          : undefined;
-        return activityViewResult(
-          await buildActivityView(
-            jobs,
-            upstream,
-            config,
-            userSettings.current,
-            scopeId,
-            args.activityLimit || 30,
-            args.mountedActivityId,
-            wait,
-            presentation
-          ),
-          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
-        );
-      }
-      if (args.jobId) {
+      if (jobQuery) {
         if (!scopeId && !args.includeAllScopes) {
           throw new Error(
             "Job lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId."
           );
         }
-        const initial = jobs.get(args.jobId);
+        const initial = jobs.get(jobQuery.id);
         if (!initial) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
         if (!args.includeAllScopes && initial.scopeId !== scopeId) {
           throw new Error("The requested Codex job belongs to another conversation scope.");
         }
-        const wait = args.waitFor
-          ? await jobs.wait(args.jobId, args.waitFor, args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS)
+        const wait = jobQuery.waitFor
+          ? await jobs.wait(jobQuery.id, jobQuery.waitFor, jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS)
           : undefined;
         const job = wait?.job || initial;
         return textResult(formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs));
       }
-      if (args.activityId) {
+      if (activityQuery) {
         if (!scopeId && !args.includeAllScopes) {
           throw new Error("Activity lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
         }
-        const activity = jobs.getActivity(args.activityId);
+        const activity = jobs.getActivity(activityQuery.id);
         if (!activity || (!args.includeAllScopes && activity.scopeId !== scopeId)) {
           throw new Error("The requested Activity belongs to another conversation scope or does not exist.");
         }
@@ -2465,12 +2246,12 @@ export function registerBridgeTools(
           uiRequired: false
         });
       }
-      if (args.threadId) {
+      if (threadQuery) {
         if (!scopeId && !args.includeAllScopes) {
           throw new Error("Thread lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.");
         }
-        const trackedSession = sessions.get(args.threadId);
-        const relatedJobs = jobs.listForThread(args.threadId, args.includeAllScopes ? undefined : scopeId);
+        const trackedSession = sessions.get(threadQuery.id);
+        const relatedJobs = jobs.listForThread(threadQuery.id, args.includeAllScopes ? undefined : scopeId);
         const sessionVisible = trackedSession && (args.includeAllScopes || trackedSession.scopeId === scopeId);
         if (!sessionVisible && relatedJobs.length === 0) {
           throw new Error("The requested Codex thread belongs to another conversation scope or does not exist.");
@@ -2479,9 +2260,9 @@ export function registerBridgeTools(
           .map((activityId) => jobs.getActivity(activityId))
           .filter((activity): activity is BridgeActivity => Boolean(activity));
         return textResult({
-          threadId: args.threadId,
-          agent: jobs.getAgentForThread(args.threadId)
-            ? formatAgentSummary(jobs.getAgentForThread(args.threadId) as BridgeAgent, jobs)
+          threadId: threadQuery.id,
+          agent: jobs.getAgentForThread(threadQuery.id)
+            ? formatAgentSummary(jobs.getAgentForThread(threadQuery.id) as BridgeAgent, jobs)
             : null,
           session: sessionVisible
             ? {
@@ -2512,16 +2293,19 @@ export function registerBridgeTools(
       }
 
       const preferences = userSettings.current;
-      const sessionLimit = args.sessionLimit ?? 10;
-      const sessionOffset = args.sessionCursor
-        ? decodePageCursor(args.sessionCursor, "sessions")
-        : args.sessionOffset ?? 0;
-      const jobLimit = args.jobLimit ?? Math.min(Math.max(20, preferences.maxConcurrentJobs), 100);
-      const jobOffset = args.jobCursor ? decodePageCursor(args.jobCursor, "jobs") : args.jobOffset ?? 0;
-      const activityLimit = args.activityLimit ?? 30;
-      const activityOffset = args.activityCursor
-        ? decodePageCursor(args.activityCursor, "activities")
-        : args.activityOffset ?? 0;
+      const sessionPage = pageQuery?.collection === "sessions" ? pageQuery : undefined;
+      const jobPage = pageQuery?.collection === "jobs" ? pageQuery : undefined;
+      const activityPage = pageQuery?.collection === "activities" ? pageQuery : undefined;
+      const sessionLimit = sessionPage?.limit ?? 10;
+      const sessionOffset = sessionPage?.cursor
+        ? decodePageCursor(sessionPage.cursor, "sessions")
+        : 0;
+      const jobLimit = jobPage?.limit ?? Math.min(Math.max(20, preferences.maxConcurrentJobs), 100);
+      const jobOffset = jobPage?.cursor ? decodePageCursor(jobPage.cursor, "jobs") : 0;
+      const activityLimit = activityPage?.limit ?? 30;
+      const activityOffset = activityPage?.cursor
+        ? decodePageCursor(activityPage.cursor, "activities")
+        : 0;
       const visibleSessions = args.includeAllScopes
         ? sessions.list(sessionLimit, sessionOffset)
         : scopeId
@@ -2610,8 +2394,8 @@ export function registerBridgeTools(
         threadIds: [...new Set(jobs.listForActivity(activity.activityId).map((job) => job.threadId).filter(Boolean))],
         jobIds: jobs.listForActivity(activity.activityId).map((job) => job.jobId)
       }));
-      if (args.query?.kind === "page") {
-        const collection = args.query.collection;
+      if (pageQuery) {
+        const collection = pageQuery.collection;
         return textResult({
           query: { kind: "page", collection },
           scopeView: statusScopeView,
@@ -2780,17 +2564,9 @@ export function registerBridgeTools(
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     activityId: scopeIdSchema().optional()
-      .describe("Optional exact Activity to validate and mount in the explicit card."),
-    cardGeneration: z.number().int().min(1).optional(),
-    forceNewCard: z.boolean().optional(),
-    sinceVersion: z.number().int().min(0).optional(),
-    waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
-    limit: z.number().int().min(1).max(100).optional()
+      .describe("Optional exact Activity to validate and mount in the explicit card.")
   });
   const codexActivityPublicInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     activityId: scopeIdSchema().optional()
       .describe("Optional exact Activity to mount; otherwise the newest Activity is selected when available.")
   });
@@ -2810,79 +2586,28 @@ export function registerBridgeTools(
       },
       _meta: activityCardToolMetadata()
     },
-    async (args, { _meta, signal }) => {
+    async (args, { _meta }) => {
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
         "Codex Activity view"
       );
-      if (args.waitMs !== undefined && args.sinceVersion === undefined) {
-        throw new Error("waitMs requires sinceVersion from a previous codex_activity result.");
-      }
-      if (args.cardGeneration !== undefined && !args.activityId) {
-        throw new Error("cardGeneration requires activityId.");
-      }
-      const usesLegacyRefresh =
-        args.cardGeneration !== undefined ||
-        args.forceNewCard !== undefined ||
-        args.sinceVersion !== undefined ||
-        args.waitMs !== undefined ||
-        args.limit !== undefined;
-      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
-      if (usesLegacyRefresh && !widgetSessionId) {
-        throw new Error(
-          "ACTIVITY_SNAPSHOT_MOVED: Card refresh fields are runtime-only compatibility inputs and require a retained mounted widget session."
-        );
-      }
       const selected = args.activityId
         ? jobs.getActivity(args.activityId)
         : jobs.listActivities(scope.scopeId, 1, 0)[0];
       if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
         throw new Error("The requested Activity is unavailable in this conversation scope.");
       }
-      if (selected && args.cardGeneration !== undefined && selected.cardGeneration !== args.cardGeneration) {
-        throw new Error("The requested Activity card generation is stale. Refresh authoritative Activity state.");
-      }
       const presentation: ActivityCardPresentationContext = { kind: "explicit" };
-      if (selected && widgetSessionId) {
-        jobs.touchActivityCardLease(
-          scope.scopeId,
-          selected.activityId,
-          selected.cardGeneration,
-          widgetSessionId,
-          presentation
-        );
-        signal?.addEventListener(
-          "abort",
-          () => jobs.releaseActivityCardLease(
-            scope.scopeId,
-            selected.activityId,
-            selected.cardGeneration,
-            widgetSessionId,
-            presentation
-          ),
-          { once: true }
-        );
-      }
-      const wait = args.sinceVersion !== undefined
-        ? await jobs.waitForScopeVersion(
-            scope.scopeId,
-            args.sinceVersion,
-            args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-            widgetSessionId,
-            signal,
-            presentation
-          )
-        : undefined;
       const view = await buildActivityView(
         jobs,
         upstream,
         config,
         userSettings.current,
         scope.scopeId,
-        args.limit || 30,
+        30,
         selected?.activityId,
-        wait,
+        undefined,
         presentation
       );
       if (selected) {
@@ -2890,7 +2615,7 @@ export function registerBridgeTools(
           selected.activityId,
           selected.executionMode,
           userSettings.current,
-          { explicit: args.forceNewCard === true, reserve: false, presentationKind: "explicit" }
+          { reserve: false, presentationKind: "explicit" }
         );
       }
       return activityViewResult(
@@ -2987,22 +2712,11 @@ export function registerBridgeTools(
 
   const codexActivityHandoffRuntimeInput = z.strictObject({
     scopeId: scopeIdSchema().optional(),
-    action: z.enum([
-      "claim",
-      "claim-batch",
-      "delivered",
-      "delivered-batch",
-      "release",
-      "release-batch"
-    ]),
-    outboxId: z.number().int().positive().optional(),
-    outboxIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
-    activityPresentationId: scopeIdSchema().optional(),
-    presentationKind: z.enum(["automatic", "explicit"]).optional(),
-    card: automaticActivityCardProofInputSchema.optional()
+    action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
+    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
+    card: automaticActivityCardProofInputSchema
   });
   const codexActivityHandoffInput = z.strictObject({
-    scopeId: scopeIdSchema().optional(),
     action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
     outboxIds: z.array(z.number().int().positive()).min(1).max(20),
     card: automaticActivityCardProofInputSchema
@@ -3038,41 +2752,15 @@ export function registerBridgeTools(
       );
       const leaseOwner = metadataString(_meta, "openai/widgetSessionId");
       if (!leaseOwner) throw new Error("Completion handoff requires a mounted widget session id.");
-      let presentation: ActivityCardPresentationContext;
-      if (args.card) {
-        if (
-          !args.action.endsWith("-batch") ||
-          args.outboxId !== undefined ||
-          args.activityPresentationId !== undefined ||
-          args.presentationKind !== undefined
-        ) {
-          throw new Error(
-            "The current handoff contract accepts only one batch action, outboxIds, and an exact automatic card proof."
-          );
-        }
-        presentation = presentationFromActivityCardProof(args.card);
-        jobs.requireActivityCardLease(
-          scope.scopeId,
-          args.card.activityId,
-          args.card.generation,
-          leaseOwner,
-          presentation
-        );
-      } else {
-        jobs.requireActivityCardSession(scope.scopeId, leaseOwner);
-        if (args.activityPresentationId && args.presentationKind !== "automatic") {
-          throw new Error("activityPresentationId requires presentationKind='automatic'.");
-        }
-        if (args.presentationKind === "automatic" && !args.activityPresentationId) {
-          throw new Error("Automatic completion handoff requires activityPresentationId.");
-        }
-        presentation = args.presentationKind === "automatic"
-          ? { kind: "automatic", activityPresentationId: args.activityPresentationId as string }
-          : args.presentationKind === "explicit"
-            ? { kind: "explicit" }
-            : { kind: "legacy-automatic" };
-      }
-      const claimAction = args.action === "claim" || args.action === "claim-batch";
+      const presentation = presentationFromActivityCardProof(args.card);
+      jobs.requireActivityCardLease(
+        scope.scopeId,
+        args.card.activityId,
+        args.card.generation,
+        leaseOwner,
+        presentation
+      );
+      const claimAction = args.action === "claim-batch";
       if (claimAction && !jobs.canClaimCompletionHandoff(scope.scopeId, presentation)) {
         return textResult({
           claimed: false,
@@ -3085,70 +2773,40 @@ export function registerBridgeTools(
             : "presentation-superseded"
         });
       }
-      if (args.action.endsWith("-batch")) {
-        if (!args.outboxIds || args.outboxId !== undefined) {
-          throw new Error(`${args.action} requires outboxIds and does not accept outboxId.`);
-        }
-        if (args.action === "delivered-batch") {
-          const records = jobs.markCompletionOutboxBatchDelivered(
-            args.outboxIds,
-            scope.scopeId,
-            leaseOwner
-          );
-          return textResult({
-            delivered: true,
-            outboxIds: records.map((record) => record.outboxId)
-          });
-        }
-        if (args.action === "release-batch") {
-          jobs.releaseCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-          return textResult({ released: true, outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b) });
-        }
-        const records = jobs.claimCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-        const batchMaterial = records
-          .map((record) => `${record.outboxId}:${record.activityId}:${record.completionVersion}:${record.channel}`)
-          .join("|");
-        const handoffBatchId = batchMaterial
-          ? `handoff-${createHash("sha256").update(scope.scopeId).update("\0").update(batchMaterial).digest("hex").slice(0, 24)}`
-          : null;
+      if (args.action === "delivered-batch") {
+        const records = jobs.markCompletionOutboxBatchDelivered(
+          args.outboxIds,
+          scope.scopeId,
+          leaseOwner
+        );
         return textResult({
-          claimed: records.length > 0,
-          handoffBatchId,
-          origin: "activity-handoff",
-          handoffDepth: records.length > 0 ? 1 : 0,
-          events: records.map((record) => ({
-            outboxId: record.outboxId,
-            activityId: record.activityId,
-            completionVersion: record.completionVersion,
-            channel: record.channel
-          }))
+          delivered: true,
+          outboxIds: records.map((record) => record.outboxId)
         });
       }
-      if (!args.outboxId || args.outboxIds !== undefined) {
-        throw new Error(`${args.action} requires outboxId and does not accept outboxIds.`);
+      if (args.action === "release-batch") {
+        jobs.releaseCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
+        return textResult({ released: true, outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b) });
       }
-      if (args.action === "claim") {
-        const record = jobs.claimCompletionOutbox(args.outboxId, scope.scopeId, leaseOwner);
-        return textResult({
-          claimed: Boolean(record),
-          outboxId: args.outboxId,
-          ...(record
-            ? {
-                activityId: record.activityId,
-                completionVersion: record.completionVersion,
-                channel: record.channel,
-                origin: "activity-handoff",
-                handoffDepth: 1
-              }
-            : {})
-        });
-      }
-      if (args.action === "release") {
-        jobs.releaseCompletionOutbox(args.outboxId, scope.scopeId, leaseOwner);
-        return textResult({ released: true, outboxId: args.outboxId });
-      }
-      const delivered = jobs.markCompletionOutboxDelivered(args.outboxId, scope.scopeId, leaseOwner);
-      return textResult({ delivered: true, outboxId: delivered.outboxId });
+      const records = jobs.claimCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
+      const batchMaterial = records
+        .map((record) => `${record.outboxId}:${record.activityId}:${record.completionVersion}:${record.channel}`)
+        .join("|");
+      const handoffBatchId = batchMaterial
+        ? `handoff-${createHash("sha256").update(scope.scopeId).update("\0").update(batchMaterial).digest("hex").slice(0, 24)}`
+        : null;
+      return textResult({
+        claimed: records.length > 0,
+        handoffBatchId,
+        origin: "activity-handoff",
+        handoffDepth: records.length > 0 ? 1 : 0,
+        events: records.map((record) => ({
+          outboxId: record.outboxId,
+          activityId: record.activityId,
+          completionVersion: record.completionVersion,
+          channel: record.channel
+        }))
+      });
     }
   );
 
@@ -3165,12 +2823,7 @@ export function registerBridgeTools(
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
     agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
-    operation: codexAgentOperationInput.optional(),
-    action: z.enum(["archive", "restore", "rename", "detach", "terminate-background-process"]).optional(),
-    agentName: z.string().trim().min(1).max(80).optional(),
-    activityId: scopeIdSchema().optional(),
-    expectedAgentVersion: z.number().int().min(1).optional(),
-    processId: z.string().trim().min(1).max(200).optional()
+    operation: codexAgentOperationInput
   });
   const codexAgentPublicInput = z.strictObject({
     requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
@@ -3196,27 +2849,8 @@ export function registerBridgeTools(
       _meta: { "openai/widgetAccessible": true }
     },
     async (args, { _meta }) => {
-      if (args.operation) {
-        const legacyFields = [
-          "action",
-          "agentName",
-          "activityId",
-          "expectedAgentVersion",
-          "processId"
-        ].filter((field) => Object.prototype.hasOwnProperty.call(args, field));
-        if (legacyFields.length > 0) {
-          throw new Error(
-            `AGENT_OPERATION_CONFLICT: operation cannot be combined with legacy fields: ${legacyFields.join(", ")}.`
-          );
-        }
-        args.action = args.operation.kind;
-        args.agentName = args.operation.kind === "rename" ? args.operation.name : undefined;
-      }
-      if (!args.action) {
-        throw new Error(
-          "AGENT_OPERATION_REQUIRED: Refresh the tool descriptor and choose archive, restore, or rename."
-        );
-      }
+      const action = args.operation.kind;
+      const agentName = args.operation.kind === "rename" ? args.operation.name : undefined;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
@@ -3226,39 +2860,11 @@ export function registerBridgeTools(
       if (!agent || agent.scopeId !== scope.scopeId) {
         throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
       }
-      if (args.action === "rename" ? !args.agentName : args.agentName !== undefined) {
-        throw new Error("agentName is required only for action='rename'.");
-      }
-      if (args.action === "detach") {
-        throw new Error(
-          "AGENT_DETACH_MOVED: Recovery detach is no longer a model-facing Agent action. Use the restricted codex_agent_recovery_detach capability with exact Activity and Agent version preconditions."
-        );
-      }
-      if (args.activityId !== undefined || args.expectedAgentVersion !== undefined) {
-        throw new Error("activityId and expectedAgentVersion are accepted only by recovery detach tooling.");
-      }
-      if (args.action === "terminate-background-process" ? !args.processId : args.processId !== undefined) {
-        throw new Error("processId is required only for the legacy terminate-background-process compatibility action.");
-      }
-      const legacyProcessWidgetSessionId = args.action === "terminate-background-process"
-        ? metadataString(_meta, "openai/widgetSessionId")
-        : undefined;
-      if (args.action === "terminate-background-process") {
-        if (!legacyProcessWidgetSessionId) {
-          throw new Error(
-            "BACKGROUND_PROCESS_TOOL_MOVED: Refresh the Activity card and use codex_background_process_terminate."
-          );
-        }
-        jobs.requireActivityCardSession(scope.scopeId, legacyProcessWidgetSessionId);
-      }
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           agentId: args.agentId,
-          action: args.action,
-          agentName: args.agentName || null,
-          activityId: args.activityId || null,
-          expectedAgentVersion: args.expectedAgentVersion ?? null,
-          processId: args.processId || null
+          action,
+          agentName: agentName || null
         }))
         .digest("hex");
       const replay = jobs.getAgentMutation(scope.scopeId, args.requestId);
@@ -3269,7 +2875,7 @@ export function registerBridgeTools(
         return textResult(replay.result);
       }
       if (
-        args.action === "archive" &&
+        action === "archive" &&
         (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId)
       ) {
         const conflictResult = {
@@ -3286,7 +2892,7 @@ export function registerBridgeTools(
       }
 
       const currentThread = jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent);
-      if (args.action === "archive" && currentThread && upstream.listBackgroundTerminals) {
+      if (action === "archive" && currentThread && upstream.listBackgroundTerminals) {
         let backgroundTerminals;
         try {
           backgroundTerminals = await upstream.listBackgroundTerminals(
@@ -3310,20 +2916,9 @@ export function registerBridgeTools(
           return textResult(conflictResult);
         }
       }
-      if (args.action === "terminate-background-process") {
-        const mutationResult = await terminateAgentBackgroundProcess({
-          jobs,
-          upstream,
-          scopeId: scope.scopeId,
-          agentId: agent.agentId,
-          processId: args.processId as string
-        });
-        jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
-        return textResult(mutationResult);
-      }
       let updated: BridgeAgent = agent;
       let restoreThreadResumable = false;
-      if (args.action === "restore" && agent.lifecycle === "archived" && currentThread) {
+      if (action === "restore" && agent.lifecycle === "archived" && currentThread) {
         const session = sessions.get(currentThread.threadId);
         if (
           session?.scopeId === scope.scopeId &&
@@ -3339,17 +2934,17 @@ export function registerBridgeTools(
         }
       }
       const result = jobs.activityTransaction(() => {
-        if (args.action === "archive") updated = jobs.archiveAgent(agent.agentId);
-        if (args.action === "restore") {
+        if (action === "archive") updated = jobs.archiveAgent(agent.agentId);
+        if (action === "restore") {
           updated = jobs.restoreAgent(agent.agentId);
           if (updated.lifecycle === "orphaned" && restoreThreadResumable) {
             updated = jobs.setAgentExecutionState(agent.agentId, "idle");
           }
         }
-        if (args.action === "rename") updated = jobs.renameAgent(agent.agentId, args.agentName as string);
+        if (action === "rename") updated = jobs.renameAgent(agent.agentId, agentName as string);
         const mutationResult = {
           ok: true,
-          action: args.action,
+          action,
           agent: formatAgentSummary(updated, jobs),
           historyPreserved: true,
           deletionPerformed: false
@@ -3514,26 +3109,29 @@ export function registerBridgeTools(
     }
   );
 
+  const codexCancelRuntimeInput = z.strictObject({
+    scopeId: scopeIdSchema()
+      .optional()
+      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+    jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
+    expectedVersion: z.number().int().min(1).optional(),
+    acknowledgeAffectedJobIds: z
+      .array(z.string().trim().min(1).max(200))
+      .max(HARD_MAX_CONCURRENT_JOBS)
+      .optional()
+      .describe(
+        "Exact affected-job list shown by authoritative status/card confirmation when a worker is shared."
+      )
+  });
+  const codexCancelPublicInput = codexCancelRuntimeInput.omit({ scopeId: true });
+
   server.registerTool(
     "codex_cancel",
     {
       title: "Force-stop Codex Job",
       description:
         "Force-stop one active Codex job in the current ChatGPT conversation scope by terminating its exact supervised worker process group (TERM, then KILL after a short grace period). The target becomes cancelled only after process exit is confirmed. Jobs sharing that worker generation are interrupted, and partial filesystem changes may remain.",
-      inputSchema: {
-        scopeId: scopeIdSchema()
-          .optional()
-          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
-        expectedVersion: z.number().int().min(1).optional(),
-        acknowledgeAffectedJobIds: z
-          .array(z.string().trim().min(1).max(200))
-          .max(HARD_MAX_CONCURRENT_JOBS)
-          .optional()
-          .describe(
-            "Exact affected-job list shown by authoritative status/card confirmation when a worker is shared."
-          )
-      },
+      inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3855,38 +3453,8 @@ export function registerBridgeTools(
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
     activityId: scopeIdSchema().describe("Exact Activity id in the current conversation scope."),
-    expectedVersion: z.number().int().min(1).optional(),
-    operation: codexActivityOperationInput.optional(),
-    action: z.enum([
-      "seal",
-      "complete",
-      "abandon",
-      "cancel",
-      "start-verification",
-      "verification-passed",
-      "verification-failed",
-      "set-policy",
-      "respond-interaction",
-      "steer"
-    ]).optional(),
-    reason: z.string().trim().min(1).max(2_000).optional(),
-    evidence: activityVerificationEvidenceInput.optional(),
-    activityKind: z.enum(ACTIVITY_KINDS).optional(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional(),
-    handoffPolicy: z.enum(ACTIVITY_HANDOFF_POLICIES).optional(),
-    completionTrigger: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional(),
-    acknowledgeAffectedJobIds: z
-      .array(z.string().trim().min(1).max(200))
-      .max(HARD_MAX_CONCURRENT_JOBS)
-      .optional(),
-    jobId: z.string().trim().min(1).max(200).optional(),
-    expectedJobVersion: z.number().int().min(1).optional(),
-    interactionId: z.string().trim().min(1).max(200).optional(),
-    interactionDecision: z.enum(["accept", "acceptForSession", "decline", "cancel"]).optional(),
-    interactionAnswers: z
-      .record(z.string().trim().min(1).max(200), z.array(z.string().max(4_000)).max(20))
-      .optional(),
-    steeringPrompt: z.string().trim().min(1).max(config.maxPromptChars).optional()
+    expectedVersion: z.number().int().min(1),
+    operation: codexActivityOperationInput
   });
   const codexActivityUpdatePublicInput = z.strictObject({
     activityId: scopeIdSchema().describe("Exact Activity id in the current conversation scope."),
@@ -3934,106 +3502,25 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      if (args.operation) {
-        const legacyFields = [
-          "action",
-          "reason",
-          "evidence",
-          "activityKind",
-          "executionMode",
-          "handoffPolicy",
-          "completionTrigger",
-          "acknowledgeAffectedJobIds",
-          "jobId",
-          "expectedJobVersion",
-          "interactionId",
-          "interactionDecision",
-          "interactionAnswers",
-          "steeringPrompt"
-        ].filter((field) => Object.prototype.hasOwnProperty.call(args, field));
-        if (legacyFields.length > 0) {
-          throw new Error(
-            `ACTIVITY_OPERATION_CONFLICT: operation cannot be combined with legacy flat fields: ${legacyFields.join(", ")}.`
-          );
-        }
-        if (args.expectedVersion === undefined) {
-          throw new Error(
-            "ACTIVITY_VERSION_REQUIRED: Refresh authoritative Activity status and retry with its exact version."
-          );
-        }
-        args.action = args.operation.kind;
-        if (args.operation.kind === "complete" || args.operation.kind === "abandon") {
-          args.reason = args.operation.reason;
-        } else if (args.operation.kind === "verification-passed") {
-          args.evidence = args.operation.evidence;
-        } else if (args.operation.kind === "verification-failed") {
-          args.reason = args.operation.reason;
-        } else if (args.operation.kind === "set-policy") {
-          args.activityKind = args.operation.policy.kind;
-          args.executionMode = args.operation.policy.executionMode;
-          args.handoffPolicy = args.operation.policy.handoff;
-          args.completionTrigger = args.operation.policy.completion;
-        }
-      }
-      if (!args.action) {
-        throw new Error(
-          "ACTIVITY_OPERATION_REQUIRED: Refresh the tool descriptor and choose one Activity operation."
-        );
+      const operation = args.operation;
+      if (
+        operation.kind === "set-policy" &&
+        !["kind", "executionMode", "handoff", "completion"].some((key) =>
+          Object.prototype.hasOwnProperty.call(operation.policy, key)
+        )
+      ) {
+        throw new Error("set-policy requires at least one Activity policy field.");
       }
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
         "Codex Activity update"
       );
-      if (args.action === "cancel") {
-        throw new Error(
-          "ACTIVITY_CANCEL_MOVED: Refresh the tool descriptor and use codex_activity_cancel with requestId and the exact Activity version."
-        );
-      }
-      validateActivityUpdateArguments(args as ActivityUpdateArguments);
       const existing = jobs.getActivity(args.activityId);
       if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
       if (existing.scopeId !== scope.scopeId) {
         throw new Error("The requested Activity belongs to another conversation scope.");
       }
-
-      if (args.action === "respond-interaction" || args.action === "steer") {
-        const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
-        if (!widgetSessionId) {
-          throw new Error(
-            "ACTIVITY_CONTROL_MOVED: Mounted-card interaction and steering actions now use dedicated app-private tools. This compatibility path requires a retained card lease."
-          );
-        }
-        jobs.requireActivityCardSession(scope.scopeId, widgetSessionId);
-        if (args.expectedVersion !== undefined && existing.version !== args.expectedVersion) {
-          throw new Error(
-            `Activity version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative state before retrying the transition.`
-          );
-        }
-        const job = args.jobId ? jobs.get(args.jobId) : undefined;
-        if (!job || job.scopeId !== scope.scopeId || job.activityId !== existing.activityId) {
-          throw new Error("The requested Codex job is unavailable in this Activity and conversation scope.");
-        }
-        if (args.expectedJobVersion !== undefined && job.version !== args.expectedJobVersion) {
-          throw new Error(
-            `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh before retrying the control action.`
-          );
-        }
-        const updated = args.action === "steer"
-          ? await jobs.steer(job.jobId, args.steeringPrompt as string)
-          : await jobs.respondToInteraction(job.jobId, args.interactionId as string, {
-              decision: args.interactionDecision,
-              answers: args.interactionAnswers
-            });
-        return textResult({
-          action: args.action,
-          activityId: existing.activityId,
-          job: formatJobStatus(updated, jobs.staleThresholdMs, undefined, userSettings.current, jobs),
-          promptOrAnswersPersisted: false,
-          steeringScope: args.action === "steer" ? "active-codex-turn-only" : undefined
-        });
-      }
-
       let activity!: BridgeActivity;
       const cancelledJobIds: string[] = [];
       jobs.activityTransaction(() => {
@@ -4041,20 +3528,20 @@ export function registerBridgeTools(
         if (!current || current.scopeId !== scope.scopeId) {
           throw new Error("The requested Activity is no longer available in this conversation scope.");
         }
-        if (args.expectedVersion !== undefined && current.version !== args.expectedVersion) {
+        if (current.version !== args.expectedVersion) {
           throw new Error(
             `Activity version changed from ${args.expectedVersion} to ${current.version}. Refresh authoritative state before retrying the transition.`
           );
         }
-        switch (args.action) {
+        switch (operation.kind) {
           case "seal":
             activity = jobs.sealActivity(args.activityId);
             break;
           case "complete":
-            activity = jobs.completeActivity(args.activityId, args.reason);
+            activity = jobs.completeActivity(args.activityId, operation.reason);
             break;
           case "abandon":
-            activity = jobs.abandonActivity(args.activityId, args.reason);
+            activity = jobs.abandonActivity(args.activityId, operation.reason);
             break;
           case "start-verification":
             activity = jobs.startActivityVerification(args.activityId);
@@ -4062,25 +3549,25 @@ export function registerBridgeTools(
           case "verification-passed":
             activity = jobs.passActivityVerification(
               args.activityId,
-              args.evidence as ActivityVerificationEvidence
+              operation.evidence as ActivityVerificationEvidence
             );
             break;
           case "verification-failed":
-            activity = jobs.failActivityVerification(args.activityId, args.reason as string);
+            activity = jobs.failActivityVerification(args.activityId, operation.reason);
             break;
           case "set-policy":
             activity = jobs.setActivityPolicy(args.activityId, {
-              kind: args.activityKind,
-              executionMode: args.executionMode,
-              handoffPolicy: args.handoffPolicy,
-              completionTrigger: args.completionTrigger
+              kind: operation.policy.kind,
+              executionMode: operation.policy.executionMode,
+              handoffPolicy: operation.policy.handoff,
+              completionTrigger: operation.policy.completion
             });
             break;
         }
       });
 
       return textResult({
-        action: args.action,
+        action: operation.kind,
         activity: formatActivitySummary(activity),
         cancelledJobIds,
         policySource: "explicit-tool-input",
@@ -4348,22 +3835,7 @@ export function registerBridgeTools(
       settings: nestedSettingsPatchInput
     })
   ]);
-  const settingsRuntimeInput = z.object({
-    expectedRevision: z.number().int().min(0),
-    operation: settingsOperationInput.optional(),
-    reset: z.boolean().optional(),
-    accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
-    modelPolicy: modelPolicyZod().optional(),
-    usePriorityServiceTier: z.boolean().optional(),
-    projects: z.array(projectTargetInputSchema).max(MAX_REGISTERED_PROJECTS).optional(),
-    defaultProjectId: z.string().min(1).max(256).nullable().optional(),
-    defaultCwd: z.string().trim().min(1).nullable().optional(),
-    uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
-    maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
-    activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
-    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
-  });
-  const settingsPublicInput = z.strictObject({
+  const settingsInput = z.strictObject({
     expectedRevision: z.number().int().min(0)
       .describe("Exact shared-settings revision rendered by this Settings card."),
     operation: settingsOperationInput.describe(
@@ -4377,7 +3849,7 @@ export function registerBridgeTools(
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
         "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations; bridge security capabilities, operator ceilings, and allowed roots cannot be changed here.",
-      inputSchema: withJsonSchemaProjection(settingsRuntimeInput, settingsPublicInput),
+      inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -4395,90 +3867,52 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const legacySettingKeys = [
-        "accessStrategy",
-        "modelPolicy",
-        "usePriorityServiceTier",
-        "projects",
-        "defaultProjectId",
-        "defaultCwd",
-        "uiLocalePreference",
-        "maxConcurrentJobs",
-        "activityCardVisibility",
-        "completionHandoff"
-      ] as const;
-      let resetRequested = false;
+      const resetRequested = args.operation.kind === "reset";
       const patch: BridgeUserSettingsPatch = {};
       let projectOperations: ProjectRegistryOperation[] = [];
 
-      if (args.operation) {
-        const legacyFields = ["reset", ...legacySettingKeys].filter((field) =>
-          Object.prototype.hasOwnProperty.call(args, field)
-        );
-        if (legacyFields.length > 0) {
-          throw new Error(
-            `SETTINGS_OPERATION_CONFLICT: operation cannot be combined with legacy fields: ${legacyFields.join(", ")}.`
-          );
+      if (args.operation.kind === "patch") {
+        const settings = args.operation.settings;
+        const nestedKeys = [
+          "accessStrategy",
+          "modelPolicy",
+          "usePriorityServiceTier",
+          "defaultProjectId",
+          "uiLocalePreference",
+          "maxConcurrentJobs",
+          "activityCard",
+          "projectOperations"
+        ] as const;
+        if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
+          throw new Error("SETTINGS_PATCH_EMPTY: Provide at least one setting or project operation.");
         }
-        if (args.operation.kind === "reset") {
-          resetRequested = true;
-        } else {
-          const settings = args.operation.settings;
-          const nestedKeys = [
-            "accessStrategy",
-            "modelPolicy",
-            "usePriorityServiceTier",
-            "defaultProjectId",
-            "uiLocalePreference",
-            "maxConcurrentJobs",
-            "activityCard",
-            "projectOperations"
-          ] as const;
-          if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
-            throw new Error("SETTINGS_PATCH_EMPTY: Provide at least one setting or project operation.");
-          }
-          for (const key of [
-            "accessStrategy",
-            "modelPolicy",
-            "usePriorityServiceTier",
-            "defaultProjectId",
-            "uiLocalePreference",
-            "maxConcurrentJobs"
-          ] as const) {
-            if (settings[key] !== undefined) {
-              (patch as Record<string, unknown>)[key] = settings[key];
-            }
-          }
-          if (settings.activityCard !== undefined) {
-            if (
-              !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
-              !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
-            ) {
-              throw new Error("SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting.");
-            }
-            if (settings.activityCard.visibility !== undefined) {
-              patch.activityCardVisibility = settings.activityCard.visibility;
-            }
-            if (settings.activityCard.completionHandoff !== undefined) {
-              patch.completionHandoff = settings.activityCard.completionHandoff;
-            }
-          }
-          projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
-        }
-      } else if (args.reset) {
-        if (legacySettingKeys.some((key) => args[key] !== undefined)) {
-          throw new Error("reset cannot be combined with individual setting values.");
-        }
-        resetRequested = true;
-      } else {
-        if (!legacySettingKeys.some((key) => args[key] !== undefined)) {
-          throw new Error("Provide operation, at least one legacy setting value, or reset=true.");
-        }
-        for (const key of legacySettingKeys) {
-          if (args[key] !== undefined) {
-            (patch as Record<string, unknown>)[key] = args[key];
+        for (const key of [
+          "accessStrategy",
+          "modelPolicy",
+          "usePriorityServiceTier",
+          "defaultProjectId",
+          "uiLocalePreference",
+          "maxConcurrentJobs"
+        ] as const) {
+          if (settings[key] !== undefined) {
+            (patch as Record<string, unknown>)[key] = settings[key];
           }
         }
+        if (settings.activityCard !== undefined) {
+          if (
+            !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
+            !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
+          ) {
+            throw new Error("SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting.");
+          }
+          if (settings.activityCard.visibility !== undefined) {
+            patch.activityCardVisibility = settings.activityCard.visibility;
+          }
+          if (settings.activityCard.completionHandoff !== undefined) {
+            patch.completionHandoff = settings.activityCard.completionHandoff;
+          }
+        }
+        projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
       }
 
       // Fail stale cards before any external catalog lookup. reset/update repeat
@@ -4583,7 +4017,7 @@ export function registerBridgeTools(
     async (args, { _meta }) => {
       try {
         const preferences = userSettings.current;
-        args = normalizeCodexTaskContract(args, _meta, preferences);
+        args = normalizeCodexTaskInput(args, _meta, preferences);
         const scope = scopeResolver.require(
           _meta as ToolCallMetadata,
           args.scopeId,
@@ -4592,16 +4026,6 @@ export function registerBridgeTools(
         resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingV4Request?.requestHashVersion === CURRENT_TASK_REQUEST_HASH_VERSION) {
-          if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
-            resolveTaskCwd(config, preferences, args.cwd);
-          }
-          if (args.adoptThread) {
-            throw new Error(
-              "THREAD_ADOPTION_RETIRED: Low-level cross-scope thread adoption is not a public Codex task operation. Use a scope-local Agent."
-            );
-          }
-          rejectRetiredTaskModelInputs(args, preferences.revision);
-          applyLegacyTaskRouting(args, jobs, scope);
           const replayRouting = resolveTaskReplayRoutingV4(
             args,
             scope.scopeId,
@@ -4617,24 +4041,14 @@ export function registerBridgeTools(
           }
           throw new Error("Persisted Codex task replay registration disappeared.");
         }
-        requireTaskActivityPresentation(args, preferences);
-        if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
-          resolveTaskCwd(config, preferences, args.cwd);
-        }
         if (
           preferences.accessStrategy !== "adaptive" &&
           Object.prototype.hasOwnProperty.call(args, "sandbox")
         ) {
           throw new Error(
-            "SANDBOX_OVERRIDE_RETIRED: Per-call sandbox is unavailable in fixed access modes. Refresh the tool list; the saved access strategy is authoritative."
+            "SANDBOX_OVERRIDE_UNAVAILABLE: Per-call sandbox is unavailable in fixed access modes. Refresh the tool list; the saved access strategy is authoritative."
           );
         }
-        if (args.adoptThread) {
-          throw new Error(
-            "THREAD_ADOPTION_RETIRED: Low-level cross-scope thread adoption is not a public Codex task operation. Use a scope-local Agent."
-          );
-        }
-        applyLegacyTaskRouting(args, jobs, scope);
 
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingRequest) {
@@ -4656,7 +4070,7 @@ export function registerBridgeTools(
           );
           if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
         }
-        rejectStaleTaskModelInputs(args, preferences);
+        validateTaskSelectionInput(args, preferences);
         const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
         const projectAdmission = resolveTaskProjectAdmission({
@@ -4703,7 +4117,7 @@ export function registerBridgeTools(
             backendKind: config.defaultBackend,
             operation: "start",
             requestedSelection: args.selection,
-            requestedPolicyRevision: args.modelPolicyRevision
+            requestedPolicyRevision: undefined
           });
           const routing = resolveTaskRoutingV4({
             args,
@@ -4767,7 +4181,7 @@ export function registerBridgeTools(
           backendKind: session.backendKind,
           operation: "continue",
           requestedSelection: args.selection,
-          requestedPolicyRevision: args.modelPolicyRevision,
+          requestedPolicyRevision: undefined,
           currentSelection: session.selection
         });
         const routing = resolveTaskRoutingV4({
@@ -4832,9 +4246,6 @@ export function registerBridgeTools(
           projectAdmission
         });
       } catch (error) {
-        if (error instanceof ActivityPresentationContractError) {
-          return activityPresentationContractErrorResult(error);
-        }
         if (error instanceof AgentThreadResumeError) {
           return agentThreadResumeErrorResult(error);
         }
@@ -4882,6 +4293,8 @@ type CodexTaskArgs = {
   agentName?: string;
   agentRole?: string;
   contextMode?: AgentContextMode;
+  // Retained only to reconstruct persisted v2/v3 request hashes. These fields
+  // are not accepted by the current runtime input schema.
   sessionMode?: SessionMode;
   threadId?: string;
   adoptThread?: boolean;
@@ -4889,67 +4302,33 @@ type CodexTaskArgs = {
   sandbox?: SandboxMode;
   modelPolicyRevision?: number;
   selection?: ModelChoice;
-  taskContract?: "nested" | "legacy-flat";
 };
 
-const LEGACY_TASK_ROUTING_FIELDS = [
-  "activityId",
-  "continuationOfActivityId",
-  "activityTitle",
-  "activityKind",
-  "handoffPolicy",
-  "completionTrigger",
-  "agentId",
-  "agentName",
-  "agentRole",
-  "contextMode",
-  "sessionMode",
-  "threadId",
-  "adoptThread"
-] as const;
-
-function normalizeCodexTaskContract(
+function normalizeCodexTaskInput(
   input: CodexTaskArgs,
   metadata: unknown,
   preferences: Pick<BridgeUserSettings, "activityCardVisibility">
 ): CodexTaskArgs {
   const args = { ...input };
-  const hasNestedRouting =
-    Object.prototype.hasOwnProperty.call(args, "activity") ||
-    Object.prototype.hasOwnProperty.call(args, "agent");
-  const legacyRoutingFields = LEGACY_TASK_ROUTING_FIELDS.filter((field) =>
-    Object.prototype.hasOwnProperty.call(args, field)
-  );
-  if (hasNestedRouting && legacyRoutingFields.length > 0) {
-    throw new Error(
-      `TASK_ROUTING_CONFLICT: Do not mix nested activity/agent routing with legacy flat fields: ${legacyRoutingFields.join(", ")}.`
-    );
+  if (args.activity?.mode === "existing") {
+    args.activityId = args.activity.id;
+  } else if (args.activity?.mode === "new") {
+    args.continuationOfActivityId = args.activity.continuationOf;
+    args.activityTitle = args.activity.title;
+    args.activityKind = args.activity.policy?.kind;
+    args.handoffPolicy = args.activity.policy?.handoff;
+    args.completionTrigger = args.activity.policy?.completion;
   }
-  args.taskContract = hasNestedRouting || legacyRoutingFields.length === 0
-    ? "nested"
-    : "legacy-flat";
 
-  if (args.taskContract === "nested") {
-    if (args.activity?.mode === "existing") {
-      args.activityId = args.activity.id;
-    } else if (args.activity?.mode === "new") {
-      args.continuationOfActivityId = args.activity.continuationOf;
-      args.activityTitle = args.activity.title;
-      args.activityKind = args.activity.policy?.kind;
-      args.handoffPolicy = args.activity.policy?.handoff;
-      args.completionTrigger = args.activity.policy?.completion;
-    }
-
-    if (args.agent?.mode === "existing") {
-      args.agentId = args.agent.id;
-      args.contextMode = args.agent.context;
-    } else if (args.agent?.mode === "new") {
-      args.agentName = args.agent.name || defaultTaskAgentName(args.requestId);
-      args.contextMode = "fresh";
-    } else if (!args.activity || args.activity.mode === "new") {
-      args.agentName = defaultTaskAgentName(args.requestId);
-      args.contextMode = "fresh";
-    }
+  if (args.agent?.mode === "existing") {
+    args.agentId = args.agent.id;
+    args.contextMode = args.agent.context;
+  } else if (args.agent?.mode === "new") {
+    args.agentName = args.agent.name || defaultTaskAgentName(args.requestId);
+    args.contextMode = "fresh";
+  } else if (!args.activity || args.activity.mode === "new") {
+    args.agentName = defaultTaskAgentName(args.requestId);
+    args.contextMode = "fresh";
   }
 
   args.agentRole ||= "primary";
@@ -4959,11 +4338,7 @@ function normalizeCodexTaskContract(
   }
   if (hostPresentationId) {
     args.activityPresentationId = hostPresentationId.toLowerCase();
-  } else if (
-    args.taskContract === "nested" &&
-    preferences.activityCardVisibility !== "never" &&
-    !args.activityPresentationId
-  ) {
+  } else if (preferences.activityCardVisibility !== "never") {
     // The MCP handler currently has no standard assistant-response identifier.
     // requestId is a stable per-call fallback until the host supplies the
     // presentation correlation metadata above.
@@ -4977,7 +4352,7 @@ function resolveImplicitTaskAgent(
   jobs: CodexJobRegistry,
   scopeId: string
 ): void {
-  if (args.agentId || args.agentName || args.threadId) return;
+  if (args.agentId || args.agentName) return;
   const sourceActivityId = args.activityId || args.continuationOfActivityId;
   if (!sourceActivityId) {
     args.agentName = defaultTaskAgentName(args.requestId);
@@ -5002,18 +4377,6 @@ function defaultTaskAgentName(requestId: string): string {
   return `Codex Agent ${requestId}`;
 }
 
-class ActivityPresentationContractError extends Error {
-  readonly code = "ACTIVITY_PRESENTATION_ID_REQUIRED";
-
-  constructor() {
-    super(
-      "ACTIVITY_PRESENTATION_ID_REQUIRED: This legacy flat task call predates host-owned " +
-      "Activity-card correlation. Refresh the tool descriptor and use nested Activity/Agent routing."
-    );
-    this.name = "ActivityPresentationContractError";
-  }
-}
-
 type AgentThreadResumeErrorCode =
   | "AGENT_ORPHANED"
   | "AGENT_THREAD_BUSY"
@@ -5035,31 +4398,10 @@ class AgentThreadResumeError extends Error {
   }
 }
 
-function requireTaskActivityPresentation(
-  args: CodexTaskArgs,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
-): void {
-  if (preferences.activityCardVisibility !== "never" && !args.activityPresentationId) {
-    throw new ActivityPresentationContractError();
-  }
-}
-
-function rejectStaleTaskModelInputs(
+function validateTaskSelectionInput(
   args: CodexTaskArgs,
   preferences: BridgeUserSettings
 ): void {
-  rejectRetiredTaskModelInputs(args, preferences.revision);
-  if (
-    args.modelPolicyRevision !== undefined &&
-    args.modelPolicyRevision !== preferences.revision
-  ) {
-    throw new ModelPolicyError(
-      "MODEL_POLICY_CHANGED",
-      `The request used policy revision ${args.modelPolicyRevision}, but revision ${preferences.revision} is active.`,
-      preferences.revision,
-      ["Refresh the Codex tool descriptor or settings view and retry with the current revision."]
-    );
-  }
   if (
     preferences.modelPolicy.mode === "fixed" &&
     Object.prototype.hasOwnProperty.call(args, "selection")
@@ -5069,24 +4411,6 @@ function rejectStaleTaskModelInputs(
       "This bridge is in fixed model mode and does not accept a per-call model selection.",
       preferences.revision,
       ["Omit selection and retry; the saved fixed selection will be applied."]
-    );
-  }
-}
-
-function rejectRetiredTaskModelInputs(
-  args: CodexTaskArgs,
-  policyRevision: number
-): void {
-  const raw = args as CodexTaskArgs & Record<string, unknown>;
-  const legacyFields = ["model", "reasoningEffort", "serviceTier"].filter((key) =>
-    Object.prototype.hasOwnProperty.call(raw, key)
-  );
-  if (legacyFields.length > 0) {
-    throw new ModelPolicyError(
-      "MODEL_SELECTION_FORBIDDEN",
-      `Legacy top-level model fields are not accepted: ${legacyFields.join(", ")}.`,
-      policyRevision,
-      ["Use one exact nested selection exposed by the current descriptor in automatic mode."]
     );
   }
 }
@@ -5101,32 +4425,6 @@ type ActivityTaskRequest = Pick<
   | "handoffPolicy"
   | "completionTrigger"
 >;
-
-function applyLegacyTaskRouting(
-  args: CodexTaskArgs,
-  jobs: CodexJobRegistry,
-  scope: ScopeResolution
-): void {
-  if (args.threadId) {
-    if (scope.source === "host-metadata") {
-      throw new Error(
-        "THREAD_ROUTING_RETIRED: Arbitrary threadId routing is retired for ChatGPT calls. Refresh tools and route with an exact agentId."
-      );
-    }
-    const legacyAgent = jobs.getAgentForThread(args.threadId);
-    if (!legacyAgent || legacyAgent.scopeId !== scope.scopeId) {
-      throw new Error(
-        "THREAD_ROUTING_RETIRED: The compatibility thread is not owned by a scope-local bridge Agent."
-      );
-    }
-    args.agentId = legacyAgent.agentId;
-    args.contextMode = "continue";
-  } else if (args.sessionMode === "new") {
-    args.contextMode = "fresh";
-  } else if (args.sessionMode === "continue") {
-    args.contextMode = "continue";
-  }
-}
 
 function resolveTaskExecutionMode(
   request: ActivityTaskRequest,
@@ -5422,104 +4720,6 @@ function pinnedCwdForExistingActivity(
   return values[0];
 }
 
-type ActivityUpdateArguments = {
-  action:
-    | "seal"
-    | "complete"
-    | "abandon"
-    | "cancel"
-    | "start-verification"
-    | "verification-passed"
-    | "verification-failed"
-    | "set-policy"
-    | "respond-interaction"
-    | "steer";
-  reason?: string;
-  evidence?: ActivityVerificationEvidence;
-  activityKind?: ActivityKind;
-  executionMode?: ActivityExecutionMode;
-  handoffPolicy?: ActivityHandoffPolicy;
-  completionTrigger?: ActivityCompletionTrigger;
-  jobId?: string;
-  expectedJobVersion?: number;
-  interactionId?: string;
-  interactionDecision?: CodexInteractionDecision;
-  interactionAnswers?: Record<string, string[]>;
-  steeringPrompt?: string;
-};
-
-function validateActivityUpdateArguments(args: ActivityUpdateArguments): void {
-  const hasControl =
-    args.jobId !== undefined ||
-    args.expectedJobVersion !== undefined ||
-    args.interactionId !== undefined ||
-    args.interactionDecision !== undefined ||
-    args.interactionAnswers !== undefined ||
-    args.steeringPrompt !== undefined;
-  const hasPolicy =
-    args.activityKind !== undefined ||
-    args.executionMode !== undefined ||
-    args.handoffPolicy !== undefined ||
-    args.completionTrigger !== undefined;
-  if (args.action === "set-policy") {
-    if (!hasPolicy) throw new Error("set-policy requires at least one Activity policy field.");
-    if (args.reason !== undefined || args.evidence !== undefined) {
-      throw new Error("set-policy cannot include reason or verification evidence.");
-    }
-    if (hasControl) throw new Error("set-policy cannot include App Server control fields.");
-    return;
-  }
-  if (args.action === "steer") {
-    if (!args.jobId || !args.steeringPrompt) throw new Error("steer requires jobId and steeringPrompt.");
-    if (args.interactionId || args.interactionDecision || args.interactionAnswers) {
-      throw new Error("steer cannot include interaction response fields.");
-    }
-    if (hasPolicy || args.reason || args.evidence) throw new Error("steer accepts only job control fields.");
-    return;
-  }
-  if (args.action === "respond-interaction") {
-    if (!args.jobId || !args.interactionId) {
-      throw new Error("respond-interaction requires jobId and interactionId.");
-    }
-    if (!args.interactionDecision && !args.interactionAnswers) {
-      throw new Error("respond-interaction requires a decision or answers.");
-    }
-    if (args.interactionDecision && args.interactionAnswers) {
-      throw new Error("respond-interaction accepts either a decision or answers, not both.");
-    }
-    if (args.steeringPrompt || hasPolicy || args.reason || args.evidence) {
-      throw new Error("respond-interaction accepts only exact interaction response fields.");
-    }
-    return;
-  }
-  if (hasControl) throw new Error(`action='${args.action}' does not accept App Server control fields.`);
-  if (hasPolicy) {
-    throw new Error("Activity policy fields require action='set-policy'.");
-  }
-  if (args.action === "verification-passed") {
-    if (!args.evidence) throw new Error("verification-passed requires bounded evidence.");
-    if (args.reason !== undefined) {
-      throw new Error("verification-passed uses evidence.summary instead of reason.");
-    }
-    return;
-  }
-  if (args.evidence !== undefined) {
-    throw new Error("Verification evidence is accepted only with action='verification-passed'.");
-  }
-  if (args.action === "verification-failed" && !args.reason) {
-    throw new Error("verification-failed requires a reason.");
-  }
-  if (
-    args.reason !== undefined &&
-    args.action !== "complete" &&
-    args.action !== "abandon" &&
-    args.action !== "cancel" &&
-    args.action !== "verification-failed"
-  ) {
-    throw new Error(`action='${args.action}' does not accept reason.`);
-  }
-}
-
 function validateActivityTaskRequest(
   args: ActivityTaskRequest,
   jobs: CodexJobRegistry,
@@ -5613,7 +4813,7 @@ async function startNewSession(input: {
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
 }): Promise<ToolResult> {
-  const cwd = input.resolved?.cwd || resolveTaskCwd(input.config, input.preferences, input.args.cwd);
+  const cwd = input.resolved?.cwd || resolveTaskCwd(input.config, input.preferences);
   const sandbox =
     input.resolved?.sandbox || resolveTaskSandbox(input.config, input.preferences, input.args.sandbox);
   const executionDecision =
@@ -5626,7 +4826,7 @@ async function startNewSession(input: {
       backendKind: input.config.defaultBackend,
       operation: "start",
       requestedSelection: input.args.selection,
-      requestedPolicyRevision: input.args.modelPolicyRevision
+      requestedPolicyRevision: undefined
     }));
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
@@ -7331,48 +6531,29 @@ function codexTaskInputSchema(
   ]).describe(
     "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
   );
+  const requestId = scopeIdSchema().describe(
+    "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
+  );
+  const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
+  const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
+    .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background.");
   const runtimeCommon = {
     scopeId: scopeIdSchema()
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-    requestId: scopeIdSchema().describe(
-      "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
-    ),
-    prompt: z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex."),
+    requestId,
+    prompt,
     activity: activity.optional(),
     agent: agent.optional(),
-    activityId: scopeIdSchema()
-      .optional()
-      .describe("Legacy flat exact Activity id."),
-    continuationOfActivityId: scopeIdSchema()
-      .optional()
-      .describe("Legacy flat continuation Activity id."),
-    activityTitle: z.string().trim().min(1).max(120).optional()
-      .describe("Legacy flat new-Activity title."),
-    activityKind: z.enum(ACTIVITY_KINDS).optional()
-      .describe("Legacy flat new-Activity classification."),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional()
-      .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."),
-    handoffPolicy: z.enum(ACTIVITY_HANDOFF_POLICIES).optional()
-      .describe("Legacy flat new-Activity handoff policy."),
-    completionTrigger: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
-      .describe("Legacy flat new-Activity completion trigger."),
-    agentId: scopeIdSchema().optional()
-      .describe("Legacy flat exact Agent id."),
-    agentName: z.string().trim().min(1).max(80).optional()
-      .describe("Legacy flat new-Agent display name."),
-    agentRole: z.string().trim().min(1).max(80).optional()
-      .describe("Legacy flat display-only assignment role."),
-    contextMode: z.enum(AGENT_CONTEXT_MODES).optional()
-      .describe("Legacy flat Agent context choice.")
+    executionMode
   };
   const publicCommon = {
-    requestId: runtimeCommon.requestId,
-    prompt: runtimeCommon.prompt,
+    requestId,
+    prompt,
     projectId: projectedProjectIdZod(config, settings),
     activity: activity.optional(),
     agent: agent.optional(),
-    executionMode: runtimeCommon.executionMode
+    executionMode
   };
   const adaptiveSandbox = settings.accessStrategy === "adaptive"
     ? {
@@ -7402,22 +6583,13 @@ function codexTaskInputSchema(
     ...adaptiveSandbox,
     ...publicModel
   });
-  // Runtime parsing recognizes retired fields so the bridge can return an
-  // identifiable refresh/migration error instead of silently dropping them.
+  // Runtime parsing stays broader only where current policy/catalog/project
+  // state is the execution authority and can change between tool listings.
   const runtime = z.strictObject({
     ...runtimeCommon,
     projectId: z.string().trim().min(1).max(64).optional(),
-    activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
-    modelPolicyRevision: z.number().int().min(0).optional(),
-    selection: modelChoiceZod().optional(),
-    sessionMode: z.enum(["auto", "new", "continue"]).optional(),
-    threadId: z.string().trim().min(1).max(200).optional(),
-    adoptThread: z.boolean().optional(),
-    cwd: z.string().min(1).optional(),
-    model: z.unknown().optional(),
-    reasoningEffort: z.unknown().optional(),
-    serviceTier: z.unknown().optional()
+    selection: modelChoiceZod().optional()
   });
   return withJsonSchemaProjection(runtime, projected) as z.ZodType<CodexTaskArgs>;
 }
@@ -7722,9 +6894,7 @@ function resolveTaskReplayRoutingV4(
     ),
     agentId: args.agentId || job.agentId,
     contextMode,
-    sourceThreadId: contextMode === "fresh"
-      ? undefined
-      : args.threadId || job.sourceThreadId
+    sourceThreadId: contextMode === "fresh" ? undefined : job.sourceThreadId
   });
 }
 
@@ -7956,14 +7126,8 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
 
 function resolveTaskCwd(
   config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  requested?: string
+  preferences: BridgeUserSettings
 ): string {
-  if (requested !== undefined) {
-    throw new Error(
-      "CWD_OVERRIDE_RETIRED: Per-call cwd is retired. Refresh the Codex tool list and save the default working folder in Codex settings."
-    );
-  }
   if (!preferences.defaultCwd) {
     throw new Error(
       "DEFAULT_CWD_REQUIRED: Save a default working folder in Codex settings before starting a new Activity or fresh Agent context."
@@ -8990,29 +8154,6 @@ function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
       message: error.message.replace(`${error.code}: `, ""),
       policyRevision: error.policyRevision,
       nextActions: error.nextActions
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
-}
-
-function activityPresentationContractErrorResult(
-  error: ActivityPresentationContractError
-): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      retryable: true,
-      missingFields: ["activityPresentationId"],
-      nextActions: [
-        "Refresh the codex_task descriptor.",
-        "Use nested activity and agent routing; the host supplies presentation correlation when available.",
-        "Reuse requestId only for the exact same execution retry."
-      ]
     }
   };
   return {

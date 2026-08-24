@@ -53,9 +53,9 @@ wait, or cursor page:
 { "query": { "kind": "page", "collection": "activities", "limit": 20, "cursor": "..." } }
 ```
 
-The prior flat status fields remain runtime compatibility inputs but are not
-published to the model. `scopeId` is likewise host-derived in ChatGPT and
-runtime-only for compatibility hosts.
+The prior flat status envelope has expired and is rejected by strict parsing.
+`scopeId` remains host-derived in ChatGPT and runtime-only for compatibility
+hosts; `includeAllScopes` remains a separate runtime-only operator audit input.
 
 Activity mutation is split by risk. First read the exact Activity version, then
 use one discriminated non-cancelling operation:
@@ -70,9 +70,9 @@ use one discriminated non-cancelling operation:
 
 Whole-Activity force-stop instead uses `codex_activity_cancel` with a unique
 `requestId`, the exact `activityId` and `expectedVersion`, and—when reported—the
-complete `acknowledgeAffectedJobIds` set. The former flat Activity update fields
-remain runtime-compatible, except legacy `action: "cancel"` returns
-`ACTIVITY_CANCEL_MOVED` and never performs cancellation.
+complete `acknowledgeAffectedJobIds` set. The former flat Activity update fields,
+including `action: "cancel"`, have expired and are rejected; callers must use the
+current `operation` contract or `codex_activity_cancel` as appropriate.
 
 `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. Settings mutation publishes only `expectedRevision` plus a discriminated reset/patch `operation`; patch groups Activity-card preferences and applies explicit project add/rename/relocate/remove deltas atomically. The Activity controls require an exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
@@ -81,7 +81,7 @@ remain runtime-compatible, except legacy `action: "cancel"` returns
 - Binds to `127.0.0.1`.
 - Uses `read-only` and `on-request` unless the operator enables broader capabilities.
 - Uses a settings-managed registry of stable project IDs, Unicode labels, and canonical folders. A single-root bridge starts with one migrated compatibility project; multiple projects may have an optional default.
-- Rejects per-call `cwd`. A stale caller receives `CWD_OVERRIDE_RETIRED` instead of being run in an unintended repository.
+- Rejects per-call `cwd` in the strict Task schema instead of running in an unintended repository.
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
 - Validates every newly saved project folder against real-path allowed roots, rejects duplicate IDs/paths, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
@@ -187,7 +187,7 @@ layout setting.
 
 The Projects section clearly separates bridge-allowed roots from registered projects. Adding or editing a project resolves its folder with `realpath`, requires it to remain inside an allowed root, and rejects duplicate normalized IDs or canonical paths. Saved project IDs are stable; labels and folders remain editable. A legacy `defaultCwd` is deterministically migrated to the `default` project. If a saved folder later disappears or falls outside a narrowed root policy, its metadata remains visible for recovery but cannot be admitted until it is fixed or removed.
 
-The generation-2 Settings card saves one atomic `operation`. `reset` has no unrelated payload; `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 1 is the sole retained Settings resource and may still send the former flat payload; those fields are runtime-only and expire when the next Settings generation evicts generation 1 under the one-revision retention policy.
+The generation-3 Settings card saves one atomic `operation`. `reset` has no unrelated payload; `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 2 is the sole retained Settings resource and uses the same operation contract. Generation 1 and its former flat payload are no longer registered or accepted.
 
 `codex_task` projects the currently selectable project IDs and labels, never their paths. A new Activity/fresh context may choose `projectId`; omission uses the configured default or sole project and otherwise returns `PROJECT_REQUIRED`. Existing Activities and continued/forked Agent threads retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
 
@@ -288,7 +288,7 @@ Recommended mappings:
 - independent verification/alternative: another fresh Agent, or an explicit fork of an existing Agent;
 - unrelated goal: new Activity + new Agent + `fresh`.
 
-One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an existing Activity has multiple Agent candidates, the bridge requires an exact nested Agent ID instead of guessing. Activity title, kind, handoff, completion, Agent name, fresh context, and assignment role have neutral defaults; generated Agent names are deterministic from `requestId` and remain unique within a scope. The assignment role defaults to `primary` and is display-only metadata: it is read only for Activity/history presentation and never participates in routing, authorization, context selection, lifecycle transitions, or handoff eligibility. New-Activity policy, Activity/Agent creation, assignment, v4 replay registration, and Job admission commit in one transaction. The legacy flat routing envelope remains runtime-compatible but is absent from discovery, and it cannot be mixed with the nested contract.
+One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an existing Activity has multiple Agent candidates, the bridge requires an exact nested Agent ID instead of guessing. Activity title, kind, handoff, completion, Agent name, fresh context, and assignment role have neutral defaults; generated Agent names are deterministic from `requestId` and remain unique within a scope. The assignment role defaults to `primary` and is display-only metadata: it is read only for Activity/history presentation and never participates in routing, authorization, context selection, lifecycle transitions, or handoff eligibility. New-Activity policy, Activity/Agent creation, assignment, v4 replay registration, and Job admission commit in one transaction. The expired flat routing envelope is rejected by the strict current contract.
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
@@ -300,8 +300,8 @@ When a turn becomes terminal, its Agent returns to `idle`, releases the active A
 
 For example, rename with `{ "operation": { "kind": "rename", "name": "Reviewer" } }`
 or archive with `{ "operation": { "kind": "archive" } }`, together with the
-required `requestId` and `agentId`. The former flat action/name fields remain
-runtime compatibility inputs but are not published to the model.
+required `requestId` and `agentId`. The former flat action/name fields have
+expired and are rejected.
 
 Active/waiting Agents and Agents with a remaining background process cannot be archived. A mounted Activity card stops one exact remaining App Server terminal through the separate destructive `codex_background_process_terminate` capability. Exceptional assignment repair uses `codex_agent_recovery_detach`, requires exact Activity/Agent/version preconditions, rechecks idle state transactionally, and is disabled by default. Force-stop, background-process termination, recovery detach, and archive are distinct operations; none rolls back filesystem changes. Permanent Agent/thread deletion is not exposed.
 
@@ -309,7 +309,7 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 `codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
-`requestId` is model-authored execution identity; Activity presentation correlation is not. A host may provide a response-level UUID through `codex/activityPresentationId` metadata so several calls share one automatic card reservation. When no such metadata exists, the bridge uses `requestId` as a stable per-call presentation fallback. The old argument remains runtime-only for stale flat callers. In every case v4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
+`requestId` is model-authored execution identity; Activity presentation correlation is not. A host may provide a response-level UUID through `codex/activityPresentationId` metadata so several calls share one automatic card reservation. When no such metadata exists, the bridge uses `requestId` as a stable per-call presentation fallback. The former caller-authored presentation argument has expired. In every case v4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
@@ -321,7 +321,7 @@ The card does not expose event timelines, Agent/job/thread IDs, full working pat
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The immediately previous content-hashed Activity resource remains registered as the sole compatibility generation, with its old status/control calls accepted only from an active scoped card lease. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. Activity generation 4 is current and generation 3 is the sole retained content-hashed resource; both use the exact app-private snapshot, proof, control, and batch-handoff contracts. Generation 2 and its flat status/control calls are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 

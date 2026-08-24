@@ -8,8 +8,8 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 2;
-export const LEGACY_SETTINGS_CARD_CONTRACT_GENERATION = 1;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 3;
+export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 2;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Settings`,

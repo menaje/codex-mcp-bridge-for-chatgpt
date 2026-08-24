@@ -233,13 +233,21 @@ describe("CodexJobRegistry persistence", () => {
       version,
       10_000,
       "widget-a",
-      controller.signal
+      controller.signal,
+      { kind: "explicit" }
     );
 
     controller.abort();
     await expect(pending).rejects.toThrow(/cancelled by the host/);
     await expect(
-      registry.waitForScopeVersion(SCOPE_A, version, 1, "widget-a")
+      registry.waitForScopeVersion(
+        SCOPE_A,
+        version,
+        1,
+        "widget-a",
+        undefined,
+        { kind: "explicit" }
+      )
     ).resolves.toMatchObject({ changed: false, timedOut: true });
   });
 
@@ -275,7 +283,8 @@ describe("CodexJobRegistry persistence", () => {
       version,
       10_000,
       "widget-load-test",
-      controller.signal
+      controller.signal,
+      { kind: "explicit" }
     );
     controller.abort();
     await expect(watch).rejects.toThrow(/cancelled by the host/);
@@ -318,26 +327,71 @@ describe("CodexJobRegistry persistence", () => {
     const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
     const controllers = Array.from({ length: 8 }, () => new AbortController());
     const scopeB = "22222222-2222-4222-8222-222222222222";
-    const watches = controllers.slice(0, 4).map((controller, index) =>
+    const watches = controllers.slice(0, 3).map((controller, index) =>
       registry
-        .waitForScopeVersion(SCOPE_A, registry.getScopeVersion(SCOPE_A), 10_000, `widget-${index}`, controller.signal)
+        .waitForScopeVersion(
+          SCOPE_A,
+          registry.getScopeVersion(SCOPE_A),
+          10_000,
+          `widget-${index}`,
+          controller.signal,
+          { kind: "explicit" }
+        )
         .catch((error: unknown) => error)
     );
+    watches.push(registry.waitForScopeVersion(
+      SCOPE_A,
+      registry.getScopeVersion(SCOPE_A),
+      10_000,
+      "widget-3",
+      controllers[3].signal,
+      {
+        kind: "automatic",
+        activityPresentationId: "10101010-1010-4010-8010-101010101010"
+      }
+    ).catch((error: unknown) => error));
 
     await expect(
-      registry.waitForScopeVersion(SCOPE_A, registry.getScopeVersion(SCOPE_A), 10, "widget-extra-a")
+      registry.waitForScopeVersion(
+        SCOPE_A,
+        registry.getScopeVersion(SCOPE_A),
+        10,
+        "widget-extra-a",
+        undefined,
+        { kind: "explicit" }
+      )
     ).rejects.toThrow(/per-scope watcher limit is 4/);
-    watches.push(...controllers.slice(4).map((controller, offset) =>
+    watches.push(...controllers.slice(4, 7).map((controller, offset) =>
       registry
-        .waitForScopeVersion(scopeB, registry.getScopeVersion(scopeB), 10_000, `widget-${offset + 4}`, controller.signal)
+        .waitForScopeVersion(
+          scopeB,
+          registry.getScopeVersion(scopeB),
+          10_000,
+          `widget-${offset + 4}`,
+          controller.signal,
+          { kind: "explicit" }
+        )
         .catch((error: unknown) => error)
     ));
+    watches.push(registry.waitForScopeVersion(
+      scopeB,
+      registry.getScopeVersion(scopeB),
+      10_000,
+      "widget-7",
+      controllers[7].signal,
+      {
+        kind: "automatic",
+        activityPresentationId: "20202020-2020-4020-8020-202020202020"
+      }
+    ).catch((error: unknown) => error));
     await expect(
       registry.waitForScopeVersion(
         "33333333-3333-4333-8333-333333333333",
         0,
         10,
-        "widget-global-extra"
+        "widget-global-extra",
+        undefined,
+        { kind: "explicit" }
       )
     ).rejects.toThrow(/watcher limit is 8/);
 
