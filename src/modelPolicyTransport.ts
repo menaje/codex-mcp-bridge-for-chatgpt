@@ -12,6 +12,11 @@ import type * as z from "zod/v4";
 export type ModelPolicyChangedEvent = {
   policyRevision: number;
   catalogFingerprint?: string;
+  /**
+   * Opaque digest of descriptor inputs that may change without a settings or
+   * catalog revision, such as current named-project availability.
+   */
+  projectionFingerprint?: string;
   schema: z.ZodType;
   annotations: ToolAnnotations;
   metadata?: Record<string, unknown>;
@@ -46,7 +51,11 @@ export class SdkModelPolicyProjectionAdapter {
         notificationAdapter: "sdk-tools-list-changed"
       };
     }
-    const signature = `${event.policyRevision}:${event.catalogFingerprint || "unavailable"}`;
+    const signature = [
+      event.policyRevision,
+      event.catalogFingerprint || "unavailable",
+      event.projectionFingerprint || "unavailable"
+    ].join(":");
     if (signature === this.lastSignature) {
       return {
         schemaRefreshRequested: false,

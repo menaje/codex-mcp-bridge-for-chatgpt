@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -829,6 +829,80 @@ describe("bridge tools", () => {
       label: "Recovery",
       cwd: realpathSync(second)
     });
+    await close();
+  });
+
+  it("refreshes the path-free project descriptor when a saved folder disappears and recovers", async () => {
+    const root = temporaryRoot();
+    const project = path.join(root, "alpha-workspace");
+    const displaced = path.join(root, "alpha-workspace.unavailable");
+    mkdirSync(project);
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    settings.update({
+      projects: [{ id: "alpha", label: "Alpha Workspace", cwd: project }],
+      defaultProjectId: "alpha"
+    }, settings.current.revision);
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+    const taskDescriptor = async () =>
+      (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+
+    const initial = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const baselineNotifications = listChanged;
+    expect(initial.capabilities.projectAvailability).toEqual([{ id: "alpha", available: true }]);
+    const initialDescriptor = await taskDescriptor();
+    expect(JSON.stringify(initialDescriptor.inputSchema.properties?.projectId))
+      .toContain('"const":"alpha"');
+    expect(JSON.stringify(initialDescriptor)).not.toContain(realpathSync(project));
+
+    renameSync(project, displaced);
+    const unavailable = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(unavailable.capabilities.projectAvailability).toEqual([{ id: "alpha", available: false }]);
+    expect(listChanged).toBe(baselineNotifications + 1);
+    const unavailableDescriptor = await taskDescriptor();
+    expect(JSON.stringify(unavailableDescriptor.inputSchema.properties?.projectId))
+      .not.toContain('"const":"alpha"');
+    expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
+    expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
+    const unavailableStatus = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: {} })
+    );
+    expect(unavailableStatus.projects).toEqual([
+      { projectId: "alpha", projectLabel: "Alpha Workspace", available: false }
+    ]);
+    expect(JSON.stringify(unavailableStatus)).not.toContain(project);
+    expect(JSON.stringify(unavailableStatus)).not.toContain(displaced);
+
+    renameSync(displaced, project);
+    const recovered = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recovered.capabilities.projectAvailability).toEqual([{ id: "alpha", available: true }]);
+    expect(listChanged).toBe(baselineNotifications + 2);
+    const recoveredDescriptor = await taskDescriptor();
+    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.projectId))
+      .toContain('"const":"alpha"');
+    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.projectId))
+      .toContain('"title":"Alpha Workspace"');
+    expect(JSON.stringify(recoveredDescriptor)).not.toContain(realpathSync(project));
     await close();
   });
 

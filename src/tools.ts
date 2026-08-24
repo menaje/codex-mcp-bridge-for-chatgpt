@@ -1944,18 +1944,21 @@ export function registerBridgeTools(
   registerSettingsCardResource(server);
   registerActivityCardResource(server);
   const policyProjection = new SdkModelPolicyProjectionAdapter(server);
-  const publishTaskProjection = (catalog?: CodexModelCatalogSnapshot) =>
-    policyProjection.publish({
-      policyRevision: userSettings.current.revision,
+  const publishTaskProjection = (catalog?: CodexModelCatalogSnapshot) => {
+    const settings = userSettings.current;
+    return policyProjection.publish({
+      policyRevision: settings.revision,
       catalogFingerprint: catalog?.fingerprint,
+      projectionFingerprint: projectProjectionFingerprint(config, settings),
       schema: codexTaskInputSchema(
         config,
-        userSettings.current,
+        settings,
         catalog || modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
       ),
-      annotations: codexToolAnnotations(config, userSettings.current),
-      metadata: codexTaskActivityCardMetadata(userSettings.current)
+      annotations: codexToolAnnotations(config, settings),
+      metadata: codexTaskActivityCardMetadata(settings)
     });
+  };
 
   server.registerTool(
     "codex_status",
@@ -5882,6 +5885,22 @@ function projectedProjectIdZod(
     .describe(
       "Stable ID of a Settings-registered project. Use it for a new Activity or fresh context; existing Activity/thread contexts retain their pinned project. Never provide a local path."
     );
+}
+
+function projectProjectionFingerprint(
+  config: BridgeConfig,
+  settings: BridgeUserSettings
+): string {
+  const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
+    defaultProjectId: settings.defaultProjectId,
+    retainUnavailable: true
+  }).selectableProjects.map(({ id, label }) => ({ id, label }));
+  // Hash only GPT-facing identity data. Canonical folders and unavailable
+  // reasons are deliberately excluded so the signature cannot disclose local
+  // filesystem layout through diagnostics, notifications, or future logging.
+  return createHash("sha256")
+    .update(JSON.stringify({ version: 1, selectable }))
+    .digest("hex");
 }
 
 function projectedSelectionZod(
