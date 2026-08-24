@@ -14,6 +14,7 @@ export const PROJECT_CWD_NOT_ALLOWED = "PROJECT_CWD_NOT_ALLOWED";
 export const PROJECT_DUPLICATE_ID = "PROJECT_DUPLICATE_ID";
 export const PROJECT_DUPLICATE_PATH = "PROJECT_DUPLICATE_PATH";
 export const PROJECT_DEFAULT_NOT_FOUND = "PROJECT_DEFAULT_NOT_FOUND";
+export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
 
 export type ProjectTarget = {
   /** Stable, normalized ASCII routing key exposed to GPT. */

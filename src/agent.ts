@@ -32,6 +32,8 @@ export type BridgeAgentThread = {
   threadId: string;
   agentId: string;
   scopeId: string;
+  projectId?: string;
+  projectLabel?: string;
   backendKind: string;
   cwd: string;
   sandbox: string;

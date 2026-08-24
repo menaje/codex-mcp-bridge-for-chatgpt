@@ -71,6 +71,9 @@ export type ActivityVerificationEvidence = {
 export type BridgeActivity = {
   activityId: string;
   scopeId: string;
+  /** Stable project identity pinned when the Activity admits its first work. */
+  projectId?: string;
+  projectLabel?: string;
   continuationOfActivityId?: string;
   /** Presentation generation is independent from Agent/thread continuity. */
   cardGeneration: number;

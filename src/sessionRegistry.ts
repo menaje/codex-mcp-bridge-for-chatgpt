@@ -1,12 +1,13 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { CodexBackendKind, SandboxMode } from "./config.js";
+import { isPathWithinRoot, type CodexBackendKind, type SandboxMode } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
 import type { ToolResult } from "./upstream.js";
 import {
   validateModelSelection,
   type ModelSelection
 } from "./modelPolicy.js";
+import { normalizeProjectId, normalizeProjectLabel } from "./projectRegistry.js";
 
 export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
 export const SCOPE_ID_PATTERN =
@@ -20,6 +21,8 @@ export type ThreadIdentity = {
 
 export type ThreadExecutionState = {
   cwd: string;
+  projectId?: string;
+  projectLabel?: string;
   sandbox: SandboxMode;
   selection?: ModelSelection;
   policyRevision?: number;
@@ -38,7 +41,7 @@ export type SessionMatch = {
 };
 
 type PersistedSessionState = {
-  version: 5;
+  version: 6;
   sessions: TrackedCodexSession[];
 };
 
@@ -78,12 +81,21 @@ export class SessionRegistry {
   record(session: TrackedCodexSession): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
+    if ((session.projectId === undefined) !== (session.projectLabel === undefined)) {
+      throw new Error("Session project metadata requires both projectId and projectLabel.");
+    }
     this.sessions.delete(session.threadId);
     this.sessions.set(session.threadId, {
       threadId: session.threadId,
       scopeId: session.scopeId,
       backendKind: session.backendKind,
       cwd: session.cwd,
+      ...(session.projectId && session.projectLabel
+        ? {
+            projectId: normalizeProjectId(session.projectId),
+            projectLabel: normalizeProjectLabel(session.projectLabel)
+          }
+        : {}),
       sandbox: session.sandbox,
       ...(session.selection ? { selection: validateModelSelection(session.selection) } : {}),
       ...(session.policyRevision !== undefined ? { policyRevision: session.policyRevision } : {}),
@@ -207,7 +219,7 @@ export class SessionRegistry {
     if (this.stateStore) {
       const stored = this.stateStore.listSessions();
       const decoded = stored
-        .map((session) => readPersistedSession(session, 5))
+        .map((session) => readPersistedSession(session, 6))
         .filter((session): session is TrackedCodexSession => Boolean(session))
         .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
       const sessions = decoded.slice(-this.maxSessions);
@@ -244,12 +256,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
     const sessions = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -276,12 +288,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
     const imported = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -307,7 +319,7 @@ export class SessionRegistry {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSessionState = {
-      version: 5,
+      version: 6,
       sessions: this.list()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -339,7 +351,7 @@ export class SessionRegistry {
 
   private isAllowedCwd(cwd: string): boolean {
     if (this.allowedRoots.length === 0) return true;
-    return this.allowedRoots.some((root) => cwd === root || cwd.startsWith(root + path.sep));
+    return this.allowedRoots.some((root) => isPathWithinRoot(cwd, root));
   }
 }
 
@@ -358,7 +370,10 @@ export function extractThreadId(result: ToolResult): string | undefined {
   return undefined;
 }
 
-function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4 | 5): TrackedCodexSession | undefined {
+function readPersistedSession(
+  value: unknown,
+  stateVersion: 1 | 2 | 3 | 4 | 5 | 6
+): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
   const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
@@ -384,6 +399,18 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4 | 5): 
     : isTimestamp(value.lastUsedAt)
       ? value.lastUsedAt
       : 0;
+  let project: { projectId: string; projectLabel: string } | undefined;
+  try {
+    if (stateVersion >= 6 && (value.projectId !== undefined || value.projectLabel !== undefined)) {
+      if (typeof value.projectId !== "string" || typeof value.projectLabel !== "string") return undefined;
+      project = {
+        projectId: normalizeProjectId(value.projectId),
+        projectLabel: normalizeProjectLabel(value.projectLabel)
+      };
+    }
+  } catch {
+    return undefined;
+  }
   if (
     typeof value.threadId !== "string" ||
     !value.threadId ||
@@ -404,6 +431,7 @@ function readPersistedSession(value: unknown, stateVersion: 1 | 2 | 3 | 4 | 5): 
     threadId: value.threadId,
     scopeId: scopeId.toLowerCase(),
     cwd: value.cwd,
+    ...(project || {}),
     sandbox,
     ...(selection ? { selection } : {}),
     ...(typeof policyRevision === "number" ? { policyRevision } : {}),

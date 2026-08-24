@@ -57,6 +57,66 @@ describe("BridgeStateStore", () => {
     expect(() => new BridgeStateStore({ file })).toThrow(/Unsupported bridge state database schema version: 999/);
   });
 
+  it("persists first-class project admission without exposing the canonical path on Activities", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const activityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    store.createActivity({
+      activityId,
+      scopeId: SCOPE_A,
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      projectCwd: "/tmp/repository",
+      title: "Project-aware work",
+      now: 1
+    });
+    store.upsertSession({
+      ...session("thread-project"),
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
+    store.upsertJob({
+      ...job("job-project", "request-project"),
+      activityId,
+      cwd: "/tmp/repository",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
+
+    expect(store.getActivity(activityId)).toMatchObject({
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
+    expect(store.getActivity(activityId)).not.toHaveProperty("projectCwd");
+    expect(store.getActivityProjectAdmission(activityId)).toEqual({
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      projectCwd: "/tmp/repository"
+    });
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+    ]);
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+    ]);
+    expect(() => store.upsertJob({
+      ...job("job-project", "request-project"),
+      activityId,
+      cwd: "/tmp/repository",
+      projectId: "other",
+      projectLabel: "Other"
+    })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
+    store.close();
+
+    const restored = new BridgeStateStore({ file });
+    expect(restored.schemaVersion).toBe(5);
+    expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe("bridge");
+    expect(restored.listJobs()).toEqual([
+      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+    ]);
+    restored.close();
+  });
+
   it("imports each legacy JSON registry once into the shared database", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-migration-root-"));
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-migration-state-"));

@@ -17,6 +17,8 @@ describe("SessionRegistry", () => {
       threadId: "thread-1",
       scopeId: SCOPE_A,
       cwd: root,
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
@@ -35,6 +37,8 @@ describe("SessionRegistry", () => {
     expect(restored.get("thread-1")).toMatchObject({
       scopeId: SCOPE_A,
       cwd: root,
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
@@ -292,7 +296,7 @@ describe("SessionRegistry", () => {
     expect(sessions.get("legacy-thread")).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
     expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -320,7 +324,7 @@ describe("SessionRegistry", () => {
     const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
     expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
     expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 5 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
     expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -349,7 +353,7 @@ describe("SessionRegistry", () => {
       backendKind: "app-server"
     });
     const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 5 });
+    expect(persisted).toMatchObject({ version: 6 });
     expect(persisted.sessions[0]).not.toHaveProperty("model");
     expect(persisted.sessions[0]).not.toHaveProperty("reasoningEffort");
   });

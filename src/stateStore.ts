@@ -36,14 +36,21 @@ import {
   type BridgeAgentLifecycle,
   type BridgeAgentThread
 } from "./agent.js";
+import {
+  PROJECT_CONTEXT_CONFLICT,
+  normalizeProjectId,
+  normalizeProjectLabel
+} from "./projectRegistry.js";
 
-const CURRENT_SCHEMA_VERSION = "4";
+const CURRENT_SCHEMA_VERSION = "5";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type SessionRowInput = {
   threadId: string;
   scopeId: string;
   cwd: string;
+  projectId?: string;
+  projectLabel?: string;
   lastUsedAt: number;
 };
 
@@ -64,6 +71,9 @@ type JobRowInput = {
   terminalVersion?: number;
   agentId?: string;
   contextMode?: AgentContextMode;
+  projectId?: string;
+  projectLabel?: string;
+  cwd?: string;
   sessionDecision?: { threadId?: string };
 };
 
@@ -81,6 +91,8 @@ type JobStorageRow = JsonRow & {
   terminal_version: number | null;
   agent_id: string | null;
   context_mode: string | null;
+  project_id: string | null;
+  project_label: string | null;
 };
 type PreviousJobRow = {
   scope_id: string;
@@ -92,11 +104,16 @@ type PreviousJobRow = {
   terminal_version: number | null;
   agent_id: string | null;
   context_mode: string | null;
+  project_id: string | null;
+  project_label: string | null;
   archived_at: number | null;
 };
 type ActivityStorageRow = {
   activity_id: string;
   scope_id: string;
+  project_id: string | null;
+  project_label: string | null;
+  project_cwd: string | null;
   continuation_of_activity_id: string | null;
   card_generation: number;
   title: string;
@@ -126,6 +143,10 @@ type ActivityStorageRow = {
 export type CreateActivityInput = {
   activityId?: string;
   scopeId: string;
+  projectId?: string;
+  projectLabel?: string;
+  /** Internal canonical path; never include this in ordinary model-facing output. */
+  projectCwd?: string;
   continuationOfActivityId?: string;
   title?: string;
   kind?: ActivityKind;
@@ -155,6 +176,8 @@ type AgentThreadStorageRow = {
   thread_id: string;
   agent_id: string;
   scope_id: string;
+  project_id: string | null;
+  project_label: string | null;
   backend_kind: string;
   cwd: string;
   sandbox: string;
@@ -163,6 +186,12 @@ type AgentThreadStorageRow = {
   linked_at: number;
   replaced_at: number | null;
   forked_from_thread_id: string | null;
+};
+
+export type ActivityProjectAdmission = {
+  projectId: string;
+  projectLabel: string;
+  projectCwd: string;
 };
 
 type ActivityAgentStorageRow = {
@@ -258,6 +287,7 @@ export class BridgeStateStore {
       existingVersion !== "1" &&
       existingVersion !== "2" &&
       existingVersion !== "3" &&
+      existingVersion !== "4" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -270,6 +300,7 @@ export class BridgeStateStore {
       if ((existingVersion || "1") === "1") this.migrateV1ToV2();
       if (this.getMeta("schema_version") === "2") this.migrateV2ToV3();
       if (this.getMeta("schema_version") === "3") this.migrateV3ToV4();
+      if (this.getMeta("schema_version") === "4") this.migrateV4ToV5();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -325,17 +356,33 @@ export class BridgeStateStore {
   upsertSession(session: SessionRowInput): void {
     this.transaction(() => {
       this.ensureScope(session.scopeId, session.lastUsedAt);
+      const project = normalizeProjectIdentity(session.projectId, session.projectLabel);
+      const persistedSession = {
+        ...session,
+        ...(project || {})
+      };
       this.database
         .prepare(`
-          INSERT INTO sessions(thread_id, scope_id, cwd, last_used_at, payload)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO sessions(
+            thread_id, scope_id, cwd, project_id, project_label, last_used_at, payload
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
             scope_id = excluded.scope_id,
             cwd = excluded.cwd,
+            project_id = excluded.project_id,
+            project_label = excluded.project_label,
             last_used_at = excluded.last_used_at,
             payload = excluded.payload
         `)
-        .run(session.threadId, session.scopeId, session.cwd, session.lastUsedAt, JSON.stringify(session));
+        .run(
+          session.threadId,
+          session.scopeId,
+          session.cwd,
+          project?.projectId || null,
+          project?.projectLabel || null,
+          session.lastUsedAt,
+          JSON.stringify(persistedSession)
+        );
     });
   }
 
@@ -362,7 +409,7 @@ export class BridgeStateStore {
       .prepare(`
         SELECT payload, activity_id, thread_id, execution_mode, backend_kind,
                bridge_instance_id, worker_id, worker_generation, upstream_request_id,
-               terminal_version, agent_id, context_mode
+               terminal_version, agent_id, context_mode, project_id, project_label
           FROM jobs
          WHERE archived_at IS NULL
          ORDER BY updated_at ASC
@@ -463,6 +510,11 @@ export class BridgeStateStore {
     const handoffPolicy = input.handoffPolicy || "none";
     const completionTrigger = input.completionTrigger || "manual";
     assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
+    let project = normalizeActivityProjectAdmission(
+      input.projectId,
+      input.projectLabel,
+      input.projectCwd
+    );
     const now = input.now ?? Date.now();
     return this.transaction(() => {
       if (this.getActivityRow(activityId)) throw new Error("Activity id already exists.");
@@ -477,11 +529,24 @@ export class BridgeStateStore {
         if (source.scopeId !== scopeId) {
           throw new Error("The continuation Activity belongs to another conversation scope.");
         }
+        const sourceProject = this.getActivityProjectAdmission(source.activityId);
+        if (
+          sourceProject &&
+          project &&
+          (sourceProject.projectId !== project.projectId ||
+            sourceProject.projectCwd !== project.projectCwd)
+        ) {
+          throw new Error(
+            `${PROJECT_CONTEXT_CONFLICT}: A continuation Activity must retain its source project.`
+          );
+        }
+        project ||= sourceProject;
       }
       const scopeVersion = this.nextScopeVersion(scopeId, now);
       this.insertActivity({
         activityId,
         scopeId,
+        ...project,
         continuationOfActivityId,
         title: normalizeActivityTitle(input.title || "Codex activity"),
         kind,
@@ -502,6 +567,8 @@ export class BridgeStateStore {
           executionMode,
           handoffPolicy,
           completionTrigger,
+          projectId: project?.projectId || null,
+          projectLabel: project?.projectLabel || null,
           continuationOfActivityId: continuationOfActivityId || null,
           cardGeneration: 1
         }
@@ -513,6 +580,12 @@ export class BridgeStateStore {
   getActivity(activityId: string): BridgeActivity | undefined {
     const row = this.getActivityRow(activityId);
     return row ? readActivityRow(row) : undefined;
+  }
+
+  getActivityProjectAdmission(activityId: string): ActivityProjectAdmission | undefined {
+    const row = this.getActivityRow(activityId);
+    if (!row) return undefined;
+    return readActivityProjectAdmission(row);
   }
 
   listActivities(scopeId?: string, limit = 100, offset = 0): BridgeActivity[] {
@@ -629,6 +702,8 @@ export class BridgeStateStore {
   linkAgentThread(input: {
     agentId: string;
     threadId: string;
+    projectId?: string;
+    projectLabel?: string;
     backendKind: string;
     cwd: string;
     sandbox: string;
@@ -641,9 +716,32 @@ export class BridgeStateStore {
       const agent = this.requireAgent(input.agentId);
       if (!isAgentContextMode(input.contextMode)) throw new Error("Invalid Agent context mode.");
       const threadId = normalizeRequiredString(input.threadId, "threadId", 200);
+      const cwd = normalizeRequiredString(input.cwd, "working directory", 4_000);
+      let project = normalizeProjectIdentity(input.projectId, input.projectLabel);
       const owner = this.getAgentForThread(threadId);
       if (owner && owner.agentId !== agent.agentId) {
         throw new Error("The Codex thread is already owned by another bridge Agent.");
+      }
+      const existingThread = this.database
+        .prepare("SELECT * FROM agent_threads WHERE thread_id = ?")
+        .get(threadId) as AgentThreadStorageRow | undefined;
+      if (existingThread) {
+        if (existingThread.cwd !== cwd) {
+          throw new Error(
+            `${PROJECT_CONTEXT_CONFLICT}: An admitted Agent thread cannot change working folders.`
+          );
+        }
+        const existingProject = readThreadProjectIdentity(existingThread);
+        if (
+          existingProject &&
+          project &&
+          existingProject.projectId !== project.projectId
+        ) {
+          throw new Error(
+            `${PROJECT_CONTEXT_CONFLICT}: An admitted Agent thread cannot change projects.`
+          );
+        }
+        project ||= existingProject;
       }
       const forkedFromThreadId = input.forkedFromThreadId
         ? normalizeRequiredString(input.forkedFromThreadId, "forkedFromThreadId", 200)
@@ -658,12 +756,14 @@ export class BridgeStateStore {
       this.database
         .prepare(`
           INSERT INTO agent_threads(
-            thread_id, agent_id, scope_id, backend_kind, cwd, sandbox, context_mode,
+            thread_id, agent_id, scope_id, project_id, project_label,
+            backend_kind, cwd, sandbox, context_mode,
             is_current, linked_at, replaced_at, forked_from_thread_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
+            project_id = COALESCE(agent_threads.project_id, excluded.project_id),
+            project_label = COALESCE(agent_threads.project_label, excluded.project_label),
             backend_kind = excluded.backend_kind,
-            cwd = excluded.cwd,
             sandbox = excluded.sandbox,
             context_mode = excluded.context_mode,
             is_current = 1,
@@ -674,8 +774,10 @@ export class BridgeStateStore {
           threadId,
           agent.agentId,
           agent.scopeId,
+          project?.projectId || null,
+          project?.projectLabel || null,
           normalizeRequiredString(input.backendKind, "backend kind", 100),
-          normalizeRequiredString(input.cwd, "working directory", 4_000),
+          cwd,
           normalizeRequiredString(input.sandbox, "sandbox", 100),
           input.contextMode,
           now,
@@ -1991,7 +2093,7 @@ export class BridgeStateStore {
         }
 
         const now = Date.now();
-        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_version", "4");
         this.setMeta("schema_v4_migrated_at", new Date(now).toISOString());
       });
     } finally {
@@ -2001,6 +2103,31 @@ export class BridgeStateStore {
     if (violations.length > 0) {
       throw new Error("Bridge state schema v4 migration produced foreign-key violations.");
     }
+  }
+
+  private migrateV4ToV5(): void {
+    this.transaction(() => {
+      this.database.exec(`
+        ALTER TABLE sessions ADD COLUMN project_id TEXT;
+        ALTER TABLE sessions ADD COLUMN project_label TEXT;
+
+        ALTER TABLE activities ADD COLUMN project_id TEXT;
+        ALTER TABLE activities ADD COLUMN project_label TEXT;
+        ALTER TABLE activities ADD COLUMN project_cwd TEXT;
+        CREATE INDEX activities_scope_project_recent
+          ON activities(scope_id, project_id, updated_at DESC);
+
+        ALTER TABLE jobs ADD COLUMN project_id TEXT;
+        ALTER TABLE jobs ADD COLUMN project_label TEXT;
+        CREATE INDEX jobs_project_recent ON jobs(project_id, updated_at DESC);
+
+        ALTER TABLE agent_threads ADD COLUMN project_id TEXT;
+        ALTER TABLE agent_threads ADD COLUMN project_label TEXT;
+      `);
+      const now = Date.now();
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v5_migrated_at", new Date(now).toISOString());
+    });
   }
 
   private registerBridgeInstance(): void {
@@ -2019,7 +2146,12 @@ export class BridgeStateStore {
             instance_id, started_at, stopped_at, termination_reason, process_id, payload
           ) VALUES (?, ?, NULL, NULL, ?, ?)
         `)
-        .run(this.currentInstanceId, now, process.pid, JSON.stringify({ schemaVersion: 4 }));
+        .run(
+          this.currentInstanceId,
+          now,
+          process.pid,
+          JSON.stringify({ schemaVersion: Number(CURRENT_SCHEMA_VERSION) })
+        );
     });
   }
 
@@ -2050,7 +2182,7 @@ export class BridgeStateStore {
     const previous = this.database
       .prepare(`
         SELECT scope_id, activity_id, thread_id, status, backend_kind, bridge_instance_id,
-               terminal_version, agent_id, context_mode, archived_at
+               terminal_version, agent_id, context_mode, project_id, project_label, archived_at
           FROM jobs WHERE job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
@@ -2077,6 +2209,17 @@ export class BridgeStateStore {
         ? previous.context_mode
         : undefined);
     if (contextMode && !isAgentContextMode(contextMode)) throw new Error("Invalid job context mode.");
+    let project = normalizeProjectIdentity(job.projectId, job.projectLabel);
+    const previousProject = normalizeProjectIdentity(
+      previous?.project_id || undefined,
+      previous?.project_label || undefined
+    );
+    if (previousProject && project && previousProject.projectId !== project.projectId) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: A persisted Codex job cannot move to another project.`
+      );
+    }
+    project = previousProject || project;
     const requestCollision = this.database
       .prepare(`
         SELECT job_id, archived_at FROM jobs
@@ -2097,9 +2240,14 @@ export class BridgeStateStore {
     let activity = this.getActivity(activityId);
     let activityCreated = false;
     if (!activity) {
+      const projectCwd = project
+        ? normalizeRequiredString(job.cwd, "project working directory", 4_000)
+        : undefined;
       this.insertActivity({
         activityId,
         scopeId,
+        ...project,
+        ...(projectCwd ? { projectCwd } : {}),
         title: `Codex job ${job.jobId.slice(0, 8)}`,
         kind: "other",
         executionMode,
@@ -2114,6 +2262,41 @@ export class BridgeStateStore {
       throw new Error("The requested Activity belongs to another conversation scope.");
     } else if (!previous && activity.lifecycle !== "open") {
       throw new Error("A new Codex job cannot be attached to a non-open Activity.");
+    }
+
+    let activityProject = this.getActivityProjectAdmission(activityId);
+    if (activityProject && project && activityProject.projectId !== project.projectId) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: A Codex job must retain its Activity project.`
+      );
+    }
+    if (!activityProject && project) {
+      if (activity.counts.total > 0 && !previous) {
+        throw new Error(
+          `${PROJECT_CONTEXT_CONFLICT}: An Activity with admitted work cannot change projects.`
+        );
+      }
+      const projectCwd = normalizeRequiredString(job.cwd, "project working directory", 4_000);
+      this.database
+        .prepare(`
+          UPDATE activities
+             SET project_id = ?, project_label = ?, project_cwd = ?
+           WHERE activity_id = ? AND project_id IS NULL
+        `)
+        .run(project.projectId, project.projectLabel, projectCwd, activityId);
+      activityProject = this.getActivityProjectAdmission(activityId);
+    }
+    if (activityProject) {
+      if (job.cwd !== undefined && job.cwd !== activityProject.projectCwd) {
+        throw new Error(
+          `${PROJECT_CONTEXT_CONFLICT}: A Codex job working folder must match its Activity project.`
+        );
+      }
+      job.cwd = activityProject.projectCwd;
+      project = {
+        projectId: activityProject.projectId,
+        projectLabel: activityProject.projectLabel
+      };
     }
 
     const threadId = normalizeOptionalString(job.threadId || job.sessionDecision?.threadId);
@@ -2135,6 +2318,8 @@ export class BridgeStateStore {
     job.backendKind = backendKind;
     job.agentId = agentId;
     job.contextMode = contextMode;
+    job.projectId = project?.projectId;
+    job.projectLabel = project?.projectLabel;
     job.bridgeInstanceId = bridgeInstanceId;
     job.terminalVersion = terminalVersion;
 
@@ -2143,8 +2328,9 @@ export class BridgeStateStore {
         INSERT INTO jobs(
           job_id, scope_id, request_id, activity_id, thread_id, status, execution_mode,
           backend_kind, bridge_instance_id, worker_id, worker_generation, upstream_request_id,
-          terminal_version, agent_id, context_mode, updated_at, archived_at, payload
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+          terminal_version, agent_id, context_mode, project_id, project_label,
+          updated_at, archived_at, payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
         ON CONFLICT(job_id) DO UPDATE SET
           scope_id = excluded.scope_id,
           request_id = excluded.request_id,
@@ -2160,6 +2346,8 @@ export class BridgeStateStore {
           terminal_version = excluded.terminal_version,
           agent_id = excluded.agent_id,
           context_mode = excluded.context_mode,
+          project_id = excluded.project_id,
+          project_label = excluded.project_label,
           updated_at = excluded.updated_at,
           archived_at = NULL,
           payload = excluded.payload
@@ -2180,6 +2368,8 @@ export class BridgeStateStore {
         terminalVersion || null,
         agentId || null,
         contextMode || null,
+        project?.projectId || null,
+        project?.projectLabel || null,
         job.updatedAt,
         JSON.stringify(job)
       );
@@ -2389,7 +2579,7 @@ export class BridgeStateStore {
     updatedAt?: number;
     waitingOn?: BridgeActivity["waitingOn"];
     counts?: ActivityJobCounts;
-  }): void {
+  } & Partial<ActivityProjectAdmission>): void {
     const counts = input.counts || countsForSingleStatus(undefined);
     if (!this.tableHasColumn("activities", "card_generation")) {
       this.database
@@ -2425,7 +2615,8 @@ export class BridgeStateStore {
         );
       return;
     }
-    this.database
+    if (!this.tableHasColumn("activities", "project_id")) {
+      this.database
       .prepare(`
         INSERT INTO activities(
           activity_id, scope_id, continuation_of_activity_id, card_generation,
@@ -2440,6 +2631,50 @@ export class BridgeStateStore {
       .run(
         input.activityId,
         input.scopeId,
+        input.continuationOfActivityId || null,
+        normalizeActivityTitle(input.title),
+        input.kind,
+        input.executionMode,
+        input.handoffPolicy,
+        input.completionTrigger,
+        input.waitingOn || "none",
+        input.legacy ? 1 : 0,
+        input.now,
+        input.updatedAt ?? input.now,
+        counts.total,
+        counts.running,
+        counts.completed,
+        counts.failed,
+        counts.interrupted,
+        counts.cancelled,
+        counts.terminal
+      );
+      return;
+    }
+    const project = normalizeActivityProjectAdmission(
+      input.projectId,
+      input.projectLabel,
+      input.projectCwd
+    );
+    this.database
+      .prepare(`
+        INSERT INTO activities(
+          activity_id, scope_id, project_id, project_label, project_cwd,
+          continuation_of_activity_id, card_generation,
+          title, kind, execution_mode, handoff_policy,
+          completion_trigger, lifecycle, waiting_on, verification, version,
+          completion_version, legacy, created_at, updated_at, sealed_at, completed_at,
+          total_jobs, running_jobs, completed_jobs, failed_jobs, interrupted_jobs,
+          cancelled_jobs, terminal_jobs
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'open', ?, 'not-required', 1, 0, ?, ?, ?, NULL, NULL,
+                  ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.activityId,
+        input.scopeId,
+        project?.projectId || null,
+        project?.projectLabel || null,
+        project?.projectCwd || null,
         input.continuationOfActivityId || null,
         normalizeActivityTitle(input.title),
         input.kind,
@@ -2686,6 +2921,8 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     threadId: row.thread_id || undefined,
     executionMode: normalizeActivityExecutionMode(row.execution_mode),
     backendKind: row.backend_kind,
+    projectId: row.project_id || undefined,
+    projectLabel: row.project_label || undefined,
     bridgeInstanceId: row.bridge_instance_id || undefined,
     workerId: row.worker_id || undefined,
     workerGeneration: row.worker_generation ?? undefined,
@@ -2716,6 +2953,8 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
   return {
     activityId: row.activity_id,
     scopeId: row.scope_id,
+    projectId: row.project_id || undefined,
+    projectLabel: row.project_label || undefined,
     continuationOfActivityId: row.continuation_of_activity_id || undefined,
     cardGeneration: row.card_generation,
     title: row.title,
@@ -2773,6 +3012,8 @@ function readAgentThreadRow(row: AgentThreadStorageRow): BridgeAgentThread {
     threadId: row.thread_id,
     agentId: row.agent_id,
     scopeId: row.scope_id,
+    projectId: row.project_id || undefined,
+    projectLabel: row.project_label || undefined,
     backendKind: row.backend_kind,
     cwd: row.cwd,
     sandbox: row.sandbox,
@@ -2782,6 +3023,38 @@ function readAgentThreadRow(row: AgentThreadStorageRow): BridgeAgentThread {
     replacedAt: row.replaced_at ?? undefined,
     forkedFromThreadId: row.forked_from_thread_id || undefined
   };
+}
+
+function readActivityProjectAdmission(
+  row: Pick<ActivityStorageRow, "activity_id" | "project_id" | "project_label" | "project_cwd">
+): ActivityProjectAdmission | undefined {
+  const values = [row.project_id, row.project_label, row.project_cwd];
+  if (values.every((value) => value === null)) return undefined;
+  if (values.some((value) => value === null)) {
+    throw new Error(`Incomplete Activity project admission metadata: ${row.activity_id}.`);
+  }
+  return normalizeActivityProjectAdmission(
+    row.project_id as string,
+    row.project_label as string,
+    row.project_cwd as string
+  );
+}
+
+function readThreadProjectIdentity(
+  row: Pick<AgentThreadStorageRow, "thread_id" | "project_id" | "project_label">
+): { projectId: string; projectLabel: string } | undefined {
+  try {
+    return normalizeProjectIdentity(
+      row.project_id || undefined,
+      row.project_label || undefined
+    );
+  } catch (error) {
+    throw new Error(
+      `Invalid Agent thread project metadata: ${row.thread_id}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 function readActivityAgentRow(row: ActivityAgentStorageRow): ActivityAgentAssignment {
@@ -2887,6 +3160,42 @@ function normalizeRequiredString(value: unknown, label: string, maximum: number)
     throw new Error(`Invalid ${label}.`);
   }
   return normalized;
+}
+
+function normalizeProjectIdentity(
+  projectId: string | undefined,
+  projectLabel: string | undefined
+): { projectId: string; projectLabel: string } | undefined {
+  if (projectId === undefined && projectLabel === undefined) return undefined;
+  if (projectId === undefined || projectLabel === undefined) {
+    throw new Error("Project admission metadata requires both projectId and projectLabel.");
+  }
+  return {
+    projectId: normalizeProjectId(projectId),
+    projectLabel: normalizeProjectLabel(projectLabel)
+  };
+}
+
+function normalizeActivityProjectAdmission(
+  projectId: string | undefined,
+  projectLabel: string | undefined,
+  projectCwd: string | undefined
+): ActivityProjectAdmission | undefined {
+  const identity = normalizeProjectIdentity(projectId, projectLabel);
+  if (!identity && projectCwd === undefined) return undefined;
+  if (!identity || projectCwd === undefined) {
+    throw new Error(
+      "Activity project admission metadata requires projectId, projectLabel, and projectCwd."
+    );
+  }
+  if (
+    !path.isAbsolute(projectCwd) ||
+    projectCwd.length > 4_000 ||
+    /[\r\n\0]/u.test(projectCwd)
+  ) {
+    throw new Error("Invalid Activity project working directory.");
+  }
+  return { ...identity, projectCwd: path.normalize(projectCwd) };
 }
 
 function stableUuid(namespace: string, ...parts: string[]): string {

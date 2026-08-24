@@ -16,6 +16,9 @@ describe("scope-level bridge Agents", () => {
     store.createActivity({
       activityId: ACTIVITY_A,
       scopeId: SCOPE_A,
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      projectCwd: "/workspace/original",
       title: "Original goal",
       now: 10
     });
@@ -35,12 +38,36 @@ describe("scope-level bridge Agents", () => {
     store.linkAgentThread({
       agentId: agent.agentId,
       threadId: "thread-original",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
       backendKind: "app-server",
       cwd: "/workspace/original",
       sandbox: "read-only",
       contextMode: "fresh",
       now: 40
     });
+    expect(() => store.linkAgentThread({
+      agentId: agent.agentId,
+      threadId: "thread-original",
+      projectId: "other",
+      projectLabel: "Other project",
+      backendKind: "app-server",
+      cwd: "/workspace/original",
+      sandbox: "read-only",
+      contextMode: "continue",
+      now: 41
+    })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
+    expect(() => store.linkAgentThread({
+      agentId: agent.agentId,
+      threadId: "thread-original",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      backendKind: "app-server",
+      cwd: "/workspace/switched",
+      sandbox: "read-only",
+      contextMode: "continue",
+      now: 42
+    })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
     expect(store.releaseAgentAssignment(ACTIVITY_A, agent.agentId, 45)).toMatchObject({
       assignmentId: firstAssignment.assignmentId,
       releasedAt: 45
@@ -63,6 +90,8 @@ describe("scope-level bridge Agents", () => {
     store.linkAgentThread({
       agentId: agent.agentId,
       threadId: "thread-fork",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
       backendKind: "app-server",
       cwd: "/workspace/original",
       sandbox: "read-only",
@@ -79,11 +108,22 @@ describe("scope-level bridge Agents", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(4);
-    expect(restored.getActivity(ACTIVITY_A)).toMatchObject({ lifecycle: "open" });
+    expect(restored.schemaVersion).toBe(5);
+    expect(restored.getActivity(ACTIVITY_A)).toMatchObject({
+      lifecycle: "open",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
     expect(restored.getActivity(ACTIVITY_B)).toMatchObject({
       continuationOfActivityId: ACTIVITY_A,
-      cardGeneration: 1
+      cardGeneration: 1,
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
+    expect(restored.getActivityProjectAdmission(ACTIVITY_B)).toEqual({
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      projectCwd: "/workspace/original"
     });
     expect(restored.getAgent(agent.agentId)).toMatchObject({
       scopeId: SCOPE_A,
@@ -94,12 +134,16 @@ describe("scope-level bridge Agents", () => {
     expect(restored.listAgentThreads(agent.agentId)).toEqual([
       expect.objectContaining({
         threadId: "thread-original",
+        projectId: "bridge",
+        projectLabel: "Codex MCP Bridge",
         contextMode: "fresh",
         isCurrent: false,
         replacedAt: 60
       }),
       expect.objectContaining({
         threadId: "thread-fork",
+        projectId: "bridge",
+        projectLabel: "Codex MCP Bridge",
         contextMode: "fork",
         isCurrent: true,
         forkedFromThreadId: "thread-original"
