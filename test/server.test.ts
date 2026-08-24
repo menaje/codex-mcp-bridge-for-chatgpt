@@ -124,6 +124,8 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("continuationOfActivityId");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("contextMode='continue'");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("saved default working folder");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never call codex_activity after codex_task");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b|\bcwd\b/);
   });
 

@@ -11,7 +11,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_status` returns policy plus scope-filtered metadata-only session
   summaries and retained asynchronous results. An explicit operator-audit flag
   can return all scopes.
-- `codex_activity` renders a scope-filtered localized flat Activity feed. Its
+- `codex_task` conditionally binds the Activity UI according to the saved card
+  visibility setting; the widget consumes only the task's scoped Activity identity
+  and obtains its feed through the same scope-filtered status path. `codex_activity`
+  explicitly opens that localized flat Activity feed. Its
   private metadata remains bounded and redacted; public rows omit Agent/job/thread
   IDs and expose only final folder names when multiple projects must be distinguished,
   never full working paths.
@@ -33,8 +36,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
-  capabilities. Its exact model/effort/service-tier decision is resolved again
-  at runtime and retained with the job.
+  capabilities. Its exact model/effort decision is resolved again at runtime.
+  The user's independent Priority preference is then applied privately by the
+  bridge and the effective downstream selection is retained with the job.
 
 The bridge does not expose a raw shell tool, process-control tool, arbitrary
 Codex config, or a general Responses API proxy. An explicitly enabled
@@ -178,10 +182,11 @@ identity.
   steering, and exact turn interruption. OpenAI currently documents the App
   Server interface as experimental, so it is not represented as a production
   stability guarantee.
-- App Server model/effort/service-tier changes are sent on the next
-  `turn/start` of the same thread. MCP Server continuation has no such override;
-  the bridge returns `THREAD_OVERRIDE_UNSUPPORTED` and requires an explicit new
-  thread instead of silently keeping the old choice or creating a hidden one.
+- App Server model/effort and independent Priority changes are sent on the next
+  `turn/start` of the same thread. MCP Server continuation cannot override its
+  admission-time selection: model/effort changes return
+  `THREAD_OVERRIDE_UNSUPPORTED`, while a changed Priority preference applies to
+  newly started threads and the existing thread retains its pinned tier.
 - Tool results and retained jobs can contain repository content. They are
   stripped of result `_meta`, token/password/key patterns, and configured-root
   absolute prefixes, then bounded in memory and persisted to the private state

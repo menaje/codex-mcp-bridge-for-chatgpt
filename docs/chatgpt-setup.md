@@ -62,7 +62,7 @@ After Refresh:
 
 1. inspect `dist/ui-manifest.json`;
 2. confirm the registered `codex_settings` `_meta.ui.resourceUri` and `openai/outputTemplate` exactly equal the manifest's current Settings URI;
-3. confirm `codex_activity` points to the current Activity URI;
+3. confirm both `codex_task` (unless visibility is `never`) and `codex_activity` point to the current Activity URI;
 4. open a new conversation and run the smoke checklist below;
 5. test an existing conversation. If it still has an old tool descriptor, ask it to rediscover tools or use a new conversation. The bridge cannot inject refreshed metadata into an already cached conversation.
 
@@ -74,13 +74,16 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 
 - access strategy;
 - fixed or automatic exact model policy;
+- independent Priority/Fast processing for Codex calls;
 - default working folder;
 - UI language;
 - concurrent-job limit;
 - card visibility;
 - optional completion handoff.
 
-For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved selections; it does not add an `all` value to the tool schema, does not select every service tier, and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
+For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved model/effort choices; it does not add an `all` value to the tool schema and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
+
+The Priority checkbox is intentionally separate. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Priority, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it.
 
 The model catalog is loaded when Settings opens, using the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails.
 
@@ -182,7 +185,9 @@ If the backend cannot resume the current thread, the Agent becomes `orphaned`. U
 
 ## 7. Activity card behavior
 
-When a task result says `bridgeActivity.shouldRenderActivityCard: true`, call `codex_activity` once with its Activity ID and card generation. The mounted card owns refreshes through one scope-version long poll; do not fixed-interval poll each job.
+`codex_task` owns automatic card presentation. When saved visibility is `always` or `background-only`, its descriptor points directly to the same Activity UI resource as `codex_activity`. Call `codex_task` directly—not through programmatic tool calling or an exec wrapper—so ChatGPT preserves that native UI. Do not call `codex_activity` afterward.
+
+The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_status` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. With visibility `never`, the bridge removes the Task UI binding. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
 The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 

@@ -42,6 +42,7 @@ import {
   MODEL_POLICY_SCHEMA_VERSION,
   ModelPolicyError,
   listAllowedModelSelections,
+  modelChoiceKey,
   modelSelectionKey,
   resolveModelPolicy,
   sameModelPolicy,
@@ -51,6 +52,7 @@ import {
   validatePolicyAgainstCatalog,
   type BackendCapabilities,
   type ExecutionDecision,
+  type ModelChoice,
   type ModelPolicy,
   type ModelSelection
 } from "./modelPolicy.js";
@@ -128,6 +130,7 @@ const bridgeUserSettingsOutputSchema = z.object({
   updatedAt: z.string().nullable(),
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
   modelPolicy: modelPolicyZod(),
+  usePriorityServiceTier: z.boolean(),
   legacyPreferredModel: z.string().optional(),
   defaultCwd: z.string().nullable(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
@@ -178,7 +181,7 @@ const settingsViewOutputSchema = z.object({
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
-    operatorModelCeiling: z.array(modelSelectionZod()).nullable(),
+    operatorModelCeiling: z.array(modelChoiceZod()).nullable(),
     persistent: z.boolean()
   }),
   catalog: z.object({
@@ -438,7 +441,9 @@ export class CodexJobRegistry {
     }
     return {
       statusTool: "codex_status",
-      plannedRenderTool: "codex_activity",
+      automaticRenderTool: "codex_task",
+      explicitRenderTool: "codex_activity",
+      followUpRenderRequired: false,
       renderToolAvailable: true,
       explicitRenderAllowed: true,
       activityCardVisibility: visibility,
@@ -1675,7 +1680,8 @@ export function registerBridgeTools(
         userSettings.current,
         catalog || modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
       ),
-      annotations: codexToolAnnotations(config, userSettings.current)
+      annotations: codexToolAnnotations(config, userSettings.current),
+      metadata: codexTaskActivityCardMetadata(userSettings.current)
     });
 
   server.registerTool(
@@ -2015,6 +2021,7 @@ export function registerBridgeTools(
         settingsSchemaVersion: preferences.schemaVersion,
         modelPolicyRevision: preferences.revision,
         modelPolicy: preferences.modelPolicy,
+        usePriorityServiceTier: preferences.usePriorityServiceTier,
         operatorModelCeiling: config.operatorModelCeiling || null,
         uiLocalePreference: preferences.uiLocalePreference,
         dynamicModelCatalog: true,
@@ -2143,7 +2150,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description:
-        "Render or refresh the lightweight Agent/Activity view for the current ChatGPT conversation. Call it when codex_task returns shouldRenderActivityCard=true or when the user explicitly asks to see status. Mounted cards refresh through one scope-wide bounded watch; this presentation tool never changes execution or lifecycle policy.",
+        "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic presentation and must not be followed by codex_activity. Mounted cards refresh through one scope-wide bounded watch; this presentation tool never changes execution or lifecycle policy.",
       inputSchema: {
         scopeId: scopeIdSchema()
           .optional()
@@ -2163,11 +2170,7 @@ export function registerBridgeTools(
         idempotentHint: true,
         openWorldHint: false
       },
-      _meta: {
-        ui: { resourceUri: ACTIVITY_CARD_URI },
-        "openai/outputTemplate": ACTIVITY_CARD_URI,
-        "openai/widgetAccessible": true
-      }
+      _meta: activityCardToolMetadata()
     },
     async (args, { _meta, signal }) => {
       const scope = scopeResolver.require(
@@ -2853,6 +2856,7 @@ export function registerBridgeTools(
         validation: catalog.validation,
         warning: catalog.warning,
         modelPolicy: preferences.modelPolicy,
+        usePriorityServiceTier: preferences.usePriorityServiceTier,
         operatorModelCeiling: config.operatorModelCeiling || null,
         models: catalog.models
       });
@@ -2864,7 +2868,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved versioned model execution policy, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
+        "Open an interactive settings card and return the saved versioned model/effort policy, independent Priority preference, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -2910,6 +2914,7 @@ export function registerBridgeTools(
         reset: z.boolean().optional(),
         accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
         modelPolicy: modelPolicyZod().optional(),
+        usePriorityServiceTier: z.boolean().optional(),
         defaultCwd: z.string().trim().min(1).nullable().optional(),
         uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
@@ -2935,6 +2940,7 @@ export function registerBridgeTools(
       const settingKeys = [
         "accessStrategy",
         "modelPolicy",
+        "usePriorityServiceTier",
         "defaultCwd",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -2958,6 +2964,13 @@ export function registerBridgeTools(
           config.operatorModelCeiling,
           userSettings.current.revision + 1
         );
+        assertPriorityCompatibility(
+          userSettings.defaults.modelPolicy,
+          catalog,
+          config.operatorModelCeiling,
+          userSettings.defaults.usePriorityServiceTier,
+          userSettings.current.revision + 1
+        );
         userSettings.reset(args.expectedRevision);
       } else {
         if (!settingKeys.some((key) => args[key] !== undefined)) {
@@ -2970,11 +2983,15 @@ export function registerBridgeTools(
             (patch as Record<string, unknown>)[key] = args[key];
           }
         }
-        if (patch.modelPolicy !== undefined) {
-          const policy = validateModelPolicy(patch.modelPolicy);
+        if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
+          const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
           if (
             current.legacyPreferredModel !== undefined ||
-            !sameModelPolicy(policy, current.modelPolicy)
+            !sameModelPolicy(policy, current.modelPolicy) ||
+            (
+              patch.usePriorityServiceTier !== undefined &&
+              patch.usePriorityServiceTier !== current.usePriorityServiceTier
+            )
           ) {
             const catalog = await freshCatalogForPolicy(
               modelCatalog,
@@ -2988,8 +3005,15 @@ export function registerBridgeTools(
               config.operatorModelCeiling,
               current.revision + 1
             );
+            assertPriorityCompatibility(
+              policy,
+              catalog,
+              config.operatorModelCeiling,
+              patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
+              current.revision + 1
+            );
           }
-          patch.modelPolicy = policy;
+          if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
         }
         userSettings.update(patch, args.expectedRevision);
       }
@@ -3017,13 +3041,14 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical turn and reuse it only for an exact retry. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId. When bridgeActivity.shouldRenderActivityCard is true, call codex_activity once; the mounted card owns refreshes for that Activity generation.",
+        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. New context always uses the saved default working folder; an Agent's existing thread keeps its pinned folder and access mode. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical turn and reuse it only for an exact retry. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId. Automatic Activity presentation is attached to this result according to the saved visibility setting; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
         taskCatalogAtRegistration
       ),
-      annotations: codexToolAnnotations(config, taskPolicyAtRegistration)
+      annotations: codexToolAnnotations(config, taskPolicyAtRegistration),
+      _meta: codexTaskActivityCardMetadata(taskPolicyAtRegistration)
     },
     async (args, { _meta }) => {
       try {
@@ -3208,7 +3233,7 @@ type CodexTaskArgs = {
   cwd?: string;
   sandbox?: SandboxMode;
   modelPolicyRevision?: number;
-  selection?: ModelSelection;
+  selection?: ModelChoice;
 };
 
 type TaskCreationMetadataErrorCode =
@@ -4144,16 +4169,7 @@ function formatJobStatus(
   };
   if (isActiveActivityJobStatus(job.status)) {
     const trackingAction = activityTracking.shouldRenderActivityCard
-      ? {
-          nextAction: {
-            tool: "codex_activity",
-            arguments: {
-              activityId: job.activityId,
-              cardGeneration: activityTracking.cardGeneration
-            },
-            callOnce: true
-          }
-        }
+      ? {}
       : {
           nextCheck: {
             tool: "codex_status",
@@ -4176,8 +4192,10 @@ function formatJobStatus(
             : activity.health === "no-progress-observed"
           ? "No MCP progress event has been observed within the configured window. Process liveness is unknown; inspect actual work evidence, wait, or explicitly cancel the job."
           : activityTracking.shouldRenderActivityCard
-            ? "Codex is running in the background. Render codex_activity exactly once now; its mounted watcher tracks progress without repeated status polling."
-            : "Codex is running in the background. Automatic card display is disabled for this turn; use one bounded codex_status wait when authoritative follow-up is needed."
+            ? "Codex is running in the background. The Activity card is attached to this codex_task result and its mounted watcher tracks progress without a GPT follow-up call."
+            : activityTracking.renderReason === "active-lease" || activityTracking.renderReason === "render-reserved"
+              ? "Codex is running in the background. This result will not create a duplicate Activity card because one is already mounted or reserved."
+              : "Codex is running in the background. Automatic card display is disabled for this turn; use one bounded codex_status wait when authoritative follow-up is needed."
     };
   }
   if (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") {
@@ -4211,7 +4229,9 @@ function activityCardRenderHint(
     visibility === "always" || (visibility === "background-only" && executionMode === "background");
   return {
     statusTool: "codex_status",
-    plannedRenderTool: "codex_activity",
+    automaticRenderTool: "codex_task",
+    explicitRenderTool: "codex_activity",
+    followUpRenderRequired: false,
     renderToolAvailable: true,
     explicitRenderAllowed: true,
     activityCardVisibility: visibility,
@@ -5004,11 +5024,10 @@ function scopeIdSchema() {
     .transform((value) => value.toLowerCase());
 }
 
-function modelSelectionZod() {
+function modelChoiceZod() {
   return z.strictObject({
     model: z.string().trim().min(1).max(200),
-    reasoningEffort: z.string().trim().min(1).max(100),
-    serviceTier: z.string().trim().min(1).max(100).optional()
+    reasoningEffort: z.string().trim().min(1).max(100)
   });
 }
 
@@ -5017,15 +5036,15 @@ function modelPolicyZod() {
   return z.union([
     z.strictObject({
       mode: z.literal("fixed"),
-      selection: modelSelectionZod(),
+      selection: modelChoiceZod(),
       constraints
     }),
     z.strictObject({
       mode: z.literal("automatic"),
-      preferredSelection: modelSelectionZod().optional(),
+      preferredSelection: modelChoiceZod().optional(),
       allowedSelections: z.union([
         z.strictObject({ kind: z.literal("catalog-visible") }),
-        z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelSelectionZod()).min(1).max(500) })
+        z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelChoiceZod()).min(1).max(500) })
       ]),
       constraints
     })
@@ -5083,9 +5102,15 @@ function codexTaskInputSchema(
         selection: projectedSelectionZod(
           settings.modelPolicy,
           catalog,
-          config.operatorModelCeiling
+          catalog
+            ? effectiveModelCeiling(
+                catalog,
+                config.operatorModelCeiling,
+                settings.usePriorityServiceTier
+              )
+            : config.operatorModelCeiling
         ).optional().describe(
-          "Optional exact model, reasoningEffort, and serviceTier selection. Omit it to use the saved preference or the validated upstream default."
+          "Optional exact model and reasoningEffort selection. Priority is a private user preference applied by the bridge and is not selected by GPT. Omit this field to use the saved preference or validated upstream default."
         )
       }
     : {};
@@ -5096,7 +5121,7 @@ function codexTaskInputSchema(
     ...publicCommon,
     sandbox: sandboxSchema(config).optional(),
     modelPolicyRevision: z.number().int().min(0).optional(),
-    selection: modelSelectionZod().optional(),
+    selection: modelChoiceZod().optional(),
     sessionMode: z.enum(["auto", "new", "continue"]).optional(),
     threadId: z.string().trim().min(1).max(200).optional(),
     adoptThread: z.boolean().optional(),
@@ -5112,38 +5137,35 @@ function projectedSelectionZod(
   policy: ModelPolicy,
   catalog: CodexModelCatalogSnapshot | undefined,
   operatorCeiling?: ModelSelection[]
-): z.ZodType<ModelSelection> {
+): z.ZodType<ModelChoice> {
   if (!catalog) {
-    return withJsonSchemaProjection(modelSelectionZod(), z.never()) as z.ZodType<ModelSelection>;
+    return withJsonSchemaProjection(modelChoiceZod(), z.never()) as z.ZodType<ModelChoice>;
   }
   const allowed = listAllowedModelSelections(policy, catalog, operatorCeiling);
   if (allowed.length === 0) {
-    return withJsonSchemaProjection(modelSelectionZod(), z.never()) as z.ZodType<ModelSelection>;
+    return withJsonSchemaProjection(modelChoiceZod(), z.never()) as z.ZodType<ModelChoice>;
   }
-  const byModelAndTier = new Map<string, ModelSelection[]>();
+  const byModel = new Map<string, ModelChoice[]>();
   for (const selection of allowed) {
-    const key = JSON.stringify([selection.model, selection.serviceTier || null]);
-    const selections = byModelAndTier.get(key) || [];
+    const selections = byModel.get(selection.model) || [];
     selections.push(selection);
-    byModelAndTier.set(key, selections);
+    byModel.set(selection.model, selections);
   }
-  const schemas = [...byModelAndTier.values()].map((selections) => {
+  const schemas = [...byModel.values()].map((selections) => {
     const model = selections[0].model;
-    const serviceTier = selections[0].serviceTier;
     const efforts = [...new Set(selections.map((selection) => selection.reasoningEffort))];
     return z.strictObject({
       model: z.literal(model),
-      reasoningEffort: literalChoice(efforts),
-      ...(serviceTier ? { serviceTier: z.literal(serviceTier) } : {})
+      reasoningEffort: literalChoice(efforts)
     });
   });
   // The public descriptor is the exact allowlist projection, while runtime
   // parsing accepts any strict, well-formed selection so PolicyResolver can
   // return structured stale-policy/catalog errors instead of a generic Zod
   // validation failure. The resolver remains the execution authority.
-  return withJsonSchemaProjection(modelSelectionZod(), {
+  return withJsonSchemaProjection(modelChoiceZod(), {
     oneOf: schemas.map(jsonSchemaBody)
-  }) as z.ZodType<ModelSelection>;
+  }) as z.ZodType<ModelChoice>;
 }
 
 function literalChoice(values: string[]): z.ZodType<string> {
@@ -5256,6 +5278,13 @@ async function buildSettingsView(
         config.operatorModelCeiling,
         userSettings.current.revision
       );
+      assertPriorityCompatibility(
+        userSettings.current.modelPolicy,
+        catalog,
+        config.operatorModelCeiling,
+        userSettings.current.usePriorityServiceTier,
+        userSettings.current.revision
+      );
     } catch (error) {
       modelPolicyWarning = error instanceof Error ? error.message : String(error);
     }
@@ -5304,7 +5333,7 @@ async function buildSettingsView(
       ...userSettings.loadWarnings,
       ...(userSettings.current.legacyPreferredModel
         ? [
-            `Legacy model-only preference '${userSettings.current.legacyPreferredModel}' remains active; its exact default effort and service tier are materialized from the backend catalog.`
+            `Legacy model-only preference '${userSettings.current.legacyPreferredModel}' remains active; its exact default effort is materialized from the backend catalog. Priority remains an independent user preference.`
           ]
         : []),
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])
@@ -5444,7 +5473,7 @@ async function resolveExecutionDecision(input: {
   preferences: BridgeUserSettings;
   backendKind: CodexBackendKind;
   operation: "start" | "continue";
-  requestedSelection?: ModelSelection;
+  requestedSelection?: ModelChoice;
   requestedPolicyRevision?: number;
   currentSelection?: ModelSelection;
 }): Promise<ExecutionDecision> {
@@ -5454,19 +5483,135 @@ async function resolveExecutionDecision(input: {
   } catch (error) {
     throw catalogUnavailableError(input.preferences.revision, error);
   }
-  return resolveModelPolicy({
+  assertPriorityCompatibility(
+    input.preferences.modelPolicy,
+    catalog,
+    input.config.operatorModelCeiling,
+    input.preferences.usePriorityServiceTier,
+    input.preferences.revision,
+    input.requestedSelection
+  );
+  const capabilities = backendCapabilities(input.upstream, input.backendKind);
+  const decision = resolveModelPolicy({
     policyRevision: input.preferences.revision,
     policy: input.preferences.modelPolicy,
     legacyPreferredModel: input.preferences.legacyPreferredModel,
     catalog,
-    operatorCeiling: input.config.operatorModelCeiling,
+    operatorCeiling: effectiveModelCeiling(
+      catalog,
+      input.config.operatorModelCeiling,
+      input.preferences.usePriorityServiceTier
+    ),
     backendKind: input.backendKind,
-    backendCapabilities: backendCapabilities(input.upstream, input.backendKind),
+    backendCapabilities: capabilities,
     operation: input.operation,
     requestedSelection: input.requestedSelection,
     requestedPolicyRevision: input.requestedPolicyRevision,
     currentSelection: input.currentSelection
   });
+  const effectiveSelection = internalServiceTierSelection(
+    decision.effectiveSelection,
+    catalog,
+    input.preferences.usePriorityServiceTier,
+    input.operation,
+    capabilities,
+    input.currentSelection,
+    input.preferences.revision
+  );
+  return {
+    ...decision,
+    effectiveSelection,
+    reason: `${decision.reason} ${effectiveSelection.serviceTier
+      ? `The bridge privately applied service tier '${effectiveSelection.serviceTier}'.`
+      : "No service-tier override was requested."}`
+  };
+}
+
+function assertPriorityCompatibility(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  usePriorityServiceTier: boolean,
+  policyRevision: number,
+  requestedSelection?: ModelChoice
+): void {
+  if (!usePriorityServiceTier) return;
+  if (requestedSelection && !priorityServiceTierForModel(catalog, requestedSelection.model)) {
+    throw priorityUnavailable(policyRevision, requestedSelection.model);
+  }
+  const compatible = listAllowedModelSelections(policy, catalog, operatorCeiling)
+    .some((selection) => Boolean(priorityServiceTierForModel(catalog, selection.model)));
+  if (!compatible) throw priorityUnavailable(policyRevision);
+}
+
+function priorityUnavailable(policyRevision: number, model?: string): ModelPolicyError {
+  return new ModelPolicyError(
+    "MODEL_UNAVAILABLE",
+    model
+      ? `Priority is enabled, but model ${model} does not expose the Priority/Fast service tier.`
+      : "Priority is enabled, but the active model policy has no allowed model with a Priority/Fast service tier.",
+    policyRevision,
+    ["Disable Priority in Codex settings.", "Choose a model that supports Priority and retry."]
+  );
+}
+
+function effectiveModelCeiling(
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  usePriorityServiceTier: boolean
+): ModelChoice[] | undefined {
+  if (!usePriorityServiceTier) return operatorCeiling;
+  const operatorKeys = operatorCeiling
+    ? new Set(operatorCeiling.map(modelChoiceKey))
+    : undefined;
+  return catalog.models.flatMap((model) => {
+    if (model.hidden || !priorityServiceTierForModel(catalog, model.id)) return [];
+    return model.supportedReasoningEfforts.flatMap(({ effort }) => {
+      const selection = { model: model.id, reasoningEffort: effort };
+      return !operatorKeys || operatorKeys.has(modelChoiceKey(selection)) ? [selection] : [];
+    });
+  });
+}
+
+function internalServiceTierSelection(
+  selection: ModelSelection,
+  catalog: CodexModelCatalogSnapshot,
+  usePriorityServiceTier: boolean,
+  operation: "start" | "continue",
+  capabilities: BackendCapabilities,
+  currentSelection: ModelSelection | undefined,
+  policyRevision: number
+): ModelSelection {
+  if (
+    operation === "continue" &&
+    !capabilities.supportsServiceTierOverrideOnContinue &&
+    currentSelection &&
+    modelChoiceKey(currentSelection) === modelChoiceKey(selection)
+  ) {
+    return {
+      model: selection.model,
+      reasoningEffort: selection.reasoningEffort,
+      ...(currentSelection.serviceTier ? { serviceTier: currentSelection.serviceTier } : {})
+    };
+  }
+  if (!usePriorityServiceTier) return { model: selection.model, reasoningEffort: selection.reasoningEffort };
+  const serviceTier = priorityServiceTierForModel(catalog, selection.model);
+  if (!serviceTier) {
+    throw priorityUnavailable(policyRevision, selection.model);
+  }
+  return { model: selection.model, reasoningEffort: selection.reasoningEffort, serviceTier };
+}
+
+function priorityServiceTierForModel(
+  catalog: CodexModelCatalogSnapshot,
+  modelId: string
+): string | undefined {
+  const model = catalog.models.find((entry) => entry.id === modelId && !entry.hidden);
+  if (!model) return undefined;
+  const ids = [model.defaultServiceTier, ...model.serviceTiers.map((tier) => tier.id)]
+    .filter((entry): entry is string => Boolean(entry));
+  return ids.find((id) => id.toLowerCase() === "priority") ||
+    ids.find((id) => id.toLowerCase() === "fast");
 }
 
 function catalogUnavailableError(policyRevision: number, error: unknown): ModelPolicyError {
@@ -6048,6 +6193,22 @@ function sanitizeTextForJob(value: string, cwd: string, allowedRoots: string[]):
     sanitized = sanitized.split(root).join(path.basename(root));
   }
   return sanitized;
+}
+
+function activityCardToolMetadata(): Record<string, unknown> {
+  return {
+    ui: { resourceUri: ACTIVITY_CARD_URI },
+    "openai/outputTemplate": ACTIVITY_CARD_URI,
+    "openai/widgetAccessible": true
+  };
+}
+
+function codexTaskActivityCardMetadata(
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+): Record<string, unknown> | undefined {
+  return preferences.activityCardVisibility === "never"
+    ? undefined
+    : activityCardToolMetadata();
 }
 
 function codexToolAnnotations(

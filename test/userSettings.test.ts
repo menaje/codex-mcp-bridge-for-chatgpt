@@ -30,6 +30,7 @@ describe("user settings store", () => {
         allowedSelections: { kind: "catalog-visible" },
         constraints: { allowDelegation: true }
       },
+      usePriorityServiceTier: false,
       defaultCwd: config.allowedRoots[0],
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
@@ -141,6 +142,73 @@ describe("user settings store", () => {
       expect.stringContaining("model policy"),
       expect.stringContaining("completionDeliveryMode was migrated")
     ]);
+  });
+
+  it("migrates model-policy service tiers to the independent Priority preference", () => {
+    const root = temporaryDirectory("bridge-root-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root
+    });
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2,
+      settings: {
+        schemaVersion: 2,
+        revision: 4,
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        accessStrategy: "adaptive",
+        modelPolicy: {
+          mode: "automatic",
+          preferredSelection: {
+            model: "gpt-5.6-sol",
+            reasoningEffort: "max",
+            serviceTier: "priority"
+          },
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "high" },
+              { model: "gpt-5.6-sol", reasoningEffort: "high", serviceTier: "priority" },
+              { model: "gpt-5.6-sol", reasoningEffort: "max", serviceTier: "priority" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        },
+        defaultCwd: root,
+        uiLocalePreference: "auto",
+        maxConcurrentJobs: 30,
+        activityCardVisibility: "always",
+        completionHandoff: "off"
+      }
+    }));
+
+    const migrated = new UserSettingsStore(config, { stateFile });
+    expect(migrated.current).toMatchObject({
+      revision: 5,
+      usePriorityServiceTier: true,
+      modelPolicy: {
+        preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        allowedSelections: {
+          kind: "explicit",
+          selections: [
+            { model: "gpt-5.6-sol", reasoningEffort: "high" },
+            { model: "gpt-5.6-sol", reasoningEffort: "max" }
+          ]
+        }
+      }
+    });
+    expect(JSON.stringify(migrated.current.modelPolicy)).not.toContain("serviceTier");
+    expect(migrated.loadWarnings).toEqual([
+      expect.stringContaining("independent Priority preference")
+    ]);
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+    expect(persisted.usePriorityServiceTier).toBe(true);
+    expect(JSON.stringify(persisted.modelPolicy)).not.toContain("serviceTier");
+
+    const reloaded = new UserSettingsStore(config, { stateFile });
+    expect(reloaded.current).toEqual(migrated.current);
+    expect(reloaded.loadWarnings).toEqual([]);
   });
 
   it.each(["agent-list", "activity-summary"])(

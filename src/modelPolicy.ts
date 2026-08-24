@@ -6,9 +6,12 @@ import type {
 
 export const MODEL_POLICY_SCHEMA_VERSION = 2 as const;
 
-export type ModelSelection = {
+export type ModelChoice = {
   model: string;
   reasoningEffort: string;
+};
+
+export type ModelSelection = ModelChoice & {
   serviceTier?: string;
 };
 
@@ -19,7 +22,7 @@ export type ModelPolicyConstraints = {
 export type AllowedSelections =
   | {
       kind: "explicit";
-      selections: ModelSelection[];
+      selections: ModelChoice[];
     }
   | {
       kind: "catalog-visible";
@@ -28,12 +31,12 @@ export type AllowedSelections =
 export type ModelPolicy =
   | {
       mode: "fixed";
-      selection: ModelSelection;
+      selection: ModelChoice;
       constraints: ModelPolicyConstraints;
     }
   | {
       mode: "automatic";
-      preferredSelection?: ModelSelection;
+      preferredSelection?: ModelChoice;
       allowedSelections: AllowedSelections;
       constraints: ModelPolicyConstraints;
     };
@@ -63,7 +66,7 @@ export type ExecutionDecision = {
   catalogFingerprint: string;
   catalogValidation: CatalogValidationState;
   backendKind: CodexBackendKind;
-  requestedSelection?: ModelSelection;
+  requestedSelection?: ModelChoice;
   effectiveSelection: ModelSelection;
   effectiveReasoningEffort: string;
   savedSelectionSupported: boolean;
@@ -98,21 +101,21 @@ export type ResolveModelPolicyInput = {
   /** Migration-only model preference from legacy settings that omitted effort. */
   legacyPreferredModel?: string;
   catalog: CodexModelCatalogSnapshot;
-  operatorCeiling?: ModelSelection[];
+  operatorCeiling?: ModelChoice[];
   backendKind: CodexBackendKind;
   backendCapabilities: BackendCapabilities;
   operation: "start" | "continue";
-  requestedSelection?: ModelSelection;
+  requestedSelection?: ModelChoice;
   requestedPolicyRevision?: number;
   currentSelection?: ModelSelection;
 };
 
 export function automaticModelPolicy(
-  preferredSelection?: ModelSelection
+  preferredSelection?: ModelChoice
 ): ModelPolicy {
   return {
     mode: "automatic",
-    ...(preferredSelection ? { preferredSelection: cloneSelection(preferredSelection) } : {}),
+    ...(preferredSelection ? { preferredSelection: cloneModelChoice(preferredSelection) } : {}),
     allowedSelections: { kind: "catalog-visible" },
     constraints: { allowDelegation: true }
   };
@@ -122,7 +125,7 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
   if (!isRecord(value)) throw new Error("Invalid model policy.");
   const constraints = readConstraints(value.constraints);
   if (value.mode === "fixed") {
-    const selection = readSelection(value.selection, "fixed model selection");
+    const selection = readModelChoice(value.selection, "fixed model selection");
     if (!constraints.allowDelegation && selection.reasoningEffort === "ultra") {
       throw new Error("Ultra reasoning requires model-policy delegation to be enabled.");
     }
@@ -137,11 +140,11 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
     allowedSelections = { kind: "catalog-visible" };
   } else if (allowed.kind === "explicit" && Array.isArray(allowed.selections)) {
     const selections = allowed.selections.map((selection, index) =>
-      readSelection(selection, `allowed model selection ${index + 1}`)
+      readModelChoice(selection, `allowed model selection ${index + 1}`)
     );
     if (selections.length === 0) throw new Error("An explicit model allowlist cannot be empty.");
     if (selections.length > 500) throw new Error("An explicit model allowlist cannot exceed 500 selections.");
-    const unique = new Set(selections.map(modelSelectionKey));
+    const unique = new Set(selections.map(modelChoiceKey));
     if (unique.size !== selections.length) throw new Error("Explicit model selections must be unique.");
     if (!constraints.allowDelegation && selections.some((entry) => entry.reasoningEffort === "ultra")) {
       throw new Error("Ultra reasoning cannot be allowed while delegation is disabled.");
@@ -152,11 +155,11 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
   }
   const preferredSelection = value.preferredSelection === undefined
     ? undefined
-    : readSelection(value.preferredSelection, "preferred model selection");
+    : readModelChoice(value.preferredSelection, "preferred model selection");
   if (
     preferredSelection &&
     allowedSelections.kind === "explicit" &&
-    !allowedSelections.selections.some((entry) => sameModelSelection(entry, preferredSelection))
+    !allowedSelections.selections.some((entry) => sameModelChoice(entry, preferredSelection))
   ) {
     throw new Error("The preferred model selection must be included in the explicit allowlist.");
   }
@@ -178,7 +181,7 @@ export function validateModelSelection(value: unknown, label = "model selection"
 export function validatePolicyAgainstCatalog(
   policy: ModelPolicy,
   catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelSelection[] | undefined,
+  operatorCeiling: ModelChoice[] | undefined,
   policyRevision: number
 ): void {
   const normalized = validateModelPolicy(policy);
@@ -269,12 +272,12 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
         `This turn uses ${selectionLabel(fallback)} without rewriting the saved preference.`;
     }
   } else if (input.requestedSelection) {
-    effectiveSelection = readSelection(input.requestedSelection, "requested model selection");
+    effectiveSelection = readModelChoice(input.requestedSelection, "requested model selection");
     source = "caller";
   } else if (
     preferredSelection &&
     listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
-      .some((selection) => sameModelSelection(selection, preferredSelection))
+      .some((selection) => sameModelChoice(selection, preferredSelection))
   ) {
     effectiveSelection = cloneSelection(preferredSelection);
     source = "preferred";
@@ -368,11 +371,11 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
 }
 
 function savedSelectionFallback(
-  saved: ModelSelection,
+  saved: ModelChoice,
   catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelSelection[] | undefined,
+  operatorCeiling: ModelChoice[] | undefined,
   allowDelegation: boolean
-): ModelSelection | undefined {
+): ModelChoice | undefined {
   const model = catalog.models.find((entry) => entry.id === saved.model && !entry.hidden);
   const orderedModels = model
     ? [model]
@@ -387,36 +390,22 @@ function savedSelectionFallback(
     ].filter((value, index, values): value is string =>
       Boolean(value) && values.indexOf(value) === index && (allowDelegation || value !== "ultra")
     );
-    const tiers = [
-      candidateModel.serviceTiers.some((tier) => tier.id === saved.serviceTier)
-        ? saved.serviceTier
-        : undefined,
-      candidateModel.defaultServiceTier,
-      undefined,
-      ...candidateModel.serviceTiers.map((tier) => tier.id)
-    ].filter((value, index, values) => values.indexOf(value) === index);
     for (const reasoningEffort of efforts) {
-      for (const serviceTier of tiers) {
-        const selection: ModelSelection = {
-          model: candidateModel.id,
-          reasoningEffort,
-          ...(serviceTier ? { serviceTier } : {})
-        };
-        if (
-          catalogSupportsSelection(catalog, selection) &&
-          (!operatorCeiling || operatorCeiling.some((entry) => sameModelSelection(entry, selection)))
-        ) return selection;
-      }
+      const selection: ModelSelection = { model: candidateModel.id, reasoningEffort };
+      if (
+        catalogSupportsSelection(catalog, selection) &&
+        (!operatorCeiling || operatorCeiling.some((entry) => sameModelChoice(entry, selection)))
+      ) return selection;
     }
   }
   return undefined;
 }
 
 function assertFallbackAllowed(
-  selection: ModelSelection,
+  selection: ModelChoice,
   allowDelegation: boolean,
   catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelSelection[] | undefined,
+  operatorCeiling: ModelChoice[] | undefined,
   policyRevision: number
 ): void {
   if (!catalogSupportsSelection(catalog, selection)) {
@@ -425,7 +414,7 @@ function assertFallbackAllowed(
   if (!allowDelegation && selection.reasoningEffort === "ultra") {
     throw forbidden(policyRevision, "Ultra reasoning is disabled by the active model policy.");
   }
-  if (operatorCeiling && !operatorCeiling.some((entry) => sameModelSelection(entry, selection))) {
+  if (operatorCeiling && !operatorCeiling.some((entry) => sameModelChoice(entry, selection))) {
     throw forbidden(policyRevision, `Fallback selection ${selectionLabel(selection)} exceeds the operator ceiling.`);
   }
 }
@@ -433,19 +422,19 @@ function assertFallbackAllowed(
 export function listAllowedModelSelections(
   policy: ModelPolicy,
   catalog: CodexModelCatalogSnapshot,
-  operatorCeiling?: ModelSelection[]
-): ModelSelection[] {
+  operatorCeiling?: ModelChoice[]
+): ModelChoice[] {
   const normalized = validateModelPolicy(policy);
   const candidates = normalized.mode === "fixed"
     ? [normalized.selection]
     : normalized.allowedSelections.kind === "explicit"
       ? normalized.allowedSelections.selections
       : catalogSelections(catalog.models);
-  const ceiling = operatorCeiling?.map((selection) => readSelection(selection, "operator model ceiling"));
+  const ceiling = operatorCeiling?.map((selection) => readModelChoice(selection, "operator model ceiling"));
   return deduplicateSelections(candidates).filter((selection) =>
     catalogSupportsSelection(catalog, selection) &&
     (normalized.constraints.allowDelegation || selection.reasoningEffort !== "ultra") &&
-    (!ceiling || ceiling.some((entry) => sameModelSelection(entry, selection)))
+    (!ceiling || ceiling.some((entry) => sameModelChoice(entry, selection)))
   );
 }
 
@@ -469,6 +458,14 @@ export function sameModelSelection(
   return modelSelectionKey(left) === modelSelectionKey(right);
 }
 
+export function sameModelChoice(
+  left: ModelChoice | undefined,
+  right: ModelChoice | undefined
+): boolean {
+  if (!left || !right) return left === right;
+  return modelChoiceKey(left) === modelChoiceKey(right);
+}
+
 export function sameModelPolicy(left: ModelPolicy, right: ModelPolicy): boolean {
   return modelPolicyKey(validateModelPolicy(left)) === modelPolicyKey(validateModelPolicy(right));
 }
@@ -481,11 +478,15 @@ export function modelSelectionKey(selection: ModelSelection): string {
   ]);
 }
 
+export function modelChoiceKey(selection: ModelChoice): string {
+  return JSON.stringify([selection.model, selection.reasoningEffort]);
+}
+
 function assertSelectionAllowed(
-  selection: ModelSelection,
+  selection: ModelChoice,
   policy: ModelPolicy,
   catalog: CodexModelCatalogSnapshot,
-  operatorCeiling: ModelSelection[] | undefined,
+  operatorCeiling: ModelChoice[] | undefined,
   policyRevision: number
 ): void {
   if (!catalogSupportsSelection(catalog, selection)) {
@@ -499,17 +500,17 @@ function assertSelectionAllowed(
   }
   if (
     operatorCeiling &&
-    !operatorCeiling.some((entry) => sameModelSelection(entry, selection))
+    !operatorCeiling.some((entry) => sameModelChoice(entry, selection))
   ) {
     throw forbidden(policyRevision, `Selection ${selectionLabel(selection)} exceeds the operator model ceiling.`);
   }
-  if (policy.mode === "fixed" && !sameModelSelection(policy.selection, selection)) {
+  if (policy.mode === "fixed" && !sameModelChoice(policy.selection, selection)) {
     throw forbidden(policyRevision, "The selected model configuration differs from the fixed policy.");
   }
   if (
     policy.mode === "automatic" &&
     policy.allowedSelections.kind === "explicit" &&
-    !policy.allowedSelections.selections.some((entry) => sameModelSelection(entry, selection))
+    !policy.allowedSelections.selections.some((entry) => sameModelChoice(entry, selection))
   ) {
     throw forbidden(policyRevision, `Selection ${selectionLabel(selection)} is not in the user allowlist.`);
   }
@@ -518,11 +519,11 @@ function assertSelectionAllowed(
 function catalogDefaultSelection(
   catalog: CodexModelCatalogSnapshot,
   policy: ModelPolicy,
-  operatorCeiling?: ModelSelection[],
+  operatorCeiling?: ModelChoice[],
   preferredModel?: string
-): ModelSelection | undefined {
+): ModelChoice | undefined {
   const allowedKeys = new Set(
-    listAllowedModelSelections(policy, catalog, operatorCeiling).map(modelSelectionKey)
+    listAllowedModelSelections(policy, catalog, operatorCeiling).map(modelChoiceKey)
   );
   const ordered = [
     ...catalog.models.filter((model) => !model.hidden && model.isDefault),
@@ -533,20 +534,9 @@ function catalogDefaultSelection(
       model.defaultReasoningEffort,
       ...model.supportedReasoningEfforts.map((entry) => entry.effort)
     ].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
-    const serviceTiers = [
-      model.defaultServiceTier,
-      undefined,
-      ...model.serviceTiers.map((tier) => tier.id)
-    ].filter((value, index, values) => values.indexOf(value) === index);
     for (const reasoningEffort of efforts) {
-      for (const serviceTier of serviceTiers) {
-        const selection: ModelSelection = {
-          model: model.id,
-          reasoningEffort,
-          ...(serviceTier ? { serviceTier } : {})
-        };
-        if (allowedKeys.has(modelSelectionKey(selection))) return selection;
-      }
+      const selection: ModelSelection = { model: model.id, reasoningEffort };
+      if (allowedKeys.has(modelChoiceKey(selection))) return selection;
     }
   }
   return undefined;
@@ -556,39 +546,35 @@ function modelPolicyKey(policy: ModelPolicy): string {
   if (policy.mode === "fixed") {
     return JSON.stringify([
       "fixed",
-      modelSelectionKey(policy.selection),
+      modelChoiceKey(policy.selection),
       policy.constraints.allowDelegation
     ]);
   }
   return JSON.stringify([
     "automatic",
-    policy.preferredSelection ? modelSelectionKey(policy.preferredSelection) : null,
+    policy.preferredSelection ? modelChoiceKey(policy.preferredSelection) : null,
     policy.allowedSelections.kind,
     policy.allowedSelections.kind === "explicit"
-      ? policy.allowedSelections.selections.map(modelSelectionKey).sort()
+      ? policy.allowedSelections.selections.map(modelChoiceKey).sort()
       : null,
     policy.constraints.allowDelegation
   ]);
 }
 
-function catalogSelections(models: CodexModelDescriptor[]): ModelSelection[] {
+function catalogSelections(models: CodexModelDescriptor[]): ModelChoice[] {
   return models.flatMap((model) =>
-    model.supportedReasoningEfforts.flatMap(({ effort }) => [
-      { model: model.id, reasoningEffort: effort },
-      ...model.serviceTiers.map((tier) => ({
-        model: model.id,
-        reasoningEffort: effort,
-        serviceTier: tier.id
-      }))
-    ])
+    model.supportedReasoningEfforts.map(({ effort }) => ({
+      model: model.id,
+      reasoningEffort: effort
+    }))
   );
 }
 
 function selectionChanged(
   currentSelection: ModelSelection | undefined,
-  nextSelection: ModelSelection
+  nextSelection: ModelChoice
 ): boolean {
-  return !sameModelSelection(currentSelection, nextSelection);
+  return !sameModelChoice(currentSelection, nextSelection);
 }
 
 function readConstraints(value: unknown): ModelPolicyConstraints {
@@ -613,6 +599,17 @@ function readSelection(value: unknown, label: string): ModelSelection {
   return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}) };
 }
 
+function readModelChoice(value: unknown, label: string): ModelChoice {
+  if (!isRecord(value)) throw new Error(`Invalid ${label}.`);
+  const model = identifier(value.model, `${label} model`, 200);
+  const reasoningEffort = identifier(value.reasoningEffort, `${label} reasoning effort`, 100);
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "model" && key !== "reasoningEffort")) {
+    throw new Error(`Invalid ${label}: only model and reasoningEffort are allowed.`);
+  }
+  return { model, reasoningEffort };
+}
+
 function identifier(value: unknown, label: string, maximum: number): string {
   if (
     typeof value !== "string" ||
@@ -626,11 +623,11 @@ function identifier(value: unknown, label: string, maximum: number): string {
   return value;
 }
 
-function deduplicateSelections(selections: ModelSelection[]): ModelSelection[] {
+function deduplicateSelections(selections: ModelChoice[]): ModelChoice[] {
   const seen = new Set<string>();
   return selections.flatMap((selection) => {
-    const normalized = readSelection(selection, "model selection");
-    const key = modelSelectionKey(normalized);
+    const normalized = readModelChoice(selection, "model selection");
+    const key = modelChoiceKey(normalized);
     if (seen.has(key)) return [];
     seen.add(key);
     return [normalized];
@@ -642,6 +639,13 @@ function cloneSelection(selection: ModelSelection): ModelSelection {
     model: selection.model,
     reasoningEffort: selection.reasoningEffort,
     ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+  };
+}
+
+function cloneModelChoice(selection: ModelChoice): ModelChoice {
+  return {
+    model: selection.model,
+    reasoningEffort: selection.reasoningEffort
   };
 }
 

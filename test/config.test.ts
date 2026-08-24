@@ -66,7 +66,7 @@ describe("config policy", () => {
     expect(config.defaultReasoningEffort).toBe("max");
     expect(config.operatorModelCeiling).toEqual([
       { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      { model: "gpt-5.6-terra", reasoningEffort: "high", serviceTier: "priority" }
+      { model: "gpt-5.6-terra", reasoningEffort: "high" }
     ]);
     expect(config.modelCatalogCacheTtlMs).toBe(120000);
     expect(config.modelCatalogTimeoutMs).toBe(15000);

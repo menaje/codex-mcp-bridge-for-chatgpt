@@ -2,7 +2,7 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { validateModelPolicy, type ModelSelection } from "./modelPolicy.js";
+import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
@@ -25,7 +25,7 @@ export type BridgeConfig = {
   defaultApprovalPolicy: ApprovalPolicy;
   defaultModel?: string;
   defaultReasoningEffort?: string;
-  operatorModelCeiling?: ModelSelection[];
+  operatorModelCeiling?: ModelChoice[];
   modelCatalogCacheTtlMs: number;
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
@@ -191,7 +191,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   };
 }
 
-function parseModelSelectionCeiling(value: string | undefined): ModelSelection[] | undefined {
+function parseModelSelectionCeiling(value: string | undefined): ModelChoice[] | undefined {
   const normalized = normalizeOptional(value);
   if (!normalized) return undefined;
   let parsed: unknown;
@@ -199,17 +199,27 @@ function parseModelSelectionCeiling(value: string | undefined): ModelSelection[]
     parsed = JSON.parse(normalized);
   } catch {
     throw new Error(
-      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must be a JSON array of exact model/reasoningEffort selections."
+      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must be a JSON array of model/reasoningEffort choices."
     );
   }
   if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 500) {
     throw new Error(
-      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must contain between 1 and 500 exact selections."
+      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must contain between 1 and 500 model/reasoningEffort choices."
     );
   }
+  const normalizedSelections = parsed.map((selection) => {
+    if (typeof selection !== "object" || selection === null || Array.isArray(selection)) return selection;
+    const choice = { ...(selection as Record<string, unknown>) };
+    delete choice.serviceTier;
+    return choice;
+  });
+  const unique = [...new Map(normalizedSelections.map((selection) => {
+    const choice = selection as Record<string, unknown>;
+    return [JSON.stringify([choice?.model, choice?.reasoningEffort]), selection];
+  })).values()];
   const policy = validateModelPolicy({
     mode: "automatic",
-    allowedSelections: { kind: "explicit", selections: parsed },
+    allowedSelections: { kind: "explicit", selections: unique },
     constraints: { allowDelegation: true }
   });
   if (policy.mode !== "automatic" || policy.allowedSelections.kind !== "explicit") {

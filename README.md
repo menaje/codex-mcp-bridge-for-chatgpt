@@ -31,9 +31,9 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 
 ## Tools
 
-- `codex_task`: create or reuse a named Agent, create or attach an Activity, and run one exact Codex turn.
+- `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, and own automatic Activity-card presentation.
 - `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state or make a bounded watch.
-- `codex_activity`: render the localized lightweight Agent/Activity card.
+- `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
 - `codex_activity_update`: apply one validated Activity lifecycle or verification transition.
 - `codex_agent`: rename, detach, archive, restore, or terminate one exact remaining App Server background process. It never deletes an Agent.
 - `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
@@ -114,13 +114,16 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 
 - access strategy: `read-only`, `adaptive`, or operator-enabled `always-full`;
 - fixed or automatic exact model policy;
+- independent Priority/Fast processing for Codex calls;
 - the default working folder inside allowed roots;
 - UI language;
 - active-job limit;
 - Activity-card visibility: `always`, `background-only`, or `never`;
 - completion handoff: `off` or `auto-handoff` while a card is mounted.
 
-In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary exact `ModelSelection` entries; no synthetic `all` value is persisted or exposed to GPT, and service-tier variants remain separate. Catalog-visible mode stays dynamic and can include later catalog additions.
+In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary model/effort entries; no synthetic `all` value is persisted or exposed to GPT. Catalog-visible mode stays dynamic and can include later catalog additions.
+
+Priority is an independent user preference, not part of the model policy. GPT sees and selects only `model` and `reasoningEffort`. When Priority is enabled, the bridge validates that the chosen model supports the Priority/Fast tier and injects the catalog's `priority` (or `fast`) identifier only into the downstream Codex call. Existing MCP threads retain their admission-time tier when that backend cannot change tiers on continuation.
 
 Opening Settings resolves the model catalog through the normal short-lived cache. There is no persistent refresh control or polling; when the lookup is stale or fails, the card keeps the last-known-good catalog and shows a contextual retry action.
 
@@ -152,7 +155,7 @@ If a saved effort disappears, the bridge does not silently rewrite it. The card 
 
 The saved `modelPolicy` is either:
 
-- `fixed`: one exact model/effort/optional service-tier selection; or
+- `fixed`: one exact model/effort selection; or
 - `automatic`: current catalog-visible selections or an explicit exact allowlist, optionally with a preferred selection.
 
 Runtime admission always rechecks the operator ceiling, saved policy, current backend catalog, and backend capability. Model aliases are not accepted.
@@ -195,6 +198,8 @@ When a turn becomes terminal, its Agent returns to `idle`, releases the active A
 Active/waiting Agents and Agents with a remaining background process cannot be archived. Force-stop, background-process termination, and archive are distinct operations; none rolls back filesystem changes. Permanent Agent/thread deletion is not exposed.
 
 ## Activity card lifecycle
+
+`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether this exact turn should display; the widget then attaches its own bounded `codex_status` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is internally suppressed. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
@@ -280,7 +285,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | New-thread backend: `mcp-server` or `app-server` |
 | `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional preferred model seed; requires effort seed |
 | `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional preferred effort seed; requires model seed |
-| `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` | unset | Immutable JSON exact-selection ceiling |
+| `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` | unset | Immutable JSON model/effort ceiling |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Successful catalog TTL |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Catalog refresh timeout |
 | `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` | `~/.codex-mcp-bridge/state.sqlite` | Primary private state |

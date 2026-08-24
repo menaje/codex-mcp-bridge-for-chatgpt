@@ -14,6 +14,7 @@ export type ModelPolicyChangedEvent = {
   catalogFingerprint?: string;
   schema: z.ZodType;
   annotations: ToolAnnotations;
+  metadata?: Record<string, unknown>;
 };
 
 export type ModelPolicyProjectionStatus = {
@@ -53,11 +54,13 @@ export class SdkModelPolicyProjectionAdapter {
         notificationAdapter: "sdk-tools-list-changed"
       };
     }
-    // RegisteredTool.update accepts only a raw Zod shape in this SDK release.
     // Assigning the public properties preserves strict-object semantics and lets
-    // one tools/list_changed notification cover both policy projections.
+    // one tools/list_changed notification cover the schema, annotations, and UI
+    // projection. An undefined metadata value intentionally removes a previously
+    // published Task UI binding.
     this.tool.inputSchema = event.schema;
     this.tool.annotations = event.annotations;
+    this.tool._meta = event.metadata;
     this.lastSignature = signature;
     this.server.sendToolListChanged();
     return {

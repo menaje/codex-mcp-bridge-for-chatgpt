@@ -81,9 +81,9 @@ describe("model policy resolver", () => {
     };
     expect(decide({ policy: withoutPreferred })).toMatchObject({
       source: "backend-default",
-      effectiveSelection: SOL_PRIORITY
+      effectiveSelection: SOL_MAX
     });
-    expect(decide({ policy: withoutPreferred }).effectiveSelection).toEqual(SOL_PRIORITY);
+    expect(decide({ policy: withoutPreferred }).effectiveSelection).toEqual(SOL_MAX);
   });
 
   it("falls back from a drifted automatic preference to the validated backend default", () => {
@@ -92,7 +92,7 @@ describe("model policy resolver", () => {
     });
     expect(decide({ policy: AUTOMATIC_POLICY, catalog: withoutPreferredModel })).toMatchObject({
       source: "backend-default",
-      effectiveSelection: SOL_PRIORITY,
+      effectiveSelection: SOL_MAX,
       reason: expect.stringContaining("preferred selection was outside")
     });
     expect(() =>
@@ -127,7 +127,7 @@ describe("model policy resolver", () => {
       effectiveSelection: TERRA_MEDIUM
     });
     expect(decide({ policy, legacyPreferredModel: "gpt-5.6-sol" }).effectiveSelection)
-      .toEqual(SOL_PRIORITY);
+      .toEqual(SOL_MAX);
   });
 
   it("keeps explicit allowlists closed when the catalog expands", () => {
@@ -167,36 +167,20 @@ describe("model policy resolver", () => {
     );
   });
 
-  it("treats service tier as part of the atomic exact selection", () => {
-    expect(decide({ policy: AUTOMATIC_POLICY, requestedSelection: SOL_PRIORITY }).effectiveSelection)
-      .toEqual(SOL_PRIORITY);
-    expectPolicyError(
-      () => decide({
-        policy: {
-          mode: "automatic",
-          allowedSelections: { kind: "explicit", selections: [SOL_MAX] },
-          constraints: { allowDelegation: true }
-        },
-        requestedSelection: SOL_PRIORITY
-      }),
-      "MODEL_SELECTION_FORBIDDEN"
-    );
+  it("keeps service tier outside the model and effort choice", () => {
+    expect(() => decide({ policy: AUTOMATIC_POLICY, requestedSelection: SOL_PRIORITY }))
+      .toThrow(/only model and reasoningEffort/i);
   });
 
-  it("materializes the backend default service tier and supports a tier-only allowlist", () => {
+  it("does not materialize backend service tiers in the model policy resolver", () => {
     const catalogVisible: ModelPolicy = {
       mode: "automatic",
       allowedSelections: { kind: "catalog-visible" },
       constraints: { allowDelegation: true }
     };
-    expect(decide({ policy: catalogVisible }).effectiveSelection).toEqual(SOL_PRIORITY);
-
-    const tierOnly: ModelPolicy = {
-      mode: "automatic",
-      allowedSelections: { kind: "explicit", selections: [SOL_PRIORITY] },
-      constraints: { allowDelegation: true }
-    };
-    expect(decide({ policy: tierOnly }).effectiveSelection).toEqual(SOL_PRIORITY);
+    expect(decide({ policy: catalogVisible }).effectiveSelection).toEqual(SOL_MAX);
+    expect(listAllowedModelSelections(catalogVisible, catalog())
+      .every((selection) => selection.serviceTier === undefined)).toBe(true);
   });
 
   it("compares explicit allowlists as sets for no-op policy updates", () => {
@@ -310,7 +294,7 @@ describe("model policy resolver", () => {
         mode: "automatic",
         allowedSelections: {
           kind: "explicit",
-          selections: [SOL_HIGH, SOL_MAX, SOL_PRIORITY, TERRA_HIGH]
+          selections: [SOL_HIGH, SOL_MAX, TERRA_HIGH]
         },
         constraints: { allowDelegation: true }
       },
@@ -390,9 +374,6 @@ function allCatalogSelections(): ModelSelection[] {
     SOL_HIGH,
     SOL_MAX,
     { model: "gpt-5.6-sol", reasoningEffort: "ultra" },
-    { model: "gpt-5.6-sol", reasoningEffort: "high", serviceTier: "priority" },
-    SOL_PRIORITY,
-    { model: "gpt-5.6-sol", reasoningEffort: "ultra", serviceTier: "priority" },
     TERRA_MEDIUM,
     TERRA_HIGH
   ];

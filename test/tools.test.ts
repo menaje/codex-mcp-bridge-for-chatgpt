@@ -352,6 +352,15 @@ describe("bridge tools", () => {
       destructiveHint: false,
       idempotentHint: false
     });
+    expect(byName.get("codex_task")?._meta).toMatchObject({
+      ui: { resourceUri: ACTIVITY_CARD_URI },
+      "openai/outputTemplate": ACTIVITY_CARD_URI,
+      "openai/widgetAccessible": true
+    });
+    expect(byName.get("codex_activity")?._meta).toMatchObject({
+      ui: { resourceUri: ACTIVITY_CARD_URI },
+      "openai/outputTemplate": ACTIVITY_CARD_URI
+    });
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["requestId", "prompt"])
     });
@@ -544,6 +553,8 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("settings.legacyPreferredModel");
     expect(contents.text).toContain('id="allowed-models"');
     expect(contents.text).toContain('id="effort-groups"');
+    expect(contents.text).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(contents.text).not.toContain('id="policy-service-tier"');
     expect(contents.text).toContain('all.dataset.action="all-efforts"');
     expect(contents.text).toContain('id="retry-models"');
     expect(contents.text).not.toContain('id="refresh"');
@@ -653,6 +664,7 @@ describe("bridge tools", () => {
         preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
         allowedSelections: { kind: "catalog-visible" }
       },
+      usePriorityServiceTier: false,
       codexExecutionDeadline: "none",
       upstreamPoolSize: 4,
       maxRetainedJobs: 100,
@@ -882,7 +894,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("keeps service-tier schema choices identical to the exact resolver allowlist", async () => {
+  it("keeps Priority private from GPT and injects it only into Codex calls", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
@@ -895,13 +907,14 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 0,
+        usePriorityServiceTier: true,
         modelPolicy: {
           mode: "automatic",
           allowedSelections: {
             kind: "explicit",
             selections: [
               { model: "gpt-5.6-sol", reasoningEffort: "high" },
-              { model: "gpt-5.6-sol", reasoningEffort: "max", serviceTier: "priority" }
+              { model: "gpt-5.6-sol", reasoningEffort: "max" }
             ]
           },
           constraints: { allowDelegation: true }
@@ -912,54 +925,74 @@ describe("bridge tools", () => {
     const selectionSchema = task.inputSchema.properties?.selection as {
       oneOf?: Array<{ properties?: Record<string, { const?: string }> }>;
     };
-    expect(selectionSchema.oneOf).toEqual(expect.arrayContaining([
+    expect(JSON.stringify(selectionSchema)).not.toContain("serviceTier");
+    expect(selectionSchema.oneOf).toEqual([
       expect.objectContaining({
         properties: expect.objectContaining({
           model: expect.objectContaining({ const: "gpt-5.6-sol" }),
-          reasoningEffort: expect.objectContaining({ const: "high" })
-        })
-      }),
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          model: expect.objectContaining({ const: "gpt-5.6-sol" }),
-          reasoningEffort: expect.objectContaining({ const: "max" }),
-          serviceTier: expect.objectContaining({ const: "priority" })
+          reasoningEffort: expect.objectContaining({
+            enum: expect.arrayContaining(["high", "max"])
+          })
         })
       })
-    ]));
-
-    for (const selection of [
-      { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      { model: "gpt-5.6-sol", reasoningEffort: "high", serviceTier: "priority" }
-    ]) {
-      const rejected = await client.callTool({
-        name: "codex_task",
-        arguments: { prompt: "not an exact allowed tuple", sessionMode: "new", selection }
-      });
-      expect(rejected).toMatchObject({
-        isError: true,
-        structuredContent: {
-          error: { code: "MODEL_SELECTION_FORBIDDEN", policyRevision: 1 }
-        }
-      });
-    }
+    ]);
 
     await runTask(client, {
-      prompt: "allowed default tier",
+      prompt: "priority high",
       sessionMode: "new",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
     });
     await runTask(client, {
-      prompt: "allowed priority tier",
+      prompt: "priority max",
       sessionMode: "new",
-      selection: { model: "gpt-5.6-sol", reasoningEffort: "max", serviceTier: "priority" }
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
     });
     expect(upstream.calls).toHaveLength(2);
-    expect(upstream.calls[1].args).toMatchObject({
-      model: "gpt-5.6-sol",
-      config: { model_reasoning_effort: "max", service_tier: "priority" }
+    expect(upstream.calls.map((call) => call.args)).toEqual([
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        config: { model_reasoning_effort: "high", service_tier: "priority" }
+      }),
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        config: { model_reasoning_effort: "max", service_tier: "priority" }
+      })
+    ]);
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, usePriorityServiceTier: false }
     });
-    expect(upstream.calls[1].args).not.toHaveProperty("serviceTier");
+    await runTask(client, {
+      prompt: "standard high",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+    });
+    expect(upstream.calls[2].args).toMatchObject({
+      model: "gpt-5.6-sol",
+      config: { model_reasoning_effort: "high" }
+    });
+    expect((upstream.calls[2].args.config as Record<string, unknown>))
+      .not.toHaveProperty("service_tier");
+
+    const unsupportedPriority = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 2,
+        usePriorityServiceTier: true,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(unsupportedPriority.isError).toBe(true);
+    expect(JSON.stringify(unsupportedPriority)).toContain("MODEL_UNAVAILABLE");
+    expect(JSON.stringify(unsupportedPriority)).toContain("Priority");
+    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((settings as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({ revision: 2, usePriorityServiceTier: false });
     await close();
   });
 
@@ -1398,6 +1431,8 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: { expectedRevision: 0, activityCardVisibility: "background-only" }
     });
+    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+      .toMatchObject({ "openai/outputTemplate": ACTIVITY_CARD_URI });
     const backgroundOnlyForeground = await client.callTool({
       name: "codex_task",
       arguments: { prompt: "foreground without automatic card", sessionMode: "new", executionMode: "foreground" }
@@ -1423,6 +1458,8 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: { expectedRevision: 1, activityCardVisibility: "never", completionHandoff: "off" }
     });
+    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+      .toBeUndefined();
     const neverBackground = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: { prompt: "background without automatic card", sessionMode: "new" }
@@ -1445,6 +1482,13 @@ describe("bridge tools", () => {
     });
     expect(impossible.isError).toBe(true);
     expect(JSON.stringify(impossible)).toContain("requires the Activity card");
+    const restored = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 2, activityCardVisibility: "always" }
+    });
+    expect(restored.isError).not.toBe(true);
+    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+      .toMatchObject({ "openai/outputTemplate": ACTIVITY_CARD_URI });
     await close();
   });
 
@@ -1634,7 +1678,9 @@ describe("bridge tools", () => {
       executionMode: "background",
       activityTracking: {
         statusTool: "codex_status",
-        plannedRenderTool: "codex_activity",
+        automaticRenderTool: "codex_task",
+        explicitRenderTool: "codex_activity",
+        followUpRenderRequired: false,
         renderToolAvailable: true
       }
     });
@@ -3762,9 +3808,13 @@ describe("bridge tools", () => {
       status: "running",
       operation: "start",
       executionMode: "background",
-      nextAction: { tool: "codex_activity", callOnce: true },
-      bridgeActivity: { shouldRenderActivityCard: true }
+      bridgeActivity: {
+        automaticRenderTool: "codex_task",
+        followUpRenderRequired: false,
+        shouldRenderActivityCard: true
+      }
     });
+    expect(started).not.toHaveProperty("nextAction");
     upstream.resolveNext();
 
     const completed = await waitForJobStatus(client, started.jobId, "completed");

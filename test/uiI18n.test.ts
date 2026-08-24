@@ -122,6 +122,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
     expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
+    expect(SETTINGS_CARD_HTML).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
     expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
     expect(ACTIVITY_CARD_HTML).not.toContain("viewMode");
@@ -152,6 +154,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
+    expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
+    expect(SETTINGS_CARD_HTML).not.toContain('document.createElement("details")');
     expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
     expect(SETTINGS_CARD_HTML).toContain('document.createElement("fieldset")');
     expect(SETTINGS_CARD_HTML).toContain('document.createElement("legend")');
@@ -171,6 +175,7 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
     expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
     expect(ACTIVITY_CARD_HTML).not.toContain("<details");
+    expect(ACTIVITY_CARD_HTML).toContain("<body hidden>");
     expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
     expect(ACTIVITY_CARD_HTML).toContain("next.feed");
     expect(ACTIVITY_CARD_HTML).toContain('renderGroup("completed"');
@@ -183,6 +188,11 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",Object.assign({activityView:true,activityLimit:viewLimit}');
+    expect(ACTIVITY_CARD_HTML).toContain("consumeToolOutput");
+    expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
+    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
+    expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
+    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
   });

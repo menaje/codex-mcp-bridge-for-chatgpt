@@ -29,6 +29,7 @@ export type BridgeUserSettings = {
   updatedAt: string | null;
   accessStrategy: AccessStrategy;
   modelPolicy: ModelPolicy;
+  usePriorityServiceTier: boolean;
   /** Migration-only compatibility for legacy defaults that selected a model but no effort. */
   legacyPreferredModel?: string;
   defaultCwd: string | null;
@@ -86,6 +87,7 @@ export class UserSettingsStore {
             }
           : undefined
       ),
+      usePriorityServiceTier: false,
       defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
@@ -225,6 +227,9 @@ export class UserSettingsStore {
       }
     }
     candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
+    if (typeof candidate.usePriorityServiceTier !== "boolean") {
+      throw new Error("Invalid Priority service-tier preference.");
+    }
     if (!isUiLocalePreference(candidate.uiLocalePreference)) {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
@@ -365,15 +370,26 @@ export class UserSettingsStore {
     ].filter(
       (key) => key in value
     );
+    const migratedModelPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
     if (
       retired.length === 0 &&
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION &&
       "modelPolicy" in value &&
+      "usePriorityServiceTier" in value &&
+      !migratedModelPolicy.changed &&
       "uiLocalePreference" in value &&
       "activityCardVisibility" in value &&
       "completionHandoff" in value
     ) return;
     this.retiredSettingsMigrationPending = true;
+    if (
+      migratedModelPolicy.changed &&
+      !this.warnings.some((warning) => warning.includes("independent Priority preference"))
+    ) {
+      this.warnings.push(
+        "Saved model-policy serviceTier values were migrated to the independent Priority preference. GPT now selects only model and reasoning effort."
+      );
+    }
     const modelOnlyLegacy =
       typeof value.defaultModel === "string" &&
       Boolean(value.defaultModel) &&
@@ -448,6 +464,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
   if (value.uiLocalePreference !== undefined && !isUiLocalePreference(value.uiLocalePreference)) {
     throw new Error(`Invalid uiLocalePreference in bridge settings at ${stateFile}.`);
   }
+  if (value.usePriorityServiceTier !== undefined && typeof value.usePriorityServiceTier !== "boolean") {
+    throw new Error(`Invalid usePriorityServiceTier in bridge settings at ${stateFile}.`);
+  }
   const updatedAt = requiredStringOrNull("updatedAt");
   const legacyModel = value.defaultModel === undefined ? null : requiredStringOrNull("defaultModel");
   const legacyEffort = value.defaultReasoningEffort === undefined
@@ -461,8 +480,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     : requiredStringOrNull("legacyPreferredModel") || undefined;
   const hasCurrentPolicy =
     value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION && value.modelPolicy !== undefined;
+  const migratedModelPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
   const modelPolicy = hasCurrentPolicy
-    ? validateModelPolicy(value.modelPolicy)
+    ? validateModelPolicy(migratedModelPolicy.value)
     : automaticModelPolicy(
         legacyModel && legacyEffort
           ? { model: legacyModel, reasoningEffort: legacyEffort }
@@ -474,6 +494,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     updatedAt,
     accessStrategy: accessStrategy as AccessStrategy,
     modelPolicy,
+    usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
+      ? value.usePriorityServiceTier
+      : migratedModelPolicy.usedFastTier,
     ...(persistedLegacyPreferredModel || (!hasCurrentPolicy && legacyModel && !legacyEffort)
       ? { legacyPreferredModel: (persistedLegacyPreferredModel || legacyModel) as string }
       : {}),
@@ -502,6 +525,51 @@ function cloneSettings(settings: BridgeUserSettings): BridgeUserSettings {
     ...settings,
     modelPolicy: validateModelPolicy(settings.modelPolicy)
   };
+}
+
+function migrateModelPolicyServiceTiers(value: unknown): {
+  value: unknown;
+  usedFastTier: boolean;
+  changed: boolean;
+} {
+  if (!isRecord(value)) return { value, usedFastTier: false, changed: false };
+  let usedFastTier = false;
+  let changed = false;
+  const withoutTier = (selection: unknown): unknown => {
+    if (!isRecord(selection) || !("serviceTier" in selection)) return selection;
+    const tier = selection.serviceTier;
+    if (typeof tier === "string" && ["priority", "fast"].includes(tier.toLowerCase())) {
+      usedFastTier = true;
+    }
+    const copy = { ...selection };
+    delete copy.serviceTier;
+    changed = true;
+    return copy;
+  };
+  const migrated: Record<string, unknown> = { ...value };
+  if (value.mode === "fixed") {
+    migrated.selection = withoutTier(value.selection);
+  } else if (value.mode === "automatic") {
+    if (value.preferredSelection !== undefined) {
+      migrated.preferredSelection = withoutTier(value.preferredSelection);
+    }
+    if (isRecord(value.allowedSelections) && Array.isArray(value.allowedSelections.selections)) {
+      const seen = new Set<string>();
+      const selections = value.allowedSelections.selections.flatMap((selection) => {
+        const normalized = withoutTier(selection);
+        if (!isRecord(normalized)) return [normalized];
+        const key = JSON.stringify([normalized.model, normalized.reasoningEffort]);
+        if (seen.has(key)) {
+          changed = true;
+          return [];
+        }
+        seen.add(key);
+        return [normalized];
+      });
+      migrated.allowedSelections = { ...value.allowedSelections, selections };
+    }
+  }
+  return { value: migrated, usedFastTier, changed };
 }
 
 function validateIntegerRange(
