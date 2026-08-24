@@ -693,7 +693,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("reports bridge policy, durable session policy, and default cwd", async () => {
+  it("reports bridge policy and path-free project/session policy", async () => {
     const root = temporaryRoot();
     const config = configFor(root, {
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
@@ -703,7 +703,9 @@ describe("bridge tools", () => {
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      defaultCwd: realpathSync(root),
+      allowedRootCount: 1,
+      defaultProjectId: "default",
+      projects: [{ projectId: "default", projectLabel: path.basename(root), available: true }],
       modelPolicy: {
         mode: "automatic",
         preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
@@ -715,7 +717,7 @@ describe("bridge tools", () => {
       maxRetainedJobs: 100,
       maxJobResultBytes: 1048576,
       maxConcurrentJobs: 30,
-      stateStorage: { backend: "memory", persistencePath: null, transactional: false },
+      stateStorage: { backend: "memory", transactional: false },
       concurrencyPolicy: {
         sameWorkingDirectory: {
           readOnly: "allowed",
@@ -732,12 +734,13 @@ describe("bridge tools", () => {
         exactActivityContinuationAgeLimit: "none"
       }
     });
+    expect(JSON.stringify(status)).not.toContain(realpathSync(root));
     expect(status.sessions).toEqual([]);
 
     await close();
   });
 
-  it("reports null default cwd when multiple roots are configured", async () => {
+  it("reports no default project when multiple roots have no registered projects", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const config = loadConfig({
@@ -747,7 +750,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(config, new FakeUpstream());
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.defaultCwd).toBeNull();
+    expect(status).toMatchObject({ allowedRootCount: 2, defaultProjectId: null, projects: [] });
     await close();
   });
 
@@ -1878,6 +1881,10 @@ describe("bridge tools", () => {
     const sourceActivityId = firstStructured.bridgeActivity.activityId;
     const agentId = firstStructured.bridgeActivity.agentId;
     expect(firstStructured.threadId).toBe("thread-1");
+    expect(firstStructured.bridgeActivity).toMatchObject({
+      projectId: "default",
+      projectLabel: path.basename(root)
+    });
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
     expect(jobs.listActivityAgentAssignments(sourceActivityId, agentId)).toEqual([
       expect.objectContaining({ contextMode: "fresh", releasedAt: expect.any(Number) })
@@ -1902,6 +1909,8 @@ describe("bridge tools", () => {
     expect(jobs.getActivity(linkedActivityId)).toMatchObject({
       lifecycle: "open",
       continuationOfActivityId: sourceActivityId,
+      projectId: "default",
+      projectLabel: path.basename(root),
       cardGeneration: 1
     });
     expect(upstream.calls[1]).toMatchObject({
@@ -1917,6 +1926,8 @@ describe("bridge tools", () => {
     });
     expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.threadId)
       .toBe("thread-forked");
+    expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity)
+      .toMatchObject({ projectId: "default", projectLabel: path.basename(root) });
     expect(upstream.calls[2]).toMatchObject({
       name: "codex-fork",
       args: { threadId: "thread-1", prompt: "independently verify the approach" }
@@ -1935,16 +1946,22 @@ describe("bridge tools", () => {
     expect(history).toHaveLength(3);
     expect(history.find((thread) => thread.threadId === "thread-1")).toMatchObject({
       isCurrent: false,
-      contextMode: "fresh"
+      contextMode: "fresh",
+      projectId: "default",
+      projectLabel: path.basename(root)
     });
     expect(history.find((thread) => thread.threadId === "thread-forked")).toMatchObject({
       isCurrent: false,
       contextMode: "fork",
+      projectId: "default",
+      projectLabel: path.basename(root),
       forkedFromThreadId: "thread-1"
     });
     expect(history.find((thread) => thread.threadId === "thread-2")).toMatchObject({
       isCurrent: true,
-      contextMode: "fresh"
+      contextMode: "fresh",
+      projectId: "default",
+      projectLabel: path.basename(root)
     });
     expect(jobs.getAgent(agentId)).toMatchObject({
       agentId,
@@ -3756,6 +3773,215 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("projects named project IDs and pins routing across Activities, Agents, and removal", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const firstCwd = realpathSync(first);
+    const secondCwd = realpathSync(second);
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const settings = new UserSettingsStore(config);
+    settings.update({
+      projects: [
+        { id: "alpha", label: "알파 저장소", cwd: first },
+        { id: "beta", label: "Beta Workspace", cwd: second }
+      ],
+      defaultProjectId: null
+    }, settings.current.revision);
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      sessions,
+      new FakeModelCatalog(),
+      settings
+    );
+
+    const taskDescriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task");
+    const descriptorJson = JSON.stringify(taskDescriptor?.inputSchema);
+    expect(descriptorJson).toContain('"const":"alpha"');
+    expect(descriptorJson).toContain('"title":"알파 저장소"');
+    expect(descriptorJson).toContain('"const":"beta"');
+    expect(descriptorJson).toContain('"title":"Beta Workspace"');
+    expect(descriptorJson).not.toContain(firstCwd);
+    expect(descriptorJson).not.toContain(secondCwd);
+
+    const missing = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "missing project", agentName: "Missing Project", contextMode: "fresh" }
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing)).toContain("PROJECT_REQUIRED");
+
+    const alpha = await runTask(client, {
+      prompt: "work in alpha",
+      projectId: "alpha",
+      agentName: "Alpha Agent",
+      contextMode: "fresh"
+    });
+    const alphaStructured = (alpha as { structuredContent?: Record<string, any> }).structuredContent!;
+    const alphaActivityId = alphaStructured.bridgeActivity.activityId as string;
+    const alphaAgentId = alphaStructured.bridgeActivity.agentId as string;
+    expect(alphaStructured).toMatchObject({
+      bridgeActivity: { projectId: "alpha", projectLabel: "알파 저장소" },
+      bridgeSession: { projectId: "alpha", projectLabel: "알파 저장소" }
+    });
+    expect(jobs.getActivity(alphaActivityId)).toMatchObject({
+      projectId: "alpha",
+      projectLabel: "알파 저장소"
+    });
+    expect(sessions.get("thread-1")).toMatchObject({
+      projectId: "alpha",
+      projectLabel: "알파 저장소",
+      cwd: firstCwd
+    });
+
+    const inherited = await runTask(client, {
+      prompt: "add another alpha Agent",
+      activityId: alphaActivityId,
+      agentName: "Second Alpha Agent",
+      contextMode: "fresh"
+    });
+    expect((inherited as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ bridgeActivity: { projectId: "alpha", projectLabel: "알파 저장소" } });
+    expect(upstream.calls[1]?.args.cwd).toBe(firstCwd);
+
+    const conflict = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must not switch repositories",
+        activityId: alphaActivityId,
+        agentId: alphaAgentId,
+        contextMode: "continue",
+        projectId: "beta"
+      }
+    });
+    expect(conflict.isError).toBe(true);
+    expect(JSON.stringify(conflict)).toContain("PROJECT_CONTEXT_CONFLICT");
+
+    const linkedBeta = await runTask(client, {
+      prompt: "continue the goal with fresh beta context",
+      projectId: "beta",
+      continuationOfActivityId: alphaActivityId,
+      agentName: "Linked Beta Agent",
+      contextMode: "fresh"
+    });
+    expect((linkedBeta as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        bridgeActivity: { projectId: "beta", projectLabel: "Beta Workspace" },
+        bridgeSession: { projectId: "beta", projectLabel: "Beta Workspace" }
+      });
+    expect(upstream.calls[2]?.args.cwd).toBe(secondCwd);
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status.projects).toEqual([
+      { projectId: "alpha", projectLabel: "알파 저장소", available: true },
+      { projectId: "beta", projectLabel: "Beta Workspace", available: true }
+    ]);
+    expect(JSON.stringify(status)).not.toContain(firstCwd);
+    expect(JSON.stringify(status)).not.toContain(secondCwd);
+    const activityCard = await client.callTool({ name: "codex_activity", arguments: {} });
+    expect(new Set(
+      ((activityCard as { structuredContent?: Record<string, any> }).structuredContent?.feed.active || [])
+        .flatMap((row: { workspaceLabels: string[] }) => row.workspaceLabels)
+    )).toEqual(new Set(["알파 저장소", "Beta Workspace"]));
+    expect(JSON.stringify(activityCard)).not.toContain(firstCwd);
+    expect(JSON.stringify(activityCard)).not.toContain(secondCwd);
+
+    settings.update({
+      projects: [{ id: "beta", label: "Beta Workspace", cwd: second }],
+      defaultProjectId: "beta"
+    }, settings.current.revision);
+    const continued = await runTask(client, {
+      prompt: "continue the admitted alpha thread",
+      activityId: alphaActivityId,
+      agentId: alphaAgentId,
+      contextMode: "continue"
+    });
+    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({ bridgeSession: { projectId: "alpha", projectLabel: "알파 저장소" } });
+    expect(upstream.calls[3]).toMatchObject({
+      name: "codex-reply",
+      args: { threadId: "thread-1" }
+    });
+    const removed = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "new work cannot use a removed project",
+        projectId: "alpha",
+        agentName: "Removed Project Agent",
+        contextMode: "fresh"
+      }
+    });
+    expect(removed.isError).toBe(true);
+    expect(JSON.stringify(removed)).toContain("PROJECT_NOT_FOUND");
+    await close();
+  });
+
+  it("keeps an omitted effective project stable across idempotent retries", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const settings = new UserSettingsStore(config);
+    settings.update({
+      projects: [
+        { id: "alpha", label: "Alpha", cwd: first },
+        { id: "beta", label: "Beta", cwd: second }
+      ],
+      defaultProjectId: "alpha"
+    }, settings.current.revision);
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    const requestId = "31313131-3131-4131-8131-313131313131";
+    const args = {
+      requestId,
+      prompt: "idempotent project turn",
+      agentName: "Retry Agent",
+      contextMode: "fresh",
+      executionMode: "foreground"
+    };
+
+    const firstResult = await client.callTool({ name: "codex_task", arguments: args });
+    settings.update({ defaultProjectId: "beta" }, settings.current.revision);
+    const replay = await client.callTool({ name: "codex_task", arguments: args });
+    expect((replay as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        threadId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.threadId,
+        bridgeActivity: {
+          activityId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.activityId,
+          jobId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.jobId,
+          projectId: "alpha"
+        }
+      });
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
+    expect(jobs.listForScope(SCOPE_A)[0]).toMatchObject({
+      projectId: "alpha",
+      projectLabel: "Alpha",
+      requestHashVersion: 3
+    });
+
+    const changed = await client.callTool({
+      name: "codex_task",
+      arguments: { ...args, projectId: "beta" }
+    });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("requestId was already used for a different Codex task");
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
   it("keeps an existing Agent thread and later turns pinned after the saved cwd changes", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
@@ -4013,10 +4239,10 @@ describe("bridge tools", () => {
     expect(status.sessions).toHaveLength(1);
     expect(status.sessions[0]).toMatchObject({
       threadId: "thread-1",
-      cwd: realpathSync(root),
       sandbox: "read-only",
       resumeAvailability: "unknown"
     });
+    expect(JSON.stringify(status.sessions[0])).not.toContain(realpathSync(root));
 
     await close();
   });
@@ -4341,7 +4567,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("requires a saved cwd for multiple roots and retires every per-call cwd override", async () => {
+  it("requires a registered project for multiple roots and retires every per-call cwd override", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const outside = temporaryRoot();
@@ -4356,7 +4582,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "inspect", agentName: "Missing Cwd", contextMode: "fresh" }
     });
-    expect(JSON.stringify(missing)).toContain("DEFAULT_CWD_REQUIRED");
+    expect(JSON.stringify(missing)).toContain("PROJECT_REQUIRED");
     expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
     const denied = await client.callTool({
       name: "codex_task",

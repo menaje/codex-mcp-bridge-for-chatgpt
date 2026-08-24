@@ -227,11 +227,10 @@ describe("http server", () => {
     );
     expect(policy.stateStorage).toMatchObject({
       backend: "sqlite",
-      persistencePath: expect.stringMatching(/state\.sqlite$/),
       transactional: true,
-      schemaVersion: 4,
+      schemaVersion: 5,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v4-scope-agent-manager",
+      activityFoundation: "schema-v5-project-aware-scope-agent-manager",
       activityPersistent: true
     });
 

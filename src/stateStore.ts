@@ -530,16 +530,10 @@ export class BridgeStateStore {
           throw new Error("The continuation Activity belongs to another conversation scope.");
         }
         const sourceProject = this.getActivityProjectAdmission(source.activityId);
-        if (
-          sourceProject &&
-          project &&
-          (sourceProject.projectId !== project.projectId ||
-            sourceProject.projectCwd !== project.projectCwd)
-        ) {
-          throw new Error(
-            `${PROJECT_CONTEXT_CONFLICT}: A continuation Activity must retain its source project.`
-          );
-        }
+        // A continuation link preserves lineage, not necessarily filesystem
+        // identity: a fresh context may deliberately start the new Activity in
+        // another registered project. When no new admission is supplied, keep
+        // the source project for continue/fork and compatibility callers.
         project ||= sourceProject;
       }
       const scopeVersion = this.nextScopeVersion(scopeId, now);

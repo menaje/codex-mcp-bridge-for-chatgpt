@@ -30,6 +30,7 @@ import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
   enforceSandbox,
   findSensitiveFiles,
+  isPathWithinRoot,
   requireAllowedCwd,
   resolveAllowedCwd
 } from "./config.js";
@@ -70,8 +71,17 @@ import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
   legacyActivityIdForJob,
+  type ActivityProjectAdmission,
   type CreateActivityInput
 } from "./stateStore.js";
+import {
+  PROJECT_CONTEXT_CONFLICT,
+  PROJECT_UNAVAILABLE,
+  ProjectRegistry,
+  normalizeProjectId,
+  normalizeProjectLabel,
+  type ProjectTarget
+} from "./projectRegistry.js";
 import type {
   CodexPendingInteraction,
   CodexProgress,
@@ -236,6 +246,13 @@ type CodexRouting = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
+  requestHashVersion: 2 | 3;
+};
+
+type TaskProjectAdmission = {
+  projectId: string;
+  projectLabel: string;
+  cwd: string;
 };
 
 type ActivityCardPresentationContext =
@@ -255,6 +272,8 @@ type ActivityScopeWatchResult = {
 type CodexJob = {
   jobId: string;
   activityId: string;
+  projectId?: string;
+  projectLabel?: string;
   agentId?: string;
   contextMode?: AgentContextMode;
   threadId?: string;
@@ -279,7 +298,7 @@ type CodexJob = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 1 | 2;
+  requestHashVersion: 1 | 2 | 3;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
   exclusiveKeys: string[];
@@ -300,7 +319,7 @@ type CodexJob = {
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
 type PersistedCodexJobState = {
-  version: 8;
+  version: 9;
   jobs: PersistedCodexJob[];
 };
 
@@ -719,6 +738,13 @@ export class CodexJobRegistry {
     return job;
   }
 
+  peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
+    this.pruneAndPersist();
+    return [...this.jobs.values()].find(
+      (entry) => entry.scopeId === scopeId && entry.requestId === requestId
+    );
+  }
+
   isThreadActive(threadId: string): boolean {
     this.pruneAndPersist();
     const exclusiveKey = threadExclusiveKey(threadId);
@@ -760,6 +786,10 @@ export class CodexJobRegistry {
 
   getActivity(activityId: string): BridgeActivity | undefined {
     return this.activityStore.getActivity(activityId);
+  }
+
+  getActivityProjectAdmission(activityId: string): ActivityProjectAdmission | undefined {
+    return this.activityStore.getActivityProjectAdmission(activityId);
   }
 
   listActivities(scopeId: string, limit = 100, offset = 0): BridgeActivity[] {
@@ -826,6 +856,8 @@ export class CodexJobRegistry {
   linkAgentThread(input: {
     agentId: string;
     threadId: string;
+    projectId?: string;
+    projectLabel?: string;
     backendKind: string;
     cwd: string;
     sandbox: string;
@@ -1167,7 +1199,7 @@ export class CodexJobRegistry {
       backendKind: input.backendKind || "mcp-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
-      requestHashVersion: input.requestHashVersion || 2,
+      requestHashVersion: input.requestHashVersion || 3,
       jobId: randomUUID(),
       createdAt: now,
       updatedAt: now,
@@ -1614,7 +1646,7 @@ export class CodexJobRegistry {
   private load(): void {
     if (this.stateStore) {
       const stored = this.stateStore.listJobs();
-      const changed = this.loadJobs(stored, 8);
+      const changed = this.loadJobs(stored, 9);
       if (changed || this.jobs.size !== stored.length) {
         this.stateStore.replaceJobs(this.persistedJobs());
       }
@@ -1636,21 +1668,21 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
 
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     const changed = this.loadJobs(parsed.jobs, stateVersion);
-    if (changed || stateVersion !== 8) this.persist();
+    if (changed || stateVersion !== 9) this.persist();
     else this.activityStore.replaceJobs(this.persistedJobs());
   }
 
-  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8): boolean {
+  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): boolean {
     const now = Date.now();
-    let changed = stateVersion !== 8;
+    let changed = stateVersion !== 9;
     const valid = values
       .map((job) => readPersistedJob(job, stateVersion))
       .filter((job): job is PersistedCodexJob => Boolean(job))
@@ -1713,12 +1745,12 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     const existing = new Set(this.jobs.keys());
     const candidates = parsed.jobs.filter((value) => {
       const id = isRecord(value) && typeof value.jobId === "string" ? value.jobId : undefined;
@@ -1744,7 +1776,7 @@ export class CodexJobRegistry {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const temporary = `${this.stateFile}.${process.pid}.tmp`;
       const state: PersistedCodexJobState = {
-        version: 8,
+        version: 9,
         jobs: persisted
       };
       writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
@@ -1884,7 +1916,7 @@ export class CodexJobRegistry {
 
   private isAllowedCwd(cwd: string): boolean {
     if (this.allowedRoots.length === 0) return true;
-    return this.allowedRoots.some((root) => cwd === root || cwd.startsWith(root + path.sep));
+    return this.allowedRoots.some((root) => isPathWithinRoot(cwd, root));
   }
 }
 
@@ -2173,9 +2205,7 @@ export function registerBridgeTools(
             : null,
           session: sessionVisible
             ? {
-                ...trackedSession,
-                createdAt: new Date(trackedSession.createdAt).toISOString(),
-                lastUsedAt: new Date(trackedSession.lastUsedAt).toISOString(),
+                ...formatSessionSummary(trackedSession),
                 resumeAvailability:
                   upstream.canResumeThread?.(trackedSession.threadId, trackedSession.backendKind) === false
                     ? "unavailable-after-worker-restart"
@@ -2271,8 +2301,13 @@ export function registerBridgeTools(
         product: PRODUCT_INFO.displayName,
         build: BRIDGE_BUILD_INFO,
         auth: config.token && !config.noAuth ? "bearer-token" : "none",
-        allowedRoots: config.allowedRoots,
-        defaultCwd: preferences.defaultCwd,
+        allowedRootCount: config.allowedRoots.length,
+        projects: userSettings.projectRegistry.availability.map(({ project, available }) => ({
+          projectId: project.id,
+          projectLabel: project.label,
+          available
+        })),
+        defaultProjectId: preferences.defaultProjectId,
         defaultSandbox: userSettings.resolveSandbox(),
         accessStrategy: preferences.accessStrategy,
         allowWorkspaceWrite: config.allowWorkspaceWrite,
@@ -2297,16 +2332,14 @@ export function registerBridgeTools(
         maxJobResultBytes: config.maxJobResultBytes,
         stateStorage: {
           backend: persistenceBackend,
-          persistencePath: sharedPersistencePath,
           transactional: persistenceBackend === "sqlite",
           schemaVersion: jobs.persistenceSchemaVersion,
           bridgeInstanceId: jobs.bridgeInstanceId,
-          activityFoundation: "schema-v4-scope-agent-manager",
+          activityFoundation: "schema-v5-project-aware-scope-agent-manager",
           activityPersistent: jobs.activityPersistent
         },
         jobPolicy: {
           persistent: jobs.persistent,
-          persistencePath: jobs.persistencePath,
           retentionMs: config.jobTtlMs,
           staleAfterMs: jobs.staleThresholdMs,
           maxStatusWaitMs: MAX_CODEX_STATUS_WAIT_MS,
@@ -2327,7 +2360,6 @@ export function registerBridgeTools(
         maxPromptChars: config.maxPromptChars,
         sessionPolicy: {
           persistent: sessions.persistent,
-          persistencePath: sessions.persistencePath,
           selection: "activity-compatible-only-when-unambiguous",
           implicitNewActivityBehavior: "start-new-thread",
           exactActivityContinuationAgeLimit: "none",
@@ -2370,16 +2402,13 @@ export function registerBridgeTools(
         },
         settingsPolicy: {
           persistent: userSettings.persistent,
-          persistencePath: userSettings.persistencePath,
           revision: preferences.revision,
           scope: "shared-bridge-instance",
           warnings: userSettings.loadWarnings
         },
         operatorWarnings: config.startupWarnings,
         sessions: visibleSessions.map((session) => ({
-          ...session,
-          createdAt: new Date(session.createdAt).toISOString(),
-          lastUsedAt: new Date(session.lastUsedAt).toISOString(),
+          ...formatSessionSummary(session),
           resumeAvailability:
             upstream.canResumeThread?.(session.threadId, session.backendKind) === false
               ? "unavailable-after-worker-restart"
@@ -2395,8 +2424,10 @@ export function registerBridgeTools(
         })),
         agents: visibleAgents.map((agent) => ({
           ...formatAgentSummary(agent, jobs),
-          currentThread: jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent) || null,
-          threadHistory: jobs.listAgentThreads(agent.agentId),
+          currentThread: formatAgentThreadSummary(
+            jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent)
+          ),
+          threadHistory: jobs.listAgentThreads(agent.agentId).map(formatAgentThreadSummary),
           activityAssignments: jobs.listActivityAgentAssignments(undefined, agent.agentId)
         })),
         upstreamTools,
@@ -3386,20 +3417,70 @@ export function registerBridgeTools(
           args.contextMode = "continue";
         }
 
-        const routing = resolveTaskRouting(args, scope.scopeId);
+        const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (existingRequest) {
+          const replayProjectId = existingRequest.requestHashVersion >= 3
+            ? args.projectId === undefined
+              ? existingRequest.projectId
+              : normalizeProjectId(args.projectId)
+            : undefined;
+          const replayRouting = resolveTaskRouting(
+            args,
+            scope.scopeId,
+            replayProjectId,
+            existingRequest.requestHashVersion >= 3 ? 3 : 2
+          );
+          const replay = jobs.findRequest(
+            replayRouting.scopeId,
+            replayRouting.requestId,
+            replayRouting.requestHash
+          );
+          if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
+        }
+        rejectStaleTaskModelInputs(args, preferences);
+        const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
+        const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
+        const projectAdmission = resolveTaskProjectAdmission({
+          args,
+          jobs,
+          sessions,
+          userSettings,
+          activityRequest,
+          agentResolution
+        });
+        const routing = resolveTaskRouting(
+          args,
+          scope.scopeId,
+          projectAdmission?.projectId,
+          3
+        );
         const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
         if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
-        rejectStaleTaskModelInputs(args, preferences);
-        const activityRequest = validateActivityTaskRequest(args, jobs, routing.scopeId);
-        const agentResolution = resolveAgentForTask(args, jobs, routing.scopeId, activityRequest);
 
         if (routing.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
         }
 
         if (agentResolution.contextMode === "fresh") {
-          const cwd = pinnedCwdForExistingActivity(jobs, activityRequest.activityId) ||
+          const pinnedCwd = projectAdmission?.cwd ||
+            pinnedCwdForExistingActivity(
+              jobs,
+              activityRequest.activityId || activityRequest.continuationOfActivityId
+            ) ||
             resolveTaskCwd(config, preferences);
+          let cwd: string;
+          try {
+            cwd = resolveAllowedCwd(pinnedCwd, config.allowedRoots);
+          } catch {
+            throw new Error(
+              `${PROJECT_UNAVAILABLE}: The selected Activity project is no longer available inside the operator-allowed roots.`
+            );
+          }
+          if (cwd !== pinnedCwd) {
+            throw new Error(
+              `${PROJECT_UNAVAILABLE}: The selected Activity project no longer resolves to its admission-time folder.`
+            );
+          }
           const sandbox = resolveTaskSandbox(config, preferences, args.sandbox);
           await enforceSensitiveFilePreflight(config, cwd, "run Codex");
           const decision = await resolveExecutionDecision({
@@ -3431,6 +3512,7 @@ export function registerBridgeTools(
             agent,
             contextMode: "fresh",
             agentRole: agentResolution.role,
+            projectAdmission,
             resolved: { cwd, sandbox, decision },
             preflightDone: true
           });
@@ -3470,7 +3552,8 @@ export function registerBridgeTools(
             activityRequest,
             executionDecision,
             agent: agentResolution.agent,
-            agentRole: agentResolution.role
+            agentRole: agentResolution.role,
+            projectAdmission
           });
         }
         return await continueTrackedSession({
@@ -3490,7 +3573,8 @@ export function registerBridgeTools(
           executionDecision,
           agent: agentResolution.agent,
           contextMode: "continue",
-          agentRole: agentResolution.role
+          agentRole: agentResolution.role,
+          projectAdmission
         });
       } catch (error) {
         if (error instanceof ActivityPresentationContractError) {
@@ -3512,6 +3596,7 @@ type CodexTaskArgs = {
   requestId: string;
   activityPresentationId?: string;
   prompt: string;
+  projectId?: string;
   activityId?: string;
   continuationOfActivityId?: string;
   activityTitle?: string;
@@ -3700,6 +3785,156 @@ function resolveAgentForTask(
     );
   }
   return { agent, contextMode, role: args.agentRole };
+}
+
+function resolveTaskProjectAdmission(input: {
+  args: CodexTaskArgs;
+  jobs: CodexJobRegistry;
+  sessions: SessionRegistry;
+  userSettings: UserSettingsStore;
+  activityRequest: ActivityTaskRequest;
+  agentResolution: AgentTaskResolution;
+}): TaskProjectAdmission | undefined {
+  const usesExistingThread =
+    Boolean(input.agentResolution.agent) &&
+    (input.agentResolution.contextMode === "continue" || input.agentResolution.contextMode === "fork");
+  // An attached Activity is immutable. A linked continuation also retains the
+  // source project when it continues/forks a source thread, but a genuinely
+  // fresh context creates a new Activity and may deliberately select another
+  // registered project.
+  const sourceActivityId = input.activityRequest.activityId ||
+    (usesExistingThread ? input.activityRequest.continuationOfActivityId : undefined);
+  const activityAdmission = sourceActivityId
+    ? input.jobs.getActivityProjectAdmission(sourceActivityId)
+    : undefined;
+  const activityCwds = sourceActivityId
+    ? [...new Set(input.jobs.listForActivity(sourceActivityId).map((job) => job.cwd))]
+    : [];
+  const activityCwdAmbiguous = activityCwds.length > 1;
+  const legacyActivityCwd = activityCwds.length === 1 ? activityCwds[0] : undefined;
+
+  let threadContext:
+    | { projectId?: string; projectLabel?: string; cwd: string }
+    | undefined;
+  if (usesExistingThread && input.agentResolution.agent) {
+    const agent = input.agentResolution.agent;
+    const thread = input.jobs
+      .listAgentThreads(agent.agentId)
+      .find((candidate) => candidate.threadId === agent.currentThreadId);
+    const session = agent.currentThreadId
+      ? input.sessions.get(agent.currentThreadId)
+      : undefined;
+    const cwd = thread?.cwd || session?.cwd;
+    if (cwd) {
+      threadContext = {
+        cwd,
+        projectId: thread?.projectId || session?.projectId,
+        projectLabel: thread?.projectLabel || session?.projectLabel
+      };
+    }
+  }
+
+  if (activityAdmission) {
+    const admission = taskProjectFromActivity(activityAdmission);
+    assertRequestedProjectMatches(input.args.projectId, admission);
+    if (
+      threadContext &&
+      (threadContext.cwd !== admission.cwd ||
+        (threadContext.projectId !== undefined && threadContext.projectId !== admission.projectId))
+    ) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: The selected Agent thread belongs to another project than the Activity.`
+      );
+    }
+    return admission;
+  }
+
+  if (activityCwdAmbiguous) {
+    if (input.args.projectId !== undefined) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: This migrated Activity spans multiple working folders and cannot be assigned one project.`
+      );
+    }
+    return undefined;
+  }
+
+  if (legacyActivityCwd) {
+    if (threadContext && threadContext.cwd !== legacyActivityCwd) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: The selected Agent thread working folder conflicts with the Activity.`
+      );
+    }
+    return resolveLegacyPinnedProject(
+      legacyActivityCwd,
+      input.args.projectId,
+      input.userSettings
+    );
+  }
+
+  if (threadContext) {
+    if (threadContext.projectId && threadContext.projectLabel) {
+      const admission = {
+        projectId: threadContext.projectId,
+        projectLabel: threadContext.projectLabel,
+        cwd: threadContext.cwd
+      };
+      assertRequestedProjectMatches(input.args.projectId, admission);
+      return admission;
+    }
+    return resolveLegacyPinnedProject(
+      threadContext.cwd,
+      input.args.projectId,
+      input.userSettings
+    );
+  }
+
+  return taskProjectFromTarget(input.userSettings.resolveProject(input.args.projectId));
+}
+
+function resolveLegacyPinnedProject(
+  cwd: string,
+  requestedProjectId: string | undefined,
+  userSettings: UserSettingsStore
+): TaskProjectAdmission | undefined {
+  if (requestedProjectId !== undefined) {
+    const selected = userSettings.resolveProject(requestedProjectId);
+    if (selected.cwd !== cwd) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: The requested project does not match the pinned working folder.`
+      );
+    }
+    return taskProjectFromTarget(selected);
+  }
+  const matched = userSettings.projectRegistry.availability.find(
+    ({ project }) => project.cwd === cwd
+  );
+  return matched ? taskProjectFromTarget(matched.project) : undefined;
+}
+
+function assertRequestedProjectMatches(
+  requestedProjectId: string | undefined,
+  admission: TaskProjectAdmission
+): void {
+  if (
+    requestedProjectId !== undefined &&
+    normalizeProjectId(requestedProjectId) !== admission.projectId
+  ) {
+    throw new Error(
+      `${PROJECT_CONTEXT_CONFLICT}: The requested project conflicts with the pinned Activity or Agent thread.`
+    );
+  }
+}
+
+function taskProjectFromActivity(admission: ActivityProjectAdmission): TaskProjectAdmission {
+  return {
+    projectId: admission.projectId,
+    projectLabel: admission.projectLabel,
+    cwd: admission.projectCwd
+  };
+}
+
+function taskProjectFromTarget(project: ProjectTarget): TaskProjectAdmission {
+  return { projectId: project.id, projectLabel: project.label, cwd: project.cwd };
 }
 
 function requireTaskCreationMetadata(
@@ -3921,7 +4156,8 @@ function validateActivityTaskRequest(
 function resolveActivityForTask(
   jobs: CodexJobRegistry,
   request: ActivityTaskRequest,
-  scopeId: string
+  scopeId: string,
+  projectAdmission?: TaskProjectAdmission
 ): BridgeActivity {
   const validated = validateActivityTaskRequest(request, jobs, scopeId);
   if (validated.activityId) {
@@ -3929,6 +4165,9 @@ function resolveActivityForTask(
   }
   return jobs.createActivity({
     scopeId,
+    projectId: projectAdmission?.projectId,
+    projectLabel: projectAdmission?.projectLabel,
+    projectCwd: projectAdmission?.cwd,
     continuationOfActivityId: validated.continuationOfActivityId,
     title: validated.activityTitle,
     kind: validated.activityKind,
@@ -3953,6 +4192,7 @@ async function startNewSession(input: {
   agent: BridgeAgent;
   contextMode: Extract<AgentContextMode, "fresh">;
   agentRole?: string;
+  projectAdmission?: TaskProjectAdmission;
   resolved?: { cwd: string; sandbox: SandboxMode; decision: ExecutionDecision };
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
@@ -4003,6 +4243,7 @@ async function startNewSession(input: {
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
+    projectAdmission: input.projectAdmission,
     run: (onProgress, onAssigned) => input.upstream.startThread
       ? input.upstream.startThread(
           {
@@ -4027,6 +4268,12 @@ async function startNewSession(input: {
         threadId,
         scopeId: input.routing.scopeId,
         cwd,
+        ...(input.projectAdmission
+          ? {
+              projectId: input.projectAdmission.projectId,
+              projectLabel: input.projectAdmission.projectLabel
+            }
+          : {}),
         sandbox,
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
@@ -4038,6 +4285,8 @@ async function startNewSession(input: {
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId,
+        projectId: input.projectAdmission?.projectId,
+        projectLabel: input.projectAdmission?.projectLabel,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
         cwd,
         sandbox,
@@ -4071,6 +4320,7 @@ async function continueTrackedSession(input: {
   agent: BridgeAgent;
   contextMode: Extract<AgentContextMode, "continue">;
   agentRole?: string;
+  projectAdmission?: TaskProjectAdmission;
 }): Promise<ToolResult> {
   const forcedSandbox = forcedSandboxForStrategy(input.preferences);
   if (forcedSandbox && input.session.sandbox !== forcedSandbox) {
@@ -4116,6 +4366,7 @@ async function continueTrackedSession(input: {
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
+    projectAdmission: input.projectAdmission,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
@@ -4160,13 +4411,35 @@ async function continueTrackedSession(input: {
     },
     onComplete: () => {
       const previous = input.sessions.get(input.session.threadId);
+      const existingThread = input.jobs
+        .listAgentThreads(input.agent.agentId)
+        .find((thread) => thread.threadId === input.session.threadId);
       input.sessions.record({
         ...input.session,
+        ...(input.projectAdmission
+          ? {
+              projectId: input.projectAdmission.projectId,
+              projectLabel: input.projectAdmission.projectLabel
+            }
+          : {}),
         scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         updatedAt: Date.now(),
         lastUsedAt: Date.now()
+      });
+      input.jobs.linkAgentThread({
+        agentId: input.agent.agentId,
+        threadId: input.session.threadId,
+        projectId: input.projectAdmission?.projectId,
+        projectLabel: input.projectAdmission?.projectLabel,
+        backendKind: input.session.backendKind,
+        cwd: input.session.cwd,
+        sandbox: input.session.sandbox,
+        // A continuation enriches legacy admission metadata; it does not
+        // rewrite how the existing thread originally entered the Agent.
+        contextMode: existingThread?.contextMode || "continue",
+        forkedFromThreadId: existingThread?.forkedFromThreadId
       });
       return () => input.sessions.restoreInMemory(input.session.threadId, previous);
     }
@@ -4186,6 +4459,7 @@ async function forkTrackedSession(input: {
   executionDecision: ExecutionDecision;
   agent: BridgeAgent;
   agentRole?: string;
+  projectAdmission?: TaskProjectAdmission;
 }): Promise<ToolResult> {
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
@@ -4233,6 +4507,7 @@ async function forkTrackedSession(input: {
     agent: input.agent,
     contextMode: "fork",
     agentRole: input.agentRole,
+    projectAdmission: input.projectAdmission,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => input.upstream.forkThread?.(
       {
@@ -4253,6 +4528,12 @@ async function forkTrackedSession(input: {
         threadId,
         scopeId: input.routing.scopeId,
         cwd: input.session.cwd,
+        ...(input.projectAdmission
+          ? {
+              projectId: input.projectAdmission.projectId,
+              projectLabel: input.projectAdmission.projectLabel
+            }
+          : {}),
         sandbox: input.session.sandbox,
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
@@ -4264,6 +4545,8 @@ async function forkTrackedSession(input: {
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId,
+        projectId: input.projectAdmission?.projectId,
+        projectLabel: input.projectAdmission?.projectLabel,
         backendKind: input.session.backendKind,
         cwd: input.session.cwd,
         sandbox: input.session.sandbox,
@@ -4288,6 +4571,7 @@ async function runCodex(input: {
   agent: BridgeAgent;
   contextMode: AgentContextMode;
   agentRole?: string;
+  projectAdmission?: TaskProjectAdmission;
   selectionKey: string;
   executionDecision: ExecutionDecision;
   rejectIfSelectionActive?: boolean;
@@ -4312,7 +4596,8 @@ async function runCodex(input: {
     const activity = resolveActivityForTask(
       input.jobs,
       input.activityRequest,
-      input.routing.scopeId
+      input.routing.scopeId,
+      input.projectAdmission
     );
     input.jobs.assignAgent({
       activityId: activity.activityId,
@@ -4325,6 +4610,8 @@ async function runCodex(input: {
         operation: input.operation,
         backendKind: input.backendKind,
         activityId: activity.activityId,
+        projectId: input.projectAdmission?.projectId,
+        projectLabel: input.projectAdmission?.projectLabel,
         agentId: input.agent.agentId,
         contextMode: input.contextMode,
         executionMode: input.activityRequest.executionMode || activity.executionMode,
@@ -4334,7 +4621,7 @@ async function runCodex(input: {
         requestId: input.routing.requestId,
         activityPresentationId: input.routing.activityPresentationId,
         requestHash: input.routing.requestHash,
-        requestHashVersion: 2,
+        requestHashVersion: input.routing.requestHashVersion,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
         executionDecision: input.executionDecision,
         exclusiveKeys: [
@@ -4447,7 +4734,9 @@ function formatJobStatus(
     turnId: appServerTurnId(job) || null,
     version: job.version,
     operation: job.operation,
-    cwd: job.cwd,
+    projectId: job.projectId || null,
+    projectLabel: job.projectLabel || null,
+    workspaceLabel: job.projectLabel || path.basename(job.cwd),
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
@@ -4458,12 +4747,16 @@ function formatJobStatus(
       ...job.sessionDecision,
       scopeId: job.scopeId,
       requestId: job.requestId,
+      projectId: job.projectId || null,
+      projectLabel: job.projectLabel || null,
       activityPresentationId: job.activityPresentationId || null
     },
     bridgeActivity: {
       activityId: job.activityId,
       jobId: job.jobId,
       agentId: job.agentId || null,
+      projectId: job.projectId || null,
+      projectLabel: job.projectLabel || null,
       executionMode: job.executionMode,
       ...activityTracking
     },
@@ -4588,7 +4881,9 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
     operation: job.operation,
-    cwd: job.cwd,
+    projectId: job.projectId || null,
+    projectLabel: job.projectLabel || null,
+    workspaceLabel: job.projectLabel || path.basename(job.cwd),
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
     scopeId: job.scopeId,
@@ -4612,6 +4907,8 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   return {
     activityId: activity.activityId,
     scopeId: activity.scopeId,
+    projectId: activity.projectId || null,
+    projectLabel: activity.projectLabel || null,
     continuationOfActivityId: activity.continuationOfActivityId || null,
     cardGeneration: activity.cardGeneration,
     title: activity.title,
@@ -4630,6 +4927,43 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
     updatedAt: new Date(activity.updatedAt).toISOString(),
     sealedAt: activity.sealedAt ? new Date(activity.sealedAt).toISOString() : null,
     completedAt: activity.completedAt ? new Date(activity.completedAt).toISOString() : null
+  };
+}
+
+function formatSessionSummary(session: TrackedCodexSession): Record<string, unknown> {
+  const updatedAt = session.updatedAt ?? session.lastUsedAt;
+  return {
+    threadId: session.threadId,
+    scopeId: session.scopeId,
+    projectId: session.projectId || null,
+    projectLabel: session.projectLabel || null,
+    sandbox: session.sandbox,
+    selection: session.selection,
+    policyRevision: session.policyRevision,
+    backendKind: session.backendKind,
+    updatedAt: new Date(updatedAt).toISOString(),
+    createdAt: new Date(session.createdAt).toISOString(),
+    lastUsedAt: new Date(session.lastUsedAt).toISOString()
+  };
+}
+
+function formatAgentThreadSummary(
+  thread: BridgeAgentThread | undefined
+): Record<string, unknown> | null {
+  if (!thread) return null;
+  return {
+    threadId: thread.threadId,
+    agentId: thread.agentId,
+    scopeId: thread.scopeId,
+    projectId: thread.projectId || null,
+    projectLabel: thread.projectLabel || null,
+    backendKind: thread.backendKind,
+    sandbox: thread.sandbox,
+    contextMode: thread.contextMode,
+    isCurrent: thread.isCurrent,
+    linkedAt: new Date(thread.linkedAt).toISOString(),
+    replacedAt: thread.replacedAt ? new Date(thread.replacedAt).toISOString() : null,
+    forkedFromThreadId: thread.forkedFromThreadId || null
   };
 }
 
@@ -4944,10 +5278,13 @@ async function buildActivityView(
     [...(assignmentsByActivity.get(activityId) || [])]
       .reverse()
       .find((assignment) => assignment.agentId === agentId);
-  const workspacesFor = (activityId: string): string[] =>
-    [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
+  const workspacesFor = (activityId: string): string[] => {
+    const activity = activityById.get(activityId);
+    if (activity?.projectLabel) return [activity.projectLabel];
+    return [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
       path.basename(job.cwd)
     ))];
+  };
 
   const activityRows = allActivities.map((activity) => {
     const activityJobs = jobsByActivity.get(activity.activityId) || [];
@@ -5028,6 +5365,8 @@ async function buildActivityView(
     return {
       rowType: "activity" as const,
       activityId: activity.activityId,
+      projectId: activity.projectId || null,
+      projectLabel: activity.projectLabel || null,
       title: activity.title,
       kind: activity.kind,
       lifecycle: activity.lifecycle,
@@ -5048,10 +5387,16 @@ async function buildActivityView(
     };
   });
   const hasMultipleWorkspaces = new Set(
-    activityRows.flatMap((row) => row.workspaceLabels)
+    activityRows.flatMap((row) => row.projectId
+      ? [`project:${row.projectId}:${row.projectLabel || ""}`]
+      : row.workspaceLabels.map((label) => `legacy:${label}`))
   ).size > 1;
   if (!hasMultipleWorkspaces) {
-    for (const row of activityRows) row.workspaceLabels = [];
+    for (const row of activityRows) {
+      row.projectId = null;
+      row.projectLabel = null;
+      row.workspaceLabels = [];
+    }
   }
 
   const activityPriority = (row: (typeof activityRows)[number]): number => {
@@ -5404,7 +5749,7 @@ function codexTaskInputSchema(
   settings: BridgeUserSettings,
   catalog: CodexModelCatalogSnapshot | undefined
 ): z.ZodType<CodexTaskArgs> {
-  const publicCommon = {
+  const common = {
     scopeId: scopeIdSchema()
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
@@ -5436,6 +5781,10 @@ function codexTaskInputSchema(
       .describe("GPT-supplied Activity assignment role required for every new Activity or new Agent. Existing Agent/Activity follow-ups reuse the stored role."),
     contextMode: z.enum(AGENT_CONTEXT_MODES).optional()
       .describe("Explicit Codex context choice required for every new Activity or new Agent: continue the Agent's current thread, fork it, or start fresh context. Existing Agent/Activity follow-ups may omit it.")
+  };
+  const publicCommon = {
+    ...common,
+    projectId: projectedProjectIdZod(config, settings)
   };
   const activityPresentationDescription =
     "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. " +
@@ -5484,7 +5833,8 @@ function codexTaskInputSchema(
   // Runtime parsing recognizes retired fields so the bridge can return an
   // identifiable refresh/migration error instead of silently dropping them.
   const runtime = z.strictObject({
-    ...publicCommon,
+    ...common,
+    projectId: z.string().trim().min(1).max(64).optional(),
     activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
     modelPolicyRevision: z.number().int().min(0).optional(),
@@ -5498,6 +5848,33 @@ function codexTaskInputSchema(
     serviceTier: z.unknown().optional()
   });
   return withJsonSchemaProjection(runtime, projected) as z.ZodType<CodexTaskArgs>;
+}
+
+function projectedProjectIdZod(
+  config: BridgeConfig,
+  settings: BridgeUserSettings
+): z.ZodType<string | undefined> {
+  const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
+    defaultProjectId: settings.defaultProjectId,
+    retainUnavailable: true
+  }).selectableProjects;
+  const projected = selectable.length === 0
+    ? { not: {} }
+    : {
+        oneOf: selectable.map((project) => ({
+          const: project.id,
+          title: project.label,
+          description: `${project.label} (${project.id})`
+        }))
+      };
+  // Keep the public descriptor limited to currently selectable IDs while the
+  // separate runtime schema accepts a bounded stale ID so the registry can
+  // return PROJECT_UNAVAILABLE/PROJECT_NOT_FOUND instead of a generic parse error.
+  return withJsonSchemaProjection(z.string(), projected)
+    .optional()
+    .describe(
+      "Stable ID of a Settings-registered project. Use it for a new Activity or fresh context; existing Activity/thread contexts retain their pinned project. Never provide a local path."
+    );
 }
 
 function projectedSelectionZod(
@@ -5573,7 +5950,12 @@ function isMutatingSandbox(sandbox: SandboxMode): boolean {
   return sandbox !== "read-only";
 }
 
-function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting {
+function resolveTaskRouting(
+  args: CodexTaskArgs,
+  scopeId: string,
+  effectiveProjectId: string | undefined,
+  requestHashVersion: 2 | 3
+): CodexRouting {
   const hasActivityArguments =
     args.activityId !== undefined ||
     args.continuationOfActivityId !== undefined ||
@@ -5595,6 +5977,9 @@ function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting 
         sandbox: args.sandbox || null,
         modelPolicyRevision: args.modelPolicyRevision ?? null,
         selection: args.selection || null,
+        ...(requestHashVersion >= 3
+          ? { projectId: effectiveProjectId || null }
+          : {}),
         agentId: args.agentId || null,
         agentName: args.agentName || null,
         agentRole: args.agentRole || null,
@@ -5617,7 +6002,8 @@ function resolveTaskRouting(args: CodexTaskArgs, scopeId: string): CodexRouting 
     scopeId,
     requestId: args.requestId,
     activityPresentationId: args.activityPresentationId,
-    requestHash
+    requestHash,
+    requestHashVersion
   };
 }
 
@@ -6200,7 +6586,7 @@ function readTrackingState(
 
 function readPersistedJob(
   value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 ): PersistedCodexJob | undefined {
   if (!isRecord(value)) return undefined;
   const jobId = typeof value.jobId === "string" && value.jobId ? value.jobId : undefined;
@@ -6244,6 +6630,20 @@ function readPersistedJob(
         .slice(-20)
     : [];
   const executionDecision = readExecutionDecision(value.executionDecision);
+  let project: { projectId: string; projectLabel: string } | undefined;
+  try {
+    if (stateVersion >= 9 && (value.projectId !== undefined || value.projectLabel !== undefined)) {
+      if (typeof value.projectId !== "string" || typeof value.projectLabel !== "string") {
+        return undefined;
+      }
+      project = {
+        projectId: normalizeProjectId(value.projectId),
+        projectLabel: normalizeProjectLabel(value.projectLabel)
+      };
+    }
+  } catch {
+    return undefined;
+  }
   if (
     !jobId ||
     !activityId ||
@@ -6264,7 +6664,7 @@ function readPersistedJob(
     (value.activityPresentationId !== undefined && !activityPresentationId) ||
     typeof requestHash !== "string" ||
     !/^[0-9a-f]{64}$/i.test(requestHash) ||
-    (requestHashVersion !== 1 && requestHashVersion !== 2) ||
+    (requestHashVersion !== 1 && requestHashVersion !== 2 && requestHashVersion !== 3) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -6300,6 +6700,7 @@ function readPersistedJob(
   return {
     jobId,
     activityId,
+    ...(project || {}),
     agentId: value.agentId,
     contextMode: value.contextMode as AgentContextMode | undefined,
     threadId: value.threadId || sessionDecision.threadId,
@@ -6625,12 +7026,16 @@ function forwardResult(
         ...job.sessionDecision,
         scopeId: job.scopeId,
         requestId: job.requestId,
+        projectId: job.projectId || null,
+        projectLabel: job.projectLabel || null,
         activityPresentationId: job.activityPresentationId || null
       },
       bridgeActivity: {
         activityId: job.activityId,
         jobId: job.jobId,
         agentId: job.agentId || null,
+        projectId: job.projectId || null,
+        projectLabel: job.projectLabel || null,
         executionMode: job.executionMode,
         ...(registry
           ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {

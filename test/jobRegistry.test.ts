@@ -32,8 +32,35 @@ describe("CodexJobRegistry persistence", () => {
       },
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("persists project admission identity with request-hash version 3", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start(
+      {
+        ...jobInput(root),
+        projectId: "bridge",
+        projectLabel: "Codex MCP Bridge",
+        requestHashVersion: 3
+      },
+      async () => result("project-thread")
+    );
+
+    await job.promise;
+    const restored = persistentRegistry(root, stateFile);
+    expect(restored.get(job.jobId)).toMatchObject({
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge",
+      requestHashVersion: 3
+    });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
+      version: 9,
+      jobs: [expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })]
+    });
   });
 
   it("marks jobs that were running at restart as interrupted", async () => {
@@ -127,7 +154,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -149,7 +176,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {

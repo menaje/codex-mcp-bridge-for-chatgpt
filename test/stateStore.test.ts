@@ -117,6 +117,47 @@ describe("BridgeStateStore", () => {
     restored.close();
   });
 
+  it("inherits a continuation project by default but permits an explicit fresh-project admission", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const sourceId = "abababab-abab-4bab-8bab-abababababab";
+    const inheritedId = "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc";
+    const switchedId = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+    store.createActivity({
+      activityId: sourceId,
+      scopeId: SCOPE_A,
+      projectId: "alpha",
+      projectLabel: "Alpha",
+      projectCwd: "/tmp/alpha",
+      now: 1
+    });
+
+    store.createActivity({
+      activityId: inheritedId,
+      scopeId: SCOPE_A,
+      continuationOfActivityId: sourceId,
+      now: 2
+    });
+    store.createActivity({
+      activityId: switchedId,
+      scopeId: SCOPE_A,
+      continuationOfActivityId: sourceId,
+      projectId: "beta",
+      projectLabel: "Beta",
+      projectCwd: "/tmp/beta",
+      now: 3
+    });
+
+    expect(store.getActivityProjectAdmission(inheritedId)).toMatchObject({
+      projectId: "alpha",
+      projectCwd: "/tmp/alpha"
+    });
+    expect(store.getActivityProjectAdmission(switchedId)).toMatchObject({
+      projectId: "beta",
+      projectCwd: "/tmp/beta"
+    });
+    store.close();
+  });
+
   it("backfills a legacy Activity only when every admitted job uses the selected project folder", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const compatibleActivity = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
