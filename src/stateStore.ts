@@ -2271,12 +2271,16 @@ export class BridgeStateStore {
       );
     }
     if (!activityProject && project) {
-      if (activity.counts.total > 0 && !previous) {
+      const projectCwd = normalizeRequiredString(job.cwd, "project working directory", 4_000);
+      if (
+        activity.counts.total > 0 &&
+        !previous &&
+        !this.activityJobsUseCwd(activityId, projectCwd)
+      ) {
         throw new Error(
           `${PROJECT_CONTEXT_CONFLICT}: An Activity with admitted work cannot change projects.`
         );
       }
-      const projectCwd = normalizeRequiredString(job.cwd, "project working directory", 4_000);
       this.database
         .prepare(`
           UPDATE activities
@@ -2563,6 +2567,16 @@ export class BridgeStateStore {
       cancelled: Number(row.cancelled || 0),
       terminal: Number(row.terminal || 0)
     };
+  }
+
+  private activityJobsUseCwd(activityId: string, cwd: string): boolean {
+    const rows = this.database
+      .prepare("SELECT payload FROM jobs WHERE activity_id = ? ORDER BY updated_at ASC")
+      .all(activityId) as JsonRow[];
+    return rows.length > 0 && rows.every((row) => {
+      const payload = parsePayload(row, "project backfill job");
+      return isRecord(payload) && normalizeOptionalString(payload.cwd) === cwd;
+    });
   }
 
   private insertActivity(input: {

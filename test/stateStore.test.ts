@@ -117,6 +117,42 @@ describe("BridgeStateStore", () => {
     restored.close();
   });
 
+  it("backfills a legacy Activity only when every admitted job uses the selected project folder", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const compatibleActivity = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    store.createActivity({ activityId: compatibleActivity, scopeId: SCOPE_A, now: 1 });
+    store.upsertJob({
+      ...job("legacy-job", "legacy-request"),
+      activityId: compatibleActivity,
+      cwd: "/tmp/repository"
+    });
+    store.upsertJob({
+      ...job("project-job", "project-request"),
+      activityId: compatibleActivity,
+      cwd: "/tmp/repository",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    });
+    expect(store.getActivityProjectAdmission(compatibleActivity)?.projectId).toBe("bridge");
+
+    const ambiguousActivity = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    store.createActivity({ activityId: ambiguousActivity, scopeId: SCOPE_A, now: 3 });
+    store.upsertJob({
+      ...job("other-legacy-job", "other-legacy-request"),
+      activityId: ambiguousActivity,
+      cwd: "/tmp/other"
+    });
+    expect(() => store.upsertJob({
+      ...job("other-project-job", "other-project-request"),
+      activityId: ambiguousActivity,
+      cwd: "/tmp/repository",
+      projectId: "bridge",
+      projectLabel: "Codex MCP Bridge"
+    })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
+    expect(store.getActivityProjectAdmission(ambiguousActivity)).toBeUndefined();
+    store.close();
+  });
+
   it("imports each legacy JSON registry once into the shared database", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-migration-root-"));
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-migration-state-"));
