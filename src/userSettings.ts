@@ -13,6 +13,12 @@ import {
   isUiLocalePreference,
   type UiLocalePreference
 } from "./uiI18n.js";
+import {
+  ProjectRegistry,
+  legacyDefaultProject,
+  normalizeProjectId,
+  type ProjectTarget
+} from "./projectRegistry.js";
 
 export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
 export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
@@ -32,6 +38,9 @@ export type BridgeUserSettings = {
   usePriorityServiceTier: boolean;
   /** Migration-only compatibility for legacy defaults that selected a model but no effort. */
   legacyPreferredModel?: string;
+  projects: ProjectTarget[];
+  defaultProjectId: string | null;
+  /** Compatibility mirror used until all execution paths route by project ID. */
   defaultCwd: string | null;
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
@@ -65,7 +74,9 @@ export class UserSettingsStore {
   private settings: BridgeUserSettings;
   private readonly warnings: string[] = [];
   private retiredSettingsMigrationPending = false;
+  private projectRegistryMigrationPending = false;
   private unavailableDefaultCwd?: string;
+  private unavailableProjectIds = new Set<string>();
 
   constructor(
     private readonly config: BridgeConfig,
@@ -74,6 +85,12 @@ export class UserSettingsStore {
     this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.now = options.now || Date.now;
+    const initialDefaultCwd = config.allowedRoots.length === 1 ? config.allowedRoots[0] : null;
+    const initialRegistry = new ProjectRegistry(
+      initialDefaultCwd === null ? [] : [legacyDefaultProject(initialDefaultCwd)],
+      config.allowedRoots,
+      { defaultProjectId: initialDefaultCwd === null ? null : "default" }
+    );
     this.initial = this.validate({
       schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
       revision: 0,
@@ -88,7 +105,9 @@ export class UserSettingsStore {
           : undefined
       ),
       usePriorityServiceTier: false,
-      defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
+      projects: initialRegistry.projects,
+      defaultProjectId: initialRegistry.defaultProjectId,
+      defaultCwd: initialDefaultCwd,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       activityCardVisibility: "always",
@@ -118,11 +137,26 @@ export class UserSettingsStore {
     return [...this.warnings];
   }
 
+  /** Available and recovery-only projects with their current admission state. */
+  get projectRegistry(): ProjectRegistry {
+    return new ProjectRegistry(this.settings.projects, this.config.allowedRoots, {
+      defaultProjectId: this.settings.defaultProjectId,
+      retainUnavailable: true
+    });
+  }
+
+  /** Resolve only a registered and currently admissible project. */
+  resolveProject(projectId?: string): ProjectTarget {
+    return this.projectRegistry.resolve(projectId);
+  }
+
   update(patch: BridgeUserSettingsPatch, expectedRevision: number): BridgeUserSettings {
     this.assertRevision(expectedRevision);
     if (
       this.unavailableDefaultCwd !== undefined &&
-      !Object.prototype.hasOwnProperty.call(patch, "defaultCwd")
+      (!hasOwn(patch, "defaultCwd") || patch.defaultCwd === null) &&
+      !hasOwn(patch, "projects") &&
+      !hasOwn(patch, "defaultProjectId")
     ) {
       throw new Error(
         `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is outside the current allowed roots. Save an allowed default working folder with this update.`
@@ -135,12 +169,11 @@ export class UserSettingsStore {
       updatedAt: new Date(this.now()).toISOString()
     };
     if (patch.modelPolicy !== undefined) delete candidate.legacyPreferredModel;
-    const validated = this.validate(candidate);
+    const retainUnavailableProjects = this.reconcileProjectPatch(candidate, patch);
+    const validated = this.validate(candidate, { retainUnavailableProjects });
     this.persist(validated);
     this.settings = validated;
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultCwd")) {
-      this.unavailableDefaultCwd = undefined;
-    }
+    this.refreshProjectAvailability(validated);
     return this.current;
   }
 
@@ -154,6 +187,7 @@ export class UserSettingsStore {
     this.persist(validated);
     this.settings = validated;
     this.unavailableDefaultCwd = undefined;
+    this.unavailableProjectIds.clear();
     return this.current;
   }
 
@@ -192,13 +226,109 @@ export class UserSettingsStore {
     }
   }
 
+  private reconcileProjectPatch(
+    candidate: BridgeUserSettings,
+    patch: BridgeUserSettingsPatch
+  ): boolean {
+    const projectsChanged = hasOwn(patch, "projects");
+    const defaultProjectChanged = hasOwn(patch, "defaultProjectId");
+    const legacyDefaultChanged = hasOwn(patch, "defaultCwd");
+
+    if (projectsChanged || defaultProjectChanged) {
+      const registry = new ProjectRegistry(candidate.projects, this.config.allowedRoots, {
+        defaultProjectId: candidate.defaultProjectId,
+        retainUnavailable: !projectsChanged
+      });
+      if (defaultProjectChanged && registry.defaultProjectId !== null) {
+        registry.resolve(registry.defaultProjectId);
+      }
+      candidate.projects = registry.projects;
+      candidate.defaultProjectId = registry.defaultProjectId;
+      candidate.defaultCwd = compatibilityDefaultCwd(registry);
+      return !projectsChanged;
+    }
+
+    if (!legacyDefaultChanged) return true;
+    if (candidate.defaultCwd === null) {
+      if (
+        candidate.projects.length === 1 &&
+        candidate.projects[0]?.id === "default"
+      ) {
+        candidate.projects = [];
+      }
+      candidate.defaultProjectId = null;
+      return true;
+    }
+
+    const canonicalCwd = requireAllowedCwd(candidate.defaultCwd, this.config.allowedRoots);
+    const existing = new ProjectRegistry(candidate.projects, this.config.allowedRoots, {
+      defaultProjectId: candidate.defaultProjectId,
+      retainUnavailable: true
+    });
+    const matching = existing.availability.find(
+      (entry) => entry.available && entry.project.cwd === canonicalCwd
+    );
+    if (matching) {
+      candidate.projects = existing.projects;
+      candidate.defaultProjectId = matching.project.id;
+      candidate.defaultCwd = canonicalCwd;
+      return true;
+    }
+
+    const compatibilityProject = legacyDefaultProject(canonicalCwd);
+    if (
+      existing.projects.length === 0 ||
+      (existing.projects.length === 1 && existing.projects[0]?.id === "default")
+    ) {
+      candidate.projects = [compatibilityProject];
+      candidate.defaultProjectId = compatibilityProject.id;
+    } else {
+      const project = {
+        ...compatibilityProject,
+        id: availableCompatibilityProjectId(compatibilityProject.label, existing.projects)
+      };
+      candidate.projects = [...existing.projects, project];
+      candidate.defaultProjectId = project.id;
+    }
+    candidate.defaultCwd = canonicalCwd;
+    return true;
+  }
+
+  private refreshProjectAvailability(settings: BridgeUserSettings): void {
+    const registry = new ProjectRegistry(settings.projects, this.config.allowedRoots, {
+      defaultProjectId: settings.defaultProjectId,
+      retainUnavailable: true
+    });
+    this.unavailableProjectIds = new Set(registry.unavailableProjectIds);
+    const effectiveDefaultId = registry.effectiveDefaultProjectId;
+    if (
+      effectiveDefaultId !== null &&
+      this.unavailableProjectIds.has(effectiveDefaultId)
+    ) {
+      this.unavailableDefaultCwd = registry.projects.find(
+        (project) => project.id === effectiveDefaultId
+      )?.cwd;
+    } else {
+      this.unavailableDefaultCwd = undefined;
+    }
+  }
+
   private assertRevision(expectedRevision: number): void {
     if (expectedRevision !== this.settings.revision) {
       throw new Error(`${SETTINGS_REVISION_CONFLICT}: Settings changed after this card was opened.`);
     }
   }
 
-  private validate(candidate: BridgeUserSettings): BridgeUserSettings {
+  private validate(
+    candidate: BridgeUserSettings,
+    options: { retainUnavailableProjects?: boolean } = {}
+  ): BridgeUserSettings {
+    const projectRegistry = new ProjectRegistry(candidate.projects, this.config.allowedRoots, {
+      defaultProjectId: candidate.defaultProjectId,
+      retainUnavailable: options.retainUnavailableProjects
+    });
+    candidate.projects = projectRegistry.projects;
+    candidate.defaultProjectId = projectRegistry.defaultProjectId;
     if (
       candidate.accessStrategy !== "read-only" &&
       candidate.accessStrategy !== "adaptive" &&
@@ -316,6 +446,7 @@ export class UserSettingsStore {
     const reconciled = { ...candidate };
     const persisted = { ...candidate };
     this.unavailableDefaultCwd = undefined;
+    this.unavailableProjectIds.clear();
     if (reconciled.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
       reconciled.accessStrategy = "read-only";
       persisted.accessStrategy = "read-only";
@@ -323,17 +454,53 @@ export class UserSettingsStore {
         "Saved full-access mode was downgraded to read-only because the bridge security policy disables danger-full-access."
       );
     }
-    if (reconciled.defaultCwd !== null) {
-      try {
-        reconciled.defaultCwd = requireAllowedCwd(reconciled.defaultCwd, this.config.allowedRoots);
-        persisted.defaultCwd = reconciled.defaultCwd;
-      } catch {
-        this.unavailableDefaultCwd = reconciled.defaultCwd;
-        reconciled.defaultCwd = null;
-        this.warnings.push(
-          `${DEFAULT_CWD_NOT_ALLOWED}: The saved working directory is outside the current allowed roots. Save an allowed default before starting a new Activity.`
-        );
+    const migratedLegacyProject =
+      this.projectRegistryMigrationPending && candidate.defaultCwd !== null
+        ? legacyDefaultProject(candidate.defaultCwd)
+        : null;
+    const projectRegistry = new ProjectRegistry(
+      this.projectRegistryMigrationPending
+        ? migratedLegacyProject === null ? [] : [migratedLegacyProject]
+        : candidate.projects,
+      this.config.allowedRoots,
+      {
+        defaultProjectId: this.projectRegistryMigrationPending
+          ? migratedLegacyProject === null ? null : migratedLegacyProject.id
+          : candidate.defaultProjectId,
+        retainUnavailable: true
       }
+    );
+    reconciled.projects = projectRegistry.projects;
+    reconciled.defaultProjectId = projectRegistry.defaultProjectId;
+    persisted.projects = projectRegistry.projects;
+    persisted.defaultProjectId = projectRegistry.defaultProjectId;
+    this.unavailableProjectIds = new Set(projectRegistry.unavailableProjectIds);
+
+    const effectiveDefaultId = projectRegistry.effectiveDefaultProjectId;
+    const effectiveDefault = effectiveDefaultId === null
+      ? undefined
+      : projectRegistry.availability.find(
+          ({ project }) => project.id === effectiveDefaultId
+        );
+    if (effectiveDefault === undefined) {
+      reconciled.defaultCwd = null;
+      persisted.defaultCwd = null;
+    } else if (effectiveDefault.available) {
+      reconciled.defaultCwd = effectiveDefault.project.cwd;
+      persisted.defaultCwd = effectiveDefault.project.cwd;
+    } else {
+      this.unavailableDefaultCwd = effectiveDefault.project.cwd;
+      reconciled.defaultCwd = null;
+      persisted.defaultCwd = effectiveDefault.project.cwd;
+      this.warnings.push(
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project is outside the current allowed roots or unavailable. Save an allowed default before starting a new Activity.`
+      );
+    }
+    for (const entry of projectRegistry.availability) {
+      if (entry.available || entry.project.id === effectiveDefaultId) continue;
+      this.warnings.push(
+        `PROJECT_UNAVAILABLE: Saved project "${entry.project.id}" is outside the current allowed roots or unavailable. Its metadata was retained for recovery, but it cannot admit new work.`
+      );
     }
     if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {
       reconciled.maxConcurrentJobs = this.config.maxConcurrentJobs;
@@ -341,24 +508,29 @@ export class UserSettingsStore {
       this.warnings.push("Saved concurrent-job limit was reduced to the current bridge maximum.");
     }
     const persistentlyChanged =
-      this.retiredSettingsMigrationPending || JSON.stringify(persisted) !== JSON.stringify(candidate);
+      this.retiredSettingsMigrationPending ||
+      this.projectRegistryMigrationPending ||
+      JSON.stringify(persisted) !== JSON.stringify(candidate);
     if (persistentlyChanged) {
       reconciled.revision += 1;
       reconciled.updatedAt = new Date(this.now()).toISOString();
       persisted.revision = reconciled.revision;
       persisted.updatedAt = reconciled.updatedAt;
     }
-    this.settings = this.validate(reconciled);
+    this.settings = this.validate(reconciled, { retainUnavailableProjects: true });
     if (persistentlyChanged) {
       // Preserve an unavailable saved path verbatim while persisting independent
       // capability/retired-field reconciliation. It becomes usable again when
       // the operator restores the corresponding allowed root.
       this.persist(persisted);
       this.retiredSettingsMigrationPending = false;
+      this.projectRegistryMigrationPending = false;
     }
   }
 
   private noteRetiredSettings(value: Record<string, unknown>): void {
+    this.projectRegistryMigrationPending =
+      !Object.prototype.hasOwnProperty.call(value, "projects");
     const retired = [
       "taskTimeoutMs",
       "defaultSessionMode",
@@ -379,7 +551,9 @@ export class UserSettingsStore {
       !migratedModelPolicy.changed &&
       "uiLocalePreference" in value &&
       "activityCardVisibility" in value &&
-      "completionHandoff" in value
+      "completionHandoff" in value &&
+      "defaultProjectId" in value &&
+      !this.projectRegistryMigrationPending
     ) return;
     this.retiredSettingsMigrationPending = true;
     if (
@@ -488,6 +662,12 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
           ? { model: legacyModel, reasoningEffort: legacyEffort }
           : undefined
       );
+  const projects = value.projects === undefined
+    ? []
+    : readProjectTargets(value.projects, stateFile);
+  const defaultProjectId = value.defaultProjectId === undefined
+    ? null
+    : requiredStringOrNull("defaultProjectId");
   return {
     schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
     revision: requiredNumber("revision"),
@@ -500,6 +680,8 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
     ...(persistedLegacyPreferredModel || (!hasCurrentPolicy && legacyModel && !legacyEffort)
       ? { legacyPreferredModel: (persistedLegacyPreferredModel || legacyModel) as string }
       : {}),
+    projects,
+    defaultProjectId,
     defaultCwd: requiredStringOrNull("defaultCwd"),
     uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
       ? value.uiLocalePreference
@@ -523,8 +705,28 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
 function cloneSettings(settings: BridgeUserSettings): BridgeUserSettings {
   return {
     ...settings,
+    projects: settings.projects.map((project) => ({ ...project })),
     modelPolicy: validateModelPolicy(settings.modelPolicy)
   };
+}
+
+function readProjectTargets(value: unknown, stateFile: string): ProjectTarget[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid projects in bridge settings at ${stateFile}.`);
+  }
+  return value.map((project, index) => {
+    if (!isRecord(project)) {
+      throw new Error(`Invalid project at index ${index} in bridge settings at ${stateFile}.`);
+    }
+    if (
+      typeof project.id !== "string" ||
+      typeof project.label !== "string" ||
+      typeof project.cwd !== "string"
+    ) {
+      throw new Error(`Invalid project at index ${index} in bridge settings at ${stateFile}.`);
+    }
+    return { id: project.id, label: project.label, cwd: project.cwd };
+  });
 }
 
 function migrateModelPolicyServiceTiers(value: unknown): {
@@ -588,6 +790,37 @@ function validateIdentifier(value: string, label: string, maximum: number): void
   if (!value.trim() || value !== value.trim() || value.length > maximum || /[\r\n]/.test(value)) {
     throw new Error(`Invalid ${label}.`);
   }
+}
+
+function compatibilityDefaultCwd(registry: ProjectRegistry): string | null {
+  const effectiveDefaultId = registry.effectiveDefaultProjectId;
+  if (effectiveDefaultId === null) return null;
+  return registry.projects.find((project) => project.id === effectiveDefaultId)?.cwd || null;
+}
+
+function availableCompatibilityProjectId(
+  label: string,
+  existingProjects: readonly ProjectTarget[]
+): string {
+  let base: string;
+  try {
+    base = normalizeProjectId(label);
+  } catch {
+    base = "project";
+  }
+  const existingIds = new Set(existingProjects.map((project) => project.id));
+  if (!existingIds.has(base)) return base;
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const suffixText = `-${suffix}`;
+    const truncatedBase = base.slice(0, 64 - suffixText.length).replace(/-+$/g, "") || "project";
+    const candidate = `${truncatedBase}${suffixText}`;
+    if (!existingIds.has(candidate)) return candidate;
+  }
+  throw new Error("Could not allocate a compatibility project ID.");
+}
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

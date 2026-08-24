@@ -343,6 +343,13 @@ describe("user settings store", () => {
     expect(migrated.current).toMatchObject({
       schemaVersion: 2,
       revision: 5,
+      projects: [{
+        id: "default",
+        label: path.basename(config.allowedRoots[0]!),
+        cwd: config.allowedRoots[0]
+      }],
+      defaultProjectId: "default",
+      defaultCwd: config.allowedRoots[0],
       modelPolicy: {
         mode: "automatic",
         preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
@@ -353,7 +360,17 @@ describe("user settings store", () => {
     const persisted = stateStore.getSettings() as Record<string, unknown>;
     expect(persisted).not.toHaveProperty("defaultModel");
     expect(persisted).not.toHaveProperty("defaultReasoningEffort");
-    expect(persisted).toMatchObject({ schemaVersion: 2, revision: 5 });
+    expect(persisted).toMatchObject({
+      schemaVersion: 2,
+      revision: 5,
+      projects: [{
+        id: "default",
+        label: path.basename(config.allowedRoots[0]!),
+        cwd: config.allowedRoots[0]
+      }],
+      defaultProjectId: "default",
+      defaultCwd: config.allowedRoots[0]
+    });
 
     const reloaded = new UserSettingsStore(config, { stateStore });
     expect(reloaded.current).toEqual(migrated.current);
@@ -398,6 +415,262 @@ describe("user settings store", () => {
       legacyPreferredModel: "gpt-5.6-sol"
     });
     stateStore.close();
+  });
+
+  it("migrates an allowed legacy default cwd into a deterministic saved project", () => {
+    const root = temporaryDirectory("bridge-legacy-project-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: root
+    });
+    const canonicalRoot = config.allowedRoots[0]!;
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2,
+      settings: {
+        schemaVersion: 2,
+        revision: 7,
+        updatedAt: "2026-08-23T00:00:00.000Z",
+        accessStrategy: "adaptive",
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: { kind: "catalog-visible" },
+          constraints: { allowDelegation: true }
+        },
+        usePriorityServiceTier: false,
+        defaultCwd: root,
+        uiLocalePreference: "auto",
+        maxConcurrentJobs: 30,
+        activityCardVisibility: "always",
+        completionHandoff: "off"
+      }
+    }));
+
+    const migrated = new UserSettingsStore(config, {
+      stateFile,
+      now: () => Date.parse("2026-08-24T01:02:03Z")
+    });
+    expect(migrated.current).toMatchObject({
+      revision: 8,
+      updatedAt: "2026-08-24T01:02:03.000Z",
+      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }],
+      defaultProjectId: "default",
+      defaultCwd: canonicalRoot
+    });
+    expect(migrated.resolveProject()).toEqual({
+      id: "default",
+      label: path.basename(canonicalRoot),
+      cwd: canonicalRoot
+    });
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
+      revision: 8,
+      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }],
+      defaultProjectId: "default",
+      defaultCwd: canonicalRoot
+    });
+
+    const reloaded = new UserSettingsStore(config, { stateFile });
+    expect(reloaded.current).toEqual(migrated.current);
+    expect(reloaded.loadWarnings).toEqual([]);
+  });
+
+  it("persists a named multi-project registry and mirrors its default for legacy execution", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const [canonicalFirst, canonicalSecond] = config.allowedRoots;
+    const store = new UserSettingsStore(config, { stateFile });
+
+    const updated = store.update({
+      projects: [
+        { id: "Web_APP", label: "웹 앱", cwd: first },
+        { id: "API", label: "API 서비스", cwd: second }
+      ],
+      defaultProjectId: "API"
+    }, 0);
+    expect(updated).toMatchObject({
+      projects: [
+        { id: "web-app", label: "웹 앱", cwd: canonicalFirst },
+        { id: "api", label: "API 서비스", cwd: canonicalSecond }
+      ],
+      defaultProjectId: "api",
+      defaultCwd: canonicalSecond
+    });
+    expect(store.resolveProject()).toMatchObject({ id: "api", cwd: canonicalSecond });
+    expect(store.resolveProject("WEB APP")).toMatchObject({ id: "web-app", cwd: canonicalFirst });
+    expect(store.resolveCwd()).toBe(canonicalSecond);
+
+    const reloaded = new UserSettingsStore(config, { stateFile });
+    expect(reloaded.current).toEqual(updated);
+    expect(reloaded.resolveProject()).toMatchObject({ id: "api", cwd: canonicalSecond });
+  });
+
+  it("rejects invalid project writes without advancing or persisting the revision", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const store = new UserSettingsStore(config);
+
+    expect(() => store.update({
+      projects: [
+        { id: "same id", label: "One", cwd: first },
+        { id: "same_id", label: "Two", cwd: second }
+      ]
+    }, 0)).toThrow(/PROJECT_DUPLICATE_ID/);
+    expect(() => store.update({
+      projects: [{ id: "first", label: "First", cwd: first }],
+      defaultProjectId: "missing"
+    }, 0)).toThrow(/PROJECT_DEFAULT_NOT_FOUND/);
+    expect(store.current.revision).toBe(0);
+    expect(store.current.projects).toEqual([]);
+  });
+
+  it("retains stale project metadata across root changes but blocks its admission", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const broadConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const [canonicalFirst, canonicalSecond] = broadConfig.allowedRoots;
+    const original = new UserSettingsStore(broadConfig, { stateFile });
+    original.update({
+      projects: [
+        { id: "active", label: "활성", cwd: first },
+        { id: "stale", label: "복구 필요", cwd: second }
+      ],
+      defaultProjectId: "active"
+    }, 0);
+
+    const narrowedConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: first
+    });
+    const narrowed = new UserSettingsStore(narrowedConfig, { stateFile });
+    expect(narrowed.current.projects).toEqual([
+      { id: "active", label: "활성", cwd: canonicalFirst },
+      { id: "stale", label: "복구 필요", cwd: canonicalSecond }
+    ]);
+    expect(narrowed.projectRegistry.selectableProjects.map(({ id }) => id)).toEqual(["active"]);
+    expect(narrowed.projectRegistry.unavailableProjectIds).toEqual(["stale"]);
+    expect(narrowed.loadWarnings).toEqual([expect.stringContaining("PROJECT_UNAVAILABLE")]);
+    expect(() => narrowed.resolveProject("stale")).toThrow(/PROJECT_UNAVAILABLE/);
+    expect(narrowed.resolveProject()).toMatchObject({ id: "active" });
+
+    const unrelated = narrowed.update(
+      { uiLocalePreference: "ko" },
+      narrowed.current.revision
+    );
+    expect(unrelated.projects).toHaveLength(2);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings.projects).toContainEqual({
+      id: "stale",
+      label: "복구 필요",
+      cwd: canonicalSecond
+    });
+
+    const recovered = narrowed.update({
+      projects: [{ id: "active", label: "활성", cwd: first }],
+      defaultProjectId: "active"
+    }, narrowed.current.revision);
+    expect(recovered.projects).toHaveLength(1);
+    expect(narrowed.projectRegistry.unavailableProjectIds).toEqual([]);
+  });
+
+  it("migrates an unavailable legacy default as recovery metadata without allowing null to erase it", () => {
+    const oldRoot = temporaryDirectory("bridge-old-");
+    const newRoot = temporaryDirectory("bridge-new-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const oldConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: oldRoot
+    });
+    const oldCanonicalRoot = oldConfig.allowedRoots[0]!;
+    writeFileSync(stateFile, JSON.stringify({
+      version: 2,
+      settings: {
+        schemaVersion: 2,
+        revision: 3,
+        updatedAt: "2026-08-23T00:00:00.000Z",
+        accessStrategy: "adaptive",
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: { kind: "catalog-visible" },
+          constraints: { allowDelegation: true }
+        },
+        usePriorityServiceTier: false,
+        defaultCwd: oldCanonicalRoot,
+        uiLocalePreference: "auto",
+        maxConcurrentJobs: 30,
+        activityCardVisibility: "always",
+        completionHandoff: "off"
+      }
+    }));
+    const narrowedConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: newRoot
+    });
+    const narrowed = new UserSettingsStore(narrowedConfig, { stateFile });
+
+    expect(narrowed.current).toMatchObject({
+      revision: 4,
+      projects: [{
+        id: "default",
+        label: path.basename(oldCanonicalRoot),
+        cwd: oldCanonicalRoot
+      }],
+      defaultProjectId: "default",
+      defaultCwd: null
+    });
+    expect(narrowed.projectRegistry.unavailableProjectIds).toEqual(["default"]);
+    expect(() => narrowed.resolveProject()).toThrow(/PROJECT_UNAVAILABLE/);
+    expect(() => narrowed.update({ defaultCwd: null }, 4)).toThrow(/DEFAULT_CWD_NOT_ALLOWED/);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
+      projects: [{ id: "default", cwd: oldCanonicalRoot }],
+      defaultProjectId: "default",
+      defaultCwd: oldCanonicalRoot
+    });
+
+    const restored = new UserSettingsStore(oldConfig, { stateFile });
+    expect(restored.resolveProject()).toMatchObject({ id: "default", cwd: oldCanonicalRoot });
+    expect(restored.current.defaultCwd).toBe(oldCanonicalRoot);
+  });
+
+  it("keeps the legacy defaultCwd mutation path synchronized during UI integration", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const [canonicalFirst, canonicalSecond] = config.allowedRoots;
+    const store = new UserSettingsStore(config);
+
+    const firstSelection = store.update({ defaultCwd: first }, 0);
+    expect(firstSelection).toMatchObject({
+      projects: [{ id: "default", label: path.basename(canonicalFirst), cwd: canonicalFirst }],
+      defaultProjectId: "default",
+      defaultCwd: canonicalFirst
+    });
+    const secondSelection = store.update({ defaultCwd: second }, 1);
+    expect(secondSelection).toMatchObject({
+      projects: [{ id: "default", label: path.basename(canonicalSecond), cwd: canonicalSecond }],
+      defaultProjectId: "default",
+      defaultCwd: canonicalSecond
+    });
+    const cleared = store.update({ defaultCwd: null }, 2);
+    expect(cleared).toMatchObject({
+      projects: [],
+      defaultProjectId: null,
+      defaultCwd: null
+    });
   });
 
   it("forces read-only even when a caller asks for full access", () => {

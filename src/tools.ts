@@ -132,6 +132,12 @@ const bridgeUserSettingsOutputSchema = z.object({
   modelPolicy: modelPolicyZod(),
   usePriorityServiceTier: z.boolean(),
   legacyPreferredModel: z.string().optional(),
+  projects: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    cwd: z.string()
+  })),
+  defaultProjectId: z.string().nullable(),
   defaultCwd: z.string().nullable(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
