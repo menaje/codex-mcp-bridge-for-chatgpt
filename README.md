@@ -35,7 +35,8 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, and own automatic Activity-card presentation.
 - `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state through one optional discriminated `query`.
 - `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
-- `codex_activity_update`: apply one validated Activity lifecycle or verification transition.
+- `codex_activity_update`: apply one exact-version, non-cancelling lifecycle, verification, or policy operation.
+- `codex_activity_cancel`: idempotently force-stop every active job in one Activity and mark it cancelled.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
 - `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
@@ -55,6 +56,23 @@ wait, or cursor page:
 The prior flat status fields remain runtime compatibility inputs but are not
 published to the model. `scopeId` is likewise host-derived in ChatGPT and
 runtime-only for compatibility hosts.
+
+Activity mutation is split by risk. First read the exact Activity version, then
+use one discriminated non-cancelling operation:
+
+```json
+{
+  "activityId": "...",
+  "expectedVersion": 4,
+  "operation": { "kind": "verification-passed", "evidence": { "summary": "..." } }
+}
+```
+
+Whole-Activity force-stop instead uses `codex_activity_cancel` with a unique
+`requestId`, the exact `activityId` and `expectedVersion`, and—when reported—the
+complete `acknowledgeAffectedJobIds` set. The former flat Activity update fields
+remain runtime-compatible, except legacy `action: "cancel"` returns
+`ACTIVITY_CANCEL_MOVED` and never performs cancellation.
 
 `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity controls require an exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 

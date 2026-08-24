@@ -24,9 +24,13 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_cancel` force-stops one scope-owned running job through exact App
   Server turn interruption or the tracked worker process group; partial
   filesystem changes are not rolled back.
-- `codex_activity_update` performs server-validated Activity transitions,
-  including whole-Activity force-stop and evidence-backed verification. App Server
-  interaction and steering fields are excluded from its model-visible schema.
+- `codex_activity_update` publishes one exact-version discriminated operation
+  for non-cancelling lifecycle, policy, and evidence-backed verification
+  transitions. It is not annotated destructive. Legacy flat lifecycle fields
+  remain runtime-only, and a legacy cancel request returns a moved-contract error.
+- `codex_activity_cancel` is the separately annotated destructive whole-Activity
+  force-stop. It requires a replay UUID, exact Activity version, scope ownership,
+  and the complete affected-job acknowledgement when workers are shared.
 - `codex_interaction_respond` and `codex_job_steer` are app-private and require
   an active exact card lease plus exact scope, Job, Activity, Agent, and optimistic
   Job-version ownership. Their request UUIDs are idempotent; interaction resolution
@@ -213,11 +217,13 @@ identity.
   tuple or loss/rotation of the locally persisted HMAC key produce a new scope.
 - Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
   cannot independently prove that a particular call received fresh user approval.
-- `codex_activity_update` is stateful and includes a destructive `cancel` action.
-  The server validates scope/lifecycle, exact job versions, worker generations,
-  and collateral acknowledgement, but cannot undo commands or file edits already performed. Verification
-  evidence is bounded metadata supplied by the caller; it is an audit reference,
-  not cryptographic proof that a test or artifact belongs only to that Activity.
+- `codex_activity_update` is a non-idempotent state transition guarded by an
+  exact Activity version. `codex_activity_cancel` is destructive and replay-safe
+  by request UUID; it validates scope/lifecycle, Activity version, worker
+  generations, and collateral acknowledgement, but cannot undo commands or file
+  edits already performed. Verification evidence is bounded metadata supplied by
+  the caller; it is an audit reference, not cryptographic proof that a test or
+  artifact belongs only to that Activity.
 - Job admission has a hard maximum of 100. The environment ceiling, saved user
   limit, Job Registry, job cancellation acknowledgement, and Activity
   cancellation acknowledgement all share that invariant, so a valid affected

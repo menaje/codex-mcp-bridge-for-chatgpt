@@ -61,7 +61,7 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify discovery of eight model-visible tools: `codex_status`, `codex_activity`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
+5. Verify discovery of nine model-visible tools: `codex_status`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
 6. The app-private `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, and `codex_update_settings` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
 
 ### Refresh after a bridge/UI change
@@ -205,6 +205,8 @@ For independent verification, create another named Agent with `fork` or `fresh`.
 
 Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
+Activity lifecycle changes require the exact version from authoritative status. `codex_activity_update` accepts one non-cancelling `operation`: seal, complete, abandon, start verification, pass/fail verification, or set policy. Each operation exposes only its relevant payload. Whole-Activity force-stop is the separate destructive and idempotent `codex_activity_cancel`, which additionally requires a unique `requestId`; retry that UUID only for the exact same cancellation. A shared-worker impact must be confirmed with the complete affected-job list. The old flat update form remains a runtime compatibility path, while flat `action: "cancel"` returns `ACTIVITY_CANCEL_MOVED` without stopping work.
+
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
 probe failure is retryable and leaves the Agent intact. Use explicit `fresh`
@@ -234,7 +236,7 @@ Only the newest automatic presentation owns the scope live watch and completion 
 { "query": { "kind": "job", "id": "...", "waitFor": "terminal", "waitMs": 55000 } }
 ```
 
-Wait timeout leaves Codex running. `codex_cancel` interrupts the exact App Server turn or tracked worker process and records cancellation only after exit evidence; it never rolls back changes.
+Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. `codex_activity_cancel` force-stops every active job in one exact-version Activity. Both record cancellation only after exit evidence and never roll back changes.
 
 App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. The immediately previous content-hashed Activity resource remains available for one compatibility revision, and its legacy process call is accepted only from an active scoped widget lease.
 

@@ -401,6 +401,7 @@ describe("bridge tools", () => {
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "codex_activity",
+      "codex_activity_cancel",
       "codex_activity_handoff",
       "codex_activity_snapshot",
       "codex_activity_update",
@@ -577,37 +578,70 @@ describe("bridge tools", () => {
       .not.toHaveProperty("outboxId");
     expect(byName.get("codex_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
       .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
-    expect(byName.get("codex_activity_update")?.inputSchema.properties?.acknowledgeAffectedJobIds)
+    expect(byName.get("codex_activity_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
       .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
     expect(byName.get("codex_activity_update")?.annotations).toMatchObject({
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: false,
       openWorldHint: false
     });
-    expect(byName.get("codex_activity_update")?.inputSchema.properties?.action).toMatchObject({
-      enum: [
-        "seal",
-        "complete",
-        "abandon",
-        "cancel",
-        "start-verification",
-        "verification-passed",
-        "verification-failed",
-        "set-policy"
-      ]
+    const activityUpdateProperties = byName.get("codex_activity_update")?.inputSchema.properties as
+      | Record<string, any>
+      | undefined;
+    expect(Object.keys(activityUpdateProperties || {}).sort()).toEqual([
+      "activityId",
+      "expectedVersion",
+      "operation"
+    ]);
+    const activityOperationVariants = activityUpdateProperties?.operation?.oneOf as
+      | Array<Record<string, any>>
+      | undefined;
+    expect(activityOperationVariants?.flatMap((variant) => {
+      const discriminator = variant.properties?.kind;
+      return discriminator?.const ? [discriminator.const] : discriminator?.enum || [];
+    }).sort()).toEqual([
+      "abandon",
+      "complete",
+      "seal",
+      "set-policy",
+      "start-verification",
+      "verification-failed",
+      "verification-passed"
+    ]);
+    expect(activityOperationVariants?.find(
+      (variant) => variant.properties?.kind?.const === "verification-passed"
+    )).toMatchObject({
+      required: expect.arrayContaining(["kind", "evidence"])
     });
-    for (const hiddenControlField of [
-      "jobId",
-      "expectedJobVersion",
-      "interactionId",
-      "interactionDecision",
-      "interactionAnswers",
-      "steeringPrompt"
-    ]) {
-      expect(byName.get("codex_activity_update")?.inputSchema.properties)
-        .not.toHaveProperty(hiddenControlField);
-    }
+    expect(activityOperationVariants?.find(
+      (variant) => variant.properties?.kind?.const === "verification-failed"
+    )).toMatchObject({
+      required: expect.arrayContaining(["kind", "reason"])
+    });
+    expect(activityOperationVariants?.find(
+      (variant) => variant.properties?.kind?.const === "set-policy"
+    )).toMatchObject({
+      required: expect.arrayContaining(["kind", "policy"]),
+      properties: { policy: expect.objectContaining({ minProperties: 1 }) }
+    });
+    expect(byName.get("codex_activity_cancel")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(Object.keys(byName.get("codex_activity_cancel")?.inputSchema.properties || {}).sort())
+      .toEqual([
+        "acknowledgeAffectedJobIds",
+        "activityId",
+        "expectedVersion",
+        "reason",
+        "requestId"
+      ]);
+    expect(byName.get("codex_activity_cancel")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["requestId", "activityId", "expectedVersion"])
+    });
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": SETTINGS_CARD_URI,
@@ -889,27 +923,42 @@ describe("bridge tools", () => {
         },
         {
           "annotations": {
-            "destructive": true,
+            "destructive": false,
             "idempotent": false,
             "openWorld": false,
             "readOnly": false,
           },
           "name": "codex_activity_update",
           "properties": [
-            "acknowledgeAffectedJobIds",
-            "action",
             "activityId",
-            "activityKind",
-            "completionTrigger",
-            "evidence",
-            "executionMode",
             "expectedVersion",
-            "handoffPolicy",
-            "reason",
-            "scopeId",
+            "operation",
           ],
-          "propertyCount": 11,
-          "schemaBytes": 2110,
+          "propertyCount": 3,
+          "schemaBytes": 2476,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_activity_cancel",
+          "properties": [
+            "acknowledgeAffectedJobIds",
+            "activityId",
+            "expectedVersion",
+            "reason",
+            "requestId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 971,
           "visibility": {
             "app": false,
             "model": true,
@@ -2692,20 +2741,62 @@ describe("bridge tools", () => {
       arguments: {
         activityId: first.activityId,
         expectedVersion: 1,
-        action: "set-policy",
-        handoffPolicy: "notify"
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
       }
     });
     expect(stalePolicy.isError).toBe(true);
     expect(JSON.stringify(stalePolicy)).toContain("Activity version changed");
     expect(jobs.getActivity(first.activityId)).toMatchObject({ handoffPolicy: "none" });
 
+    const missingVersion = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
+      }
+    });
+    expect(missingVersion.isError).toBe(true);
+    expect(JSON.stringify(missingVersion)).toContain("ACTIVITY_VERSION_REQUIRED");
+    const mixedContract = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } },
+        handoffPolicy: "verify"
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("ACTIVITY_OPERATION_CONFLICT");
+    const emptyPolicy = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: {} }
+      }
+    });
+    expect(emptyPolicy.isError).toBe(true);
+    expect(JSON.stringify(emptyPolicy)).toContain("requires at least one Activity policy field");
+    const updatedPolicy = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
+      }
+    }));
+    expect(updatedPolicy.activity).toMatchObject({ handoffPolicy: "notify" });
+
     const completed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: first.activityId,
-        action: "complete",
-        reason: "The orchestrator accepted both investigation results"
+        expectedVersion: updatedPolicy.activity.version,
+        operation: {
+          kind: "complete",
+          reason: "The orchestrator accepted both investigation results"
+        }
       }
     }));
     expect(completed).toMatchObject({
@@ -3650,17 +3741,27 @@ describe("bridge tools", () => {
     const jobId = (started as { structuredContent?: Record<string, any> })
       .structuredContent?.bridgeActivity?.jobId;
     expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "not-required" });
+    const initialVersion = jobs.getActivity(activityId)?.version as number;
 
     const crossScope = await rawCallTool({
       name: "codex_activity_update",
-      arguments: { scopeId: SCOPE_B, activityId, action: "seal" }
+      arguments: {
+        scopeId: SCOPE_B,
+        activityId,
+        expectedVersion: initialVersion,
+        operation: { kind: "seal" }
+      }
     });
     expect(crossScope.isError).toBe(true);
     expect(JSON.stringify(crossScope)).toContain("another conversation scope");
 
     const sealed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "seal" }
+      arguments: {
+        activityId,
+        expectedVersion: initialVersion,
+        operation: { kind: "seal" }
+      }
     }));
     expect(sealed.activity).toMatchObject({
       lifecycle: "sealed",
@@ -3680,25 +3781,67 @@ describe("bridge tools", () => {
       });
     const illegalComplete = await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "complete" }
+      arguments: {
+        activityId,
+        expectedVersion: sealed.activity.version,
+        operation: { kind: "complete" }
+      }
     });
     expect(illegalComplete.isError).toBe(true);
     expect(JSON.stringify(illegalComplete)).toContain("Finish Activity verification");
 
+    const missingFailureReason = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.activity.version,
+        operation: { kind: "verification-failed" }
+      }
+    });
+    expect(missingFailureReason.isError).toBe(true);
+    const missingEvidence = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.activity.version,
+        operation: { kind: "verification-passed" }
+      }
+    });
+    expect(missingEvidence.isError).toBe(true);
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.activity.version,
+        operation: {
+          kind: "verification-failed",
+          reason: "The first independent review found a gap"
+        }
+      }
+    }));
+    expect(failed.activity).toMatchObject({ lifecycle: "open", verification: "failed" });
+
     const verifying = parseToolJson(await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "start-verification" }
+      arguments: {
+        activityId,
+        expectedVersion: failed.activity.version,
+        operation: { kind: "start-verification" }
+      }
     }));
     expect(verifying.activity).toMatchObject({ verification: "verifying" });
     const passed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId,
-        action: "verification-passed",
-        evidence: {
-          summary: "Reviewed the diff and ran the test suite",
-          jobIds: [jobId],
-          tests: ["npm test: exit 0"]
+        expectedVersion: verifying.activity.version,
+        operation: {
+          kind: "verification-passed",
+          evidence: {
+            summary: "Reviewed the diff and ran the test suite",
+            jobIds: [jobId],
+            tests: ["npm test: exit 0"]
+          }
         }
       }
     }));
@@ -3720,13 +3863,29 @@ describe("bridge tools", () => {
           rows: [expect.objectContaining({ latestActivityId: activityId, verification: "verified" })]
         }
       });
+    const abandonedTask = await runTask(client, {
+      prompt: "create disposable work",
+      activityTitle: "Disposable Activity",
+      agentName: "Disposable Agent",
+      contextMode: "fresh"
+    });
+    const abandonedActivityId = taskActivityId(abandonedTask);
+    const abandoned = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: abandonedActivityId,
+        expectedVersion: jobs.getActivity(abandonedActivityId)?.version,
+        operation: { kind: "abandon", reason: "No longer needed" }
+      }
+    }));
+    expect(abandoned.activity).toMatchObject({ lifecycle: "abandoned" });
     await close();
   });
 
   it("cancels every running child job before cancelling its Activity", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const running = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
@@ -3737,14 +3896,57 @@ describe("bridge tools", () => {
       }
     }));
 
-    const cancelled = parseToolJson(await client.callTool({
+    const legacyCancel = await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: running.activityId,
         action: "cancel",
         reason: "The user stopped this Activity"
       }
+    });
+    expect(legacyCancel.isError).toBe(true);
+    expect(JSON.stringify(legacyCancel)).toContain("ACTIVITY_CANCEL_MOVED");
+    expect(upstream.aborts).toBe(0);
+
+    const activityVersion = jobs.getActivity(running.activityId)?.version as number;
+    const stale = await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: {
+        requestId: "62626262-6262-4262-8262-626262626262",
+        activityId: running.activityId,
+        expectedVersion: activityVersion + 1
+      }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("Activity version changed");
+    expect(upstream.aborts).toBe(0);
+    const crossScope = await rawCallTool({
+      name: "codex_activity_cancel",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "63636363-6363-4363-8363-636363636362",
+        activityId: running.activityId,
+        expectedVersion: activityVersion
+      }
+    });
+    expect(crossScope.isError).toBe(true);
+    expect(JSON.stringify(crossScope)).toContain("another conversation scope");
+
+    const cancellationArguments = {
+      requestId: "63636363-6363-4363-8363-636363636363",
+      activityId: running.activityId,
+      expectedVersion: activityVersion,
+      reason: "The user stopped this Activity"
+    } as const;
+    const cancelled = parseToolJson(await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: cancellationArguments
     }));
+    const cancellationReplay = parseToolJson(await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: cancellationArguments
+    }));
+    expect(cancellationReplay).toEqual(cancelled);
     expect(cancelled).toMatchObject({
       action: "cancel",
       activity: {
@@ -3757,6 +3959,12 @@ describe("bridge tools", () => {
     expect(cancelled.warning).toContain("not rolled back");
     expect(upstream.aborts).toBe(1);
     expect(jobs.get(running.jobId)).toMatchObject({ status: "cancelled" });
+    const changedRetry = await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: { ...cancellationArguments, reason: "Different cancellation semantics" }
+    });
+    expect(changedRetry.isError).toBe(true);
+    expect(JSON.stringify(changedRetry)).toContain("different mutation");
 
     const attach = await client.callTool({
       name: "codex_task",
@@ -3813,10 +4021,11 @@ describe("bridge tools", () => {
     });
 
     const stopped = parseToolJson(await client.callTool({
-      name: "codex_activity_update",
+      name: "codex_activity_cancel",
       arguments: {
+        requestId: "64646464-6464-4464-8464-646464646464",
         activityId: first.activityId,
-        action: "cancel",
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
         acknowledgeAffectedJobIds: affected
       }
     }));
@@ -6188,11 +6397,12 @@ describe("bridge tools", () => {
     expect(JSON.stringify(jobCancellation)).toContain("Unknown Codex job id");
 
     const activityCancellation = await client.callTool({
-      name: "codex_activity_update",
+      name: "codex_activity_cancel",
       arguments: {
         scopeId: SCOPE_A,
+        requestId: "65656565-6565-4565-8565-656565656565",
         activityId: SCOPE_B,
-        action: "cancel",
+        expectedVersion: 1,
         acknowledgeAffectedJobIds: acknowledged
       }
     });
@@ -7006,6 +7216,7 @@ async function connectTestClient(
           request.name === "codex_activity" ||
           request.name === "codex_activity_snapshot" ||
           request.name === "codex_activity_handoff" ||
+          request.name === "codex_activity_cancel" ||
           request.name === "codex_activity_update" ||
           request.name === "codex_agent" ||
           request.name === "codex_agent_recovery_detach" ||

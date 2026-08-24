@@ -132,6 +132,8 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("admission-time project");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never call codex_activity after codex_task");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exact authoritative version");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_activity_cancel");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b|\bcwd\b/);
   });
 
