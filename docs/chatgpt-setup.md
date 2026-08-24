@@ -79,7 +79,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 - access strategy;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- default working folder;
+- named projects and an optional compatibility default;
 - UI language;
 - concurrent-job limit;
 - card visibility;
@@ -94,15 +94,17 @@ The model catalog is loaded when Settings opens, using the bridge's short TTL an
 There is one conversation-scoped flat Activity feed. Retired saved layout
 preferences are safely discarded and are not selectable in Settings.
 
-With one allowed root the default folder starts as that root. With multiple allowed roots, save one folder before starting a new Activity. The card cannot widen operator roots/capabilities, change tunnel credentials, or change the Codex approval policy.
+The **Projects** section lists bridge-allowed roots separately from registered projects. Each project has a stable normalized ID, a Unicode display label, and an absolute folder. New or edited folders are canonicalized with `realpath` and must remain inside an allowed root. The card reports normalized-ID and canonical-path collisions inline. Saved IDs are read-only in the card; edit the label or folder, or remove and add the entry only when a new identity is intended.
 
-The default folder and access strategy are independent:
+With one allowed root, existing single-folder settings migrate to a `default` project. With multiple projects, choose an optional default. A project whose folder disappears or is no longer inside a narrowed root remains visible as **Needs recovery**, but it cannot be saved or admitted until its folder is fixed or the entry is removed. The card cannot widen allowed roots/capabilities, change tunnel credentials, or change the Codex approval policy.
+
+The compatibility default project and access strategy are independent:
 
 - fixed `read-only` forces read-only and removes per-call `sandbox` from `codex_task`;
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor must never contain `cwd`. New Activities and `fresh` context use the saved default folder. Existing Agent threads keep their pinned admission-time folder and sandbox after Settings changes. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
+The public `codex_task` descriptor must never contain `cwd`. During this settings/UI phase it also does not expose `projectId`: new Activities and `fresh` context use the optional default project (or sole project) through the compatibility `defaultCwd` mirror. Existing Agent threads keep their pinned admission-time folder and sandbox after Settings changes. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
 
 ### Dynamic model/effort behavior
 
@@ -116,7 +118,7 @@ If a saved effort is no longer supported, Settings warns instead of rewriting it
 
 Call `codex_status` and confirm:
 
-- the saved `defaultCwd`, `accessStrategy`, card visibility, and language;
+- the saved projects/default-project compatibility mirror, `accessStrategy`, card visibility, and language;
 - operator roots and mutation capability flags;
 - default backend and active build ID;
 - settings schema/model policy and catalog source/fingerprint/LKG status;
@@ -220,16 +222,18 @@ App Server may leave a background terminal after the turn itself completes. The 
 In a new ChatGPT conversation:
 
 1. open Settings and confirm it renders without an old-resource error;
-2. change a harmless preference and save;
-3. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
-4. choose **Restore default settings**, confirm, and verify the card rerenders;
-5. confirm `codex_task` has no `cwd` and fixed access modes have no `sandbox`;
-6. start a narrow foreground read-only Activity and confirm it uses the saved folder;
-7. open the flat Activity feed and verify there is no KPI/card grid/layout selector or path/backend/ID/timeline detail;
-8. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
-9. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
-10. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
-11. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
+2. add two project folders, verify IDs normalize, duplicate IDs/paths are rejected inline, choose a default, and save;
+3. edit one project label/folder, remove the unused project, and confirm allowed roots remain a separate read-only list;
+4. change a harmless preference and save;
+5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
+6. choose **Restore default settings**, confirm, and verify the card rerenders;
+7. confirm `codex_task` has no `cwd` or `projectId` in this phase and fixed access modes have no `sandbox`;
+8. start a narrow foreground read-only Activity and confirm it uses the default/sole project folder;
+9. open the flat Activity feed and verify there is no KPI/card grid/layout selector or path/backend/ID/timeline detail;
+10. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
+11. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
+12. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
+13. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source.
 
 In an existing pre-refresh conversation:
 
@@ -245,7 +249,9 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Tunnel missing: verify workspace association and Tunnel Read/Use permissions.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: deploy current server first, use plugin **Refresh**, then start a new conversation if the old one stays cached.
-- `DEFAULT_CWD_REQUIRED`: save a default folder in Settings.
+- `DEFAULT_CWD_REQUIRED`: choose a default project (or keep exactly one available project) in Settings.
+- `PROJECT_DUPLICATE_ID` / `PROJECT_DUPLICATE_PATH`: correct the highlighted duplicate project values.
+- `PROJECT_UNAVAILABLE`: fix or remove the **Needs recovery** project before saving or admitting work.
 - `CWD_OVERRIDE_RETIRED`: refresh the plugin/tool list; do not resend per-call cwd.
 - `SANDBOX_OVERRIDE_RETIRED`: refresh tools; the fixed saved access strategy is authoritative.
 - Repository refused: remove common secret files from the exposed copy or use a sanitized staging copy.

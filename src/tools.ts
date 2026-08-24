@@ -155,6 +155,12 @@ const bridgeUserSettingsOutputSchema = z.object({
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
 
+const projectTargetInputSchema = z.strictObject({
+  id: z.string().min(1).max(256),
+  label: z.string().min(1).max(1_000),
+  cwd: z.string().min(1).max(4_096)
+});
+
 const catalogModelOutputSchema = z.object({
   id: z.string(),
   catalogId: z.string().optional(),
@@ -194,6 +200,10 @@ const settingsViewOutputSchema = z.object({
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
     availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
+    projectAvailability: z.array(z.strictObject({
+      id: z.string(),
+      available: z.boolean()
+    })),
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
@@ -3190,7 +3200,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved versioned model/effort policy, independent Priority preference, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
+        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -3237,6 +3247,8 @@ export function registerBridgeTools(
         accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
         modelPolicy: modelPolicyZod().optional(),
         usePriorityServiceTier: z.boolean().optional(),
+        projects: z.array(projectTargetInputSchema).max(100).optional(),
+        defaultProjectId: z.string().min(1).max(256).nullable().optional(),
         defaultCwd: z.string().trim().min(1).nullable().optional(),
         uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
@@ -3263,6 +3275,8 @@ export function registerBridgeTools(
         "accessStrategy",
         "modelPolicy",
         "usePriorityServiceTier",
+        "projects",
+        "defaultProjectId",
         "defaultCwd",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -6058,6 +6072,9 @@ async function buildSettingsView(
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
       availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
+      projectAvailability: userSettings.projectRegistry.availability.map(
+        ({ project, available }) => ({ id: project.id, available })
+      ),
       maxConcurrentJobs: config.maxConcurrentJobs,
       allowWorkspaceWrite: config.allowWorkspaceWrite,
       allowDangerFullAccess: config.allowDangerFullAccess,

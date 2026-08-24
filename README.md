@@ -13,7 +13,8 @@ ChatGPT
   -> sticky backend router
        -> codex mcp-server (stable default)
        -> codex app-server (richer thread and process controls)
-  -> one saved starting folder inside operator-allowed roots
+  -> settings-managed named projects inside operator-allowed roots
+       -> one optional compatibility default for fresh work
 ```
 
 The bridge presents local Codex as durable, conversation-scoped Agents and user-goal Activities:
@@ -38,7 +39,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_agent`: rename, detach, archive, restore, or terminate one exact remaining App Server background process. It never deletes an Agent.
 - `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
-- `codex_settings`: render saved policy and preferences.
+- `codex_settings`: render saved named projects, policy, and preferences.
 
 `codex_update_settings` and `codex_activity_handoff` are app-only actions used by the cards.
 
@@ -46,10 +47,10 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 
 - Binds to `127.0.0.1`.
 - Uses `read-only` and `on-request` unless the operator enables broader capabilities.
-- Uses one saved default working folder. With one allowed root it defaults to that root; with multiple roots the user must select one in Settings.
+- Uses a settings-managed registry of stable project IDs, Unicode labels, and canonical folders. A single-root bridge starts with one migrated compatibility project; multiple projects may have an optional default.
 - Rejects per-call `cwd`. A stale caller receives `CWD_OVERRIDE_RETIRED` instead of being run in an unintended repository.
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
-- Validates the saved folder against real-path allowed roots and checks common secret filenames before new execution.
+- Validates every newly saved project folder against real-path allowed roots, rejects duplicate IDs/paths, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
 - Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, and bounded results in a private SQLite database.
 
@@ -118,7 +119,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - access strategy: `read-only`, `adaptive`, or operator-enabled `always-full`;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- the default working folder inside allowed roots;
+- named projects with stable normalized IDs, Unicode labels, canonical folders inside allowed roots, and an optional default project;
 - UI language;
 - active-job limit;
 - Activity-card visibility: `always` means one automatic card per GPT response,
@@ -136,7 +137,9 @@ The Activity card has one conversation-scoped flat-feed layout. Older saved
 layout preferences are safely discarded; there is no layout selector or active
 layout setting.
 
-The saved default folder is the only start path for a new Activity or explicit fresh Agent context. Existing Agent threads keep their admission-time folder and sandbox even after Settings changes. The folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
+The Projects section clearly separates bridge-allowed roots from registered projects. Adding or editing a project resolves its folder with `realpath`, requires it to remain inside an allowed root, and rejects duplicate normalized IDs or canonical paths. Saved project IDs are stable; labels and folders remain editable. A legacy `defaultCwd` is deterministically migrated to the `default` project. If a saved folder later disappears or falls outside a narrowed root policy, its metadata remains visible for recovery but cannot be admitted until it is fixed or removed.
+
+In this settings/UI phase, the optional default project (or sole project) remains mirrored to the legacy `defaultCwd` execution policy. It is therefore the start path for a new Activity or explicit fresh Agent context; public per-task `projectId` routing is not yet exposed. With multiple projects and no default, fresh work still requires a compatibility default. Existing Agent threads keep their admission-time folder and sandbox even after Settings changes. A project folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
 
 Access strategy and path policy are separate:
 

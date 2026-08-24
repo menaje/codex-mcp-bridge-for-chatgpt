@@ -28,11 +28,16 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   permanently deletes an Agent or rolls back files.
 - `codex_models` returns the target backend's validated selectable catalog,
   source, timestamp, and fingerprint.
-- `codex_settings` returns owner limits and renders the versioned model-policy card.
+- `codex_settings` returns bridge limits, the saved named-project registry, and a
+  path-free availability flag for each project, then renders the versioned
+  settings card. The availability summary adds neither a path nor a validation
+  reason beyond the saved registry fields already needed for configuration.
 - `codex_update_settings` is app-only, requires the current settings revision,
   and atomically persists a changed policy validated against a fresh target-backend
-  catalog; an unverified CLI fallback cannot activate policy changes. It cannot
-  widen the immutable operator selection ceiling.
+  catalog; an unverified CLI fallback cannot activate policy changes. Project
+  writes are independently resolved with `realpath`, checked against immutable
+  allowed roots, and rejected on normalized-ID or canonical-path collisions. It
+  cannot widen either the root policy or model-selection ceiling.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
@@ -49,9 +54,16 @@ the network as the current macOS user.
 
 - Loopback host binding.
 - Real-path allowlist for working directories.
-- One saved default starting folder for every new Activity/fresh context;
-  existing Agent threads keep their admission-time folder. A stale per-call cwd
-  fails explicitly instead of being ignored.
+- A settings-managed registry of stable project IDs, Unicode labels, and
+  canonical folders beneath allowed roots. The optional default (or sole
+  project) is the compatibility starting folder for every new Activity/fresh
+  context until public project-aware task routing is enabled; existing Agent
+  threads keep their admission-time folder. A stale per-call cwd fails
+  explicitly instead of being ignored.
+- Recovery-only project metadata is retained when a saved folder disappears or
+  no longer satisfies a narrowed root policy. It is marked unavailable in the
+  Settings view and cannot admit work; saving requires fixing or
+  removing every unavailable entry.
 - Read-only sandbox.
 - `on-request` approval policy.
 - Thirty concurrent jobs at most.
@@ -219,9 +231,10 @@ identity.
   Raw prompts and private reasoning are not Activity event or outbox fields.
   Archived job rows retain deduplication and terminal facts but replace their
   original payload/result with a minimal summary.
-- Persisted settings contain local paths and user defaults. They contain no
-  tunnel credential, prompt, or result, but every user of the same private
-  bridge connection shares them.
+- Persisted settings contain project IDs, labels, local paths, retained project
+  metadata needed for recovery, and user defaults. Availability is derived at
+  load time. They contain no tunnel credential, prompt, or result, but every
+  user of the same private bridge connection shares them.
 - No-auth loopback mode trusts other processes and users on the same Mac.
 - A compromised local user account can access the same files and processes.
 

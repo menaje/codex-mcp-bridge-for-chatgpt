@@ -14,6 +14,35 @@ import {
   UI_TRANSLATIONS
 } from "../src/uiI18n.js";
 
+const PROJECT_TRANSLATION_KEYS = [
+  "settings.projects",
+  "settings.projectsHint",
+  "settings.allowedRoots",
+  "settings.allowedRootsHint",
+  "settings.addProject",
+  "settings.noProjects",
+  "settings.projectId",
+  "settings.projectIdHint",
+  "settings.projectLabel",
+  "settings.projectCwd",
+  "settings.defaultProject",
+  "settings.defaultProjectHint",
+  "settings.defaultProjectNone",
+  "settings.projectAvailable",
+  "settings.projectUnavailable",
+  "settings.projectNew",
+  "settings.removeProject",
+  "settings.projectInvalidId",
+  "settings.projectInvalidLabel",
+  "settings.projectInvalidCwd",
+  "settings.projectDuplicateId",
+  "settings.projectDuplicatePath",
+  "settings.projectDefaultMissing",
+  "settings.projectUnavailableSave",
+  "settings.projectLimit",
+  "settings.projectError"
+] as const;
+
 describe("human-facing UI localization", () => {
   it("ships complete, shared bundles for every supported locale", () => {
     expect(SUPPORTED_UI_LOCALES).toEqual([
@@ -52,6 +81,9 @@ describe("human-facing UI localization", () => {
       expect(UI_TRANSLATIONS[locale]["settings.conflict"]).not.toBe(
         UI_TRANSLATIONS.en["settings.conflict"]
       );
+      for (const key of PROJECT_TRANSLATION_KEYS) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
       expect(UI_TRANSLATIONS[locale]["job.interrupted"]).not.toBe(UI_TRANSLATIONS.en["job.interrupted"]);
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).not.toBe(UI_TRANSLATIONS.en["waiting.orchestrator"]);
     }
@@ -137,6 +169,12 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).not.toContain("viewMode");
     expect(serialized).not.toContain("settings.cardView");
     expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
+    expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
+    expect(SETTINGS_CARD_HTML).toContain('id="project-list"');
+    expect(SETTINGS_CARD_HTML).toContain('id="add-project" type="button"');
+    expect(SETTINGS_CARD_HTML).toContain('id="default-project"');
+    expect(SETTINGS_CARD_HTML).toContain('id="allowed-root-list"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="default-cwd"');
     expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
@@ -163,6 +201,13 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
     expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
+    expect(SETTINGS_CARD_HTML).toContain("projects:projectSettings.projects");
+    expect(SETTINGS_CARD_HTML).toContain("defaultProjectId:projectSettings.defaultProjectId");
+    expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
+    expect(SETTINGS_CARD_HTML).toContain('id.readOnly=persisted');
+    expect(SETTINGS_CARD_HTML).toContain("PROJECT_DUPLICATE_ID");
+    expect(SETTINGS_CARD_HTML).toContain("PROJECT_DUPLICATE_PATH");
+    expect(SETTINGS_CARD_HTML).toContain("normalizedPathKey");
     expect(SETTINGS_CARD_HTML).not.toContain('document.createElement("details")');
     expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
     expect(SETTINGS_CARD_HTML).toContain('document.createElement("fieldset")');

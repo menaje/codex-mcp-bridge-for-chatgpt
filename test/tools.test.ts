@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -405,6 +405,8 @@ describe("bridge tools", () => {
       "openai/visibility": "private"
     });
     expect(byName.get("codex_update_settings")?.inputSchema.properties).toMatchObject({
+      projects: { type: "array" },
+      defaultProjectId: expect.any(Object),
       uiLocalePreference: {
         enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
       },
@@ -599,6 +601,12 @@ describe("bridge tools", () => {
     expect(contents.text).toContain('id="allowed-models"');
     expect(contents.text).toContain('id="effort-groups"');
     expect(contents.text).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(contents.text).toContain('id="project-list"');
+    expect(contents.text).toContain('id="add-project" type="button"');
+    expect(contents.text).toContain('id="default-project"');
+    expect(contents.text).not.toContain('id="default-cwd"');
+    expect(contents.text).toContain("projects:projectSettings.projects");
+    expect(contents.text).toContain("defaultProjectId:projectSettings.defaultProjectId");
     expect(contents.text).not.toContain('id="policy-service-tier"');
     expect(contents.text).toContain('all.dataset.action="all-efforts"');
     expect(contents.text).toContain('id="retry-models"');
@@ -689,6 +697,137 @@ describe("bridge tools", () => {
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true
+    });
+    await close();
+  });
+
+  it("validates and persists named projects through the app-only Settings mutation", async () => {
+    const root = temporaryRoot();
+    const web = path.join(root, "web");
+    const api = path.join(root, "api");
+    mkdirSync(web);
+    mkdirSync(api);
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const initial = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(initial.settings).toMatchObject({
+      projects: [{ id: "default", cwd: realpathSync(root) }],
+      defaultProjectId: "default"
+    });
+    expect(initial.capabilities.projectAvailability).toEqual([
+      { id: "default", available: true }
+    ]);
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        projects: [
+          { id: "Web APP", label: "웹 앱", cwd: web },
+          { id: "API", label: "API 서비스", cwd: api }
+        ],
+        defaultProjectId: "API"
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    const view = (saved as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(view.settings).toMatchObject({
+      revision: 1,
+      projects: [
+        { id: "web-app", label: "웹 앱", cwd: realpathSync(web) },
+        { id: "api", label: "API 서비스", cwd: realpathSync(api) }
+      ],
+      defaultProjectId: "api",
+      defaultCwd: realpathSync(api)
+    });
+    expect(view.capabilities.projectAvailability).toEqual([
+      { id: "web-app", available: true },
+      { id: "api", available: true }
+    ]);
+
+    const duplicateId = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        projects: [
+          { id: "same id", label: "One", cwd: web },
+          { id: "same_id", label: "Two", cwd: api }
+        ],
+        defaultProjectId: null
+      }
+    });
+    expect(duplicateId.isError).toBe(true);
+    expect(JSON.stringify(duplicateId)).toContain("PROJECT_DUPLICATE_ID");
+
+    const duplicatePath = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        projects: [
+          { id: "one", label: "One", cwd: web },
+          { id: "two", label: "Two", cwd: web }
+        ],
+        defaultProjectId: null
+      }
+    });
+    expect(duplicatePath.isError).toBe(true);
+    expect(JSON.stringify(duplicatePath)).toContain("PROJECT_DUPLICATE_PATH");
+
+    const missingDefault = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        projects: [{ id: "web", label: "Web", cwd: web }],
+        defaultProjectId: "missing"
+      }
+    });
+    expect(missingDefault.isError).toBe(true);
+    expect(JSON.stringify(missingDefault)).toContain("PROJECT_DEFAULT_NOT_FOUND");
+    await close();
+  });
+
+  it("exposes recovery availability without leaking validation reasons into capabilities", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const stateFile = path.join(temporaryRoot(), "settings.json");
+    const broadConfig = configFor(first, {
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const original = new UserSettingsStore(broadConfig, { stateFile });
+    original.update({
+      projects: [
+        { id: "active", label: "Active", cwd: first },
+        { id: "recovery", label: "Recovery", cwd: second }
+      ],
+      defaultProjectId: "active"
+    }, 0);
+    const narrowConfig = configFor(first);
+    const recovered = new UserSettingsStore(narrowConfig, { stateFile });
+    const { client, close } = await connectTestClient(
+      narrowConfig,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      recovered
+    );
+
+    const view = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(view.capabilities.projectAvailability).toEqual([
+      { id: "active", available: true },
+      { id: "recovery", available: false }
+    ]);
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
+    expect(view.settings.projects).toContainEqual({
+      id: "recovery",
+      label: "Recovery",
+      cwd: realpathSync(second)
     });
     await close();
   });
