@@ -5,12 +5,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
+import {
+  parseLauncherArgs,
+  resolveLauncherRoots,
+  serializeLauncherRoots
+} from "./launcher-options.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const args = parseArgs(process.argv.slice(2));
+const args = parseLauncherArgs(process.argv.slice(2));
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
-const root = resolve(args.root || process.cwd());
 const port = String(args.port || process.env.CODEX_MCP_BRIDGE_PORT || "8876");
 const host = "127.0.0.1";
 const localOriginUrl = `http://${host}:${port}`;
@@ -31,10 +35,11 @@ async function main() {
   if (mode !== "local" && mode !== "secure") {
     throw new Error(`Unknown mode: ${mode}. Use local or secure.`);
   }
+  const roots = resolveLauncherRoots(args.roots);
 
   ensurePrerequisites();
   ensureBuilt();
-  startBridge();
+  startBridge(roots);
   await waitForHealth(`${localOriginUrl}/healthz`);
 
   if (mode === "local") {
@@ -146,13 +151,13 @@ async function startSecureTunnel() {
   await waitForever();
 }
 
-function startBridge() {
+function startBridge(roots) {
   const env = {
     ...process.env,
     CODEX_MCP_BRIDGE_HOST: host,
     CODEX_MCP_BRIDGE_PORT: port,
     CODEX_MCP_BRIDGE_NO_AUTH: "1",
-    CODEX_MCP_BRIDGE_ROOTS: root,
+    CODEX_MCP_BRIDGE_ROOTS: serializeLauncherRoots(roots),
     CODEX_MCP_BRIDGE_ALLOWED_HOSTS: "127.0.0.1,localhost"
   };
   if (args.write) {
@@ -219,33 +224,14 @@ function isIgnorableNoAuthDoctorFailure(output) {
   return oauthOnly && reachable;
 }
 
-function parseArgs(rawArgs) {
-  const parsed = {};
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const arg = rawArgs[index];
-    if (arg === "--help" || arg === "-h") parsed.help = true;
-    else if (arg === "--no-build") parsed.noBuild = true;
-    else if (arg === "--write") parsed.write = true;
-    else if (arg === "--allow-full-access") parsed.allowFullAccess = true;
-    else if (arg === "--allow-write") parsed.allowWrite = true;
-    else if (arg === "--mode") parsed.mode = rawArgs[++index];
-    else if (arg === "--root") parsed.root = rawArgs[++index];
-    else if (arg === "--port") parsed.port = rawArgs[++index];
-    else if (arg === "--tunnel-id") parsed.tunnelId = rawArgs[++index];
-    else if (arg === "--profile") parsed.profile = rawArgs[++index];
-    else if (arg === "--tunnel-client") parsed.tunnelClient = rawArgs[++index];
-    else throw new Error(`Unknown argument: ${arg}`);
-  }
-  return parsed;
-}
-
 function printHelp() {
   console.log(`Usage:
   npm run bridge:local -- --root /absolute/repo
+  npm run bridge:local -- --root /absolute/repo-a --root /absolute/repo-b
   npm run bridge:secure -- --root /absolute/repo --tunnel-id tunnel_...
 
 Options:
-  --root <path>          Only allowed repository root. Defaults to cwd.
+  --root <path>          Allowed repository root. Repeat for multiple roots; defaults to cwd.
   --write                Enable workspace-write for this process.
   --allow-write          Keep read-only as the default, but allow explicit workspace-write calls.
   --allow-full-access    Keep read-only as the default, but allow workspace-write and danger-full-access calls.

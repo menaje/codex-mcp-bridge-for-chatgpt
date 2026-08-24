@@ -32,6 +32,20 @@ export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
 npm run bridge:secure -- --root /absolute/path/to/repository
 ```
 
+For multiple disjoint operator roots, repeat `--root`; do not combine local
+paths into one broad parent merely to launch the bridge:
+
+```bash
+npm run bridge:secure -- \
+  --root /absolute/path/to/repository-a \
+  --root /absolute/path/to/repository-b
+```
+
+The launcher canonicalizes existing directories and passes the exact
+de-duplicated allowlist to the bridge. Operator roots define only the security
+ceiling. Register the named selectable projects inside those roots in Settings;
+GPT receives project IDs, not these paths.
+
 The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
 
 ```bash
@@ -96,6 +110,8 @@ preferences are safely discarded and are not selectable in Settings.
 
 The **Projects** section lists bridge-allowed roots separately from registered projects. Each project has a stable normalized ID, a Unicode display label, and an absolute folder. New or edited folders are canonicalized with `realpath` and must remain inside an allowed root. The card reports normalized-ID and canonical-path collisions inline. Saved IDs are read-only in the card; edit the label or folder, or remove and add the entry only when a new identity is intended.
 
+The bundled launcher accepts disjoint operator roots as repeated `--root <path>` options. Those roots are a security ceiling, not selectable project entries, and the card cannot widen them or change tunnel credentials, operator capabilities, or the Codex approval policy.
+
 With one allowed root, existing single-folder settings migrate to a `default` project. With multiple projects, choose an optional default. A project whose folder disappears or is no longer inside a narrowed root remains visible as **Needs recovery**, but it cannot be saved or admitted until its folder is fixed or the entry is removed. The card cannot widen allowed roots/capabilities, change tunnel credentials, or change the Codex approval policy.
 
 The compatibility default project and access strategy are independent:
@@ -104,7 +120,7 @@ The compatibility default project and access strategy are independent:
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor must never contain `cwd`. During this settings/UI phase it also does not expose `projectId`: new Activities and `fresh` context use the optional default project (or sole project) through the compatibility `defaultCwd` mirror. Existing Agent threads keep their pinned admission-time folder and sandbox after Settings changes. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
+The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. A new Activity/fresh context uses an explicit `projectId`, the configured default, or the sole project. Existing Activities and continued/forked Agent threads keep their admission-time project and sandbox after Settings changes, and conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A stale caller that sends `cwd` receives `CWD_OVERRIDE_RETIRED`; a fixed-mode stale caller that sends `sandbox` receives `SANDBOX_OVERRIDE_RETIRED`.
 
 ### Dynamic model/effort behavior
 
@@ -119,7 +135,7 @@ If a saved effort is no longer supported, Settings warns instead of rewriting it
 Call `codex_status` and confirm:
 
 - the saved projects/default-project compatibility mirror, `accessStrategy`, card visibility, and language;
-- operator roots and mutation capability flags;
+- the operator-root count and mutation capability flags;
 - default backend and active build ID;
 - settings schema/model policy and catalog source/fingerprint/LKG status;
 - SQLite state is reachable.
@@ -127,6 +143,7 @@ Call `codex_status` and confirm:
 Inspect `tools/list`:
 
 - `codex_task` has no `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
+- `projectId` lists only currently selectable registered IDs and their labels;
 - fixed access modes have no `sandbox`;
 - `adaptive` exposes only permitted sandboxes;
 - Agent fields are `agentId`, `agentName`, `agentRole`, and `contextMode`;
@@ -142,6 +159,7 @@ Use these routes:
 {
   "activityTitle": "Implement the agreed design",
   "activityKind": "implementation",
+  "projectId": "bridge",
   "agentName": "Mina",
   "agentRole": "implementation",
   "contextMode": "fresh",

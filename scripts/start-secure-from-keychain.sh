@@ -23,4 +23,13 @@ if [[ -z "$NPM_BIN" ]]; then
 fi
 
 cd "$REPO_ROOT"
-exec "$NPM_BIN" run bridge:secure -- --root "$BRIDGE_ROOT" --no-build "$@"
+LAUNCHER_ROOT_ARGS=(--root "$BRIDGE_ROOT")
+for LAUNCHER_ARG in "$@"; do
+  if [[ "$LAUNCHER_ARG" == "--root" ]]; then
+    # Explicit repeatable roots replace the compatibility default instead of
+    # silently adding the repository root to the operator's allowlist.
+    LAUNCHER_ROOT_ARGS=()
+    break
+  fi
+done
+exec "$NPM_BIN" run bridge:secure -- "${LAUNCHER_ROOT_ARGS[@]}" --no-build "$@"

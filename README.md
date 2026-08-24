@@ -86,6 +86,19 @@ npm run bridge:local -- --root /absolute/path/to/repository
 ```
 
 The launcher uses `http://127.0.0.1:8876/mcp`; health is at `/healthz`.
+Repeat `--root` to admit multiple disjoint operator roots in one bridge process:
+
+```bash
+npm run bridge:local -- \
+  --root /absolute/path/to/repository-a \
+  --root /absolute/path/to/repository-b
+```
+
+Each launcher root must already exist and resolve to a directory. The launcher
+canonicalizes and de-duplicates them before startup. These roots are only the
+immutable operator security ceiling; Settings still controls which named
+projects inside that ceiling are selectable. A single `--root` and omission
+(which uses the current directory) retain their previous behavior.
 
 For a tunnel connection:
 
@@ -286,7 +299,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_TOKEN` | unset | Bearer token unless loopback no-auth is used |
 | `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Allowed only on loopback |
 | `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI command; App Server requires the manifest-pinned exact version |
-| `CODEX_MCP_BRIDGE_ROOTS` | current directory | Comma-separated absolute starting-root allowlist |
+| `CODEX_MCP_BRIDGE_ROOTS` | current directory | Direct-server comma-separated absolute starting-root allowlist; the bundled launcher uses repeatable `--root` |
 | `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | Adaptive omission/default sandbox |
 | `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial saved access strategy |
 | `CODEX_MCP_BRIDGE_ALLOW_WRITE` | unset | Enables workspace-write capability |
@@ -320,6 +333,11 @@ security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-api-
 security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-tunnel-id" -w "tunnel_..." -U
 
 CODEX_MCP_BRIDGE_ROOT=/absolute/path/to/repository npm run bridge:secure:keychain
+
+# Explicit --root arguments replace the compatibility root above and may repeat.
+npm run bridge:secure:keychain -- \
+  --root /absolute/path/to/repository-a \
+  --root /absolute/path/to/repository-b
 ```
 
 Historical attribution is in [UPSTREAM.md](UPSTREAM.md).

@@ -53,13 +53,17 @@ the network as the current macOS user.
 ## Enforced defaults
 
 - Loopback host binding.
-- Real-path allowlist for working directories.
+- Real-path allowlist for working directories. The bundled launcher accepts a
+  repeatable `--root <path>`, canonicalizes and de-duplicates each existing
+  directory, and fails before startup when an entry cannot be represented
+  exactly. These roots remain an operator ceiling, not GPT-selectable paths.
 - A settings-managed registry of stable project IDs, Unicode labels, and
-  canonical folders beneath allowed roots. The optional default (or sole
-  project) is the compatibility starting folder for every new Activity/fresh
-  context until public project-aware task routing is enabled; existing Agent
-  threads keep their admission-time folder. A stale per-call cwd fails
-  explicitly instead of being ignored.
+  canonical folders beneath allowed roots. `codex_task` accepts only projected
+  registered project IDs, resolves paths internally, and pins the admitted
+  identity to the Activity, job, session, and Agent thread. An optional default
+  (or sole project) handles omission; existing Activities and continued/forked
+  threads cannot silently switch projects. A stale per-call cwd fails explicitly
+  instead of being ignored.
 - Recovery-only project metadata is retained when a saved folder disappears or
   no longer satisfies a narrowed root policy. It is marked unavailable in the
   Settings view and cannot admit work; saving requires fixing or
