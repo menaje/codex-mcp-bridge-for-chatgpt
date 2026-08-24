@@ -863,17 +863,35 @@ class AppServerConnection {
     this.activeTurns.set(turnId, context);
     this.threadTurns.set(threadId, turnId);
     const identity = this.rpc.identity;
-    onAssigned?.({
-      backendKind: "app-server",
-      workerId: this.workerId,
-      workerGeneration: this.generation,
-      ...(identity ? { workerPid: identity.pid } : {}),
-      ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
-        ? { processGroupId: identity.processGroupId }
-        : {}),
-      upstreamRequestId: turnId,
-      threadId
-    });
+    try {
+      onAssigned?.({
+        backendKind: "app-server",
+        workerId: this.workerId,
+        workerGeneration: this.generation,
+        ...(identity ? { workerPid: identity.pid } : {}),
+        ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
+          ? { processGroupId: identity.processGroupId }
+          : {}),
+        upstreamRequestId: turnId,
+        threadId
+      });
+    } catch (error) {
+      this.activeTurns.delete(turnId);
+      if (this.threadTurns.get(threadId) === turnId) this.threadTurns.delete(threadId);
+      try {
+        await this.rpc.request(
+          "turn/interrupt",
+          { threadId, turnId },
+          {
+            timeoutMs: this.protocolOptions.interruptTimeoutMs,
+            lateResponseContext: { threadId, turnId }
+          }
+        );
+      } catch {
+        // Assignment persistence is the originating failure and must remain observable.
+      }
+      throw error;
+    }
     this.emit(context, {
       eventId: `turn:${turnId}`,
       type: "turn",

@@ -375,6 +375,47 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("interrupts and forgets a turn when assignment persistence fails", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const assignmentFailure = new Error("fixture assignment persistence failed");
+    let assignment: UpstreamWorkerAssignment | undefined;
+    try {
+      await expect(
+        pool.callTool(
+          "codex",
+          task("hold for assignment persistence failure"),
+          undefined,
+          (value) => {
+            assignment = value;
+            throw assignmentFailure;
+          }
+        )
+      ).rejects.toBe(assignmentFailure);
+
+      expect(assignment).toMatchObject({
+        threadId: "fake-thread-1",
+        upstreamRequestId: "fake-turn-1"
+      });
+      await expect(pool.steerThread(assignment!.threadId!, "should not steer")).rejects.toThrow(
+        "has no active turn to steer"
+      );
+      await expect(
+        pool.callTool("codex-reply", {
+          ...task("report interrupt count"),
+          threadId: assignment!.threadId
+        })
+      ).resolves.toMatchObject({
+        content: [{ type: "text", text: "INTERRUPTS:1" }],
+        structuredContent: {
+          threadId: assignment!.threadId,
+          turnStatus: "completed"
+        }
+      });
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
   it("round-trips command, file, input, and permission requests by exact request ID", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const interactions: CodexPendingInteraction[] = [];

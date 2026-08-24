@@ -16,6 +16,7 @@ const archivedThreads = new Set();
 const knownThreads = new Set();
 const loadedThreads = new Set();
 const backgroundTerminals = new Map();
+const interruptedTurnCounts = new Map();
 let initialized = false;
 let threadSequence = 0;
 let turnSequence = 0;
@@ -268,7 +269,10 @@ lines.on("line", (line) => {
   if (message.method === "turn/interrupt") {
     const context = activeTurns.get(message.params.turnId);
     response(message.id, {});
-    if (context) finishTurn(context, "interrupted", "INTERRUPTED");
+    if (context) {
+      interruptedTurnCounts.set(context.threadId, (interruptedTurnCounts.get(context.threadId) || 0) + 1);
+      finishTurn(context, "interrupted", "INTERRUPTED");
+    }
     return;
   }
 
@@ -372,6 +376,10 @@ function beginTurn(context) {
     }]);
   }
   if (prompt.includes("hold")) return;
+  if (prompt.includes("report interrupt count")) {
+    finishTurn(context, "completed", `INTERRUPTS:${interruptedTurnCounts.get(threadId) || 0}`);
+    return;
+  }
   if (prompt.includes("report selection")) {
     finishTurn(context, "completed", `SELECTION:${JSON.stringify(context.selection)}`);
     return;
