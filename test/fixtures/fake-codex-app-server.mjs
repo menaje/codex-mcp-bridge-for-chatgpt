@@ -15,6 +15,7 @@ const pendingServerRequests = new Map();
 const archivedThreads = new Set();
 const knownThreads = new Set();
 const loadedThreads = new Set();
+const systemErrorThreads = new Set();
 const backgroundTerminals = new Map();
 const interruptedTurnCounts = new Map();
 let initialized = false;
@@ -26,7 +27,7 @@ const sendBatch = (messages) => process.stdout.write(`${messages.map(JSON.string
 const response = (id, result) => send({ id, result });
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
-  pendingServerRequests.set(String(id), accept);
+  pendingServerRequests.set(String(id), { requestId: id, threadId: params.threadId, accept });
   send({ id, method, params });
 };
 
@@ -125,6 +126,29 @@ lines.on("line", (line) => {
     }
     loadedThreads.add(threadId);
     response(message.id, { thread: { id: threadId } });
+    return;
+  }
+  if (message.method === "thread/read") {
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    const active = [...activeTurns.values()].some((turn) => turn.threadId === threadId);
+    const status = systemErrorThreads.has(threadId)
+      ? { type: "systemError" }
+      : active
+        ? { type: "active", activeFlags: [] }
+        : loadedThreads.has(threadId)
+          ? { type: "idle" }
+          : { type: "notLoaded" };
+    response(message.id, {
+      thread: {
+        id: threadId,
+        status,
+        turns: []
+      }
+    });
     return;
   }
   if (message.method === "thread/fork") {
@@ -281,10 +305,14 @@ lines.on("line", (line) => {
   }
 
   if (message.id !== undefined && message.method === undefined) {
-    const accept = pendingServerRequests.get(String(message.id));
-    if (accept) {
+    const pending = pendingServerRequests.get(String(message.id));
+    if (pending) {
       pendingServerRequests.delete(String(message.id));
-      accept(message.result);
+      notification("serverRequest/resolved", {
+        threadId: pending.threadId,
+        requestId: pending.requestId
+      });
+      pending.accept(message.result);
     }
   }
 });
@@ -362,10 +390,111 @@ function beginTurn(context) {
         status: "completed"
       }
     });
+    notification("warning", {
+      threadId,
+      message: "Fixture warning"
+    });
+    notification("configWarning", {
+      summary: "Fixture config warning",
+      details: "Review the fixture configuration",
+      path: `${process.cwd()}/config.toml`
+    });
+    notification("model/rerouted", {
+      threadId,
+      turnId,
+      fromModel: "gpt-fixture-a",
+      toModel: "gpt-fixture-b",
+      reason: "highRiskCyberActivity"
+    });
+    notification("model/verification", {
+      threadId,
+      turnId,
+      verifications: ["trustedAccessForCyber"]
+    });
+    notification("model/safetyBuffering/updated", {
+      threadId,
+      turnId,
+      model: "gpt-fixture-b",
+      useCases: ["fixture"],
+      reasons: ["fixture safety"],
+      showBufferingUi: true,
+      fasterModel: "gpt-fixture-fast"
+    });
+    notification("thread/tokenUsage/updated", {
+      threadId,
+      turnId,
+      tokenUsage: {
+        total: {
+          totalTokens: 12,
+          inputTokens: 7,
+          cachedInputTokens: 2,
+          cacheWriteInputTokens: 0,
+          outputTokens: 5,
+          reasoningOutputTokens: 1
+        },
+        last: {
+          totalTokens: 4,
+          inputTokens: 2,
+          cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          outputTokens: 2,
+          reasoningOutputTokens: 1
+        },
+        modelContextWindow: 128000
+      }
+    });
+    notification("thread/compacted", { threadId, turnId });
+    notification("item/mcpToolCall/progress", {
+      threadId,
+      turnId,
+      itemId: "mcp-1",
+      message: "Fixture MCP progress"
+    });
+    notification("item/completed", {
+      threadId,
+      turnId,
+      item: {
+        type: "mcpToolCall",
+        id: "mcp-1",
+        server: "fixture-server",
+        tool: "fixture-tool",
+        status: "completed",
+        arguments: { prompt: "PRIVATE_MCP_ARGUMENT_MUST_NEVER_APPEAR" },
+        appContext: null,
+        pluginId: null,
+        result: { content: ["PRIVATE_MCP_RESULT_MUST_NEVER_APPEAR"], structuredContent: null, _meta: null },
+        error: null,
+        durationMs: 3
+      }
+    });
+    notification("item/completed", {
+      threadId,
+      turnId,
+      item: {
+        type: "collabAgentToolCall",
+        id: "collab-1",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: threadId,
+        receiverThreadIds: ["fixture-subagent-thread"],
+        prompt: "PRIVATE_COLLAB_PROMPT_MUST_NEVER_APPEAR",
+        model: "gpt-fixture-b",
+        reasoningEffort: "high",
+        agentsStates: {}
+      }
+    });
   }
 
   if (prompt.includes("interactions")) {
     requestCommand(context);
+    return;
+  }
+  if (prompt.includes("auto resolve input")) {
+    requestAutoResolvedInput(context);
+    return;
+  }
+  if (prompt.includes("expire input locally")) {
+    requestLocallyExpiredInput(context);
     return;
   }
   if (prompt.includes("leave background terminal")) {
@@ -401,8 +530,19 @@ function requestCommand(context) {
       itemId: "command-approval-1",
       startedAtMs: Date.now(),
       environmentId: null,
+      reason: "Fixture network approval",
+      networkApprovalContext: { host: "example.test", protocol: "https" },
       command: "echo approved",
-      cwd: process.cwd()
+      cwd: process.cwd(),
+      commandActions: [{
+        type: "read",
+        command: "cat fixture.txt",
+        name: "fixture.txt",
+        path: `${process.cwd()}/fixture.txt`
+      }],
+      proposedExecpolicyAmendment: ["echo", "approved"],
+      proposedNetworkPolicyAmendments: [{ host: "example.test", action: "allow" }],
+      availableDecisions: ["accept", "acceptForSession", "decline", "cancel"]
     },
     (result) => {
       if (result?.decision !== "accept") process.exit(72);
@@ -414,7 +554,8 @@ function requestCommand(context) {
           turnId: context.turnId,
           itemId: "file-approval-1",
           startedAtMs: Date.now(),
-          reason: "write fixture"
+          reason: "write fixture",
+          grantRoot: process.cwd()
         },
         (fileResult) => {
           if (fileResult?.decision !== "decline") process.exit(73);
@@ -469,14 +610,75 @@ function requestPermission(context) {
       permissions
     },
     (result) => {
-      if (result?.scope !== "turn" || result?.permissions?.network?.enabled !== true) process.exit(75);
+      if (result?.scope !== "session" || result?.permissions?.network?.enabled !== true) process.exit(75);
       finishTurn(context, "completed", "INTERACTIONS COMPLETE");
     }
   );
 }
 
+function requestAutoResolvedInput(context) {
+  const requestId = "request-auto-input-55";
+  serverRequest(
+    requestId,
+    "item/tool/requestUserInput",
+    {
+      threadId: context.threadId,
+      turnId: context.turnId,
+      itemId: "auto-input-1",
+      autoResolutionMs: 100,
+      questions: [{
+        id: "auto",
+        header: "Automatic",
+        question: "This request resolves automatically",
+        isOther: false,
+        isSecret: false,
+        options: []
+      }]
+    },
+    () => process.exit(76)
+  );
+  setTimeout(() => {
+    pendingServerRequests.delete(String(requestId));
+    notification("serverRequest/resolved", {
+      threadId: context.threadId,
+      requestId
+    });
+    finishTurn(context, "completed", "AUTO INPUT RESOLVED");
+  }, 25);
+}
+
+function requestLocallyExpiredInput(context) {
+  const requestId = "request-expiring-input-66";
+  serverRequest(
+    requestId,
+    "item/tool/requestUserInput",
+    {
+      threadId: context.threadId,
+      turnId: context.turnId,
+      itemId: "expiring-input-1",
+      autoResolutionMs: 20,
+      questions: [{
+        id: "expiring",
+        header: "Expiring",
+        question: "This request expires locally",
+        isOther: false,
+        isSecret: false,
+        options: []
+      }]
+    },
+    () => process.exit(77)
+  );
+  setTimeout(() => {
+    pendingServerRequests.delete(String(requestId));
+    finishTurn(context, "completed", "LOCAL INPUT EXPIRED");
+  }, 75);
+}
+
 function finishTurn(context, status, text) {
   if (!activeTurns.delete(context.turnId)) return;
+  if (context.prompt.includes("mark thread system error")) {
+    systemErrorThreads.add(context.threadId);
+  }
   notification("item/completed", {
     threadId: context.threadId,
     turnId: context.turnId,

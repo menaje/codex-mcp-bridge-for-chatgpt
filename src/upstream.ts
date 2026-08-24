@@ -25,6 +25,13 @@ export type CodexPublicEvent = {
     | "plan"
     | "command"
     | "file-change"
+    | "error"
+    | "warning"
+    | "model"
+    | "context"
+    | "mcp"
+    | "collaboration"
+    | "usage"
     | "approval-required"
     | "input-required"
     | "turn";
@@ -36,6 +43,12 @@ export type CodexPublicEvent = {
 
 export type CodexProgress = Progress & { event?: CodexPublicEvent };
 
+export type CodexInteractionDecision =
+  | "accept"
+  | "acceptForSession"
+  | "decline"
+  | "cancel";
+
 export type CodexPendingInteraction = {
   interactionId: string;
   kind: "command-approval" | "file-approval" | "permission-approval" | "user-input";
@@ -43,6 +56,33 @@ export type CodexPendingInteraction = {
   turnId: string;
   itemId: string;
   summary: string;
+  reason?: string;
+  cwdLabel?: string;
+  grantRootLabel?: string;
+  availableDecisions?: CodexInteractionDecision[];
+  autoResolutionMs?: number | null;
+  expiresAt?: number | null;
+  networkContext?: {
+    host: string;
+    protocol: "http" | "https" | "socks5Tcp" | "socks5Udp";
+  };
+  commandActions?: Array<{
+    type: "read" | "listFiles" | "search" | "unknown";
+    command: string;
+    name?: string;
+    pathLabel?: string;
+    query?: string;
+  }>;
+  proposedAmendments?: {
+    execPolicy?: string[];
+    networkPolicy?: Array<{ host: string; action: "allow" | "deny" }>;
+  };
+  requestedPermissions?: {
+    networkEnabled?: boolean | null;
+    filesystemRead?: string[];
+    filesystemWrite?: string[];
+    filesystemEntries?: number;
+  };
   questions?: Array<{
     id: string;
     header: string;
@@ -51,6 +91,31 @@ export type CodexPendingInteraction = {
     options?: Array<{ label: string; description: string }>;
   }>;
 };
+
+export type CodexThreadResumeProbe =
+  | {
+      state: "resumable";
+      runtimeStatus: "notLoaded" | "idle";
+      threadId: string;
+    }
+  | {
+      state: "busy";
+      runtimeStatus: "active";
+      threadId: string;
+      retryable: true;
+    }
+  | {
+      state: "orphaned";
+      reason: "missing" | "system-error";
+      threadId: string;
+      retryable: false;
+    }
+  | {
+      state: "unknown";
+      reason: "unsupported" | "transient";
+      threadId: string;
+      retryable: true;
+    };
 
 export type UpstreamWorkerAssignment = {
   backendKind: "mcp-server" | "app-server";
@@ -126,6 +191,10 @@ export type CodexUpstream = {
     backendKind?: CodexBackendKind
   ): Promise<{ terminated: boolean }>;
   canResumeThread?(threadId: string, backendKind?: CodexBackendKind): boolean | undefined;
+  probeThread?(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexThreadResumeProbe>;
   callTool(
     name: string,
     args: Record<string, unknown>,
@@ -138,7 +207,7 @@ export type CodexUpstream = {
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,
-    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void>;
   steerThread?(threadId: string, prompt: string): Promise<{ turnId: string }>;
   close(): Promise<void>;

@@ -687,6 +687,17 @@ export class BridgeStateStore {
     return Number((this.database.prepare(sql).get(...parameters) as CountRow).count);
   }
 
+  countAgentsByLifecycle(lifecycle: BridgeAgentLifecycle, scopeId?: string): number {
+    if (!isAgentLifecycle(lifecycle)) throw new Error("Invalid Agent lifecycle.");
+    let sql = "SELECT COUNT(*) AS count FROM agents WHERE lifecycle = ?";
+    const parameters: string[] = [lifecycle];
+    if (scopeId) {
+      sql += " AND scope_id = ?";
+      parameters.push(normalizeUuid(scopeId, "agent scopeId"));
+    }
+    return Number((this.database.prepare(sql).get(...parameters) as CountRow).count);
+  }
+
   listAgentThreads(agentId: string): BridgeAgentThread[] {
     return (this.database
       .prepare("SELECT * FROM agent_threads WHERE agent_id = ? ORDER BY linked_at ASC")

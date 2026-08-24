@@ -7,7 +7,9 @@ import type {
   CodexThreadStartRequest,
   CodexBackgroundTerminal,
   CodexPendingInteraction,
+  CodexInteractionDecision,
   CodexProgress,
+  CodexThreadResumeProbe,
   CodexUpstream,
   ToolResult,
   UpstreamWorkerAssignment
@@ -173,6 +175,26 @@ export class CodexBackendRouter implements CodexUpstream {
     return this.backend(kind).canResumeThread?.(threadId, kind);
   }
 
+  async probeThread(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexThreadResumeProbe> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (!kind) {
+      return { state: "unknown", reason: "transient", threadId, retryable: true };
+    }
+    const backend = this.backend(kind);
+    if (backend.probeThread) return backend.probeThread(threadId, kind);
+    const resumable = backend.canResumeThread?.(threadId, kind);
+    if (resumable === true) {
+      return { state: "resumable", runtimeStatus: "idle", threadId };
+    }
+    if (resumable === false) {
+      return { state: "orphaned", reason: "missing", threadId, retryable: false };
+    }
+    return { state: "unknown", reason: "transient", threadId, retryable: true };
+  }
+
   async callTool(
     name: string,
     args: Record<string, unknown>,
@@ -219,7 +241,7 @@ export class CodexBackendRouter implements CodexUpstream {
 
   async respondToInteraction(
     interactionId: string,
-    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void> {
     if (!this.appBackend.respondToInteraction) throw new Error("App Server interaction handling is unavailable.");
     await this.appBackend.respondToInteraction(interactionId, response);

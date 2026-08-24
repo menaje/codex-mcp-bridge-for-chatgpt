@@ -112,6 +112,23 @@ manifest. Main CI installs the exact manifest version and regenerates both
 schema formats before build/test, so ordinary unit tests remain offline and
 fixture-driven.
 
+### App Server canary and rollback gate
+
+Do not switch the default backend merely because schema and fixture tests pass.
+OpenAI documents App Server as experimental and unsupported for production
+workloads. An operator canary requires explicit risk acceptance, no active
+turns/approvals/input/background terminals at restart, the exact CLI/schema
+check above, a real restart continuation, and two real turns that use different
+allowed model/effort selections.
+
+During the canary, inspect `codex_status` for catalog freshness, aggregate
+worker health, retryable probe failures, and orphaned-Agent count. Exercise
+command, file, permission, and user-input resolution—including cancel,
+decline, session acceptance when advertised, automatic resolution, and expiry.
+Rollback by restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and
+restarting. The setting applies only to new threads; existing App Server
+threads stay pinned and are neither converted nor deleted.
+
 ### Legacy runtime namespace
 
 The following compatibility identifiers deliberately retain the bare

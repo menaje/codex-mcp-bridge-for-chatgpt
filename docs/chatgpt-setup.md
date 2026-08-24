@@ -205,7 +205,10 @@ For independent verification, create another named Agent with `fork` or `fresh`.
 
 Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. `codex_agent` provides idempotent `rename`, `detach`, `archive`, `restore`, and exact `terminate-background-process` actions. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. There is no GPT-facing permanent delete.
 
-If the backend cannot resume the current thread, the Agent becomes `orphaned`. Use explicit `fresh` to replace its current thread; the original stays in thread history.
+Before continuing, App Server threads are checked with `thread/read`. A missing
+or system-error thread makes the Agent `orphaned`; an active turn or temporary
+probe failure is retryable and leaves the Agent intact. Use explicit `fresh`
+only for a confirmed orphan; the original stays in thread history.
 
 ## 7. Activity card behavior
 
@@ -253,6 +256,16 @@ In a new ChatGPT conversation:
 12. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
 13. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
 14. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source; use `fresh` plus another project to verify an explicit linked-project switch.
+15. in an App Server canary, verify command/file/permission/input prompts expose
+    only their advertised decisions, including session approval when offered;
+    confirm cancel/decline, automatic resolution, and expiry all remove the
+    control without stopping the turn;
+16. restart between two App Server turns and confirm `thread/read` resumes the
+    exact thread; separately exercise busy, missing, and transient probe paths
+    and verify only missing/system-error becomes orphaned;
+17. inspect `codex_status` for the experimental policy, exact CLI, catalog
+    freshness, aggregate worker health, and orphaned count; verify no full path,
+    raw reasoning, MCP payload, or collaboration prompt appears.
 
 In an existing pre-refresh conversation:
 

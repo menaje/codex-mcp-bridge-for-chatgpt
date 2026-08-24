@@ -18,7 +18,9 @@ import { CodexJobRegistry } from "../src/tools.js";
 import { uiResourceRevisions } from "../src/uiResources.js";
 import type {
   CodexBackgroundTerminal,
+  CodexInteractionDecision,
   CodexProgress,
+  CodexThreadResumeProbe,
   CodexThreadForkRequest,
   CodexUpstream,
   ToolResult,
@@ -188,6 +190,20 @@ class ManagedDeferredUpstream extends DeferredUpstream {
   }
 }
 
+class InteractionUpstream extends DeferredUpstream {
+  public interactionResponses: Array<{
+    interactionId: string;
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> };
+  }> = [];
+
+  async respondToInteraction(
+    interactionId: string,
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+  ): Promise<void> {
+    this.interactionResponses.push({ interactionId, response });
+  }
+}
+
 class BackgroundTerminalUpstream extends FakeUpstream {
   public terminationCalls: Array<{ threadId: string; processId: string }> = [];
   private readonly terminals = new Map<string, CodexBackgroundTerminal[]>();
@@ -238,6 +254,18 @@ class RestartAwareUpstream extends FakeUpstream {
 
   canResumeThread(threadId: string): boolean {
     return !this.unavailableThreads.has(threadId);
+  }
+}
+
+class ProbeAwareUpstream extends FakeUpstream {
+  public probe: CodexThreadResumeProbe = {
+    state: "resumable",
+    runtimeStatus: "idle",
+    threadId: "thread-1"
+  };
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    return { ...this.probe, threadId } as CodexThreadResumeProbe;
   }
 }
 
@@ -926,6 +954,19 @@ describe("bridge tools", () => {
       },
       usePriorityServiceTier: false,
       codexExecutionDeadline: "none",
+      appServerPolicy: {
+        experimental: true,
+        upstreamProductionSupport: "unsupported",
+        rollout: "explicit-opt-in-canary",
+        supportedCodexCliVersion: "0.145.0",
+        resumeProbe: "thread/read"
+      },
+      modelCatalogStatus: {
+        available: true,
+        source: "codex-cli",
+        stale: false,
+        validation: "valid"
+      },
       upstreamPoolSize: 4,
       maxRetainedJobs: 100,
       maxJobResultBytes: 1048576,
@@ -2475,6 +2516,131 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("projects only allowed interaction decisions and clears server-resolved requests from Activity state", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for interactions",
+        agentName: "Interaction Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const approval = {
+      interactionId: "interaction-approval-1",
+      kind: "command-approval" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      summary: "Command approval required",
+      reason: "Network access",
+      cwdLabel: path.basename(root),
+      availableDecisions: ["acceptForSession", "decline", "cancel"] as CodexInteractionDecision[],
+      networkContext: { host: "example.test", protocol: "https" as const },
+      proposedAmendments: {
+        networkPolicy: [{ host: "example.test", action: "allow" as const }]
+      }
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: approval.summary,
+      event: {
+        eventId: "approval-waiting",
+        type: "approval-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: approval.summary,
+        details: { interaction: approval }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([approval]);
+
+    const unavailableDecision = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: started.activityId,
+        action: "respond-interaction",
+        jobId: started.jobId,
+        interactionId: approval.interactionId,
+        interactionDecision: "accept"
+      }
+    });
+    expect(unavailableDecision.isError).toBe(true);
+    expect(JSON.stringify(unavailableDecision)).toContain("decision is not available");
+    expect(upstream.interactionResponses).toEqual([]);
+
+    await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: started.activityId,
+        action: "respond-interaction",
+        jobId: started.jobId,
+        interactionId: approval.interactionId,
+        interactionDecision: "acceptForSession"
+      }
+    });
+    expect(upstream.interactionResponses).toEqual([
+      { interactionId: approval.interactionId, response: { decision: "acceptForSession" } }
+    ]);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    const input = {
+      interactionId: "interaction-input-2",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-2",
+      summary: "Codex requires user input",
+      autoResolutionMs: 100,
+      expiresAt: Date.now() + 100,
+      questions: [{
+        id: "choice",
+        header: "Choice",
+        question: "Choose",
+        isSecret: false
+      }]
+    };
+    upstream.progressNext({
+      progress: 3,
+      message: input.summary,
+      event: {
+        eventId: "input-waiting",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: input.summary,
+        details: { interaction: input }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([input]);
+    upstream.progressNext({
+      progress: 4,
+      message: "input resolved",
+      event: {
+        eventId: "input-resolved",
+        type: "input-required",
+        phase: "completed",
+        createdAt: Date.now(),
+        summary: "input resolved",
+        details: {
+          resolvedInteractionId: input.interactionId,
+          resolution: "server-resolved"
+        }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
   it("keeps foreground execution in the active call and returns Activity identifiers", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
@@ -3573,7 +3739,14 @@ describe("bridge tools", () => {
       })
     );
 
-    expect(firstPage.scopeCounts).toEqual({ sessions: 14, activities: 3, agents: 3, jobs: 3, runningJobs: 0 });
+    expect(firstPage.scopeCounts).toEqual({
+      sessions: 14,
+      activities: 3,
+      agents: 3,
+      orphanedAgents: 0,
+      jobs: 3,
+      runningJobs: 0
+    });
     expect(firstPage.sessions).toHaveLength(10);
     expect(firstPage.jobs).toHaveLength(2);
     expect(firstPage.pagination).toMatchObject({
@@ -4924,6 +5097,112 @@ describe("bridge tools", () => {
       .toMatchObject({ action: "start", reason: "activity-new", threadId: "thread-2" });
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex"]);
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-2" });
+    await close();
+  });
+
+  it("keeps busy and transient resume probes retryable while orphaning definitive thread failure", async () => {
+    const root = temporaryRoot();
+    const upstream = new ProbeAwareUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const started = await runTask(client, {
+      prompt: "seed probe Agent",
+      agentName: "Probe Agent",
+      contextMode: "fresh"
+    });
+    const agentId = (started as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId;
+
+    upstream.probe = {
+      state: "busy",
+      runtimeStatus: "active",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const busy = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "busy retry", agentId, contextMode: "continue" }
+    });
+    expect(busy).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "AGENT_THREAD_BUSY", retryable: true }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+
+    upstream.probe = {
+      state: "unknown",
+      reason: "transient",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const unavailable = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "probe retry", agentId, contextMode: "continue" }
+    });
+    expect(unavailable).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "THREAD_PROBE_UNAVAILABLE", retryable: true }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+
+    upstream.probe = {
+      state: "orphaned",
+      reason: "system-error",
+      threadId: "thread-1",
+      retryable: false
+    };
+    const corrupt = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "corrupt thread", agentId, contextMode: "continue" }
+    });
+    expect(corrupt).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "AGENT_ORPHANED",
+          retryable: false,
+          probe: { reason: "system-error" }
+        }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "orphaned" });
+    expect(upstream.calls).toHaveLength(1);
+    const orphanedStatus = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: {} })
+    );
+    expect(orphanedStatus.scopeCounts).toMatchObject({ agents: 1, orphanedAgents: 1 });
+
+    await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "73737373-7373-4373-8373-737373737373",
+        agentId,
+        action: "archive"
+      }
+    });
+    upstream.probe = {
+      state: "resumable",
+      runtimeStatus: "notLoaded",
+      threadId: "thread-1"
+    };
+    const restored = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "74747474-7474-4474-8474-747474747474",
+        agentId,
+        action: "restore"
+      }
+    });
+    expect(restored).toMatchObject({
+      structuredContent: {
+        ok: true,
+        agent: { lifecycle: "idle" }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
     await close();
   });
 

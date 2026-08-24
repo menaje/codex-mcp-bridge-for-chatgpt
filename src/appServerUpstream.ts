@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import {
   DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
@@ -9,6 +10,7 @@ import {
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
   JsonRpcProcess,
+  JsonRpcServerRequestResolved,
   MAX_JSON_RPC_TIMEOUT_MS,
   type JsonRpcLateResponse,
   type JsonRpcProcessIdentity,
@@ -21,9 +23,11 @@ import type {
   CodexThreadForkRequest,
   CodexThreadStartRequest,
   CodexBackgroundTerminal,
+  CodexInteractionDecision,
   CodexPendingInteraction,
   CodexProgress,
   CodexPublicEvent,
+  CodexThreadResumeProbe,
   CodexUpstream,
   ToolResult,
   UpstreamWorkerAssignment
@@ -93,10 +97,13 @@ type TurnContext = {
 };
 
 type PendingInteraction = CodexPendingInteraction & {
+  requestId: number | string;
   method: string;
   requestParams: Record<string, unknown>;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  answered: boolean;
+  autoResolutionTimer?: NodeJS.Timeout;
 };
 
 type AppWorker = {
@@ -111,6 +118,7 @@ type AppWorker = {
 export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly workers: AppWorker[];
   private readonly threadWorkers = new Map<string, number>();
+  private readonly threadResumeEvidence = new Map<string, boolean>();
   private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
   private readonly versionProbe: CodexCliVersionProbe;
   private compatibilityCheck?: Promise<string>;
@@ -136,6 +144,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async listTools(): Promise<unknown> {
+    const resumableEvidence = [...this.threadResumeEvidence.values()];
     return {
       tools: [
         { name: "codex", description: "Start a Codex App Server thread and turn." },
@@ -146,7 +155,19 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         { name: "turn/steer", description: "Steer an active Codex App Server turn." },
         { name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }
       ],
-      backendKind: "app-server"
+      backendKind: "app-server",
+      experimental: true,
+      workerHealth: {
+        configured: this.workers.length,
+        live: this.workers.filter((worker) => worker.connection && !worker.connection.exited).length,
+        starting: this.workers.filter((worker) => Boolean(worker.connecting)).length,
+        activeCalls: this.workers.reduce((total, worker) => total + worker.activeCalls, 0),
+        stickyThreads: this.threadWorkers.size
+      },
+      resumeEvidence: {
+        available: resumableEvidence.filter(Boolean).length,
+        unavailable: resumableEvidence.filter((value) => !value).length
+      }
     };
   }
 
@@ -199,12 +220,18 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         requestArguments(input.prompt, input.selection, {}),
         onProgress,
         (assignment) => {
-          if (assignment.threadId) this.threadWorkers.set(assignment.threadId, worker.index);
+          if (assignment.threadId) {
+            this.threadWorkers.set(assignment.threadId, worker.index);
+            this.threadResumeEvidence.set(assignment.threadId, true);
+          }
           onAssigned?.(assignment);
         }
       );
       const threadId = structuredString(result, "threadId");
-      if (threadId) this.threadWorkers.set(threadId, worker.index);
+      if (threadId) {
+        this.threadWorkers.set(threadId, worker.index);
+        this.threadResumeEvidence.set(threadId, true);
+      }
       return result;
     } finally {
       worker.activeCalls -= 1;
@@ -213,10 +240,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
 
   async archiveThread(threadId: string): Promise<void> {
     await this.withThreadWorker(threadId, (connection) => connection.archiveThread(threadId));
+    this.threadWorkers.delete(threadId);
+    this.threadResumeEvidence.set(threadId, false);
   }
 
   async restoreThread(threadId: string): Promise<void> {
     await this.withThreadWorker(threadId, (connection) => connection.restoreThread(threadId));
+    this.threadResumeEvidence.set(threadId, true);
   }
 
   async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
@@ -242,9 +272,35 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
   }
 
-  canResumeThread(_threadId: string): boolean {
-    // App Server can load persisted Codex threads from disk by exact id.
-    return true;
+  canResumeThread(threadId: string): boolean | undefined {
+    return this.threadResumeEvidence.get(threadId) ??
+      (this.threadWorkers.has(threadId) ? true : undefined);
+  }
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    const preferredIndex = this.threadWorkers.get(threadId);
+    const worker = preferredIndex === undefined ? this.leastBusyWorker() : this.workers[preferredIndex];
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const probe = await connection.probeThread(threadId);
+      if (probe.state === "resumable" || probe.state === "busy") {
+        this.threadWorkers.set(threadId, worker.index);
+        this.threadResumeEvidence.set(threadId, true);
+      } else if (probe.state === "orphaned") {
+        this.threadWorkers.delete(threadId);
+        this.threadResumeEvidence.set(threadId, false);
+      }
+      return probe;
+    } catch {
+      if (worker.connection?.exited) {
+        worker.connection = undefined;
+        this.forgetWorkerThreads(worker.index);
+      }
+      return { state: "unknown", reason: "transient", threadId, retryable: true };
+    } finally {
+      worker.activeCalls -= 1;
+    }
   }
 
   async callTool(
@@ -265,14 +321,20 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     try {
       const connection = await this.connectionFor(worker);
       const assigned = (assignment: UpstreamWorkerAssignment) => {
-        if (assignment.threadId) this.threadWorkers.set(assignment.threadId, worker.index);
+        if (assignment.threadId) {
+          this.threadWorkers.set(assignment.threadId, worker.index);
+          this.threadResumeEvidence.set(assignment.threadId, true);
+        }
         onAssigned?.(assignment);
       };
       const result = name === "codex"
         ? await connection.startThreadAndTurn(args, onProgress, assigned)
         : await connection.resumeThreadAndTurn(requestedThreadId as string, args, onProgress, assigned);
       const threadId = structuredString(result, "threadId");
-      if (threadId) this.threadWorkers.set(threadId, worker.index);
+      if (threadId) {
+        this.threadWorkers.set(threadId, worker.index);
+        this.threadResumeEvidence.set(threadId, true);
+      }
       return result;
     } catch (error) {
       if (worker.connection?.exited) {
@@ -303,7 +365,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
 
   async respondToInteraction(
     interactionId: string,
-    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void> {
     for (const worker of this.workers) {
       if (worker.connection?.respondToInteraction(interactionId, response)) return;
@@ -321,6 +383,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   async close(): Promise<void> {
     this.closing = true;
     this.threadWorkers.clear();
+    this.threadResumeEvidence.clear();
     const compatibilityCheck = this.compatibilityCheck;
     this.compatibilityAbort?.abort();
     if (compatibilityCheck) {
@@ -436,7 +499,10 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private onWorkerLateResponse(worker: AppWorker, response: CodexAppServerLateResponse): void {
     if (worker.generation === response.workerGeneration && lateResponseSucceeded(response)) {
       const threadId = lateResponseThreadId(response);
-      if (threadId) this.threadWorkers.set(threadId, worker.index);
+      if (threadId) {
+        this.threadWorkers.set(threadId, worker.index);
+        this.threadResumeEvidence.set(threadId, true);
+      }
     }
     this.protocolOptions.onLateResponse?.(response);
   }
@@ -666,6 +732,42 @@ class AppServerConnection {
     return { terminated: response.terminated };
   }
 
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    try {
+      const response = await this.rpc.request<Record<string, unknown>>(
+        "thread/read",
+        { threadId, includeTurns: false },
+        {
+          timeoutMs: this.protocolOptions.requestTimeoutMs,
+          lateResponseContext: { threadId }
+        }
+      );
+      const thread = isRecord(response.thread) ? response.thread : undefined;
+      if (!thread || thread.id !== threadId || !isRecord(thread.status)) {
+        return { state: "unknown", reason: "unsupported", threadId, retryable: true };
+      }
+      const runtimeStatus = thread.status.type;
+      if (runtimeStatus === "notLoaded" || runtimeStatus === "idle") {
+        return { state: "resumable", runtimeStatus, threadId };
+      }
+      if (runtimeStatus === "active") {
+        return { state: "busy", runtimeStatus, threadId, retryable: true };
+      }
+      if (runtimeStatus === "systemError") {
+        return { state: "orphaned", reason: "system-error", threadId, retryable: false };
+      }
+      return { state: "unknown", reason: "unsupported", threadId, retryable: true };
+    } catch (error) {
+      if (isMissingThreadError(error)) {
+        return { state: "orphaned", reason: "missing", threadId, retryable: false };
+      }
+      if (isUnsupportedThreadReadError(error)) {
+        return { state: "unknown", reason: "unsupported", threadId, retryable: true };
+      }
+      return { state: "unknown", reason: "transient", threadId, retryable: true };
+    }
+  }
+
   private async ensureThreadLoaded(threadId: string): Promise<void> {
     if (this.loadedThreads.has(threadId)) return;
     await this.rpc.request(
@@ -717,13 +819,15 @@ class AppServerConnection {
 
   respondToInteraction(
     interactionId: string,
-    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): boolean {
     const pending = this.pendingInteractions.get(interactionId);
     if (!pending) return false;
+    if (pending.answered) throw new Error("This Codex interaction response was already submitted.");
     if (pending.kind === "user-input") {
       if (!response.answers) throw new Error("User-input interaction requires answers.");
-      this.pendingInteractions.delete(interactionId);
+      pending.answered = true;
+      if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
       pending.resolve({
         answers: Object.fromEntries(
           Object.entries(response.answers).map(([key, answers]) => [key, { answers }])
@@ -731,14 +835,24 @@ class AppServerConnection {
       });
     } else {
       if (!response.decision) throw new Error("Approval interaction requires a decision.");
-      this.pendingInteractions.delete(interactionId);
+      if (
+        pending.availableDecisions &&
+        !pending.availableDecisions.includes(response.decision)
+      ) {
+        throw new Error("The selected decision is not available for this Codex approval request.");
+      }
+      pending.answered = true;
+      if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
       if (pending.kind === "permission-approval") {
         const requested = isRecord(pending.requestParams.permissions)
           ? pending.requestParams.permissions
           : {};
         pending.resolve({
-          permissions: response.decision === "accept" ? grantedPermissions(requested) : {},
-          scope: "turn"
+          permissions:
+            response.decision === "accept" || response.decision === "acceptForSession"
+              ? grantedPermissions(requested)
+              : {},
+          scope: response.decision === "acceptForSession" ? "session" : "turn"
         });
       } else {
         pending.resolve({ decision: response.decision || "decline" });
@@ -794,6 +908,7 @@ class AppServerConnection {
 
   async close(): Promise<void> {
     for (const pending of this.pendingInteractions.values()) {
+      if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
       pending.reject(new Error("Codex App Server closed before the interaction was answered."));
     }
     this.pendingInteractions.clear();
@@ -906,10 +1021,30 @@ class AppServerConnection {
   }
 
   private onNotification(method: string, params: unknown): void {
-    if (REASONING_NOTIFICATIONS.includes(method) || !isRecord(params)) return;
-    const turnId = optionalString(params.turnId) || (isRecord(params.turn) ? optionalString(params.turn.id) : undefined);
+    if (!isRecord(params)) return;
+    if (method === "serverRequest/resolved") {
+      this.resolvePendingServerRequest(params, "server-resolved");
+      return;
+    }
+    if (REASONING_NOTIFICATIONS.includes(method)) return;
+    const threadId = optionalString(params.threadId);
+    const turnId = optionalString(params.turnId) ||
+      (isRecord(params.turn) ? optionalString(params.turn.id) : undefined) ||
+      (threadId ? this.threadTurns.get(threadId) : undefined);
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
+    const protocolEvent = publicNotificationEvent(method, params);
+    if (!context && protocolEvent && isGlobalProtocolNotice(method)) {
+      for (const active of this.activeTurns.values()) {
+        const globalEvent = publicNotificationEvent(method, params);
+        if (globalEvent) this.emit(active, globalEvent);
+      }
+      return;
+    }
     if (!context) return;
+    if (protocolEvent) {
+      this.emit(context, protocolEvent);
+      return;
+    }
     if (method === "turn/completed") {
       this.completeTurn(context, params);
       return;
@@ -960,6 +1095,37 @@ class AppServerConnection {
     }
   }
 
+  private resolvePendingServerRequest(
+    params: Record<string, unknown>,
+    resolution: "server-resolved" | "expired"
+  ): void {
+    const requestId = params.requestId;
+    const threadId = optionalString(params.threadId);
+    if ((typeof requestId !== "string" && typeof requestId !== "number") || !threadId) return;
+    const match = [...this.pendingInteractions.entries()].find(([, pending]) =>
+      String(pending.requestId) === String(requestId) && pending.threadId === threadId
+    );
+    if (!match) return;
+    const [interactionId, pending] = match;
+    this.pendingInteractions.delete(interactionId);
+    if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
+    if (!pending.answered) pending.reject(new JsonRpcServerRequestResolved());
+    const context = this.activeTurns.get(pending.turnId);
+    if (!context) return;
+    const summary = resolution === "expired"
+      ? `${pending.kind} expired before a response was submitted.`
+      : `${pending.kind} was resolved by the App Server.`;
+    this.emit(
+      context,
+      event(
+        pending.kind === "user-input" ? "input-required" : "approval-required",
+        "completed",
+        summary,
+        { resolvedInteractionId: interactionId, resolution }
+      )
+    );
+  }
+
   private onServerRequest(method: string, params: unknown, requestId: number | string): Promise<unknown> {
     if (!isRecord(params)) throw new Error(`Invalid App Server request payload for ${method}.`);
     const kind = method === "item/commandExecution/requestApproval"
@@ -993,12 +1159,32 @@ class AppServerConnection {
         }))
       : undefined;
     const summary = kind === "command-approval"
-      ? `Command approval required: ${(optionalString(params.command) || "command").slice(0, 500)}`
+      ? `Command approval required: ${(optionalString(params.command) || "command").slice(0, 500)}${
+          optionalString(params.reason) ? ` — ${optionalString(params.reason)!.slice(0, 300)}` : ""
+        }`
       : kind === "file-approval"
-        ? "File-change approval required."
+        ? `File-change approval required.${
+            optionalString(params.reason) ? ` ${optionalString(params.reason)!.slice(0, 300)}` : ""
+          }`
         : kind === "permission-approval"
           ? `Additional permission approval required: ${(optionalString(params.reason) || "Codex requested additional access.").slice(0, 500)}`
           : "Codex requires user input.";
+    const reason = optionalString(params.reason)?.slice(0, 500);
+    const cwdLabel = safePathLabel(params.cwd);
+    const grantRootLabel = safePathLabel(params.grantRoot);
+    const availableDecisions = interactionDecisions(kind, params);
+    const autoResolutionMs = readAutoResolutionMs(params.autoResolutionMs);
+    const expiresAt = typeof autoResolutionMs === "number"
+      ? Date.now() + autoResolutionMs
+      : autoResolutionMs === null
+        ? null
+        : undefined;
+    const networkContext = readNetworkContext(params.networkApprovalContext);
+    const commandActions = readCommandActions(params.commandActions);
+    const proposedAmendments = readProposedAmendments(params);
+    const requestedPermissions = readRequestedPermissions(
+      kind === "command-approval" ? params.additionalPermissions : params.permissions
+    );
     const interaction: CodexPendingInteraction = {
       interactionId,
       kind,
@@ -1006,26 +1192,59 @@ class AppServerConnection {
       turnId,
       itemId,
       summary,
+      ...(reason ? { reason } : {}),
+      ...(cwdLabel ? { cwdLabel } : {}),
+      ...(grantRootLabel ? { grantRootLabel } : {}),
+      ...(availableDecisions ? { availableDecisions } : {}),
+      ...(autoResolutionMs !== undefined ? { autoResolutionMs } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      ...(networkContext ? { networkContext } : {}),
+      ...(commandActions ? { commandActions } : {}),
+      ...(proposedAmendments ? { proposedAmendments } : {}),
+      ...(requestedPermissions ? { requestedPermissions } : {}),
       ...(questions ? { questions } : {})
     };
-    this.emit(
-      context,
-      event(
-        kind === "user-input" ? "input-required" : "approval-required",
-        "waiting",
-        summary,
-        { interaction }
-      )
-    );
-    return new Promise((resolve, reject) => {
-      this.pendingInteractions.set(interactionId, {
-        ...interaction,
-        method,
-        requestParams: params,
-        resolve,
-        reject
-      });
+    let resolveInteraction!: (result: unknown) => void;
+    let rejectInteraction!: (error: Error) => void;
+    const responsePromise = new Promise<unknown>((resolve, reject) => {
+      resolveInteraction = resolve;
+      rejectInteraction = reject;
     });
+    const pending: PendingInteraction = {
+      ...interaction,
+      requestId,
+      method,
+      requestParams: params,
+      resolve: resolveInteraction,
+      reject: rejectInteraction,
+      answered: false
+    };
+    if (typeof autoResolutionMs === "number") {
+      pending.autoResolutionTimer = setTimeout(() => {
+        this.resolvePendingServerRequest(
+          { requestId, threadId },
+          "expired"
+        );
+      }, autoResolutionMs);
+      pending.autoResolutionTimer.unref?.();
+    }
+    this.pendingInteractions.set(interactionId, pending);
+    try {
+      this.emit(
+        context,
+        event(
+          kind === "user-input" ? "input-required" : "approval-required",
+          "waiting",
+          summary,
+          { interaction }
+        )
+      );
+    } catch (error) {
+      this.pendingInteractions.delete(interactionId);
+      if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
+      rejectInteraction(error instanceof Error ? error : new Error(String(error)));
+    }
+    return responsePromise;
   }
 
   private completeTurn(context: TurnContext, params: Record<string, unknown>): void {
@@ -1043,6 +1262,7 @@ class AppServerConnection {
     if (this.terminalTurns.size > 200) this.terminalTurns.delete(this.terminalTurns.values().next().value as string);
     for (const [interactionId, interaction] of this.pendingInteractions) {
       if (interaction.turnId !== context.turnId) continue;
+      if (interaction.autoResolutionTimer) clearTimeout(interaction.autoResolutionTimer);
       interaction.reject(new Error("Codex turn ended before the pending interaction was answered."));
       this.pendingInteractions.delete(interactionId);
     }
@@ -1067,7 +1287,10 @@ class AppServerConnection {
   }
 
   private onProcessExit(error: Error): void {
-    for (const interaction of this.pendingInteractions.values()) interaction.reject(error);
+    for (const interaction of this.pendingInteractions.values()) {
+      if (interaction.autoResolutionTimer) clearTimeout(interaction.autoResolutionTimer);
+      interaction.reject(error);
+    }
     this.pendingInteractions.clear();
     for (const context of this.activeTurns.values()) context.reject(error);
     this.activeTurns.clear();
@@ -1182,6 +1405,126 @@ function requestArguments(
   };
 }
 
+function publicNotificationEvent(
+  method: string,
+  params: Record<string, unknown>
+): CodexPublicEvent | undefined {
+  if (method === "error") {
+    const error = isRecord(params.error) ? params.error : undefined;
+    const message = optionalString(error?.message)?.slice(0, 1_000) || "Codex reported a turn error.";
+    return event("error", "updated", message, {
+      willRetry: params.willRetry === true,
+      hasAdditionalDetails: Boolean(optionalString(error?.additionalDetails))
+    });
+  }
+  if (method === "warning" || method === "guardianWarning") {
+    return event(
+      "warning",
+      "updated",
+      (optionalString(params.message) || "Codex reported a warning.").slice(0, 1_000),
+      { source: method }
+    );
+  }
+  if (method === "configWarning" || method === "deprecationNotice") {
+    const summary = (optionalString(params.summary) || "Codex reported a configuration notice.").slice(0, 1_000);
+    return event("warning", "updated", summary, {
+      source: method,
+      details: optionalString(params.details)?.slice(0, 1_000) || null,
+      ...(method === "configWarning" && params.path ? { pathLabel: safePathLabel(params.path) || null } : {})
+    });
+  }
+  if (method === "model/rerouted") {
+    const fromModel = optionalString(params.fromModel)?.slice(0, 120) || "unknown";
+    const toModel = optionalString(params.toModel)?.slice(0, 120) || "unknown";
+    const reason = optionalString(params.reason)?.slice(0, 200) || "unspecified";
+    return event("model", "updated", `Model rerouted from ${fromModel} to ${toModel}.`, {
+      kind: "rerouted",
+      fromModel,
+      toModel,
+      reason
+    });
+  }
+  if (method === "model/verification") {
+    const verifications = Array.isArray(params.verifications)
+      ? params.verifications
+          .filter((entry): entry is string => typeof entry === "string")
+          .slice(0, 20)
+          .map((entry) => entry.slice(0, 200))
+      : [];
+    return event("model", "updated", "Model verification state changed.", {
+      kind: "verification",
+      verifications
+    });
+  }
+  if (method === "model/safetyBuffering/updated") {
+    const model = optionalString(params.model)?.slice(0, 120) || "unknown";
+    return event("model", "updated", `Safety buffering state changed for ${model}.`, {
+      kind: "safety-buffering",
+      model,
+      showBufferingUi: params.showBufferingUi === true,
+      fasterModel: optionalString(params.fasterModel)?.slice(0, 120) || null,
+      useCases: boundedStringArray(params.useCases, 20, 200),
+      reasons: boundedStringArray(params.reasons, 20, 300)
+    });
+  }
+  if (method === "thread/compacted") {
+    return event("context", "completed", "Codex compacted the thread context.", {
+      kind: "compaction"
+    });
+  }
+  if (method === "item/mcpToolCall/progress") {
+    return event(
+      "mcp",
+      "updated",
+      "MCP tool call progressed.",
+      { itemId: optionalString(params.itemId)?.slice(0, 200) || null }
+    );
+  }
+  if (method === "thread/tokenUsage/updated") {
+    const usage = isRecord(params.tokenUsage) ? params.tokenUsage : {};
+    return event("usage", "updated", "Codex token usage updated.", {
+      total: readTokenUsageBreakdown(usage.total),
+      last: readTokenUsageBreakdown(usage.last),
+      modelContextWindow:
+        typeof usage.modelContextWindow === "number" && Number.isFinite(usage.modelContextWindow)
+          ? Math.max(0, Math.trunc(usage.modelContextWindow))
+          : null
+    });
+  }
+  return undefined;
+}
+
+function isGlobalProtocolNotice(method: string): boolean {
+  return method === "warning" || method === "configWarning" || method === "deprecationNotice";
+}
+
+function boundedStringArray(value: unknown, maxItems: number, maxChars: number): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, maxItems)
+        .map((entry) => entry.slice(0, maxChars))
+    : [];
+}
+
+function readTokenUsageBreakdown(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null;
+  const keys = [
+    "totalTokens",
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "outputTokens",
+    "reasoningOutputTokens"
+  ];
+  const entries = keys.flatMap((key) =>
+    typeof value[key] === "number" && Number.isFinite(value[key])
+      ? [[key, Math.max(0, Math.trunc(value[key]))] as const]
+      : []
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
 function publicItemEvent(
   item: Record<string, unknown>,
   phase: "started" | "completed",
@@ -1218,6 +1561,50 @@ function publicItemEvent(
         }))
       : [];
     return event("file-change", phase, `File changes ${phase} (${changes.length}).`, { itemId, changes });
+  }
+  if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
+    const server = item.type === "mcpToolCall"
+      ? optionalString(item.server)?.slice(0, 120) || "MCP"
+      : optionalString(item.namespace)?.slice(0, 120) || "dynamic";
+    const tool = optionalString(item.tool)?.slice(0, 160) || "tool";
+    const errorMessage = isRecord(item.error)
+      ? optionalString(item.error.message)?.slice(0, 1_000) || null
+      : null;
+    return event("mcp", phase, `${server}.${tool} ${phase}.`, {
+      itemId,
+      server,
+      tool,
+      status: optionalString(item.status)?.slice(0, 80) || null,
+      durationMs: typeof item.durationMs === "number" ? item.durationMs : null,
+      error: errorMessage
+    });
+  }
+  if (item.type === "collabAgentToolCall") {
+    const tool = optionalString(item.tool)?.slice(0, 80) || "collaboration";
+    const receivers = Array.isArray(item.receiverThreadIds)
+      ? item.receiverThreadIds
+          .filter((entry): entry is string => typeof entry === "string")
+          .slice(0, 30)
+          .map((entry) => entry.slice(0, 200))
+      : [];
+    return event("collaboration", phase, `Collaboration ${tool} ${phase}.`, {
+      itemId,
+      tool,
+      status: optionalString(item.status)?.slice(0, 80) || null,
+      receiverThreadIds: receivers,
+      model: optionalString(item.model)?.slice(0, 120) || null,
+      reasoningEffort: optionalString(item.reasoningEffort)?.slice(0, 80) || null
+    });
+  }
+  if (item.type === "subAgentActivity") {
+    return event("collaboration", phase, `Sub-agent activity ${phase}.`, {
+      itemId,
+      kind: optionalString(item.kind)?.slice(0, 120) || "unknown",
+      agentThreadId: optionalString(item.agentThreadId)?.slice(0, 200) || null
+    });
+  }
+  if (item.type === "contextCompaction") {
+    return event("context", phase, `Context compaction ${phase}.`, { itemId });
   }
   return undefined;
 }
@@ -1280,6 +1667,154 @@ function safeLateIdentifier(value: unknown): string | undefined {
   const normalized = value.trim();
   if (!normalized || normalized.length > 200 || /[\u0000-\u001f\u007f]/.test(normalized)) return undefined;
   return normalized;
+}
+
+function interactionDecisions(
+  kind: CodexPendingInteraction["kind"],
+  params: Record<string, unknown>
+): CodexInteractionDecision[] | undefined {
+  if (kind === "user-input") return undefined;
+  if (kind === "command-approval" && Array.isArray(params.availableDecisions)) {
+    return [...new Set(params.availableDecisions.filter(isInteractionDecision))];
+  }
+  return ["accept", "acceptForSession", "decline", "cancel"];
+}
+
+function isInteractionDecision(value: unknown): value is CodexInteractionDecision {
+  return value === "accept" ||
+    value === "acceptForSession" ||
+    value === "decline" ||
+    value === "cancel";
+}
+
+function readAutoResolutionMs(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= MAX_JSON_RPC_TIMEOUT_MS
+    ? value
+    : undefined;
+}
+
+function safePathLabel(value: unknown): string | undefined {
+  const raw = optionalString(value);
+  if (!raw) return undefined;
+  const label = path.basename(raw).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return (label || path.parse(raw).root || "filesystem root").slice(0, 200);
+}
+
+function readNetworkContext(
+  value: unknown
+): CodexPendingInteraction["networkContext"] | undefined {
+  if (!isRecord(value)) return undefined;
+  const host = optionalString(value.host)?.slice(0, 253);
+  const protocol = value.protocol;
+  if (
+    !host ||
+    (protocol !== "http" &&
+      protocol !== "https" &&
+      protocol !== "socks5Tcp" &&
+      protocol !== "socks5Udp")
+  ) {
+    return undefined;
+  }
+  return { host, protocol };
+}
+
+function readCommandActions(
+  value: unknown
+): CodexPendingInteraction["commandActions"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const actions = value.filter(isRecord).slice(0, 20).flatMap((action) => {
+    const type = action.type;
+    if (type !== "read" && type !== "listFiles" && type !== "search" && type !== "unknown") {
+      return [];
+    }
+    const command = optionalString(action.command)?.slice(0, 500);
+    if (!command) return [];
+    const pathLabel = safePathLabel(action.path);
+    const name = optionalString(action.name)?.slice(0, 120);
+    const query = optionalString(action.query)?.slice(0, 300);
+    return [{
+      type,
+      command,
+      ...(name ? { name } : {}),
+      ...(pathLabel ? { pathLabel } : {}),
+      ...(query ? { query } : {})
+    }];
+  });
+  return actions.length > 0 ? actions : undefined;
+}
+
+function readProposedAmendments(
+  params: Record<string, unknown>
+): CodexPendingInteraction["proposedAmendments"] | undefined {
+  const execPolicy = Array.isArray(params.proposedExecpolicyAmendment)
+    ? params.proposedExecpolicyAmendment
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 30)
+        .map((entry) => entry.slice(0, 300))
+    : undefined;
+  const networkPolicy = Array.isArray(params.proposedNetworkPolicyAmendments)
+    ? params.proposedNetworkPolicyAmendments.filter(isRecord).slice(0, 20).flatMap((entry) => {
+        const host = optionalString(entry.host)?.slice(0, 253);
+        const action = entry.action;
+        return host && (action === "allow" || action === "deny") ? [{ host, action }] : [];
+      })
+    : undefined;
+  return execPolicy?.length || networkPolicy?.length
+    ? {
+        ...(execPolicy?.length ? { execPolicy } : {}),
+        ...(networkPolicy?.length ? { networkPolicy } : {})
+      }
+    : undefined;
+}
+
+function readRequestedPermissions(
+  value: unknown
+): CodexPendingInteraction["requestedPermissions"] | undefined {
+  if (!isRecord(value)) return undefined;
+  const network = isRecord(value.network) ? value.network : undefined;
+  const fileSystem = isRecord(value.fileSystem) ? value.fileSystem : undefined;
+  const filesystemRead = Array.isArray(fileSystem?.read)
+    ? fileSystem.read.map(safePathLabel).filter((entry): entry is string => Boolean(entry)).slice(0, 50)
+    : undefined;
+  const filesystemWrite = Array.isArray(fileSystem?.write)
+    ? fileSystem.write.map(safePathLabel).filter((entry): entry is string => Boolean(entry)).slice(0, 50)
+    : undefined;
+  const networkEnabled = network?.enabled;
+  const filesystemEntries = Array.isArray(fileSystem?.entries)
+    ? Math.min(fileSystem.entries.length, 1_000)
+    : undefined;
+  if (
+    networkEnabled !== true &&
+    networkEnabled !== false &&
+    networkEnabled !== null &&
+    filesystemRead === undefined &&
+    filesystemWrite === undefined &&
+    filesystemEntries === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(networkEnabled === true || networkEnabled === false || networkEnabled === null
+      ? { networkEnabled }
+      : {}),
+    ...(filesystemRead !== undefined ? { filesystemRead } : {}),
+    ...(filesystemWrite !== undefined ? { filesystemWrite } : {}),
+    ...(filesystemEntries !== undefined ? { filesystemEntries } : {})
+  };
+}
+
+function isMissingThreadError(error: unknown): boolean {
+  if (!isRecord(error) || error.code !== -32000) return false;
+  const message = typeof error.message === "string" ? error.message : "";
+  return /\bthread\b.*\b(?:not found|missing|archived)\b/i.test(message);
+}
+
+function isUnsupportedThreadReadError(error: unknown): boolean {
+  return isRecord(error) && error.code === -32601;
 }
 
 function rawString(value: unknown): string | undefined {

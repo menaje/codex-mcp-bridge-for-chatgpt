@@ -217,6 +217,22 @@ identity.
   identifier-free aggregate counters. Late archive/unarchive success never
   changes logical Agent state; the journal records it as a conflict for explicit
   upstream recovery.
+- App Server continuation admission uses `thread/read`, not an optimistic local
+  boolean. Missing and `systemError` are permanent orphan evidence; `active`
+  and transport/timeout failures are retryable and do not mutate Agent
+  continuity state. Restoring an archived orphaned Agent clears that state only
+  after a new exact probe proves the thread is resumable.
+- Server-initiated approval and input requests are correlated by exact worker
+  generation and JSON-RPC request ID. `serverRequest/resolved` dismisses a
+  request without sending a duplicate response; `autoResolutionMs` has a local
+  expiry guard. Only protocol-advertised decisions are accepted, including
+  `acceptForSession` when available. Persisted/UI context uses bounded labels,
+  counts, hosts, and protocols; raw permission paths remain only in the
+  transient upstream request needed to form the response.
+- Public App Server telemetry classifies errors, warnings/config notices, model
+  reroutes/verifications/safety buffering, context compaction, MCP calls,
+  collaboration, and token usage. It excludes raw reasoning, MCP arguments and
+  results, collaboration prompts, and full local paths.
 - Logical Agent archive/restore never invokes App Server thread archive/unarchive.
   This keeps bridge lifecycle management from cascading through an upstream fork
   graph and affecting another logical Agent.

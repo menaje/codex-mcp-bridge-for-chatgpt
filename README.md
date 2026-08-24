@@ -183,6 +183,38 @@ The saved `modelPolicy` is either:
 
 Runtime admission always rechecks the operator ceiling, saved policy, current backend catalog, and backend capability. Model aliases are not accepted.
 
+## Experimental App Server rollout
+
+The default backend remains `mcp-server`. OpenAI currently documents local
+`codex app-server` as experimental and unsupported for production workloads,
+so `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=app-server` is an explicit operator
+canary choice, not a production-readiness claim. A default switch requires
+recorded risk acceptance outside this repository.
+
+Before an App Server canary, drain active turns, approval/user-input prompts,
+and background terminals; install the exact manifest-pinned CLI; run
+`npm run app-server:compat:check`; and verify a restart continuation plus two
+turns with different allowed model/effort selections. `codex_status` exposes
+the experimental policy, pinned CLI version, cached catalog freshness,
+aggregate worker health, and orphaned-Agent count without publishing local
+paths or raw protocol payloads.
+
+The backend setting affects only newly created threads. Existing MCP and App
+Server threads remain pinned to their original backend. Rollback therefore
+means restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and restarting;
+it does not convert or discard already created App Server threads.
+
+Before an App Server continuation, the bridge probes exact persisted state with
+`thread/read`. `notLoaded` and `idle` are resumable, `active` returns retryable
+`AGENT_THREAD_BUSY`, and a transient probe failure returns retryable
+`THREAD_PROBE_UNAVAILABLE` without changing Agent state. Only a missing thread
+or `systemError` marks the Agent `orphaned`. Approval/input requests retain a
+bounded path-safe view of reason, working-folder label, network context,
+permission scope, amendments, and available decisions. The bridge consumes
+`serverRequest/resolved` and applies an `autoResolutionMs` expiry guard so stale
+controls do not remain in Activity state; session approval appears only when it
+is an available decision.
+
 ## Agent, Activity, and context routing
 
 In ChatGPT, omit `scopeId`; the bridge derives an opaque UUID from anonymous host conversation metadata. Compatibility MCP hosts without that metadata must generate and reuse an explicit UUID. Scope IDs are routing labels, not authentication credentials.
@@ -209,7 +241,7 @@ Recommended mappings:
 
 One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an Activity has multiple Agent candidates, the bridge requires an exact `agentId` instead of guessing. The bridge never invents public identity metadata: GPT supplies a person-like display name such as `Mina`, while `agentRole` can say `implementation` or `review`. Missing creation fields are reported together through `AGENT_NAME_REQUIRED`, `AGENT_METADATA_REQUIRED`, or `ACTIVITY_METADATA_REQUIRED`, so GPT can retry once with a complete envelope and a new `requestId`. Existing Agent/Activity follow-ups reuse stored metadata. Agent names are Unicode-normalized and case-insensitively unique within a scope.
 
-`continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If a persisted backend thread is no longer resumable, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable.
+`continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
 When a turn becomes terminal, its Agent returns to `idle`, releases the active Activity assignment, and remains reusable. `codex_agent` provides idempotent scope-local actions:
 
@@ -269,7 +301,7 @@ SQLite schema v5 stores conversation scopes, first-class project admission ident
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 
-App Server threads can be resumed by exact ID. MCP Server thread context is worker-generation-local and can become unavailable after restart. The bridge never silently substitutes a new thread.
+App Server threads are checked by exact ID with `thread/read` before resume. MCP Server thread context is worker-generation-local and can become unavailable after restart. The bridge never silently substitutes a new thread.
 
 ## Development and releases
 

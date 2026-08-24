@@ -83,6 +83,17 @@ export type JsonRpcServerRequestHandler = (
 
 export type JsonRpcNotificationHandler = (method: string, params: unknown) => void;
 
+/**
+ * Signals that the peer already resolved an inbound server request through a
+ * separate protocol path. No duplicate JSON-RPC response must be written.
+ */
+export class JsonRpcServerRequestResolved extends Error {
+  constructor() {
+    super("The peer already resolved this server request.");
+    this.name = "JsonRpcServerRequestResolved";
+  }
+}
+
 export type JsonRpcProcessOptions = {
   command: string;
   args: string[];
@@ -414,6 +425,7 @@ export class JsonRpcProcess {
       const result = await this.options.onRequest(request.method, request.params, request.id);
       this.write({ jsonrpc: "2.0", id: request.id, result: result ?? {} });
     } catch (error) {
+      if (error instanceof JsonRpcServerRequestResolved) return;
       const code = isRecord(error) && typeof error.code === "number" ? error.code : -32603;
       this.write({
         jsonrpc: "2.0",

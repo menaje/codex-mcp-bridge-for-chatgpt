@@ -6,8 +6,8 @@
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "790154778c0d51a6ecdaec114800a031173a20d25838a11f031e380ce5a9bb66",
-      "uri": "ui://codex-mcp-bridge/settings/790154778c0d.html",
+      "digest": "704961afedea9e257e940ab8410b003980a379135285f3866946b195b6e12d38",
+      "uri": "ui://codex-mcp-bridge/settings/704961afedea.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -34,8 +34,8 @@
       },
       "previous": [
         {
-          "digest": "2aa6fb9e45a1df66ffe256a403bbd90f8677b03fbf700bf5855466d1f72e5950",
-          "uri": "ui://codex-mcp-bridge/settings/2aa6fb9e45a1.html",
+          "digest": "790154778c0d51a6ecdaec114800a031173a20d25838a11f031e380ce5a9bb66",
+          "uri": "ui://codex-mcp-bridge/settings/790154778c0d.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -51,7 +51,7 @@
                 },
                 "domain": "https://web-sandbox.oaiusercontent.com"
               },
-              "openai/widgetDescription": "Configure saved access, model/effort policy, independent Priority processing, working-directory, interface-language, concurrency, and per-response Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and per-response Activity-card visibility for Codex MCP Bridge for ChatGPT.",
               "openai/widgetPrefersBorder": true,
               "openai/widgetCSP": {
                 "connect_domains": [],
@@ -64,8 +64,8 @@
       ]
     },
     "activity": {
-      "digest": "9df1e6f82a4d29e4a16d49a7f054272286e008c91ccf9fddac2a4cdf36539c5d",
-      "uri": "ui://codex-mcp-bridge/activity/9df1e6f82a4d.html",
+      "digest": "be3a57e8d37c6b4bc76a279d35a5ccbd0ee2a1f0094ac7ad5735e0f06e2b6a58",
+      "uri": "ui://codex-mcp-bridge/activity/be3a57e8d37c.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -92,8 +92,8 @@
       },
       "previous": [
         {
-          "digest": "c52ad0349aaf64e774a0cd843cdde1151acb9c7db4c1712235c3c2c5f435a9e3",
-          "uri": "ui://codex-mcp-bridge/activity/c52ad0349aaf.html",
+          "digest": "9df1e6f82a4d29e4a16d49a7f054272286e008c91ccf9fddac2a4cdf36539c5d",
+          "uri": "ui://codex-mcp-bridge/activity/9df1e6f82a4d.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",

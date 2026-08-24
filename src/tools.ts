@@ -27,6 +27,7 @@ import {
 } from "./agent.js";
 import type { BridgeConfig, CodexBackendKind, SandboxMode } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { SUPPORTED_CODEX_CLI_VERSION } from "./appServerCompatibility.js";
 import {
   enforceSandbox,
   findSensitiveFiles,
@@ -84,8 +85,10 @@ import {
 } from "./projectRegistry.js";
 import type {
   CodexPendingInteraction,
+  CodexInteractionDecision,
   CodexProgress,
   CodexPublicEvent,
+  CodexThreadResumeProbe,
   CodexUpstream,
   ToolResult,
   UpstreamWorkerAssignment
@@ -832,8 +835,12 @@ export class CodexJobRegistry {
     return this.activityStore.listAgents(scopeId, includeArchived, limit, offset);
   }
 
-  agentCount(scopeId: string, includeArchived = false): number {
+  agentCount(scopeId?: string, includeArchived = false): number {
     return this.activityStore.countAgents(scopeId, includeArchived);
+  }
+
+  orphanedAgentCount(scopeId?: string): number {
+    return this.activityStore.countAgentsByLifecycle("orphaned", scopeId);
   }
 
   listAgentThreads(agentId: string): BridgeAgentThread[] {
@@ -1356,7 +1363,7 @@ export class CodexJobRegistry {
   async respondToInteraction(
     jobId: string,
     interactionId: string,
-    response: { decision?: "accept" | "decline" | "cancel"; answers?: Record<string, string[]> }
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || !isActiveActivityJobStatus(job.status)) {
@@ -1369,6 +1376,13 @@ export class CodexJobRegistry {
     }
     if (interaction.kind !== "user-input" && !response.decision) {
       throw new Error("This Codex approval interaction requires a decision.");
+    }
+    if (
+      response.decision &&
+      interaction.availableDecisions &&
+      !interaction.availableDecisions.includes(response.decision)
+    ) {
+      throw new Error("The selected decision is not available for this Codex approval request.");
     }
     if (!this.upstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
     await this.upstream.respondToInteraction(interactionId, response);
@@ -1458,6 +1472,14 @@ export class CodexJobRegistry {
     );
     if (publicEvent) {
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
+      const resolvedInteractionId = typeof publicEvent.details?.resolvedInteractionId === "string"
+        ? publicEvent.details.resolvedInteractionId
+        : undefined;
+      if (resolvedInteractionId) {
+        job.pendingInteractions = job.pendingInteractions.filter(
+          (entry) => entry.interactionId !== resolvedInteractionId
+        );
+      }
       const interaction = readPendingInteraction(publicEvent.details?.interaction);
       if (interaction) {
         job.pendingInteractions = [
@@ -2298,7 +2320,19 @@ export function registerBridgeTools(
         : scopeId
           ? jobs.activityCount(scopeId)
           : 0;
-      const scopedAgentCount = scopeId ? jobs.agentCount(scopeId, true) : 0;
+      const scopedAgentCount = args.includeAllScopes
+        ? jobs.agentCount(undefined, true)
+        : scopeId
+          ? jobs.agentCount(scopeId, true)
+          : 0;
+      const scopedOrphanedAgentCount = args.includeAllScopes
+        ? jobs.orphanedAgentCount()
+        : scopeId
+          ? jobs.orphanedAgentCount(scopeId)
+          : 0;
+      const cachedCatalog = modelCatalog.getCachedCatalog?.({
+        backendKind: config.defaultBackend
+      });
       const persistencePaths = [sessions.persistencePath, jobs.persistencePath, userSettings.persistencePath];
       const sharedPersistencePath =
         persistencePaths[0] && persistencePaths.every((entry) => entry === persistencePaths[0])
@@ -2338,6 +2372,32 @@ export function registerBridgeTools(
         activityCardVisibility: preferences.activityCardVisibility,
         completionHandoff: preferences.completionHandoff,
         defaultBackend: config.defaultBackend,
+        appServerPolicy: {
+          experimental: true,
+          upstreamProductionSupport: "unsupported",
+          rollout: "explicit-opt-in-canary",
+          riskAcceptanceRequiredForDefaultSwitch: true,
+          transport: "local-stdio",
+          supportedCodexCliVersion: SUPPORTED_CODEX_CLI_VERSION,
+          resumeProbe: "thread/read",
+          interactionResolution: "serverRequest/resolved-with-local-expiry-guard"
+        },
+        modelCatalogStatus: cachedCatalog
+          ? {
+              available: true,
+              backendKind: config.defaultBackend,
+              source: cachedCatalog.source,
+              fetchedAt: cachedCatalog.fetchedAt,
+              validatedAt: cachedCatalog.validatedAt,
+              fingerprint: cachedCatalog.fingerprint,
+              stale: cachedCatalog.stale,
+              validation: cachedCatalog.validation,
+              modelCount: cachedCatalog.models.length
+            }
+          : {
+              available: false,
+              backendKind: config.defaultBackend
+            },
         upstreamPoolSize: config.upstreamPoolSize,
         maxConcurrentJobs: preferences.maxConcurrentJobs,
         maxConcurrentJobsHardLimit: config.maxConcurrentJobs,
@@ -2406,7 +2466,8 @@ export function registerBridgeTools(
           jobs: scopedJobCount,
           runningJobs: scopedRunningCount,
           activities: scopedActivityCount,
-          agents: scopedAgentCount
+          agents: scopedAgentCount,
+          orphanedAgents: scopedOrphanedAgentCount
         },
         pagination: {
           sessions: pageSummary("sessions", sessionOffset, sessionLimit, visibleSessions.length, scopedSessionCount),
@@ -2809,19 +2870,28 @@ export function registerBridgeTools(
       }
       let updated: BridgeAgent = agent;
       let detached: ActivityAgentAssignment | undefined;
+      let restoreThreadResumable = false;
+      if (args.action === "restore" && agent.lifecycle === "archived" && currentThread) {
+        const session = sessions.get(currentThread.threadId);
+        if (
+          session?.scopeId === scope.scopeId &&
+          session.backendKind === currentThread.backendKind
+        ) {
+          if (upstream.probeThread) {
+            const probe = await upstream.probeThread(currentThread.threadId, session.backendKind);
+            restoreThreadResumable = probe.state === "resumable" || probe.state === "busy";
+          } else {
+            restoreThreadResumable =
+              upstream.canResumeThread?.(currentThread.threadId, session.backendKind) !== false;
+          }
+        }
+      }
       const result = jobs.activityTransaction(() => {
         if (args.action === "archive") updated = jobs.archiveAgent(agent.agentId);
         if (args.action === "restore") {
           updated = jobs.restoreAgent(agent.agentId);
-          if (updated.lifecycle === "orphaned" && currentThread) {
-            const session = sessions.get(currentThread.threadId);
-            const resumable =
-              session?.scopeId === scope.scopeId &&
-              session.backendKind === currentThread.backendKind &&
-              upstream.canResumeThread?.(currentThread.threadId, session.backendKind) !== false;
-            if (resumable) {
-              updated = jobs.setAgentExecutionState(agent.agentId, "idle");
-            }
+          if (updated.lifecycle === "orphaned" && restoreThreadResumable) {
+            updated = jobs.setAgentExecutionState(agent.agentId, "idle");
           }
         }
         if (args.action === "rename") updated = jobs.renameAgent(agent.agentId, args.agentName as string);
@@ -2962,7 +3032,7 @@ export function registerBridgeTools(
         jobId: z.string().trim().min(1).max(200).optional(),
         expectedJobVersion: z.number().int().min(1).optional(),
         interactionId: z.string().trim().min(1).max(200).optional(),
-        interactionDecision: z.enum(["accept", "decline", "cancel"]).optional(),
+        interactionDecision: z.enum(["accept", "acceptForSession", "decline", "cancel"]).optional(),
         interactionAnswers: z
           .record(z.string().trim().min(1).max(200), z.array(z.string().max(4_000)).max(20))
           .optional()
@@ -3531,7 +3601,7 @@ export function registerBridgeTools(
         if (!agentResolution.agent) {
           throw new Error("AGENT_CONTEXT_UNAVAILABLE: A new Agent has no thread to continue or fork. Use contextMode='fresh'.");
         }
-        const session = requireAgentSession(
+        const session = await requireAgentSession(
           agentResolution,
           sessions,
           jobs,
@@ -3592,6 +3662,9 @@ export function registerBridgeTools(
         }
         if (error instanceof TaskCreationMetadataError) {
           return taskCreationMetadataErrorResult(error);
+        }
+        if (error instanceof AgentThreadResumeError) {
+          return agentThreadResumeErrorResult(error);
         }
         if (error instanceof ModelPolicyError) return modelPolicyErrorResult(error);
         throw error;
@@ -3659,6 +3732,27 @@ class ActivityPresentationContractError extends Error {
       "and reuse both requestId and activityPresentationId for an exact logical-call retry."
     );
     this.name = "ActivityPresentationContractError";
+  }
+}
+
+type AgentThreadResumeErrorCode =
+  | "AGENT_ORPHANED"
+  | "AGENT_THREAD_BUSY"
+  | "THREAD_PROBE_UNAVAILABLE";
+
+class AgentThreadResumeError extends Error {
+  constructor(
+    readonly code: AgentThreadResumeErrorCode,
+    readonly retryable: boolean,
+    readonly probe: CodexThreadResumeProbe
+  ) {
+    const message = code === "AGENT_ORPHANED"
+      ? "The backend reports that this Agent thread is missing or in a system-error state. Use contextMode='fresh' for an explicit replacement."
+      : code === "AGENT_THREAD_BUSY"
+        ? "The Agent thread already has an active App Server turn. Wait for that turn to finish, then retry."
+        : "The bridge could not verify the Agent thread because the App Server probe was unavailable. Retry without replacing the Agent thread."
+    super(`${code}: ${message}`);
+    this.name = "AgentThreadResumeError";
   }
 }
 
@@ -3977,13 +4071,13 @@ function requireTaskCreationMetadata(
   throw new TaskCreationMetadataError(code, subject, missing, required);
 }
 
-function requireAgentSession(
+async function requireAgentSession(
   resolution: AgentTaskResolution,
   sessions: SessionRegistry,
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
   scopeId: string
-): TrackedCodexSession {
+): Promise<TrackedCodexSession> {
   if (!resolution.agent) throw new Error("Agent resolution is missing an existing thread owner.");
   const threadId = resolution.agent.currentThreadId as string;
   const session = sessions.get(threadId);
@@ -3995,12 +4089,26 @@ function requireAgentSession(
       "AGENT_ORPHANED: The Agent current thread session is unavailable. Use contextMode='fresh' for an explicit replacement."
     );
   }
-  if (upstream.canResumeThread?.(threadId, session.backendKind) === false) {
+  const probe = upstream.probeThread
+    ? await upstream.probeThread(threadId, session.backendKind)
+    : undefined;
+  if (probe?.state === "busy") {
+    throw new AgentThreadResumeError("AGENT_THREAD_BUSY", true, probe);
+  }
+  if (probe?.state === "unknown") {
+    throw new AgentThreadResumeError("THREAD_PROBE_UNAVAILABLE", true, probe);
+  }
+  if (
+    probe?.state === "orphaned" ||
+    (!probe && upstream.canResumeThread?.(threadId, session.backendKind) === false)
+  ) {
     jobs.setAgentExecutionState(resolution.agent.agentId, "orphaned", {
       orphanedReason: "The backend reports that the Agent current thread can no longer be resumed."
     });
-    throw new Error(
-      "AGENT_ORPHANED: The backend cannot resume this Agent thread. Use contextMode='fresh' for an explicit replacement."
+    throw new AgentThreadResumeError(
+      "AGENT_ORPHANED",
+      false,
+      probe || { state: "orphaned", reason: "missing", threadId, retryable: false }
     );
   }
   return session;
@@ -4039,7 +4147,7 @@ type ActivityUpdateArguments = {
   jobId?: string;
   expectedJobVersion?: number;
   interactionId?: string;
-  interactionDecision?: "accept" | "decline" | "cancel";
+  interactionDecision?: CodexInteractionDecision;
   interactionAnswers?: Record<string, string[]>;
   steeringPrompt?: string;
 };
@@ -6495,6 +6603,13 @@ function sanitizePublicEvent(value: unknown): CodexPublicEvent | undefined {
     "plan",
     "command",
     "file-change",
+    "error",
+    "warning",
+    "model",
+    "context",
+    "mcp",
+    "collaboration",
+    "usage",
     "approval-required",
     "input-required",
     "turn"
@@ -6586,6 +6701,118 @@ function readPendingInteraction(value: unknown): CodexPendingInteraction | undef
           }];
         })
     : undefined;
+  const availableDecisions = Array.isArray(value.availableDecisions)
+    ? [...new Set(value.availableDecisions.filter(isCodexInteractionDecision))].slice(0, 4)
+    : undefined;
+  const autoResolutionMs = value.autoResolutionMs === null
+    ? null
+    : typeof value.autoResolutionMs === "number" &&
+        Number.isSafeInteger(value.autoResolutionMs) &&
+        value.autoResolutionMs >= 0
+      ? value.autoResolutionMs
+      : undefined;
+  const expiresAt = value.expiresAt === null
+    ? null
+    : typeof value.expiresAt === "number" && Number.isSafeInteger(value.expiresAt)
+      ? value.expiresAt
+      : undefined;
+  const networkProtocol = isRecord(value.networkContext)
+    ? value.networkContext.protocol
+    : undefined;
+  const networkContext: CodexPendingInteraction["networkContext"] = isRecord(value.networkContext) &&
+    typeof value.networkContext.host === "string" &&
+    (networkProtocol === "http" ||
+      networkProtocol === "https" ||
+      networkProtocol === "socks5Tcp" ||
+      networkProtocol === "socks5Udp")
+    ? {
+        host: redactSensitiveText(value.networkContext.host).slice(0, 253),
+        protocol: networkProtocol
+      }
+    : undefined;
+  const commandActions: CodexPendingInteraction["commandActions"] = Array.isArray(value.commandActions)
+    ? value.commandActions.filter(isRecord).slice(0, 20).flatMap((action) => {
+        const actionType = action.type;
+        if (
+          actionType !== "read" &&
+          actionType !== "listFiles" &&
+          actionType !== "search" &&
+          actionType !== "unknown"
+        ) return [];
+        if (typeof action.command !== "string") return [];
+        return [{
+          type: actionType,
+          command: redactSensitiveText(action.command).slice(0, 500),
+          ...(typeof action.name === "string"
+            ? { name: redactSensitiveText(action.name).slice(0, 120) }
+            : {}),
+          ...(typeof action.pathLabel === "string"
+            ? { pathLabel: redactSensitiveText(action.pathLabel).slice(0, 200) }
+            : {}),
+          ...(typeof action.query === "string"
+            ? { query: redactSensitiveText(action.query).slice(0, 300) }
+            : {})
+        }];
+      })
+    : undefined;
+  const rawAmendments = isRecord(value.proposedAmendments) ? value.proposedAmendments : undefined;
+  const execPolicy = Array.isArray(rawAmendments?.execPolicy)
+    ? rawAmendments.execPolicy
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 30)
+        .map((entry) => redactSensitiveText(entry).slice(0, 300))
+    : undefined;
+  const networkPolicy: NonNullable<CodexPendingInteraction["proposedAmendments"]>["networkPolicy"] =
+    Array.isArray(rawAmendments?.networkPolicy)
+    ? rawAmendments.networkPolicy.filter(isRecord).slice(0, 20).flatMap((entry) => {
+        const action = entry.action;
+        return typeof entry.host === "string" && (action === "allow" || action === "deny")
+          ? [{ host: redactSensitiveText(entry.host).slice(0, 253), action }]
+          : [];
+      })
+    : undefined;
+  const proposedAmendments = execPolicy?.length || networkPolicy?.length
+    ? {
+        ...(execPolicy?.length ? { execPolicy } : {}),
+        ...(networkPolicy?.length ? { networkPolicy } : {})
+      }
+    : undefined;
+  const rawPermissions = isRecord(value.requestedPermissions) ? value.requestedPermissions : undefined;
+  const filesystemRead = Array.isArray(rawPermissions?.filesystemRead)
+    ? rawPermissions.filesystemRead
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 50)
+        .map((entry) => redactSensitiveText(entry).slice(0, 200))
+    : undefined;
+  const filesystemWrite = Array.isArray(rawPermissions?.filesystemWrite)
+    ? rawPermissions.filesystemWrite
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 50)
+        .map((entry) => redactSensitiveText(entry).slice(0, 200))
+    : undefined;
+  const requestedPermissions = rawPermissions && (
+    rawPermissions.networkEnabled === true ||
+    rawPermissions.networkEnabled === false ||
+    rawPermissions.networkEnabled === null ||
+    filesystemRead !== undefined ||
+    filesystemWrite !== undefined ||
+    typeof rawPermissions.filesystemEntries === "number"
+  )
+    ? {
+        ...(rawPermissions.networkEnabled === true ||
+          rawPermissions.networkEnabled === false ||
+          rawPermissions.networkEnabled === null
+          ? { networkEnabled: rawPermissions.networkEnabled }
+          : {}),
+        ...(filesystemRead !== undefined ? { filesystemRead } : {}),
+        ...(filesystemWrite !== undefined ? { filesystemWrite } : {}),
+        ...(typeof rawPermissions.filesystemEntries === "number" &&
+          Number.isSafeInteger(rawPermissions.filesystemEntries) &&
+          rawPermissions.filesystemEntries >= 0
+          ? { filesystemEntries: Math.min(rawPermissions.filesystemEntries, 1_000) }
+          : {})
+      }
+    : undefined;
   return {
     interactionId: value.interactionId.slice(0, 200),
     kind,
@@ -6593,12 +6820,35 @@ function readPendingInteraction(value: unknown): CodexPendingInteraction | undef
     turnId: value.turnId.slice(0, 200),
     itemId: value.itemId.slice(0, 200),
     summary: redactSensitiveText(value.summary).slice(0, 1_000),
+    ...(typeof value.reason === "string"
+      ? { reason: redactSensitiveText(value.reason).slice(0, 500) }
+      : {}),
+    ...(typeof value.cwdLabel === "string"
+      ? { cwdLabel: redactSensitiveText(value.cwdLabel).slice(0, 200) }
+      : {}),
+    ...(typeof value.grantRootLabel === "string"
+      ? { grantRootLabel: redactSensitiveText(value.grantRootLabel).slice(0, 200) }
+      : {}),
+    ...(availableDecisions ? { availableDecisions } : {}),
+    ...(autoResolutionMs !== undefined ? { autoResolutionMs } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    ...(networkContext ? { networkContext } : {}),
+    ...(commandActions?.length ? { commandActions } : {}),
+    ...(proposedAmendments ? { proposedAmendments } : {}),
+    ...(requestedPermissions ? { requestedPermissions } : {}),
     ...(questions ? { questions } : {})
   };
 }
 
+function isCodexInteractionDecision(value: unknown): value is CodexInteractionDecision {
+  return value === "accept" ||
+    value === "acceptForSession" ||
+    value === "decline" ||
+    value === "cancel";
+}
+
 function sanitizePublicData(value: unknown, depth: number): unknown {
-  if (depth > 4 || value === null || value === undefined) return value === null ? null : undefined;
+  if (depth > 6 || value === null || value === undefined) return value === null ? null : undefined;
   if (typeof value === "string") return redactSensitiveText(value).slice(0, 8_192);
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) {
@@ -7133,6 +7383,27 @@ function activityPresentationContractErrorResult(
         "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
         "For an exact logical-call retry, reuse both requestId and activityPresentationId."
       ]
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function agentThreadResumeErrorResult(error: AgentThreadResumeError): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      retryable: error.retryable,
+      probe: error.probe,
+      nextActions: error.code === "AGENT_ORPHANED"
+        ? ["Start an explicit fresh context for this Agent after reviewing the lost thread continuity."]
+        : error.code === "AGENT_THREAD_BUSY"
+          ? ["Wait for the active turn to finish and retry the same logical request."]
+          : ["Retry the same logical request; do not replace or detach the Agent thread."]
     }
   };
   return {

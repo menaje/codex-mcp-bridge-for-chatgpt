@@ -38,6 +38,31 @@ describe("CodexAppServerUpstreamPool", () => {
     expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
   });
 
+  it("reports only aggregate App Server worker and resume health", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      await expect(pool.listTools()).resolves.toMatchObject({
+        backendKind: "app-server",
+        experimental: true,
+        workerHealth: {
+          configured: 1,
+          live: 0,
+          starting: 0,
+          activeCalls: 0,
+          stickyThreads: 0
+        },
+        resumeEvidence: { available: 0, unavailable: 0 }
+      });
+      await pool.listModels();
+      await expect(pool.listTools()).resolves.toMatchObject({
+        workerHealth: { configured: 1, live: 1, activeCalls: 0 }
+      });
+      expect(JSON.stringify(await pool.listTools())).not.toContain("fake-thread");
+    } finally {
+      await pool.close();
+    }
+  });
+
   it("rejects an unsupported configured CLI before admitting an App Server worker", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
       versionProbe: async () => "0.144.0"
@@ -291,6 +316,65 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("classifies exact thread/read runtime state without orphaning transient activity", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      await expect(pool.probeThread("missing-thread")).resolves.toEqual({
+        state: "orphaned",
+        reason: "missing",
+        threadId: "missing-thread",
+        retryable: false
+      });
+      expect(pool.canResumeThread("missing-thread")).toBe(false);
+
+      const started = await pool.callTool("codex", task("probe idle"));
+      const threadId = (started.structuredContent as { threadId: string }).threadId;
+      await expect(pool.probeThread(threadId)).resolves.toEqual({
+        state: "resumable",
+        runtimeStatus: "idle",
+        threadId
+      });
+
+      await pool.archiveThread(threadId);
+      await pool.restoreThread(threadId);
+      await expect(pool.probeThread(threadId)).resolves.toEqual({
+        state: "resumable",
+        runtimeStatus: "notLoaded",
+        threadId
+      });
+
+      let assignment: UpstreamWorkerAssignment | undefined;
+      const active = pool.callTool(
+        "codex-reply",
+        { ...task("hold for probe"), threadId },
+        undefined,
+        (value) => { assignment = value; }
+      );
+      await eventually(() => Boolean(assignment));
+      await expect(pool.probeThread(threadId)).resolves.toEqual({
+        state: "busy",
+        runtimeStatus: "active",
+        threadId,
+        retryable: true
+      });
+      expect(pool.canResumeThread(threadId)).toBe(true);
+      await pool.forceTerminateWorker(assignment!);
+      await active;
+
+      const corrupt = await pool.callTool("codex", task("mark thread system error"));
+      const corruptThreadId = (corrupt.structuredContent as { threadId: string }).threadId;
+      await expect(pool.probeThread(corruptThreadId)).resolves.toEqual({
+        state: "orphaned",
+        reason: "system-error",
+        threadId: corruptThreadId,
+        retryable: false
+      });
+      expect(pool.canResumeThread(corruptThreadId)).toBe(false);
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
   it("lists and terminates exact background terminals after a turn completes", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
@@ -344,7 +428,19 @@ describe("CodexAppServerUpstreamPool", () => {
         }
       });
       expect(events.map((event) => event.type)).toEqual(
-        expect.arrayContaining(["turn", "plan", "agent-message", "command", "file-change"])
+        expect.arrayContaining([
+          "turn",
+          "plan",
+          "agent-message",
+          "command",
+          "file-change",
+          "warning",
+          "model",
+          "context",
+          "mcp",
+          "collaboration",
+          "usage"
+        ])
       );
       expect(events).toEqual(
         expect.arrayContaining([
@@ -354,6 +450,9 @@ describe("CodexAppServerUpstreamPool", () => {
         ])
       );
       expect(JSON.stringify(events)).not.toContain("PRIVATE_REASONING_MUST_NEVER_APPEAR");
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_MCP_ARGUMENT_MUST_NEVER_APPEAR");
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_MCP_RESULT_MUST_NEVER_APPEAR");
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_COLLAB_PROMPT_MUST_NEVER_APPEAR");
     } finally {
       await pool.close();
     }
@@ -438,10 +537,22 @@ describe("CodexAppServerUpstreamPool", () => {
 
       const command = await nextInteraction(interactions, "command-approval");
       expect(command.interactionId).toContain("request-command-17");
+      expect(command).toMatchObject({
+        reason: "Fixture network approval",
+        cwdLabel: path.basename(process.cwd()),
+        networkContext: { host: "example.test", protocol: "https" },
+        availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
+        commandActions: [{ type: "read", pathLabel: "fixture.txt" }],
+        proposedAmendments: {
+          execPolicy: ["echo", "approved"],
+          networkPolicy: [{ host: "example.test", action: "allow" }]
+        }
+      });
       await pool.respondToInteraction(command.interactionId, { decision: "accept" });
 
       const file = await nextInteraction(interactions, "file-approval");
       expect(file.interactionId).toContain("902");
+      expect(file.grantRootLabel).toBe(path.basename(process.cwd()));
       await pool.respondToInteraction(file.interactionId, { decision: "decline" });
 
       const input = await nextInteraction(interactions, "user-input");
@@ -452,7 +563,12 @@ describe("CodexAppServerUpstreamPool", () => {
 
       const permission = await nextInteraction(interactions, "permission-approval");
       expect(permission.summary).toContain("Need fixture access");
-      await pool.respondToInteraction(permission.interactionId, { decision: "accept" });
+      expect(permission.requestedPermissions).toMatchObject({
+        networkEnabled: true,
+        filesystemRead: [path.basename(process.cwd())],
+        filesystemWrite: [path.basename(process.cwd())]
+      });
+      await pool.respondToInteraction(permission.interactionId, { decision: "acceptForSession" });
 
       await expect(running).resolves.toMatchObject({
         content: [{ type: "text", text: "INTERACTIONS COMPLETE" }],
@@ -464,6 +580,74 @@ describe("CodexAppServerUpstreamPool", () => {
         "user-input",
         "permission-approval"
       ]);
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
+  it("clears an automatically resolved server request without sending a duplicate response", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const interactions: CodexPendingInteraction[] = [];
+    const events: CodexPublicEvent[] = [];
+    try {
+      const running = pool.callTool("codex", task("auto resolve input"), (progress) => {
+        if (progress.event) events.push(progress.event);
+        const interaction = progress.event?.details?.interaction;
+        if (isInteraction(interaction)) interactions.push(interaction);
+      });
+      const input = await nextInteraction(interactions, "user-input");
+      expect(input).toMatchObject({
+        autoResolutionMs: 100,
+        expiresAt: expect.any(Number)
+      });
+      await expect(running).resolves.toMatchObject({
+        content: [{ type: "text", text: "AUTO INPUT RESOLVED" }],
+        structuredContent: { turnStatus: "completed" }
+      });
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "input-required",
+          phase: "completed",
+          details: {
+            resolvedInteractionId: input.interactionId,
+            resolution: "server-resolved"
+          }
+        })
+      ]));
+      await expect(
+        pool.respondToInteraction(input.interactionId, { answers: { auto: ["late"] } })
+      ).rejects.toThrow("Unknown or already resolved");
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
+  it("expires a timed user-input request locally when the resolved notification is absent", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const interactions: CodexPendingInteraction[] = [];
+    const events: CodexPublicEvent[] = [];
+    try {
+      const running = pool.callTool("codex", task("expire input locally"), (progress) => {
+        if (progress.event) events.push(progress.event);
+        const interaction = progress.event?.details?.interaction;
+        if (isInteraction(interaction)) interactions.push(interaction);
+      });
+      const input = await nextInteraction(interactions, "user-input");
+      expect(input.autoResolutionMs).toBe(20);
+      await expect(running).resolves.toMatchObject({
+        content: [{ type: "text", text: "LOCAL INPUT EXPIRED" }],
+        structuredContent: { turnStatus: "completed" }
+      });
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "input-required",
+          phase: "completed",
+          details: {
+            resolvedInteractionId: input.interactionId,
+            resolution: "expired"
+          }
+        })
+      ]));
     } finally {
       await pool.close();
     }
