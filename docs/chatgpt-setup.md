@@ -110,6 +110,15 @@ preferences are safely discarded and are not selectable in Settings.
 
 The **Projects** section lists bridge-allowed roots separately from registered projects. Each project has a stable normalized ID, a Unicode display label, and an absolute folder. New or edited folders are canonicalized with `realpath` and must remain inside an allowed root. The card reports normalized-ID and canonical-path collisions inline. Saved IDs are read-only in the card; edit the label or folder, or remove and add the entry only when a new identity is intended.
 
+Settings card generation 2 sends `expectedRevision` and exactly one `reset` or
+`patch` operation. A patch groups the ordinary settings and a bounded atomic list
+of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
+the whole saved project array. The bridge checks the revision both before a fresh
+model-catalog lookup and immediately before commit. The sole retained generation-1
+card continues through a runtime-only flat compatibility parser. That parser is
+eligible for removal once a later Settings generation evicts generation 1 from the
+one-revision UI retention window.
+
 The bundled launcher accepts disjoint operator roots as repeated `--root <path>` options. Those roots are a security ceiling, not selectable project entries, and the card cannot widen them or change tunnel credentials, operator capabilities, or the Codex approval policy.
 
 With one allowed root, existing single-folder settings migrate to a `default` project. With multiple projects, choose an optional default. A project whose folder disappears or is no longer inside a narrowed root remains visible as **Needs recovery**, but it cannot be saved or admitted until its folder is fixed or the entry is removed. The card cannot widen allowed roots/capabilities, change tunnel credentials, or change the Codex approval policy.

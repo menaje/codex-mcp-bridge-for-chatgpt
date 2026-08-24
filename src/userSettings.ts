@@ -14,6 +14,8 @@ import {
   type UiLocalePreference
 } from "./uiI18n.js";
 import {
+  MAX_REGISTERED_PROJECTS,
+  PROJECT_NOT_FOUND,
   ProjectRegistry,
   legacyDefaultProject,
   normalizeProjectId,
@@ -54,6 +56,12 @@ export type BridgeUserSettingsPatch = Partial<
     "schemaVersion" | "revision" | "updatedAt" | "legacyPreferredModel"
   >
 >;
+
+export type ProjectRegistryOperation =
+  | { kind: "add"; project: ProjectTarget }
+  | { kind: "rename"; projectId: string; label: string }
+  | { kind: "relocate"; projectId: string; cwd: string }
+  | { kind: "remove"; projectId: string };
 
 type PersistedSettingsState = {
   version: 2;
@@ -175,6 +183,78 @@ export class UserSettingsStore {
     this.settings = validated;
     this.refreshProjectAvailability(validated);
     return this.current;
+  }
+
+  /**
+   * Fail fast before policy validation that may consult an external catalog.
+   * The eventual reset/update call repeats this check immediately before
+   * persistence so an intervening card save cannot be overwritten.
+   */
+  assertExpectedRevision(expectedRevision: number): void {
+    this.assertRevision(expectedRevision);
+  }
+
+  /** Apply an explicit project-registry delta and ordinary settings as one revision. */
+  updateWithProjectOperations(
+    patch: BridgeUserSettingsPatch,
+    operations: readonly ProjectRegistryOperation[],
+    expectedRevision: number
+  ): BridgeUserSettings {
+    this.assertRevision(expectedRevision);
+    if (operations.length === 0) return this.update(patch, expectedRevision);
+    if (operations.length > MAX_REGISTERED_PROJECTS * 2) {
+      throw new Error(
+        `PROJECT_OPERATION_LIMIT: At most ${MAX_REGISTERED_PROJECTS * 2} project operations are allowed per save.`
+      );
+    }
+
+    const projects = this.settings.projects.map((project) => ({ ...project }));
+    const operationKindsByProject = new Map<string, Set<ProjectRegistryOperation["kind"]>>();
+    for (const operation of operations) {
+      const projectId = normalizeProjectId(
+        operation.kind === "add" ? operation.project.id : operation.projectId
+      );
+      const kinds = operationKindsByProject.get(projectId) || new Set();
+      if (
+        kinds.has(operation.kind) ||
+        (
+          kinds.size > 0 &&
+          (
+            kinds.has("add") ||
+            kinds.has("remove") ||
+            operation.kind === "add" ||
+            operation.kind === "remove"
+          )
+        )
+      ) {
+        throw new Error(
+          `PROJECT_OPERATION_CONFLICT: Conflicting project operations for "${projectId}".`
+        );
+      }
+      kinds.add(operation.kind);
+      operationKindsByProject.set(projectId, kinds);
+    }
+
+    for (const operation of operations) {
+      if (operation.kind === "add") {
+        projects.push({ ...operation.project });
+        continue;
+      }
+      const projectId = normalizeProjectId(operation.projectId);
+      const index = projects.findIndex((project) => project.id === projectId);
+      if (index < 0) {
+        throw new Error(`${PROJECT_NOT_FOUND}: Unknown project ID: ${projectId}`);
+      }
+      if (operation.kind === "remove") {
+        projects.splice(index, 1);
+      } else if (operation.kind === "rename") {
+        projects[index] = { ...projects[index]!, label: operation.label };
+      } else {
+        projects[index] = { ...projects[index]!, cwd: operation.cwd };
+      }
+    }
+
+    return this.update({ ...patch, projects }, expectedRevision);
   }
 
   reset(expectedRevision: number): BridgeUserSettings {

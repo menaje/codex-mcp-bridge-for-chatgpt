@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  MAX_REGISTERED_PROJECTS,
   PROJECT_DEFAULT_NOT_FOUND,
   PROJECT_CWD_INVALID,
   PROJECT_DUPLICATE_ID,
@@ -10,6 +11,7 @@ import {
   PROJECT_ID_INVALID,
   PROJECT_ID_MAX_LENGTH,
   PROJECT_LABEL_INVALID,
+  PROJECT_LIMIT_EXCEEDED,
   PROJECT_NOT_FOUND,
   PROJECT_REQUIRED,
   PROJECT_UNAVAILABLE,
@@ -104,6 +106,18 @@ describe("project registry", () => {
       { id: "one", label: "One", cwd: first },
       { id: "two", label: "Two", cwd: firstAlias }
     ], [root])).toThrow(PROJECT_DUPLICATE_PATH);
+  });
+
+  it("enforces the registry limit independently from the app schema", () => {
+    const root = temporaryDirectory("project-root-");
+    expect(() => new ProjectRegistry(
+      Array.from({ length: MAX_REGISTERED_PROJECTS + 1 }, (_, index) => ({
+        id: `project-${index}`,
+        label: `Project ${index}`,
+        cwd: root
+      })),
+      [root]
+    )).toThrow(PROJECT_LIMIT_EXCEEDED);
   });
 
   it("resolves explicit, configured-default, and sole-project selections", () => {

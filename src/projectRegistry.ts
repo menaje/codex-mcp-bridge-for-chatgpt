@@ -3,6 +3,7 @@ import { requireAllowedCwd } from "./config.js";
 
 export const PROJECT_ID_MAX_LENGTH = 64;
 export const PROJECT_LABEL_MAX_LENGTH = 120;
+export const MAX_REGISTERED_PROJECTS = 100;
 
 export const PROJECT_REQUIRED = "PROJECT_REQUIRED";
 export const PROJECT_NOT_FOUND = "PROJECT_NOT_FOUND";
@@ -13,6 +14,7 @@ export const PROJECT_CWD_INVALID = "PROJECT_CWD_INVALID";
 export const PROJECT_CWD_NOT_ALLOWED = "PROJECT_CWD_NOT_ALLOWED";
 export const PROJECT_DUPLICATE_ID = "PROJECT_DUPLICATE_ID";
 export const PROJECT_DUPLICATE_PATH = "PROJECT_DUPLICATE_PATH";
+export const PROJECT_LIMIT_EXCEEDED = "PROJECT_LIMIT_EXCEEDED";
 export const PROJECT_DEFAULT_NOT_FOUND = "PROJECT_DEFAULT_NOT_FOUND";
 export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
 
@@ -102,6 +104,11 @@ export class ProjectRegistry {
   ) {
     if (!Array.isArray(projects)) {
       throw new Error("Invalid projects: expected an array.");
+    }
+    if (projects.length > MAX_REGISTERED_PROJECTS) {
+      throw new Error(
+        `${PROJECT_LIMIT_EXCEEDED}: At most ${MAX_REGISTERED_PROJECTS} projects may be registered.`
+      );
     }
     this.allowedRoots = allowedRoots.map((root) => {
       if (!path.isAbsolute(root) || /[\r\n\0]/u.test(root)) {

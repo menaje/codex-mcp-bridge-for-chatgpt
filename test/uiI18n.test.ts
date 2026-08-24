@@ -201,8 +201,9 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
     expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
-    expect(SETTINGS_CARD_HTML).toContain("projects:projectSettings.projects");
+    expect(SETTINGS_CARD_HTML).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(SETTINGS_CARD_HTML).toContain("defaultProjectId:projectSettings.defaultProjectId");
+    expect(SETTINGS_CARD_HTML).toContain('operation:{kind:"patch",settings}');
     expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
     expect(SETTINGS_CARD_HTML).toContain('id.readOnly=persisted');
     expect(SETTINGS_CARD_HTML).toContain("PROJECT_DUPLICATE_ID");

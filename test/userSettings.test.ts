@@ -509,6 +509,55 @@ describe("user settings store", () => {
     expect(reloaded.resolveProject()).toMatchObject({ id: "api", cwd: canonicalSecond });
   });
 
+  it("applies explicit project registry operations atomically at one expected revision", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const relocated = temporaryDirectory("bridge-relocated-");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second},${relocated}`
+    });
+    const store = new UserSettingsStore(config);
+
+    const added = store.updateWithProjectOperations({
+      defaultProjectId: "api",
+      uiLocalePreference: "ko"
+    }, [
+      { kind: "add", project: { id: "web", label: "Web", cwd: first } },
+      { kind: "add", project: { id: "api", label: "API", cwd: second } }
+    ], 0);
+    expect(added).toMatchObject({
+      revision: 1,
+      uiLocalePreference: "ko",
+      defaultProjectId: "api",
+      projects: [
+        { id: "web", label: "Web", cwd: config.allowedRoots[0] },
+        { id: "api", label: "API", cwd: config.allowedRoots[1] }
+      ]
+    });
+
+    const edited = store.updateWithProjectOperations({ defaultProjectId: "web" }, [
+      { kind: "rename", projectId: "web", label: "웹 앱" },
+      { kind: "relocate", projectId: "web", cwd: relocated },
+      { kind: "remove", projectId: "api" }
+    ], 1);
+    expect(edited).toMatchObject({
+      revision: 2,
+      defaultProjectId: "web",
+      defaultCwd: config.allowedRoots[2],
+      projects: [{ id: "web", label: "웹 앱", cwd: config.allowedRoots[2] }]
+    });
+
+    expect(() => store.updateWithProjectOperations({}, [
+      { kind: "rename", projectId: "web", label: "One" },
+      { kind: "rename", projectId: "web", label: "Two" }
+    ], 2)).toThrow(/PROJECT_OPERATION_CONFLICT/);
+    expect(() => store.updateWithProjectOperations({}, [
+      { kind: "remove", projectId: "missing" }
+    ], 2)).toThrow(/PROJECT_NOT_FOUND/);
+    expect(store.current).toEqual(edited);
+  });
+
   it("rejects invalid project writes without advancing or persisting the revision", () => {
     const first = temporaryDirectory("bridge-first-");
     const second = temporaryDirectory("bridge-second-");

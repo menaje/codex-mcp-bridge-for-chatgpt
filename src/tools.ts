@@ -87,6 +87,9 @@ import {
   type CreateActivityInput
 } from "./stateStore.js";
 import {
+  MAX_REGISTERED_PROJECTS,
+  PROJECT_ID_MAX_LENGTH,
+  PROJECT_LABEL_MAX_LENGTH,
   PROJECT_CONTEXT_CONFLICT,
   PROJECT_UNAVAILABLE,
   ProjectRegistry,
@@ -110,6 +113,7 @@ import {
   COMPLETION_HANDOFF_MODES,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
+  type ProjectRegistryOperation,
   UserSettingsStore
 } from "./userSettings.js";
 import {
@@ -4278,26 +4282,102 @@ export function registerBridgeTools(
     }
   );
 
+  const settingsAccessStrategyInput = config.allowDangerFullAccess
+    ? z.enum(["read-only", "adaptive", "always-full"])
+    : z.enum(["read-only", "adaptive"]);
+  const projectOperationTargetInput = z.strictObject({
+    id: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
+    label: z.string().trim().min(1).max(PROJECT_LABEL_MAX_LENGTH),
+    cwd: z.string().trim().min(1).max(4_096)
+  });
+  const projectRegistryOperationInput = z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("add"),
+      project: projectOperationTargetInput
+    }),
+    z.strictObject({
+      kind: z.literal("rename"),
+      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
+      label: z.string().trim().min(1).max(PROJECT_LABEL_MAX_LENGTH)
+    }),
+    z.strictObject({
+      kind: z.literal("relocate"),
+      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
+      cwd: z.string().trim().min(1).max(4_096)
+    }),
+    z.strictObject({
+      kind: z.literal("remove"),
+      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH)
+    })
+  ]);
+  const activityCardSettingsPatchBase = z.strictObject({
+    visibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
+    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
+  });
+  const activityCardSettingsPatchInput = withJsonSchemaProjection(
+    activityCardSettingsPatchBase,
+    {
+      ...jsonSchemaBody(activityCardSettingsPatchBase),
+      minProperties: 1
+    }
+  );
+  const nestedSettingsPatchBase = z.strictObject({
+    accessStrategy: settingsAccessStrategyInput.optional(),
+    modelPolicy: modelPolicyZod().optional(),
+    usePriorityServiceTier: z.boolean().optional(),
+    defaultProjectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH).nullable().optional(),
+    uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
+    maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
+    activityCard: activityCardSettingsPatchInput.optional(),
+    projectOperations: z.array(projectRegistryOperationInput)
+      .min(1)
+      .max(MAX_REGISTERED_PROJECTS * 2)
+      .optional()
+  });
+  const nestedSettingsPatchInput = withJsonSchemaProjection(
+    nestedSettingsPatchBase,
+    {
+      ...jsonSchemaBody(nestedSettingsPatchBase),
+      minProperties: 1
+    }
+  );
+  const settingsOperationInput = z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("reset") }),
+    z.strictObject({
+      kind: z.literal("patch"),
+      settings: nestedSettingsPatchInput
+    })
+  ]);
+  const settingsRuntimeInput = z.object({
+    expectedRevision: z.number().int().min(0),
+    operation: settingsOperationInput.optional(),
+    reset: z.boolean().optional(),
+    accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
+    modelPolicy: modelPolicyZod().optional(),
+    usePriorityServiceTier: z.boolean().optional(),
+    projects: z.array(projectTargetInputSchema).max(MAX_REGISTERED_PROJECTS).optional(),
+    defaultProjectId: z.string().min(1).max(256).nullable().optional(),
+    defaultCwd: z.string().trim().min(1).nullable().optional(),
+    uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
+    maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
+    activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
+    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
+  });
+  const settingsPublicInput = z.strictObject({
+    expectedRevision: z.number().int().min(0)
+      .describe("Exact shared-settings revision rendered by this Settings card."),
+    operation: settingsOperationInput.describe(
+      "Reset defaults, or atomically patch settings and an explicit project-registry delta."
+    )
+  });
+
   server.registerTool(
     "codex_update_settings",
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, persist, and activate user-configurable bridge policy and preferences. This action is intended for the Codex settings card; bridge security capabilities, operator ceilings, and allowed roots cannot be changed here.",
-      inputSchema: {
-        expectedRevision: z.number().int().min(0),
-        reset: z.boolean().optional(),
-        accessStrategy: z.enum(["read-only", "adaptive", "always-full"]).optional(),
-        modelPolicy: modelPolicyZod().optional(),
-        usePriorityServiceTier: z.boolean().optional(),
-        projects: z.array(projectTargetInputSchema).max(100).optional(),
-        defaultProjectId: z.string().min(1).max(256).nullable().optional(),
-        defaultCwd: z.string().trim().min(1).nullable().optional(),
-        uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
-        maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
-        activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
-        completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
-      },
+        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations; bridge security capabilities, operator ceilings, and allowed roots cannot be changed here.",
+      inputSchema: withJsonSchemaProjection(settingsRuntimeInput, settingsPublicInput),
       outputSchema: settingsViewOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -4315,7 +4395,7 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const settingKeys = [
+      const legacySettingKeys = [
         "accessStrategy",
         "modelPolicy",
         "usePriorityServiceTier",
@@ -4327,42 +4407,108 @@ export function registerBridgeTools(
         "activityCardVisibility",
         "completionHandoff"
       ] as const;
-      let validatedCatalog: CodexModelCatalogSnapshot | undefined;
-      if (args.reset) {
-        if (settingKeys.some((key) => args[key] !== undefined)) {
+      let resetRequested = false;
+      const patch: BridgeUserSettingsPatch = {};
+      let projectOperations: ProjectRegistryOperation[] = [];
+
+      if (args.operation) {
+        const legacyFields = ["reset", ...legacySettingKeys].filter((field) =>
+          Object.prototype.hasOwnProperty.call(args, field)
+        );
+        if (legacyFields.length > 0) {
+          throw new Error(
+            `SETTINGS_OPERATION_CONFLICT: operation cannot be combined with legacy fields: ${legacyFields.join(", ")}.`
+          );
+        }
+        if (args.operation.kind === "reset") {
+          resetRequested = true;
+        } else {
+          const settings = args.operation.settings;
+          const nestedKeys = [
+            "accessStrategy",
+            "modelPolicy",
+            "usePriorityServiceTier",
+            "defaultProjectId",
+            "uiLocalePreference",
+            "maxConcurrentJobs",
+            "activityCard",
+            "projectOperations"
+          ] as const;
+          if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
+            throw new Error("SETTINGS_PATCH_EMPTY: Provide at least one setting or project operation.");
+          }
+          for (const key of [
+            "accessStrategy",
+            "modelPolicy",
+            "usePriorityServiceTier",
+            "defaultProjectId",
+            "uiLocalePreference",
+            "maxConcurrentJobs"
+          ] as const) {
+            if (settings[key] !== undefined) {
+              (patch as Record<string, unknown>)[key] = settings[key];
+            }
+          }
+          if (settings.activityCard !== undefined) {
+            if (
+              !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
+              !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
+            ) {
+              throw new Error("SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting.");
+            }
+            if (settings.activityCard.visibility !== undefined) {
+              patch.activityCardVisibility = settings.activityCard.visibility;
+            }
+            if (settings.activityCard.completionHandoff !== undefined) {
+              patch.completionHandoff = settings.activityCard.completionHandoff;
+            }
+          }
+          projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
+        }
+      } else if (args.reset) {
+        if (legacySettingKeys.some((key) => args[key] !== undefined)) {
           throw new Error("reset cannot be combined with individual setting values.");
         }
+        resetRequested = true;
+      } else {
+        if (!legacySettingKeys.some((key) => args[key] !== undefined)) {
+          throw new Error("Provide operation, at least one legacy setting value, or reset=true.");
+        }
+        for (const key of legacySettingKeys) {
+          if (args[key] !== undefined) {
+            (patch as Record<string, unknown>)[key] = args[key];
+          }
+        }
+      }
+
+      // Fail stale cards before any external catalog lookup. reset/update repeat
+      // the same check immediately before persistence after the await boundary.
+      userSettings.assertExpectedRevision(args.expectedRevision);
+      const current = userSettings.current;
+      const nextRevision = current.revision + 1;
+      let validatedCatalog: CodexModelCatalogSnapshot | undefined;
+      if (resetRequested) {
         const catalog = await freshCatalogForPolicy(
           modelCatalog,
           config.defaultBackend,
-          userSettings.current.revision + 1
+          nextRevision
         );
         validatedCatalog = catalog;
         validatePolicyAgainstCatalog(
           userSettings.defaults.modelPolicy,
           catalog,
           config.operatorModelCeiling,
-          userSettings.current.revision + 1
+          nextRevision
         );
         assertPriorityCompatibility(
           userSettings.defaults.modelPolicy,
           catalog,
           config.operatorModelCeiling,
           userSettings.defaults.usePriorityServiceTier,
-          userSettings.current.revision + 1
+          nextRevision
         );
         userSettings.reset(args.expectedRevision);
       } else {
-        if (!settingKeys.some((key) => args[key] !== undefined)) {
-          throw new Error("Provide at least one setting value, or use reset=true.");
-        }
-        const current = userSettings.current;
-        const patch: BridgeUserSettingsPatch = {};
-        for (const key of settingKeys) {
-          if (args[key] !== undefined) {
-            (patch as Record<string, unknown>)[key] = args[key];
-          }
-        }
         if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
           const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
           if (
@@ -4376,26 +4522,30 @@ export function registerBridgeTools(
             const catalog = await freshCatalogForPolicy(
               modelCatalog,
               config.defaultBackend,
-              current.revision + 1
+              nextRevision
             );
             validatedCatalog = catalog;
             validatePolicyAgainstCatalog(
               policy,
               catalog,
               config.operatorModelCeiling,
-              current.revision + 1
+              nextRevision
             );
             assertPriorityCompatibility(
               policy,
               catalog,
               config.operatorModelCeiling,
               patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
-              current.revision + 1
+              nextRevision
             );
           }
           if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
         }
-        userSettings.update(patch, args.expectedRevision);
+        if (projectOperations.length > 0) {
+          userSettings.updateWithProjectOperations(patch, projectOperations, args.expectedRevision);
+        } else {
+          userSettings.update(patch, args.expectedRevision);
+        }
       }
       const projectionStatus = publishTaskProjection(validatedCatalog);
       return settingsViewResult(

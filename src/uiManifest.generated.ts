@@ -10,8 +10,8 @@ export const UI_RESOURCE_MANIFEST = {
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "350b7062c4e30c707c00bf14dc37ef1fab9f3515b80a3c5be10ccbe6aec44f15",
-      "uri": "ui://codex-mcp-bridge/settings/350b7062c4e3.html",
+      "digest": "783769560252f4a8d482d2b596f628c16b0023542b7feb80595ede7b15952943",
+      "uri": "ui://codex-mcp-bridge/settings/783769560252.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -34,13 +34,13 @@ export const UI_RESOURCE_MANIFEST = {
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 1
+          "codex/uiContractGeneration": 2
         }
       },
       "previous": [
         {
-          "digest": "704961afedea9e257e940ab8410b003980a379135285f3866946b195b6e12d38",
-          "uri": "ui://codex-mcp-bridge/settings/704961afedea.html",
+          "digest": "350b7062c4e30c707c00bf14dc37ef1fab9f3515b80a3c5be10ccbe6aec44f15",
+          "uri": "ui://codex-mcp-bridge/settings/350b7062c4e3.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -62,7 +62,8 @@ export const UI_RESOURCE_MANIFEST = {
                 "connect_domains": [],
                 "resource_domains": []
               },
-              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 1
             }
           }
         }

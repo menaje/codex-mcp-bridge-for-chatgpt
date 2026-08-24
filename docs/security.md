@@ -58,12 +58,17 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   path-free availability flag for each project, then renders the versioned
   settings card. The availability summary adds neither a path nor a validation
   reason beyond the saved registry fields already needed for configuration.
-- `codex_update_settings` is app-only, requires the current settings revision,
-  and atomically persists a changed policy validated against a fresh target-backend
-  catalog; an unverified CLI fallback cannot activate policy changes. Project
-  writes are independently resolved with `realpath`, checked against immutable
-  allowed roots, and rejected on normalized-ID or canonical-path collisions. It
-  cannot widen either the root policy or model-selection ceiling.
+- `codex_update_settings` is app-only and exposes one discriminated reset/patch
+  operation at an exact settings revision. A patch uses explicit, bounded project
+  add/rename/relocate/remove deltas instead of replacing the registry array. The
+  revision is checked before fresh target-backend catalog work and again
+  immediately before the single atomic commit, so a concurrent card cannot be
+  overwritten across that await boundary. An unverified CLI fallback cannot
+  activate policy changes. Project folders are resolved with `realpath`, checked
+  against immutable allowed roots, and rejected on normalized-ID or canonical-path
+  collisions. The operation cannot widen either the root policy or model-selection
+  ceiling. Flat generation-1 Settings inputs remain runtime-only until that sole
+  retained resource is evicted by the next Settings generation.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled

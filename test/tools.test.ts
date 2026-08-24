@@ -18,6 +18,7 @@ import {
   LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION
 } from "../src/activityCard.js";
 import {
+  LEGACY_SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_URI
 } from "../src/settingsCard.js";
@@ -345,6 +346,19 @@ class FakeModelCatalog implements CodexModelCatalogProvider {
 
   getCachedCatalog(): CodexModelCatalogSnapshot {
     return this.snapshot(true);
+  }
+}
+
+class MutatingModelCatalog extends FakeModelCatalog {
+  public beforeRefresh?: () => void;
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    if (options.refresh === true && this.beforeRefresh) {
+      const mutate = this.beforeRefresh;
+      this.beforeRefresh = undefined;
+      mutate();
+    }
+    return super.getCatalog(options);
   }
 }
 
@@ -699,17 +713,41 @@ describe("bridge tools", () => {
       ui: { visibility: ["app"] },
       "openai/visibility": "private"
     });
-    expect(byName.get("codex_update_settings")?.inputSchema.properties).toMatchObject({
-      projects: { type: "array" },
-      defaultProjectId: expect.any(Object),
-      uiLocalePreference: {
-        enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
-      },
-      activityCardVisibility: { enum: ["always", "background-only", "never"] },
-      completionHandoff: { enum: ["off", "auto-handoff"] }
+    const updateSettingsSchema = byName.get("codex_update_settings")?.inputSchema as any;
+    expect(Object.keys(updateSettingsSchema.properties).sort()).toEqual([
+      "expectedRevision",
+      "operation"
+    ]);
+    expect(updateSettingsSchema.required).toEqual(["expectedRevision", "operation"]);
+    expect(updateSettingsSchema.properties.operation.oneOf.map(
+      (variant: any) => variant.properties.kind.const
+    )).toEqual(["reset", "patch"]);
+    const settingsPatchSchema = updateSettingsSchema.properties.operation.oneOf[1]
+      .properties.settings;
+    expect(settingsPatchSchema).toMatchObject({
+      minProperties: 1,
+      properties: {
+        accessStrategy: { enum: ["read-only", "adaptive"] },
+        defaultProjectId: expect.any(Object),
+        uiLocalePreference: {
+          enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
+        },
+        activityCard: {
+          minProperties: 1,
+          properties: {
+            visibility: { enum: ["always", "background-only", "never"] },
+            completionHandoff: { enum: ["off", "auto-handoff"] }
+          }
+        }
+      }
     });
-    expect(byName.get("codex_update_settings")?.inputSchema.properties)
-      .not.toHaveProperty("activityCardView");
+    expect(settingsPatchSchema.properties.projectOperations.items.oneOf.map(
+      (variant: any) => variant.properties.kind.const
+    )).toEqual(["add", "rename", "relocate", "remove"]);
+    expect(updateSettingsSchema.properties).not.toHaveProperty("projects");
+    expect(updateSettingsSchema.properties).not.toHaveProperty("defaultCwd");
+    expect(updateSettingsSchema.properties).not.toHaveProperty("reset");
+    expect(updateSettingsSchema.properties).not.toHaveProperty("activityCardView");
     expect(JSON.stringify(byName.get("codex_update_settings")?.inputSchema)).not.toContain('"all"');
     expect(byName.get("codex_update_settings")?.inputSchema.properties)
       .not.toHaveProperty("defaultSessionMode");
@@ -1060,21 +1098,11 @@ describe("bridge tools", () => {
           },
           "name": "codex_update_settings",
           "properties": [
-            "accessStrategy",
-            "activityCardVisibility",
-            "completionHandoff",
-            "defaultCwd",
-            "defaultProjectId",
             "expectedRevision",
-            "maxConcurrentJobs",
-            "modelPolicy",
-            "projects",
-            "reset",
-            "uiLocalePreference",
-            "usePriorityServiceTier",
+            "operation",
           ],
-          "propertyCount": 12,
-          "schemaBytes": 2848,
+          "propertyCount": 2,
+          "schemaBytes": 4294,
           "visibility": {
             "app": true,
             "model": false,
@@ -1306,7 +1334,7 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("result&&result.isError");
     expect(contents.text).toContain("!elements.form.reportValidity()");
     expect(contents.text).toContain("Number.isSafeInteger(value)");
-    expect(contents.text).toContain("if(modelPolicyDirty)args.modelPolicy=buildModelPolicy()");
+    expect(contents.text).toContain("if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy()");
     expect(contents.text).toContain("settings.legacyPreferredModel");
     expect(contents.text).toContain('id="allowed-models"');
     expect(contents.text).toContain('id="effort-groups"');
@@ -1315,8 +1343,10 @@ describe("bridge tools", () => {
     expect(contents.text).toContain('id="add-project" type="button"');
     expect(contents.text).toContain('id="default-project"');
     expect(contents.text).not.toContain('id="default-cwd"');
-    expect(contents.text).toContain("projects:projectSettings.projects");
+    expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(contents.text).toContain("defaultProjectId:projectSettings.defaultProjectId");
+    expect(contents.text).toContain('operation:{kind:"patch",settings}');
+    expect(contents.text).toContain('operation:{kind:"reset"}');
     expect(contents.text).not.toContain('id="policy-service-tier"');
     expect(contents.text).toContain('all.dataset.action="all-efforts"');
     expect(contents.text).toContain('id="retry-models"');
@@ -1372,6 +1402,17 @@ describe("bridge tools", () => {
             expect(html).not.toContain('callTool("codex_activity_snapshot"');
             expect(html).not.toContain('callTool("codex_interaction_respond"');
           }
+        } else {
+          const html = (resource.contents[0] as { text?: string }).text || "";
+          if (index === 0) {
+            expect(html).toContain('operation:{kind:"patch",settings}');
+            expect(html).toContain('operation:{kind:"reset"}');
+            expect(html).not.toContain("projects:projectSettings.projects");
+          } else {
+            expect(html).toContain("projects:projectSettings.projects");
+            expect(html).toContain("reset:true");
+            expect(html).not.toContain('operation:{kind:"patch",settings}');
+          }
         }
         expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
           .toMatchObject({
@@ -1379,7 +1420,9 @@ describe("bridge tools", () => {
               ? LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION
               : name === "activity"
                 ? ACTIVITY_CARD_CONTRACT_GENERATION
-                : SETTINGS_CARD_CONTRACT_GENERATION
+                : index > 0
+                  ? LEGACY_SETTINGS_CARD_CONTRACT_GENERATION
+                  : SETTINGS_CARD_CONTRACT_GENERATION
           });
       }
     }
@@ -1415,9 +1458,18 @@ describe("bridge tools", () => {
       destructiveHint: true,
       openWorldHint: true
     });
+    const settingsMutation = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_update_settings"
+    ) as any;
+    expect(settingsMutation.inputSchema.properties.operation.oneOf[1]
+      .properties.settings.properties.accessStrategy.enum)
+      .toEqual(["read-only", "adaptive", "always-full"]);
     await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 0, accessStrategy: "read-only" }
+      arguments: {
+        expectedRevision: 0,
+        operation: { kind: "patch", settings: { accessStrategy: "read-only" } }
+      }
     });
     expect(await taskAnnotations()).toMatchObject({
       readOnlyHint: false,
@@ -1426,7 +1478,10 @@ describe("bridge tools", () => {
     });
     await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 1, accessStrategy: "always-full" }
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "patch", settings: { accessStrategy: "always-full" } }
+      }
     });
     expect(await taskAnnotations()).toMatchObject({
       readOnlyHint: false,
@@ -1440,8 +1495,10 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const web = path.join(root, "web");
     const api = path.join(root, "api");
+    const movedApi = path.join(root, "moved-api");
     mkdirSync(web);
     mkdirSync(api);
+    mkdirSync(movedApi);
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
     const initial = (await client.callTool({
@@ -1460,11 +1517,17 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 0,
-        projects: [
-          { id: "Web APP", label: "웹 앱", cwd: web },
-          { id: "API", label: "API 서비스", cwd: api }
-        ],
-        defaultProjectId: "API"
+        operation: {
+          kind: "patch",
+          settings: {
+            defaultProjectId: "API",
+            projectOperations: [
+              { kind: "remove", projectId: "default" },
+              { kind: "add", project: { id: "Web APP", label: "웹 앱", cwd: web } },
+              { kind: "add", project: { id: "API", label: "API 서비스", cwd: api } }
+            ]
+          }
+        }
       }
     });
     expect(saved.isError).not.toBe(true);
@@ -1487,11 +1550,14 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        projects: [
-          { id: "same id", label: "One", cwd: web },
-          { id: "same_id", label: "Two", cwd: api }
-        ],
-        defaultProjectId: null
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { id: "WEB APP", label: "Duplicate", cwd: movedApi } }
+            ]
+          }
+        }
       }
     });
     expect(duplicateId.isError).toBe(true);
@@ -1501,11 +1567,14 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        projects: [
-          { id: "one", label: "One", cwd: web },
-          { id: "two", label: "Two", cwd: web }
-        ],
-        defaultProjectId: null
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { id: "other", label: "Other", cwd: web } }
+            ]
+          }
+        }
       }
     });
     expect(duplicatePath.isError).toBe(true);
@@ -1515,12 +1584,64 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        projects: [{ id: "web", label: "Web", cwd: web }],
-        defaultProjectId: "missing"
+        operation: {
+          kind: "patch",
+          settings: { defaultProjectId: "missing" }
+        }
       }
     });
     expect(missingDefault.isError).toBe(true);
     expect(JSON.stringify(missingDefault)).toContain("PROJECT_DEFAULT_NOT_FOUND");
+
+    const edited = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "rename", projectId: "web-app", label: "Web Application" },
+              { kind: "relocate", projectId: "api", cwd: movedApi }
+            ]
+          }
+        }
+      }
+    });
+    expect((edited as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({
+        revision: 2,
+        projects: [
+          { id: "web-app", label: "Web Application", cwd: realpathSync(web) },
+          { id: "api", label: "API 서비스", cwd: realpathSync(movedApi) }
+        ]
+      });
+    const incompleteRename = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 2,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "rename", projectId: "web-app" }]
+          }
+        }
+      }
+    });
+    const pollutedRemove = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 2,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "remove", projectId: "web-app", label: "irrelevant" }]
+          }
+        }
+      }
+    });
+    expect(incompleteRename.isError).toBe(true);
+    expect(pollutedRemove.isError).toBe(true);
     await close();
   });
 
@@ -2306,7 +2427,13 @@ describe("bridge tools", () => {
   it("rejects stale settings cards and unavailable saved exact selections", async () => {
     const root = temporaryRoot();
     const config = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
 
     const descriptor = (await client.listTools()).tools.find(
       (entry) => entry.name === "codex_update_settings"
@@ -2320,30 +2447,154 @@ describe("bridge tools", () => {
 
     await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 0, uiLocalePreference: "ko" }
+      arguments: {
+        expectedRevision: 0,
+        operation: { kind: "patch", settings: { uiLocalePreference: "ko" } }
+      }
     });
+    const refreshesBeforeStaleSave = catalog.calls.filter((call) => call.refresh === true).length;
     const stale = await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 0, accessStrategy: "always-full" }
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
+      }
     });
     expect(stale.isError).toBe(true);
     expect(JSON.stringify(stale)).toContain("SETTINGS_REVISION_CONFLICT");
     expect(JSON.stringify(stale)).not.toContain("expected revision");
     expect(JSON.stringify(stale)).not.toContain("current revision");
+    expect(catalog.calls.filter((call) => call.refresh === true)).toHaveLength(
+      refreshesBeforeStaleSave
+    );
 
     const unsupported = await client.callTool({
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        modelPolicy: {
-          mode: "fixed",
-          selection: { model: "gpt-5.5", reasoningEffort: "max" },
-          constraints: { allowDelegation: true }
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.5", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
         }
       }
     });
     expect(unsupported.isError).toBe(true);
     expect(JSON.stringify(unsupported)).toContain("MODEL_UNAVAILABLE");
+    await close();
+  });
+
+  it("distinguishes reset from patch and rejects mixed or empty Settings operations", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            uiLocalePreference: "ko",
+            activityCard: { visibility: "background-only", completionHandoff: "auto-handoff" }
+          }
+        }
+      }
+    });
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({
+        revision: 1,
+        uiLocalePreference: "ko",
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
+      });
+
+    const emptyPatch = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "patch", settings: {} }
+      }
+    });
+    expect(emptyPatch.isError).toBe(true);
+    expect(JSON.stringify(emptyPatch)).toContain("SETTINGS_PATCH_EMPTY");
+
+    const mixed = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "reset" },
+        uiLocalePreference: "en"
+      }
+    });
+    expect(mixed.isError).toBe(true);
+    expect(JSON.stringify(mixed)).toContain("SETTINGS_OPERATION_CONFLICT");
+
+    const reset = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, operation: { kind: "reset" } }
+    });
+    expect((reset as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+      .toMatchObject({
+        revision: 2,
+        uiLocalePreference: "auto",
+        activityCardVisibility: "always",
+        completionHandoff: "off"
+      });
+    await close();
+  });
+
+  it("rechecks the Settings revision immediately before commit after catalog validation", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    const catalog = new MutatingModelCatalog();
+    catalog.beforeRefresh = () => settings.update({ uiLocalePreference: "ko" }, 0);
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      catalog,
+      settings
+    );
+
+    const raced = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("SETTINGS_REVISION_CONFLICT");
+    expect(settings.current).toMatchObject({
+      revision: 1,
+      uiLocalePreference: "ko",
+      modelPolicy: { mode: "automatic" }
+    });
     await close();
   });
 
