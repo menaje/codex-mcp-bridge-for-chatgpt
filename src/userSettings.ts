@@ -435,14 +435,19 @@ export class UserSettingsStore {
           throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
         }
         this.noteRetiredSettings(parsed.settings);
-        this.loadCandidate(readSettings(parsed.settings, this.stateFile as string));
-        this.stateStore?.setSettings(this.settings);
+        this.loadCandidate(
+          readSettings(parsed.settings, this.stateFile as string),
+          { persistIfUnchanged: true }
+        );
       }
       this.stateStore?.setMeta(marker, new Date().toISOString());
     });
   }
 
-  private loadCandidate(candidate: BridgeUserSettings): void {
+  private loadCandidate(
+    candidate: BridgeUserSettings,
+    options: { persistIfUnchanged?: boolean } = {}
+  ): void {
     const reconciled = { ...candidate };
     const persisted = { ...candidate };
     this.unavailableDefaultCwd = undefined;
@@ -518,11 +523,13 @@ export class UserSettingsStore {
       persisted.updatedAt = reconciled.updatedAt;
     }
     this.settings = this.validate(reconciled, { retainUnavailableProjects: true });
-    if (persistentlyChanged) {
+    if (persistentlyChanged || options.persistIfUnchanged) {
       // Preserve an unavailable saved path verbatim while persisting independent
       // capability/retired-field reconciliation. It becomes usable again when
       // the operator restores the corresponding allowed root.
       this.persist(persisted);
+    }
+    if (persistentlyChanged) {
       this.retiredSettingsMigrationPending = false;
       this.projectRegistryMigrationPending = false;
     }

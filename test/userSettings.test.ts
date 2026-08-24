@@ -643,6 +643,59 @@ describe("user settings store", () => {
     expect(restored.current.defaultCwd).toBe(oldCanonicalRoot);
   });
 
+  it("imports an unavailable legacy JSON default into SQLite exactly once without erasing recovery data", () => {
+    const oldRoot = temporaryDirectory("bridge-import-old-root-");
+    const newRoot = temporaryDirectory("bridge-import-new-root-");
+    const stateDirectory = temporaryDirectory("bridge-import-settings-");
+    const settingsFile = path.join(stateDirectory, "settings.json");
+    const databaseFile = path.join(stateDirectory, "state.sqlite");
+    const oldConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: oldRoot
+    });
+    const legacy = new UserSettingsStore(oldConfig, { stateFile: settingsFile });
+    legacy.update({ uiLocalePreference: "ko" }, legacy.current.revision);
+
+    const tightenedConfig = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: newRoot
+    });
+    const firstState = new BridgeStateStore({ file: databaseFile });
+    const first = new UserSettingsStore(tightenedConfig, {
+      stateFile: settingsFile,
+      stateStore: firstState,
+      now: () => Date.parse("2026-08-24T02:00:00Z")
+    });
+    const firstRevision = first.current.revision;
+    expect(first.current).toMatchObject({
+      defaultCwd: null,
+      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }],
+      defaultProjectId: "default"
+    });
+    expect(firstState.getSettings()).toMatchObject({
+      revision: firstRevision,
+      defaultCwd: oldConfig.allowedRoots[0],
+      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }],
+      defaultProjectId: "default"
+    });
+    firstState.close();
+
+    const reopenedState = new BridgeStateStore({ file: databaseFile });
+    const reopened = new UserSettingsStore(tightenedConfig, {
+      stateFile: settingsFile,
+      stateStore: reopenedState,
+      now: () => Date.parse("2026-08-24T03:00:00Z")
+    });
+    expect(reopened.current.revision).toBe(firstRevision);
+    expect(reopened.current.projects).toEqual(first.current.projects);
+    expect(reopened.current.defaultCwd).toBeNull();
+    expect(reopenedState.getSettings()).toMatchObject({
+      revision: firstRevision,
+      defaultCwd: oldConfig.allowedRoots[0]
+    });
+    reopenedState.close();
+  });
+
   it("keeps the legacy defaultCwd mutation path synchronized during UI integration", () => {
     const first = temporaryDirectory("bridge-first-");
     const second = temporaryDirectory("bridge-second-");

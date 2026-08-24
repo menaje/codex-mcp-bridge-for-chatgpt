@@ -1,5 +1,4 @@
 import path from "node:path";
-import { realpathSync } from "node:fs";
 import { requireAllowedCwd } from "./config.js";
 
 export const PROJECT_ID_MAX_LENGTH = 64;
@@ -107,14 +106,11 @@ export class ProjectRegistry {
       if (!path.isAbsolute(root) || /[\r\n\0]/u.test(root)) {
         throw new Error("Allowed project roots must be absolute paths.");
       }
-      try {
-        return realpathSync(root);
-      } catch {
-        // Configuration canonicalizes roots at startup. Keep that identity if
-        // the root later becomes temporarily unavailable so recovery-mode
-        // registries can still load and block admission cleanly.
-        return path.normalize(root);
-      }
+      // BridgeConfig canonicalizes this security ceiling once at startup.
+      // Never realpath it again here: if the original directory is later
+      // replaced by a symlink, re-resolving would silently move the ceiling to
+      // the symlink target and admit a path the operator never configured.
+      return path.normalize(root);
     });
     const seenIds = new Set<string>();
     const seenPaths = new Set<string>();

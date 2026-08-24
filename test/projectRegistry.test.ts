@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, renameSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -67,6 +67,24 @@ describe("project registry", () => {
       [{ id: "relative", label: "Relative", cwd: "workspace" }],
       [root]
     )).toThrow(PROJECT_CWD_INVALID);
+  });
+
+  it("does not move the startup security ceiling when an allowed root is replaced by a symlink", () => {
+    const container = temporaryDirectory("project-root-swap-");
+    const configuredRoot = path.join(container, "allowed");
+    const originalRoot = path.join(container, "allowed-original");
+    const outside = temporaryDirectory("project-root-outside-");
+    const outsideProject = path.join(outside, "workspace");
+    mkdirSync(configuredRoot);
+    mkdirSync(outsideProject);
+    const startupCeiling = realpathSync(configuredRoot);
+
+    renameSync(configuredRoot, originalRoot);
+    symlinkSync(outside, configuredRoot);
+
+    expect(() => new ProjectRegistry([
+      { id: "escaped", label: "Escaped", cwd: path.join(configuredRoot, "workspace") }
+    ], [startupCeiling])).toThrow(/outside allowed roots/);
   });
 
   it("rejects IDs and canonical paths that collide after normalization", () => {
