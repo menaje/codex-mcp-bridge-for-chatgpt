@@ -13,6 +13,8 @@ Current public identity:
 | Kind | Value |
 | --- | --- |
 | Product | `Codex MCP Bridge for ChatGPT` |
+| Plugin display name | `Codex MCP Bridge for ChatGPT` |
+| Plugin developer/category | `menaje` / `Developer Tools` |
 | GitHub repository | `menaje/codex-mcp-bridge-for-chatgpt` |
 | npm package | `codex-mcp-bridge-for-chatgpt` |
 
@@ -22,10 +24,25 @@ The manifest controls:
 - npm package name, retained executable name, and packaged file list;
 - Node and npm versions used by local package metadata and GitHub Actions;
 - GitHub owner and repository name;
+- personal/local plugin identity, descriptions, developer, category,
+  capabilities, starter prompts, and registered ChatGPT app connection;
 - immutable Settings and Activity UI cache-key policy, hash algorithm and
   prefix length, retained-generation count, and required logical resources;
 - SemVer version, tag prefix, stable/prerelease channel, and release title;
 - generated release-note policy and the required npm tarball/checksum assets.
+
+## Personal/local plugin package identity
+
+`npm run release:sync` derives `.codex-plugin/plugin.json` and `.app.json` from
+the `plugin` block. The first file contains the plugin's user-facing metadata
+and always uses the release SemVer. The second maps the package to the existing
+developer-mode ChatGPT connection. Both files are generated and included in
+the npm package; do not edit them directly.
+
+`npm run release:check` rejects either missing file, malformed JSON, or any
+field that has drifted from `release-manifest.json`. Public marketplace-only
+assets and policy URLs are intentionally omitted while this package remains a
+personal/local plugin.
 
 ## UI resource identity and compatibility
 
@@ -90,9 +107,10 @@ npm run check
 npm run release:version -- 0.4.0-beta.1
 ```
 
-The command changes the manifest and synchronizes `package.json` and
-`package-lock.json` in one operation. An exact prerelease version automatically
-sets the prerelease channel; a normal version sets the stable channel.
+The command changes the manifest and synchronizes `package.json`,
+`package-lock.json`, `.codex-plugin/plugin.json`, and `.app.json` in one
+operation. An exact prerelease version automatically sets the prerelease
+channel; a normal version sets the stable channel.
 
 If another manifest field is intentionally edited, run:
 

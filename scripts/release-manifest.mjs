@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_FILENAME = "release-manifest.json";
+const PLUGIN_MANIFEST_FILENAME = ".codex-plugin/plugin.json";
+const APP_MANIFEST_FILENAME = ".app.json";
 const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
@@ -13,11 +15,15 @@ const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
   "LICENSE",
+  ".codex-plugin",
+  ".app.json",
   "release-manifest.json",
   "release-manifest.schema.json"
 ]);
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const PACKAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+const PLUGIN_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const PLUGIN_APP_ID_PATTERN = /^plugin_asdk_app_[A-Za-z0-9]+$/;
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+$/;
 
@@ -37,7 +43,7 @@ export function validateReleaseManifest(value) {
   const root = requiredRecord(value, "release manifest");
   assertKeys(
     root,
-    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "uiResources", "release"],
+    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "release"],
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
@@ -91,6 +97,48 @@ export function validateReleaseManifest(value) {
   if (repository.provider !== "github") fail("repository.provider must be github");
   identifier(repository.owner, "repository.owner", GITHUB_OWNER_PATTERN, 39);
   identifier(repository.name, "repository.name", GITHUB_REPOSITORY_PATTERN, 100);
+
+  const plugin = requiredRecord(root.plugin, "plugin");
+  assertKeys(
+    plugin,
+    [
+      "name",
+      "displayName",
+      "shortDescription",
+      "longDescription",
+      "developerName",
+      "category",
+      "capabilities",
+      "defaultPrompt",
+      "app"
+    ],
+    "plugin"
+  );
+  identifier(plugin.name, "plugin.name", PLUGIN_NAME_PATTERN, 64);
+  boundedString(plugin.displayName, "plugin.displayName", 80);
+  boundedString(plugin.shortDescription, "plugin.shortDescription", 80);
+  boundedString(plugin.longDescription, "plugin.longDescription", 500);
+  boundedString(plugin.developerName, "plugin.developerName", 80);
+  boundedString(plugin.category, "plugin.category", 80);
+  if (!Array.isArray(plugin.capabilities) || plugin.capabilities.length < 1 || plugin.capabilities.length > 12) {
+    fail("plugin.capabilities must contain 1 to 12 entries");
+  }
+  const capabilities = plugin.capabilities.map((entry, index) =>
+    boundedString(entry, `plugin.capabilities[${index}]`, 100)
+  );
+  if (new Set(capabilities).size !== capabilities.length) fail("plugin.capabilities must be unique");
+  if (!Array.isArray(plugin.defaultPrompt) || plugin.defaultPrompt.length < 1 || plugin.defaultPrompt.length > 3) {
+    fail("plugin.defaultPrompt must contain 1 to 3 entries");
+  }
+  const defaultPrompts = plugin.defaultPrompt.map((entry, index) =>
+    boundedString(entry, `plugin.defaultPrompt[${index}]`, 128)
+  );
+  if (new Set(defaultPrompts).size !== defaultPrompts.length) fail("plugin.defaultPrompt must be unique");
+  const app = requiredRecord(plugin.app, "plugin.app");
+  assertKeys(app, ["name", "id"], "plugin.app");
+  identifier(app.name, "plugin.app.name", PLUGIN_NAME_PATTERN, 64);
+  identifier(app.id, "plugin.app.id", PLUGIN_APP_ID_PATTERN, 128);
+  if (app.name !== plugin.name) fail("plugin.app.name must match plugin.name");
 
   const uiResources = requiredRecord(root.uiResources, "uiResources");
   assertKeys(
@@ -169,7 +217,52 @@ export function deriveReleaseMetadata(manifest) {
     packageFilename,
     checksumFilename: `${packageFilename}.sha256`,
     repositorySlug,
-    repositoryUrl
+    repositoryUrl,
+    pluginName: manifest.plugin.name,
+    pluginDisplayName: manifest.plugin.displayName,
+    pluginDeveloperName: manifest.plugin.developerName,
+    pluginCategory: manifest.plugin.category,
+    pluginAppId: manifest.plugin.app.id
+  };
+}
+
+export function derivePluginManifests(manifest) {
+  validateReleaseManifest(manifest);
+  const repositoryUrl = `https://github.com/${manifest.repository.owner}/${manifest.repository.name}`;
+  const plugin = manifest.plugin;
+  return {
+    pluginManifest: {
+      name: plugin.name,
+      version: manifest.release.version,
+      description: manifest.product.description,
+      author: {
+        name: plugin.developerName,
+        url: `https://github.com/${manifest.repository.owner}`
+      },
+      homepage: `${repositoryUrl}#readme`,
+      repository: repositoryUrl,
+      license: manifest.package.license,
+      keywords: [...manifest.package.keywords],
+      apps: `./${APP_MANIFEST_FILENAME}`,
+      interface: {
+        displayName: plugin.displayName,
+        shortDescription: plugin.shortDescription,
+        longDescription: plugin.longDescription,
+        developerName: plugin.developerName,
+        category: plugin.category,
+        capabilities: [...plugin.capabilities],
+        websiteURL: repositoryUrl,
+        defaultPrompt: [...plugin.defaultPrompt]
+      }
+    },
+    appManifest: {
+      apps: {
+        [plugin.app.name]: {
+          id: plugin.app.id,
+          category: plugin.category
+        }
+      }
+    }
   };
 }
 
@@ -179,6 +272,13 @@ export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const drift = [];
   if (!sameJson(prepared.packageJson, prepared.nextPackageJson)) drift.push("package.json");
   if (!sameJson(prepared.packageLock, prepared.nextPackageLock)) drift.push("package-lock.json");
+  const pluginManifests = derivePluginManifests(manifest);
+  if (!jsonFileMatches(path.join(repoRoot, PLUGIN_MANIFEST_FILENAME), pluginManifests.pluginManifest)) {
+    drift.push(PLUGIN_MANIFEST_FILENAME);
+  }
+  if (!jsonFileMatches(path.join(repoRoot, APP_MANIFEST_FILENAME), pluginManifests.appManifest)) {
+    drift.push(APP_MANIFEST_FILENAME);
+  }
   if (drift.length > 0) {
     throw new Error(`Release metadata drift in ${drift.join(", ")}. Run npm run release:sync.`);
   }
@@ -193,6 +293,7 @@ export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const prepared = preparePackageMetadata(repoRoot, manifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
   writeJsonIfChanged(path.join(repoRoot, "package-lock.json"), prepared.packageLock, prepared.nextPackageLock);
+  writePluginManifests(repoRoot, manifest);
   if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
     syncUiResources(repoRoot, manifest);
   }
@@ -336,7 +437,14 @@ export function setReleaseVersion(requested, repoRoot = DEFAULT_REPO_ROOT) {
   writeJsonAtomically(path.join(repoRoot, MANIFEST_FILENAME), nextManifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
   writeJsonIfChanged(path.join(repoRoot, "package-lock.json"), prepared.packageLock, prepared.nextPackageLock);
+  writePluginManifests(repoRoot, nextManifest);
   return deriveReleaseMetadata(nextManifest);
+}
+
+function writePluginManifests(repoRoot, manifest) {
+  const derived = derivePluginManifests(manifest);
+  writeJsonArtifactIfChanged(path.join(repoRoot, PLUGIN_MANIFEST_FILENAME), derived.pluginManifest);
+  writeJsonArtifactIfChanged(path.join(repoRoot, APP_MANIFEST_FILENAME), derived.appManifest);
 }
 
 function preparePackageMetadata(repoRoot, manifest) {
@@ -497,6 +605,10 @@ function writeJsonIfChanged(file, current, next) {
   if (!sameJson(current, next)) writeJsonAtomically(file, next);
 }
 
+function writeJsonArtifactIfChanged(file, next) {
+  if (!jsonFileMatches(file, next)) writeJsonAtomically(file, next);
+}
+
 function writeJsonAtomically(file, value) {
   const temporary = `${file}.tmp-${process.pid}`;
   mkdirSync(path.dirname(file), { recursive: true });
@@ -516,6 +628,15 @@ function writeTextAtomically(file, value) {
 
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function jsonFileMatches(file, expected) {
+  if (!existsSync(file)) return false;
+  try {
+    return sameJson(readJson(file), expected);
+  } catch {
+    return false;
+  }
 }
 
 function errorMessage(error) {

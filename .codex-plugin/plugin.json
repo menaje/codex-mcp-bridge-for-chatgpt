@@ -1,0 +1,39 @@
+{
+  "name": "codex-mcp-bridge",
+  "version": "0.3.0",
+  "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
+  "author": {
+    "name": "menaje",
+    "url": "https://github.com/menaje"
+  },
+  "homepage": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt#readme",
+  "repository": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "chatgpt",
+    "mcp",
+    "model-context-protocol",
+    "bridge"
+  ],
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "Codex MCP Bridge for ChatGPT",
+    "shortDescription": "Connect ChatGPT to your local Codex",
+    "longDescription": "Run and monitor local Codex tasks from ChatGPT through a policy-enforcing MCP bridge. Reuse agents across activities, choose models and reasoning effort, and control working folders and filesystem access.",
+    "developerName": "menaje",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Run and continue local Codex tasks",
+      "Monitor agents, activities, and jobs",
+      "Choose models and reasoning effort",
+      "Control working folders and access policy"
+    ],
+    "websiteURL": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt",
+    "defaultPrompt": [
+      "Ask local Codex to inspect this project and explain how it works.",
+      "Use local Codex to implement this change and track the activity.",
+      "Show the status of my active Codex agents and activities."
+    ]
+  }
+}

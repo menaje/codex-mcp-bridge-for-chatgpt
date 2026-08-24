@@ -13,6 +13,8 @@
     "LICENSE",
     "UPSTREAM.md",
     "docs",
+    ".codex-plugin",
+    ".app.json",
     "release-manifest.json",
     "release-manifest.schema.json"
   ],

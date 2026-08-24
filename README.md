@@ -217,7 +217,7 @@ Only the newest automatic presentation in a conversation owns the bounded scope-
 
 ## UI cache-key and Plugin Refresh policy
 
-`release-manifest.json` is canonical for both release identity and UI resource policy. Settings and Activity URIs are immutable content hashes of the final HTML/JS/CSS plus host-affecting metadata:
+`release-manifest.json` is canonical for release identity, personal/local plugin metadata, and UI resource policy. `npm run release:sync` generates `.codex-plugin/plugin.json` and `.app.json`, including the display name, developer, category, release SemVer, and existing ChatGPT developer-mode connection. Settings and Activity URIs are immutable content hashes of the final HTML/JS/CSS plus host-affecting metadata:
 
 ```text
 ui://codex-mcp-bridge/settings/<sha256-prefix>.html
@@ -251,7 +251,7 @@ App Server threads can be resumed by exact ID. MCP Server thread context is work
 
 Work on `dev`. The GitHub workflow runs only on `main`; do not promote or push to `main` without explicit instruction.
 
-`release-manifest.json` controls product/package identity, toolchain, repository, SemVer/release assets, and UI resource policy. Normal version change:
+`release-manifest.json` controls product/package identity, personal/local plugin metadata, toolchain, repository, SemVer/release assets, and UI resource policy. Normal version change:
 
 ```bash
 npm run release:version -- patch
@@ -267,7 +267,7 @@ npm run release:check
 npm run check
 ```
 
-Do not hand-edit generated UI manifests/snapshots or use `npm version` directly.
+Do not hand-edit `.codex-plugin/plugin.json`, `.app.json`, generated UI manifests/snapshots, or use `npm version` directly.
 
 The current product/repository/package names include **for ChatGPT**. Bare `codex-mcp-bridge` values are a retained runtime namespace covering the executable, environment prefix, local state directory, Keychain services, tunnel profile, and MCP App URI namespace.
 

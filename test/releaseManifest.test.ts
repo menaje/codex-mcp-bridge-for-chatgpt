@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   checkReleaseMetadata,
+  derivePluginManifests,
   deriveReleaseMetadata,
   deriveUiResourceManifest,
   loadReleaseManifest,
@@ -27,7 +28,12 @@ describe("release manifest", () => {
       binaryName: "codex-mcp-bridge",
       nodeVersion: "22",
       npmVersion: "10.9.3",
-      repositorySlug: "menaje/codex-mcp-bridge-for-chatgpt"
+      repositorySlug: "menaje/codex-mcp-bridge-for-chatgpt",
+      pluginName: "codex-mcp-bridge",
+      pluginDisplayName: "Codex MCP Bridge for ChatGPT",
+      pluginDeveloperName: "menaje",
+      pluginCategory: "Developer Tools",
+      pluginAppId: "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0"
     });
   });
 
@@ -42,7 +48,7 @@ describe("release manifest", () => {
       version: metadata.version,
       packageManager: `npm@${metadata.npmVersion}`,
       engines: { node: metadata.nodeEngine },
-      files: expect.arrayContaining(["dist", "docs", "release-manifest.json"]),
+      files: expect.arrayContaining(["dist", "docs", ".codex-plugin", ".app.json", "release-manifest.json"]),
       repository: { type: "git", url: `${metadata.repositoryUrl}.git` }
     });
     expect(readJson(path.join(root, "package-lock.json"))).toMatchObject({
@@ -50,7 +56,31 @@ describe("release manifest", () => {
       version: metadata.version,
       packages: { "": { name: metadata.packageName, version: metadata.version } }
     });
+    const derivedPlugin = derivePluginManifests(loadReleaseManifest(root));
+    expect(readJson(path.join(root, ".codex-plugin/plugin.json"))).toEqual(derivedPlugin.pluginManifest);
+    expect(readJson(path.join(root, ".app.json"))).toEqual(derivedPlugin.appManifest);
     expect(checkReleaseMetadata(root)).toEqual(metadata);
+  });
+
+  it("detects and repairs drift in generated plugin manifests", () => {
+    const root = fixtureRoot();
+    syncReleaseMetadata(root);
+
+    const pluginFile = path.join(root, ".codex-plugin/plugin.json");
+    const pluginManifest = readJson(pluginFile);
+    pluginManifest.interface.category = "Productivity";
+    writeJson(pluginFile, pluginManifest);
+    expect(() => checkReleaseMetadata(root)).toThrow(/\.codex-plugin\/plugin\.json/);
+
+    syncReleaseMetadata(root);
+    const appFile = path.join(root, ".app.json");
+    const appManifest = readJson(appFile);
+    appManifest.apps["codex-mcp-bridge"].id = "plugin_asdk_app_drifted";
+    writeJson(appFile, appManifest);
+    expect(() => checkReleaseMetadata(root)).toThrow(/\.app\.json/);
+
+    syncReleaseMetadata(root);
+    expect(checkReleaseMetadata(root).pluginCategory).toBe("Developer Tools");
   });
 
   it("updates the manifest and package metadata together for increments and prereleases", () => {
@@ -70,6 +100,7 @@ describe("release manifest", () => {
       channel: "prerelease",
       prerelease: true
     });
+    expect(readJson(path.join(root, ".codex-plugin/plugin.json")).version).toBe("0.4.0-beta.1");
     expect(checkReleaseMetadata(root).version).toBe("0.4.0-beta.1");
     expect(() => setReleaseVersion("1.2.3-01", root)).toThrow(/Version must be/);
   });

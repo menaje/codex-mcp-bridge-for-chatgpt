@@ -16,6 +16,8 @@
       "LICENSE",
       "UPSTREAM.md",
       "docs",
+      ".codex-plugin",
+      ".app.json",
       "release-manifest.json",
       "release-manifest.schema.json"
     ],
@@ -35,6 +37,29 @@
     "provider": "github",
     "owner": "menaje",
     "name": "codex-mcp-bridge-for-chatgpt"
+  },
+  "plugin": {
+    "name": "codex-mcp-bridge",
+    "displayName": "Codex MCP Bridge for ChatGPT",
+    "shortDescription": "Connect ChatGPT to your local Codex",
+    "longDescription": "Run and monitor local Codex tasks from ChatGPT through a policy-enforcing MCP bridge. Reuse agents across activities, choose models and reasoning effort, and control working folders and filesystem access.",
+    "developerName": "menaje",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Run and continue local Codex tasks",
+      "Monitor agents, activities, and jobs",
+      "Choose models and reasoning effort",
+      "Control working folders and access policy"
+    ],
+    "defaultPrompt": [
+      "Ask local Codex to inspect this project and explain how it works.",
+      "Use local Codex to implement this change and track the activity.",
+      "Show the status of my active Codex agents and activities."
+    ],
+    "app": {
+      "name": "codex-mcp-bridge",
+      "id": "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0"
+    }
   },
   "uiResources": {
     "strategy": "content-hash",
