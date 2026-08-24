@@ -62,7 +62,12 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   sandbox is exposed only for adaptive policy and only within owner-enabled
   capabilities. Its exact model/effort decision is resolved again at runtime.
   The user's independent Priority preference is then applied privately by the
-  bridge and the effective downstream selection is retained with the job.
+  bridge and the effective downstream selection is retained with the job. New
+  admissions use canonical request-hash v4 over the resolved project ID and
+  canonical folder, backend, sandbox, execution/context mode, immutable source
+  thread, effective model selection, prompt, and creation metadata. Presentation
+  and mutable policy/catalog revision state are excluded; persisted v1-v3 jobs
+  retain their original replay semantics.
 
 The bridge does not expose a raw shell tool, arbitrary process control,
 arbitrary Codex config, or a general Responses API proxy. Its only direct

@@ -20,6 +20,7 @@ import {
 } from "./activity.js";
 import {
   AGENT_CONTEXT_MODES,
+  normalizeAgentName,
   type ActivityAgentAssignment,
   type AgentContextMode,
   type BridgeAgent,
@@ -77,10 +78,11 @@ import {
   registerActivityCardResource,
   ACTIVITY_CARD_URI
 } from "./activityCard.js";
-import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
+import type { ScopeResolution, ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
   legacyActivityIdForJob,
+  normalizeActivityTitle,
   type ActivityProjectAdmission,
   type CreateActivityInput
 } from "./stateStore.js";
@@ -268,8 +270,10 @@ type CodexRouting = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 2 | 3;
+  requestHashVersion: 2 | 3 | 4;
 };
+
+const CURRENT_TASK_REQUEST_HASH_VERSION = 4 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -356,7 +360,8 @@ type CodexJob = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3;
+  requestHashVersion: 1 | 2 | 3 | 4;
+  sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
   exclusiveKeys: string[];
@@ -1324,7 +1329,7 @@ export class CodexJobRegistry {
       backendKind: input.backendKind || "mcp-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
-      requestHashVersion: input.requestHashVersion || 3,
+      requestHashVersion: input.requestHashVersion || CURRENT_TASK_REQUEST_HASH_VERSION,
       jobId: randomUUID(),
       createdAt: now,
       updatedAt: now,
@@ -4191,7 +4196,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. An exact logical-call retry reuses both IDs. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. Reusing that presentation ID preserves card grouping, but presentation changes never create another Codex execution for the same requestId and execution semantics. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4208,6 +4213,33 @@ export function registerBridgeTools(
           args.scopeId,
           "Codex task execution"
         );
+        const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (existingV4Request?.requestHashVersion === CURRENT_TASK_REQUEST_HASH_VERSION) {
+          if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
+            resolveTaskCwd(config, preferences, args.cwd);
+          }
+          if (args.adoptThread) {
+            throw new Error(
+              "THREAD_ADOPTION_RETIRED: Low-level cross-scope thread adoption is not a public Codex task operation. Use a scope-local Agent."
+            );
+          }
+          rejectRetiredTaskModelInputs(args, preferences.revision);
+          applyLegacyTaskRouting(args, jobs, scope);
+          const replayRouting = resolveTaskReplayRoutingV4(
+            args,
+            scope.scopeId,
+            existingV4Request
+          );
+          const replay = jobs.findRequest(
+            replayRouting.scopeId,
+            replayRouting.requestId,
+            replayRouting.requestHash
+          );
+          if (replay) {
+            return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
+          }
+          throw new Error("Persisted Codex task replay registration disappeared.");
+        }
         requireTaskActivityPresentation(args, preferences);
         if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
           resolveTaskCwd(config, preferences, args.cwd);
@@ -4225,25 +4257,7 @@ export function registerBridgeTools(
             "THREAD_ADOPTION_RETIRED: Low-level cross-scope thread adoption is not a public Codex task operation. Use a scope-local Agent."
           );
         }
-        if (args.threadId) {
-          if (scope.source === "host-metadata") {
-            throw new Error(
-              "THREAD_ROUTING_RETIRED: Arbitrary threadId routing is retired for ChatGPT calls. Refresh tools and route with an exact agentId."
-            );
-          }
-          const legacyAgent = jobs.getAgentForThread(args.threadId);
-          if (!legacyAgent || legacyAgent.scopeId !== scope.scopeId) {
-            throw new Error(
-              "THREAD_ROUTING_RETIRED: The compatibility thread is not owned by a scope-local bridge Agent."
-            );
-          }
-          args.agentId = legacyAgent.agentId;
-          args.contextMode = "continue";
-        } else if (args.sessionMode === "new") {
-          args.contextMode = "fresh";
-        } else if (args.sessionMode === "continue") {
-          args.contextMode = "continue";
-        }
+        applyLegacyTaskRouting(args, jobs, scope);
 
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingRequest) {
@@ -4276,16 +4290,9 @@ export function registerBridgeTools(
           activityRequest,
           agentResolution
         });
-        const routing = resolveTaskRouting(
-          args,
-          scope.scopeId,
-          projectAdmission?.projectId,
-          3
-        );
-        const replay = jobs.findRequest(routing.scopeId, routing.requestId, routing.requestHash);
-        if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
+        const executionMode = resolveTaskExecutionMode(activityRequest, jobs);
 
-        if (routing.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
+        if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
         }
 
@@ -4321,13 +4328,35 @@ export function registerBridgeTools(
             requestedSelection: args.selection,
             requestedPolicyRevision: args.modelPolicyRevision
           });
+          const routing = resolveTaskRoutingV4({
+            args,
+            scopeId: scope.scopeId,
+            projectId: projectAdmission?.projectId,
+            cwd,
+            sandbox,
+            operation: "start",
+            backendKind: config.defaultBackend,
+            executionMode,
+            effectiveSelection: decision.effectiveSelection,
+            agentId: agentResolution.agent?.agentId,
+            contextMode: "fresh"
+          });
+          const replay = jobs.findRequest(
+            routing.scopeId,
+            routing.requestId,
+            routing.requestHash
+          );
+          if (replay) {
+            return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
+          }
           const agent = agentResolution.agent || jobs.createAgent({
-            scopeId: routing.scopeId,
+            scopeId: scope.scopeId,
             agentName: agentResolution.newAgentName
           });
           return await startNewSession({
             args,
             routing,
+            executionMode,
             requestedMode: "new",
             reason: activityRequest.activityId ? "activity-no-compatible" : "activity-new",
             config,
@@ -4354,7 +4383,7 @@ export function registerBridgeTools(
           sessions,
           jobs,
           upstream,
-          routing.scopeId
+          scope.scopeId
         );
         const executionDecision = await resolveExecutionDecision({
           config,
@@ -4367,11 +4396,34 @@ export function registerBridgeTools(
           requestedPolicyRevision: args.modelPolicyRevision,
           currentSelection: session.selection
         });
+        const routing = resolveTaskRoutingV4({
+          args,
+          scopeId: scope.scopeId,
+          projectId: projectAdmission?.projectId,
+          cwd: session.cwd,
+          sandbox: session.sandbox,
+          operation: agentResolution.contextMode === "continue" ? "continue" : "start",
+          backendKind: session.backendKind,
+          executionMode,
+          effectiveSelection: executionDecision.effectiveSelection,
+          agentId: agentResolution.agent.agentId,
+          contextMode: agentResolution.contextMode,
+          sourceThreadId: session.threadId
+        });
+        const replay = jobs.findRequest(
+          routing.scopeId,
+          routing.requestId,
+          routing.requestHash
+        );
+        if (replay) {
+          return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
+        }
         if (agentResolution.contextMode === "fork") {
           return await forkTrackedSession({
             prompt: args.prompt,
             session,
             routing,
+            executionMode,
             config,
             upstream,
             sessions,
@@ -4390,6 +4442,7 @@ export function registerBridgeTools(
           reason: "activity-compatible",
           session,
           routing,
+          executionMode,
           config,
           upstream,
           sessions,
@@ -4477,7 +4530,7 @@ class ActivityPresentationContractError extends Error {
       "ACTIVITY_PRESENTATION_ID_REQUIRED: Automatic Activity cards require one UUID " +
       "activityPresentationId for the current ChatGPT assistant response. Refresh the tool " +
       "descriptor, generate the UUID once, reuse it for every codex_task in this response, " +
-      "and reuse both requestId and activityPresentationId for an exact logical-call retry."
+      "and retain it on retries when possible so the response keeps one card grouping."
     );
     this.name = "ActivityPresentationContractError";
   }
@@ -4517,6 +4570,7 @@ function rejectStaleTaskModelInputs(
   args: CodexTaskArgs,
   preferences: BridgeUserSettings
 ): void {
+  rejectRetiredTaskModelInputs(args, preferences.revision);
   if (
     args.modelPolicyRevision !== undefined &&
     args.modelPolicyRevision !== preferences.revision
@@ -4528,6 +4582,23 @@ function rejectStaleTaskModelInputs(
       ["Refresh the Codex tool descriptor or settings view and retry with the current revision."]
     );
   }
+  if (
+    preferences.modelPolicy.mode === "fixed" &&
+    Object.prototype.hasOwnProperty.call(args, "selection")
+  ) {
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_FORBIDDEN",
+      "This bridge is in fixed model mode and does not accept a per-call model selection.",
+      preferences.revision,
+      ["Omit selection and retry; the saved fixed selection will be applied."]
+    );
+  }
+}
+
+function rejectRetiredTaskModelInputs(
+  args: CodexTaskArgs,
+  policyRevision: number
+): void {
   const raw = args as CodexTaskArgs & Record<string, unknown>;
   const legacyFields = ["model", "reasoningEffort", "serviceTier"].filter((key) =>
     Object.prototype.hasOwnProperty.call(raw, key)
@@ -4536,19 +4607,8 @@ function rejectStaleTaskModelInputs(
     throw new ModelPolicyError(
       "MODEL_SELECTION_FORBIDDEN",
       `Legacy top-level model fields are not accepted: ${legacyFields.join(", ")}.`,
-      preferences.revision,
+      policyRevision,
       ["Use one exact nested selection exposed by the current descriptor in automatic mode."]
-    );
-  }
-  if (
-    preferences.modelPolicy.mode === "fixed" &&
-    Object.prototype.hasOwnProperty.call(raw, "selection")
-  ) {
-    throw new ModelPolicyError(
-      "MODEL_SELECTION_FORBIDDEN",
-      "This bridge is in fixed model mode and does not accept a per-call model selection.",
-      preferences.revision,
-      ["Omit selection and retry; the saved fixed selection will be applied."]
     );
   }
 }
@@ -4563,6 +4623,41 @@ type ActivityTaskRequest = Pick<
   | "handoffPolicy"
   | "completionTrigger"
 >;
+
+function applyLegacyTaskRouting(
+  args: CodexTaskArgs,
+  jobs: CodexJobRegistry,
+  scope: ScopeResolution
+): void {
+  if (args.threadId) {
+    if (scope.source === "host-metadata") {
+      throw new Error(
+        "THREAD_ROUTING_RETIRED: Arbitrary threadId routing is retired for ChatGPT calls. Refresh tools and route with an exact agentId."
+      );
+    }
+    const legacyAgent = jobs.getAgentForThread(args.threadId);
+    if (!legacyAgent || legacyAgent.scopeId !== scope.scopeId) {
+      throw new Error(
+        "THREAD_ROUTING_RETIRED: The compatibility thread is not owned by a scope-local bridge Agent."
+      );
+    }
+    args.agentId = legacyAgent.agentId;
+    args.contextMode = "continue";
+  } else if (args.sessionMode === "new") {
+    args.contextMode = "fresh";
+  } else if (args.sessionMode === "continue") {
+    args.contextMode = "continue";
+  }
+}
+
+function resolveTaskExecutionMode(
+  request: ActivityTaskRequest,
+  jobs: CodexJobRegistry
+): ActivityExecutionMode {
+  if (request.executionMode) return request.executionMode;
+  if (!request.activityId) return "background";
+  return jobs.getActivity(request.activityId)?.executionMode || "background";
+}
 
 type AgentTaskResolution =
   | {
@@ -5046,6 +5141,7 @@ function resolveActivityForTask(
 async function startNewSession(input: {
   args: CodexTaskArgs;
   routing: CodexRouting;
+  executionMode: ActivityExecutionMode;
   requestedMode: SessionMode;
   reason: SessionDecision["reason"];
   config: BridgeConfig;
@@ -5106,6 +5202,7 @@ async function startNewSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision,
     activityRequest: input.activityRequest,
+    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
@@ -5192,6 +5289,7 @@ async function continueTrackedSession(input: {
   reason: SessionDecision["reason"];
   session: TrackedCodexSession;
   routing: CodexRouting;
+  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
   sessions: SessionRegistry;
@@ -5246,10 +5344,12 @@ async function continueTrackedSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision: decision,
     activityRequest: input.activityRequest,
+    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    sourceThreadId: input.session.threadId,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
@@ -5333,6 +5433,7 @@ async function forkTrackedSession(input: {
   prompt: string;
   session: TrackedCodexSession;
   routing: CodexRouting;
+  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
   sessions: SessionRegistry;
@@ -5381,10 +5482,12 @@ async function forkTrackedSession(input: {
     executionDecision: input.executionDecision,
     sessionDecision,
     activityRequest: input.activityRequest,
+    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: "fork",
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    sourceThreadId: input.session.threadId,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => input.upstream.forkThread?.(
       {
@@ -5445,10 +5548,12 @@ async function runCodex(input: {
   routing: CodexRouting;
   sessionDecision: SessionDecision;
   activityRequest: ActivityTaskRequest;
+  executionMode: ActivityExecutionMode;
   agent: BridgeAgent;
   contextMode: AgentContextMode;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
+  sourceThreadId?: string;
   selectionKey: string;
   executionDecision: ExecutionDecision;
   rejectIfSelectionActive?: boolean;
@@ -5491,7 +5596,7 @@ async function runCodex(input: {
         projectLabel: input.projectAdmission?.projectLabel,
         agentId: input.agent.agentId,
         contextMode: input.contextMode,
-        executionMode: input.activityRequest.executionMode || activity.executionMode,
+        executionMode: input.executionMode,
         cwd: input.cwd,
         sandbox: input.sandbox,
         scopeId: input.routing.scopeId,
@@ -5499,6 +5604,7 @@ async function runCodex(input: {
         activityPresentationId: input.routing.activityPresentationId,
         requestHash: input.routing.requestHash,
         requestHashVersion: input.routing.requestHashVersion,
+        sourceThreadId: input.sourceThreadId,
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
         executionDecision: input.executionDecision,
         exclusiveKeys: [
@@ -6761,8 +6867,9 @@ function codexTaskInputSchema(
     "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. " +
     "Generate it once for the response, reuse it for every codex_task in that response even " +
     "across different Activities or Agents, and generate a new value for the next response. " +
-    "An exact logical-call retry reuses both this value and requestId; requestId deduplicates " +
-    "one Codex call while activityPresentationId deduplicates one response's card.";
+    "Reuse it on retries when possible to preserve card grouping. requestId deduplicates one " +
+    "Codex execution while activityPresentationId deduplicates one response's card and is not " +
+    "part of execution replay identity.";
   const publicPresentation = {
     activityPresentationId: settings.activityCardVisibility === "never"
       ? scopeIdSchema().optional().describe(
@@ -6996,6 +7103,188 @@ function resolveTaskRouting(
     requestHash,
     requestHashVersion
   };
+}
+
+type TaskRequestHashV4Input = {
+  args: CodexTaskArgs;
+  scopeId: string;
+  projectId?: string;
+  cwd: string;
+  sandbox: SandboxMode;
+  operation: CodexJobOperation;
+  backendKind: CodexBackendKind;
+  executionMode: ActivityExecutionMode;
+  effectiveSelection: ModelSelection;
+  agentId?: string;
+  contextMode: AgentContextMode;
+  sourceThreadId?: string;
+};
+
+/**
+ * Hash v4 commits only admission-time execution semantics. In particular, it
+ * deliberately excludes Activity-card presentation, catalog/policy revisions,
+ * watches, leases, and other mutable discovery or UI state.
+ */
+function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
+  const activityCreation = input.args.activityId
+    ? null
+    : {
+        title: normalizeActivityTitle(input.args.activityTitle || "Codex activity"),
+        kind: input.args.activityKind || "other",
+        executionMode: input.executionMode,
+        handoffPolicy: input.args.handoffPolicy || "none",
+        completionTrigger: input.args.completionTrigger || "manual"
+      };
+  const agentCreation = input.args.agentName
+    ? { name: normalizeAgentName(input.args.agentName).agentName }
+    : null;
+  const requestHash = createHash("sha256")
+    .update(
+      canonicalJson({
+        version: CURRENT_TASK_REQUEST_HASH_VERSION,
+        scopeId: input.scopeId,
+        prompt: input.args.prompt,
+        project: input.projectId
+          ? { projectId: input.projectId, cwd: input.cwd }
+          : null,
+        routing: {
+          activity: input.args.activityId
+            ? { mode: "existing", activityId: input.args.activityId }
+            : {
+                mode: "new",
+                continuationOfActivityId: input.args.continuationOfActivityId || null
+              },
+          agent: input.args.agentName
+            ? {
+                mode: "new",
+                contextMode: input.contextMode,
+                sourceThreadId: input.sourceThreadId || null
+              }
+            : {
+                mode: "existing",
+                agentId: requireTaskHashAgentId(input.agentId),
+                contextMode: input.contextMode,
+                sourceThreadId: input.sourceThreadId || null
+              }
+        },
+        execution: {
+          operation: input.operation,
+          backendKind: input.backendKind,
+          cwd: input.cwd,
+          sandbox: input.sandbox,
+          executionMode: input.executionMode,
+          modelSelection: {
+            model: input.effectiveSelection.model,
+            reasoningEffort: input.effectiveSelection.reasoningEffort,
+            serviceTier: input.effectiveSelection.serviceTier || null
+          }
+        },
+        creation: {
+          activity: activityCreation,
+          agent: agentCreation,
+          assignmentRole: normalizeTaskAssignmentRole(input.args.agentRole)
+        }
+      })
+    )
+    .digest("hex");
+  return {
+    scopeId: input.scopeId,
+    requestId: input.args.requestId,
+    activityPresentationId: input.args.activityPresentationId,
+    requestHash,
+    requestHashVersion: CURRENT_TASK_REQUEST_HASH_VERSION
+  };
+}
+
+function resolveTaskReplayRoutingV4(
+  args: CodexTaskArgs,
+  scopeId: string,
+  job: CodexJob
+): CodexRouting {
+  if (
+    job.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION ||
+    !job.agentId ||
+    !job.contextMode ||
+    !job.executionDecision
+  ) {
+    throw new Error("Persisted Codex task replay identity is incomplete.");
+  }
+  const contextMode = args.contextMode || job.contextMode;
+  const requestedProjectId = args.projectId === undefined
+    ? job.projectId
+    : normalizeProjectId(args.projectId);
+  return resolveTaskRoutingV4({
+    args,
+    scopeId,
+    projectId: requestedProjectId,
+    cwd: job.cwd,
+    sandbox: contextMode === "fresh" ? args.sandbox || job.sandbox : job.sandbox,
+    operation: contextMode === "continue" ? "continue" : "start",
+    backendKind: job.executionDecision.backendKind,
+    executionMode: args.executionMode || job.executionMode,
+    effectiveSelection: replayEffectiveSelection(
+      args.selection,
+      job.executionDecision.effectiveSelection
+    ),
+    agentId: args.agentId || job.agentId,
+    contextMode,
+    sourceThreadId: contextMode === "fresh"
+      ? undefined
+      : args.threadId || job.sourceThreadId
+  });
+}
+
+function replayEffectiveSelection(
+  requested: ModelChoice | undefined,
+  admitted: ModelSelection
+): ModelSelection {
+  if (
+    !requested ||
+    (requested.model === admitted.model &&
+      requested.reasoningEffort === admitted.reasoningEffort)
+  ) {
+    return admitted;
+  }
+  return {
+    ...requested,
+    ...(admitted.serviceTier ? { serviceTier: admitted.serviceTier } : {})
+  };
+}
+
+function requireTaskHashAgentId(value: string | undefined): string {
+  if (!value) throw new Error("Codex task routing requires a resolved Agent identity.");
+  return value;
+}
+
+function normalizeTaskAssignmentRole(value: string | undefined): string {
+  if (value === undefined) return "primary";
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "primary";
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Cannot hash a non-finite JSON number.");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    return `{${entries
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  throw new Error(`Cannot hash unsupported JSON value of type ${typeof value}.`);
 }
 
 async function buildSettingsView(
@@ -7800,7 +8089,10 @@ function readPersistedJob(
     (value.activityPresentationId !== undefined && !activityPresentationId) ||
     typeof requestHash !== "string" ||
     !/^[0-9a-f]{64}$/i.test(requestHash) ||
-    (requestHashVersion !== 1 && requestHashVersion !== 2 && requestHashVersion !== 3) ||
+    (requestHashVersion !== 1 &&
+      requestHashVersion !== 2 &&
+      requestHashVersion !== 3 &&
+      requestHashVersion !== 4) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -7826,6 +8118,7 @@ function readPersistedJob(
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     !isOptionalString(value.agentId) ||
+    !isOptionalString(value.sourceThreadId) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
     (value.lastProgress !== undefined && !lastProgress) ||
@@ -7862,6 +8155,7 @@ function readPersistedJob(
     activityPresentationId,
     requestHash,
     requestHashVersion,
+    sourceThreadId: value.sourceThreadId,
     selectionKey: value.selectionKey,
     ...(executionDecision ? { executionDecision } : {}),
     exclusiveKeys: [...value.exclusiveKeys],

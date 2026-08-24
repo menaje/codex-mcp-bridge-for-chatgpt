@@ -986,7 +986,7 @@ describe("bridge tools", () => {
             "selection",
           ],
           "propertyCount": 19,
-          "schemaBytes": 5314,
+          "schemaBytes": 5359,
           "visibility": {
             "app": true,
             "model": true,
@@ -2744,12 +2744,15 @@ describe("bridge tools", () => {
       args: { threadId: "thread-1", prompt: "continue into a separately verifiable goal" }
     });
 
-    const forked = await runTask(client, {
+    const forkRequestId = "35353535-3535-4535-8535-353535353535";
+    const forkArguments = {
+      requestId: forkRequestId,
       prompt: "independently verify the approach",
       activityId: linkedActivityId,
       agentId,
       contextMode: "fork"
-    });
+    };
+    const forked = await runTask(client, forkArguments);
     expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.threadId)
       .toBe("thread-forked");
     expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity)
@@ -2758,6 +2761,20 @@ describe("bridge tools", () => {
       name: "codex-fork",
       args: { threadId: "thread-1", prompt: "independently verify the approach" }
     });
+    const forkRetry = await runTask(client, {
+      ...forkArguments,
+      activityPresentationId: "36363636-3636-4636-8636-363636363636"
+    });
+    expect((forkRetry as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        threadId: "thread-forked",
+        bridgeActivity: {
+          activityId: linkedActivityId,
+          jobId: (forked as { structuredContent?: Record<string, any> })
+            .structuredContent?.bridgeActivity.jobId
+        }
+      });
+    expect(upstream.calls).toHaveLength(3);
 
     const fresh = await runTask(client, {
       prompt: "start unrelated context with the same logical Agent",
@@ -4360,7 +4377,7 @@ describe("bridge tools", () => {
   it("deduplicates request retries and rejects request-id reuse with changed arguments", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, rawCallTool, close } = await connectTestClient(
       configFor(root),
       upstream
     );
@@ -4370,6 +4387,7 @@ describe("bridge tools", () => {
       requestId,
       prompt: "one logical task",
       agentName: "Deduplicated Agent",
+      agentRole: "test role",
       contextMode: "fresh" as const,
       activityTitle: "Deduplicated Activity",
       activityKind: "investigation" as const,
@@ -4408,15 +4426,21 @@ describe("bridge tools", () => {
     });
     expect(changedActivity.isError).toBe(true);
     expect(JSON.stringify(changedActivity)).toContain("already used for a different Codex task");
-    const changedPresentation = await client.callTool({
+    const changedPresentation = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
         ...arguments_,
         activityPresentationId: "24242424-0000-4000-8000-000000000099"
       }
-    });
-    expect(changedPresentation.isError).toBe(true);
-    expect(JSON.stringify(changedPresentation)).toContain("already used for a different Codex task");
+    }));
+    expect(changedPresentation.jobId).toBe(first.jobId);
+    expect(changedPresentation.activityId).toBe(first.activityId);
+    const omittedPresentation = parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: { ...arguments_ }
+    }));
+    expect(omittedPresentation.jobId).toBe(first.jobId);
+    expect(omittedPresentation.activityId).toBe(first.activityId);
 
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
@@ -4434,6 +4458,112 @@ describe("bridge tools", () => {
         renderReason: "render-reserved"
       }
     });
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("registers concurrent exact v4 retries before duplicating Agent creation", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const arguments_ = {
+      requestId: "37373737-3737-4737-8737-373737373737",
+      prompt: "one concurrent logical task",
+      agentName: "Concurrent Retry Agent",
+      agentRole: "implementation",
+      contextMode: "fresh" as const,
+      activityTitle: "Concurrent retry",
+      activityKind: "implementation" as const,
+      executionMode: "background" as const
+    };
+
+    const [first, second] = await Promise.all([
+      client.callTool({ name: "codex_task", arguments: arguments_ }),
+      client.callTool({ name: "codex_task", arguments: arguments_ })
+    ]);
+    const firstJob = parseToolJson(first);
+    const secondJob = parseToolJson(second);
+    expect(secondJob.jobId).toBe(firstJob.jobId);
+    expect(secondJob.activityId).toBe(firstJob.activityId);
+    expect(upstream.calls).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+
+    upstream.resolveNext(fakeCodexResult("concurrent-retry-thread"));
+    await waitForJobStatus(client, firstJob.jobId, "completed");
+    await close();
+  });
+
+  it("normalizes v4 defaults and exact model selection across semantic retries", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const arguments_ = {
+      scopeId: SCOPE_A,
+      requestId: "34343434-3434-4434-8434-343434343434",
+      activityPresentationId: "34343434-3434-4434-8434-343434343434",
+      prompt: "normalize admitted defaults",
+      activityTitle: "Normalized defaults",
+      activityKind: "investigation" as const,
+      agentName: "Normalization Agent",
+      agentRole: "primary",
+      contextMode: "fresh" as const
+    };
+
+    const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
+    const admitted = jobs.listForScope(SCOPE_A)[0];
+    expect(admitted).toMatchObject({
+      requestHashVersion: 4,
+      executionMode: "background",
+      executionDecision: {
+        effectiveSelection: expect.objectContaining({
+          model: expect.any(String),
+          reasoningEffort: expect.any(String)
+        })
+      }
+    });
+    const effectiveSelection = admitted!.executionDecision!.effectiveSelection;
+    const retry = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        activityPresentationId: undefined,
+        executionMode: "background",
+        handoffPolicy: "none",
+        completionTrigger: "manual",
+        modelPolicyRevision: 999,
+        selection: {
+          model: effectiveSelection.model,
+          reasoningEffort: effectiveSelection.reasoningEffort
+        }
+      }
+    });
+    expect((retry as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        bridgeActivity: {
+          activityId: (first as { structuredContent?: Record<string, any> })
+            .structuredContent?.bridgeActivity.activityId,
+          jobId: admitted!.jobId
+        }
+      });
+    expect(upstream.calls).toHaveLength(1);
+
+    const differentSelection = effectiveSelection.model === "gpt-5.6-terra"
+      ? { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      : { model: "gpt-5.6-terra", reasoningEffort: "high" };
+    const changedSelection = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        selection: differentSelection
+      }
+    });
+    expect(changedSelection.isError).toBe(true);
+    expect(JSON.stringify(changedSelection)).toContain(
+      "requestId was already used for a different Codex task"
+    );
     expect(upstream.calls).toHaveLength(1);
     await close();
   });
@@ -5416,6 +5546,10 @@ describe("bridge tools", () => {
     const firstResult = await client.callTool({ name: "codex_task", arguments: args });
     settings.update({ defaultProjectId: "beta" }, settings.current.revision);
     const replay = await client.callTool({ name: "codex_task", arguments: args });
+    const explicitReplay = await client.callTool({
+      name: "codex_task",
+      arguments: { ...args, projectId: "alpha" }
+    });
     expect((replay as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
         threadId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.threadId,
@@ -5425,12 +5559,22 @@ describe("bridge tools", () => {
           projectId: "alpha"
         }
       });
+    expect((explicitReplay as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        bridgeActivity: {
+          activityId: (firstResult as { structuredContent?: Record<string, any> })
+            .structuredContent?.bridgeActivity.activityId,
+          jobId: (firstResult as { structuredContent?: Record<string, any> })
+            .structuredContent?.bridgeActivity.jobId,
+          projectId: "alpha"
+        }
+      });
     expect(upstream.calls).toHaveLength(1);
     expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
     expect(jobs.listForScope(SCOPE_A)[0]).toMatchObject({
       projectId: "alpha",
       projectLabel: "Alpha",
-      requestHashVersion: 3
+      requestHashVersion: 4
     });
 
     const changed = await client.callTool({

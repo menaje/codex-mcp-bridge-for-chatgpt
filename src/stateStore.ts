@@ -60,6 +60,7 @@ type JobRowInput = {
   requestId: string;
   status: string;
   updatedAt: number;
+  sourceThreadId?: string;
   activityId?: string;
   threadId?: string;
   executionMode?: ActivityExecutionMode;
@@ -3182,7 +3183,7 @@ function normalizeUuid(value: string, label: string): string {
   return normalized;
 }
 
-function normalizeActivityTitle(value: string): string {
+export function normalizeActivityTitle(value: string): string {
   const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) throw new Error("Activity title cannot be empty.");
   return normalized.slice(0, 120);

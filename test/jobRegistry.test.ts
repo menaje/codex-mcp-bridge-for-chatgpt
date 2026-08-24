@@ -63,6 +63,27 @@ describe("CodexJobRegistry persistence", () => {
     });
   });
 
+  it("persists request-hash version 4 and its immutable source thread", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start(
+      {
+        ...jobInput(root),
+        requestHashVersion: 4,
+        sourceThreadId: "thread-before-fork"
+      },
+      async () => result("thread-after-fork")
+    );
+
+    await job.promise;
+    const restored = persistentRegistry(root, stateFile);
+    expect(restored.get(job.jobId)).toMatchObject({
+      requestHashVersion: 4,
+      sourceThreadId: "thread-before-fork"
+    });
+  });
+
   it("marks jobs that were running at restart as interrupted", async () => {
     const root = temporaryRoot();
     const stateFile = path.join(root, "private", "jobs.json");
