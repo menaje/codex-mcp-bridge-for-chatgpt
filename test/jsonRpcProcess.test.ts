@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
+import { JsonRpcProcess, type JsonRpcLateResponse } from "../src/jsonRpcProcess.js";
 
 const FAKE_SERVER = String.raw`
 const { spawn } = require("node:child_process");
@@ -37,6 +37,7 @@ function processFor(options: {
   omitJsonRpcHeader?: boolean;
   onRequest?: (method: string, params: unknown, requestId: number | string) => unknown;
   onExit?: (error: Error) => void;
+  onLateResponse?: (response: JsonRpcLateResponse) => void;
 } = {}) {
   return new JsonRpcProcess({
     command: process.execPath,
@@ -97,6 +98,71 @@ describe("JsonRpcProcess", () => {
     }
   });
 
+  it("identifies an exact late response without disturbing newer request tracking", async () => {
+    const lateResponses: JsonRpcLateResponse[] = [];
+    const rpc = processFor({
+      omitJsonRpcHeader: true,
+      onLateResponse: (response) => lateResponses.push(response)
+    });
+    try {
+      const held = rpc.request("hold", { marker: "late" }, { timeoutMs: 25 });
+      await expect(held).rejects.toMatchObject({
+        code: -32001,
+        requestId: 1,
+        method: "hold",
+        timeoutMs: 25,
+        processIdentity: expect.objectContaining({ pid: expect.any(Number) })
+      });
+
+      await expect(rpc.request("release", {}, { timeoutMs: 2_000 })).resolves.toEqual({});
+      await eventually(() => lateResponses.length === 1);
+      expect(lateResponses[0]).toMatchObject({
+        requestId: 1,
+        method: "hold",
+        timeoutMs: 25,
+        response: { id: 1, result: { released: true } }
+      });
+      expect(lateResponses[0]!.receivedAt).toBeGreaterThanOrEqual(lateResponses[0]!.timedOutAt);
+
+      await expect(rpc.request("echo", { still: "tracked" }, { timeoutMs: 2_000 })).resolves.toEqual({
+        still: "tracked"
+      });
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it("validates explicit timeouts before spawning a process", async () => {
+    const rpc = processFor();
+    await expect(rpc.request("echo", {}, { timeoutMs: 0 })).rejects.toThrow(
+      "JSON-RPC timeout must be an integer between 1"
+    );
+    expect(rpc.identity).toBeUndefined();
+    await rpc.close();
+  });
+
+  it("clears pending requests as soon as process shutdown begins", async () => {
+    const rpc = processFor({ omitJsonRpcHeader: true });
+    const held = rpc.request("hold");
+    await eventually(() => rpc.pendingRequestCount === 1);
+    const rejected = expect(held).rejects.toThrow("process was closed");
+    await rpc.close();
+    await rejected;
+    expect(rpc.pendingRequestCount).toBe(0);
+  });
+
+  it("leaves no pending state when the child command cannot start", async () => {
+    const rpc = new JsonRpcProcess({
+      command: `${process.execPath}-does-not-exist`,
+      args: [],
+      debugLabel: "missing-jsonrpc"
+    });
+    await expect(rpc.request("echo", {}, { timeoutMs: 100 })).rejects.toThrow();
+    await eventually(() => rpc.exited);
+    expect(rpc.pendingRequestCount).toBe(0);
+    await rpc.close();
+  });
+
   it.runIf(process.platform !== "win32")(
     "force-stops the exact detached process group, including descendants",
     async () => {
@@ -127,9 +193,10 @@ describe("JsonRpcProcess", () => {
     });
     const held = rpc.request("hold");
     const rejected = expect(held).rejects.toThrow(/exited/);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await eventually(() => rpc.pendingRequestCount === 1);
     await rpc.forceTerminate(500);
     await rejected;
+    expect(rpc.pendingRequestCount).toBe(0);
     expect(exits).toHaveLength(1);
   });
 });

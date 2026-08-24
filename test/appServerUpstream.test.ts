@@ -1,7 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
+import {
+  APP_SERVER_CLIENT_INFO,
+  CodexAppServerUpstreamPool,
+  type CodexAppServerLateResponse
+} from "../src/appServerUpstream.js";
+import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
+import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
+import { PRODUCT_INFO } from "../src/productInfo.js";
 import type {
   CodexPendingInteraction,
   CodexPublicEvent,
@@ -14,7 +21,89 @@ const FIXTURE = path.join(
   "fake-codex-app-server.mjs"
 );
 
+const protocolFixture = (name: string): string => path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  `fake-codex-app-server-${name}.mjs`
+);
+
 describe("CodexAppServerUpstreamPool", () => {
+  it("uses stable release client identity for every App Server handshake", () => {
+    expect(APP_SERVER_CLIENT_INFO).toEqual({
+      name: PRODUCT_INFO.runtimeName,
+      title: PRODUCT_INFO.displayName,
+      version: BRIDGE_BUILD_INFO.version
+    });
+    expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
+  });
+
+  it.each([
+    ["init-error", 2_000, "fixture initialization rejected"],
+    ["init-timeout", 25, "initialize timed out after 25ms"],
+    ["init-incompatible", 2_000, "missing string field(s): platformFamily, platformOs"]
+  ])(
+    "terminates the worker process group when %s prevents startup",
+    async (fixtureName, initializeTimeoutMs, expectedMessage) => {
+      const pool = new CodexAppServerUpstreamPool(protocolFixture(fixtureName), 1, {
+        initializeTimeoutMs,
+        requestTimeoutMs: 2_000
+      });
+      try {
+        let failure: unknown;
+        try {
+          await pool.listModels();
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toContain(expectedMessage);
+        const identity = (failure as Error & { processIdentity?: JsonRpcProcessIdentity }).processIdentity;
+        expect(identity).toMatchObject({
+          pid: expect.any(Number),
+          processGroupId: process.platform === "win32" ? null : expect.any(Number)
+        });
+        await eventually(() => !processIdentityAlive(identity!));
+      } finally {
+        await pool.close();
+      }
+    },
+    5_000
+  );
+
+  it("reports late bounded control responses without corrupting newer requests", async () => {
+    const lateResponses: CodexAppServerLateResponse[] = [];
+    const pool = new CodexAppServerUpstreamPool(protocolFixture("late-control"), 1, {
+      initializeTimeoutMs: 2_000,
+      requestTimeoutMs: 100,
+      onLateResponse: (response) => lateResponses.push(response)
+    });
+    try {
+      await expect(pool.listModels()).rejects.toMatchObject({
+        code: -32001,
+        requestId: 2,
+        method: "model/list",
+        timeoutMs: 100
+      });
+      await expect(pool.listModels()).resolves.toEqual({ data: [], nextCursor: null });
+      await eventually(() => lateResponses.length === 1);
+      expect(lateResponses[0]).toMatchObject({
+        workerId: "app-0",
+        workerGeneration: 1,
+        requestId: 2,
+        method: "model/list",
+        response: { id: 2, result: { data: [], nextCursor: null } }
+      });
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it("rejects invalid protocol timeouts before starting a worker", () => {
+    expect(
+      () => new CodexAppServerUpstreamPool(FIXTURE, 1, { requestTimeoutMs: 0 })
+    ).toThrow("requestTimeoutMs must be an integer between 1");
+  });
+
   it("exposes the backend model catalog and applies exact turn-level continuation overrides", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
@@ -313,5 +402,14 @@ async function eventually(predicate: () => boolean, timeoutMs = 3_000): Promise<
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error("Condition did not become true before timeout.");
     await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function processIdentityAlive(identity: JsonRpcProcessIdentity): boolean {
+  try {
+    process.kill(identity.processGroupId === null ? identity.pid : -identity.processGroupId, 0);
+    return true;
+  } catch (error) {
+    return !(typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH");
   }
 }

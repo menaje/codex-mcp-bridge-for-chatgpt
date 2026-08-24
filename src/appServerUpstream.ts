@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
-import { JsonRpcProcess, type JsonRpcTerminationResult } from "./jsonRpcProcess.js";
+import {
+  JsonRpcProcess,
+  MAX_JSON_RPC_TIMEOUT_MS,
+  type JsonRpcLateResponse,
+  type JsonRpcProcessIdentity,
+  type JsonRpcTerminationResult
+} from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type {
@@ -24,6 +30,38 @@ const REASONING_NOTIFICATIONS = [
   "rawResponseItem/completed",
   "rawResponse/completed"
 ];
+
+const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
+
+export const APP_SERVER_CLIENT_INFO = Object.freeze({
+  name: PRODUCT_INFO.runtimeName,
+  title: PRODUCT_INFO.displayName,
+  version: BRIDGE_BUILD_INFO.version
+});
+
+export type CodexAppServerLateResponse = JsonRpcLateResponse & {
+  workerId: string;
+  workerGeneration: number;
+};
+
+export type CodexAppServerProtocolOptions = {
+  /** Deadline for bounded control requests; completed turns remain timer-free. */
+  requestTimeoutMs?: number;
+  /** Defaults to requestTimeoutMs when omitted. */
+  initializeTimeoutMs?: number;
+  /** Per-stage deadline for the interrupt acknowledgement and completion confirmation. */
+  interruptTimeoutMs?: number;
+  /** Receives exact responses for recently timed-out control requests. */
+  onLateResponse?: (response: CodexAppServerLateResponse) => void;
+};
+
+type ResolvedCodexAppServerProtocolOptions = {
+  requestTimeoutMs: number;
+  initializeTimeoutMs: number;
+  interruptTimeoutMs: number;
+  onLateResponse?: (response: CodexAppServerLateResponse) => void;
+};
 
 type TurnContext = {
   threadId: string;
@@ -56,12 +94,18 @@ type AppWorker = {
 export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly workers: AppWorker[];
   private readonly threadWorkers = new Map<string, number>();
+  private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
   private closing = false;
 
-  constructor(private readonly codexCommand: string, poolSize = 4) {
+  constructor(
+    private readonly codexCommand: string,
+    poolSize = 4,
+    protocolOptions: CodexAppServerProtocolOptions = {}
+  ) {
     if (!Number.isInteger(poolSize) || poolSize <= 0) {
       throw new Error("Codex App Server pool size must be a positive integer.");
     }
+    this.protocolOptions = resolveProtocolOptions(protocolOptions);
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
       index,
       activeCalls: 0,
@@ -256,7 +300,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     this.closing = true;
     this.threadWorkers.clear();
     await Promise.all(
-      this.workers.flatMap((worker) => worker.connection ? [worker.connection.close()] : [])
+      this.workers.map(async (worker) => {
+        if (worker.connection) await worker.connection.close();
+        if (!worker.connecting) return;
+        try {
+          await worker.connecting;
+        } catch {
+          // Failed and interrupted startup paths clean up their own process.
+        }
+      })
     );
   }
 
@@ -293,8 +345,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       worker.connecting = AppServerConnection.create(
         this.codexCommand,
         `app-${worker.index}`,
-        generation
-      ).then((connection) => {
+        generation,
+        this.protocolOptions
+      ).then(async (connection) => {
+        if (this.closing) {
+          await connection.close();
+          throw new Error("Codex App Server upstream closed during worker startup.");
+        }
         worker.connection = connection;
         return connection;
       });
@@ -325,7 +382,8 @@ class AppServerConnection {
   private constructor(
     command: string,
     private readonly workerId: string,
-    private readonly generation: number
+    private readonly generation: number,
+    private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions
   ) {
     this.rpc = new JsonRpcProcess({
       command,
@@ -334,14 +392,38 @@ class AppServerConnection {
       omitJsonRpcHeader: true,
       onNotification: (method, params) => this.onNotification(method, params),
       onRequest: (method, params, requestId) => this.onServerRequest(method, params, requestId),
-      onExit: (error) => this.onProcessExit(error)
+      onExit: (error) => this.onProcessExit(error),
+      onLateResponse: (response) => protocolOptions.onLateResponse?.({
+        ...response,
+        workerId,
+        workerGeneration: generation
+      })
     });
   }
 
-  static async create(command: string, workerId: string, generation: number): Promise<AppServerConnection> {
-    const connection = new AppServerConnection(command, workerId, generation);
-    await connection.initialize();
-    return connection;
+  static async create(
+    command: string,
+    workerId: string,
+    generation: number,
+    protocolOptions: ResolvedCodexAppServerProtocolOptions
+  ): Promise<AppServerConnection> {
+    const connection = new AppServerConnection(command, workerId, generation, protocolOptions);
+    try {
+      await connection.initialize();
+      return connection;
+    } catch (error) {
+      const identity = connection.rpc.identity;
+      const initializationError = appServerInitializationError(error, identity);
+      try {
+        await connection.close();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [initializationError, cleanupError],
+          `${initializationError.message} Worker cleanup also failed.`
+        );
+      }
+      throw initializationError;
+    }
   }
 
   get exited(): boolean {
@@ -365,7 +447,7 @@ class AppServerConnection {
         experimentalRawEvents: false,
         ephemeral: false
       },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
@@ -392,7 +474,7 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
       { threadId: sourceThreadId },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/fork thread.id");
@@ -401,7 +483,11 @@ class AppServerConnection {
   }
 
   async archiveThread(threadId: string): Promise<void> {
-    await this.rpc.request("thread/archive", { threadId }, { timeoutMs: 30_000 });
+    await this.rpc.request(
+      "thread/archive",
+      { threadId },
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+    );
     this.loadedThreads.delete(threadId);
   }
 
@@ -409,7 +495,7 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/unarchive",
       { threadId },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     const restoredThread = isRecord(response.thread) ? response.thread : undefined;
     const restoredThreadId = typeof restoredThread?.id === "string" ? restoredThread.id : undefined;
@@ -430,7 +516,7 @@ class AppServerConnection {
       const response: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>(
         "thread/backgroundTerminals/list",
         { threadId, cursor, limit: 100 },
-        { timeoutMs: 30_000 }
+        { timeoutMs: this.protocolOptions.requestTimeoutMs }
       );
       if (!Array.isArray(response.data)) {
         throw new Error("Codex App Server returned an invalid background terminal list.");
@@ -460,7 +546,7 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/backgroundTerminals/terminate",
       { threadId, processId },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     if (typeof response.terminated !== "boolean") {
       throw new Error("Codex App Server returned an invalid background terminal termination result.");
@@ -470,7 +556,11 @@ class AppServerConnection {
 
   private async ensureThreadLoaded(threadId: string): Promise<void> {
     if (this.loadedThreads.has(threadId)) return;
-    await this.rpc.request("thread/resume", { threadId }, { timeoutMs: 30_000 });
+    await this.rpc.request(
+      "thread/resume",
+      { threadId },
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+    );
     this.loadedThreads.add(threadId);
   }
 
@@ -481,7 +571,7 @@ class AppServerConnection {
       const response: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>(
         "model/list",
         { cursor, limit: 100, includeHidden: false },
-        { timeoutMs: 30_000 }
+        { timeoutMs: this.protocolOptions.requestTimeoutMs }
       );
       if (!Array.isArray(response.data)) {
         throw new Error("Codex App Server returned an invalid model/list response.");
@@ -502,7 +592,7 @@ class AppServerConnection {
         expectedTurnId: turnId,
         input: [{ type: "text", text: prompt, text_elements: [] }]
       },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     return { turnId: requiredString(result.turnId, "turn/steer turnId") };
   }
@@ -558,11 +648,11 @@ class AppServerConnection {
         await this.rpc.request(
           "turn/interrupt",
           { threadId: context.threadId, turnId },
-          { timeoutMs: 5_000 }
+          { timeoutMs: this.protocolOptions.interruptTimeoutMs }
         );
         const confirmed = await Promise.race([
           context.done.then(() => true, () => true),
-          delay(5_000).then(() => false)
+          delay(this.protocolOptions.interruptTimeoutMs).then(() => false)
         ]);
         if (confirmed || this.terminalTurns.has(turnId)) {
           return {
@@ -590,14 +680,10 @@ class AppServerConnection {
   }
 
   private async initialize(): Promise<void> {
-    await this.rpc.request(
+    const result = await this.rpc.request(
       "initialize",
       {
-        clientInfo: {
-          name: PRODUCT_INFO.runtimeName,
-          title: PRODUCT_INFO.displayName,
-          version: BRIDGE_BUILD_INFO.version
-        },
+        clientInfo: APP_SERVER_CLIENT_INFO,
         capabilities: {
           experimentalApi: true,
           requestAttestation: false,
@@ -605,8 +691,9 @@ class AppServerConnection {
           optOutNotificationMethods: REASONING_NOTIFICATIONS
         }
       },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.initializeTimeoutMs }
     );
+    validateInitializeResponse(result);
     await this.rpc.notify("initialized");
   }
 
@@ -627,7 +714,7 @@ class AppServerConnection {
         effort: modelReasoningEffort(args.config) || null,
         serviceTier: optionalString(args.serviceTier) || null
       },
-      { timeoutMs: 30_000 }
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
     const turn = isRecord(response.turn) ? response.turn : undefined;
     const turnId = requiredString(turn?.id, "turn/start turn.id");
@@ -860,6 +947,74 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsServiceTierOverrideOnContinue: true,
   supportsFork: true
 };
+
+function resolveProtocolOptions(
+  options: CodexAppServerProtocolOptions
+): ResolvedCodexAppServerProtocolOptions {
+  const requestTimeoutMs = positiveTimeout(
+    options.requestTimeoutMs ?? DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS,
+    "requestTimeoutMs"
+  );
+  return {
+    requestTimeoutMs,
+    initializeTimeoutMs: positiveTimeout(
+      options.initializeTimeoutMs ?? requestTimeoutMs,
+      "initializeTimeoutMs"
+    ),
+    interruptTimeoutMs: positiveTimeout(
+      options.interruptTimeoutMs ?? DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS,
+      "interruptTimeoutMs"
+    ),
+    ...(options.onLateResponse ? { onLateResponse: options.onLateResponse } : {})
+  };
+}
+
+function positiveTimeout(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_JSON_RPC_TIMEOUT_MS) {
+    throw new Error(
+      `Codex App Server ${label} must be an integer between 1 and ${MAX_JSON_RPC_TIMEOUT_MS}ms.`
+    );
+  }
+  return value;
+}
+
+function validateInitializeResponse(value: unknown): void {
+  // Initialize currently advertises platform/user-agent metadata, but no
+  // protocol-version field. Validate the documented shape without parsing an
+  // undocumented compatibility range out of userAgent.
+  if (!isRecord(value)) {
+    throw new Error(
+      "Codex App Server returned an incompatible initialize response; expected an object. Check the installed Codex CLI version."
+    );
+  }
+  const invalidFields = ["userAgent", "platformFamily", "platformOs"].filter(
+    (field) => typeof value[field] !== "string"
+  );
+  if (invalidFields.length > 0) {
+    throw new Error(
+      `Codex App Server returned an incompatible initialize response; missing string field(s): ${invalidFields.join(", ")}. Check the installed Codex CLI version.`
+    );
+  }
+}
+
+function appServerInitializationError(
+  error: unknown,
+  processIdentity: JsonRpcProcessIdentity | undefined
+): Error {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  const metadata = isRecord(error)
+    ? Object.fromEntries(
+        ["code", "data", "requestId", "method", "timeoutMs"].flatMap((key) =>
+          error[key] === undefined ? [] : [[key, error[key]]]
+        )
+      )
+    : {};
+  return Object.assign(
+    new Error(`Codex App Server initialization failed: ${cause.message}`, { cause }),
+    metadata,
+    processIdentity ? { processIdentity } : {}
+  );
+}
 
 function requestArguments(
   prompt: string,

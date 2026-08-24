@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import readline from "node:readline";
+
+const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
 
 const lines = readline.createInterface({ input: process.stdin });
 const activeTurns = new Map();
@@ -27,6 +30,7 @@ lines.on("line", (line) => {
 
   if (message.method === "initialize") {
     const capabilities = message.params?.capabilities || {};
+    const clientInfo = message.params?.clientInfo || {};
     const optedOut = new Set(capabilities.optOutNotificationMethods || []);
     const required = [
       "item/reasoning/summaryTextDelta",
@@ -35,7 +39,13 @@ lines.on("line", (line) => {
       "rawResponseItem/completed",
       "rawResponse/completed"
     ];
-    if (!required.every((method) => optedOut.has(method)) || capabilities.requestAttestation !== false) {
+    if (
+      !required.every((method) => optedOut.has(method)) ||
+      capabilities.requestAttestation !== false ||
+      clientInfo.name !== manifest.product.runtimeName ||
+      clientInfo.title !== manifest.product.displayName ||
+      clientInfo.version !== manifest.release.version
+    ) {
       send({ id: message.id, error: { code: -32602, message: "missing safe initialization capabilities" } });
       return;
     }

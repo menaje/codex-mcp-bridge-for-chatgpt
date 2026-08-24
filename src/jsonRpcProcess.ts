@@ -29,6 +29,15 @@ type PendingRequest = {
   timer?: NodeJS.Timeout;
 };
 
+type TimedOutRequest = {
+  method: string;
+  timeoutMs: number;
+  timedOutAt: number;
+};
+
+const MAX_TRACKED_TIMED_OUT_REQUESTS = 256;
+export const MAX_JSON_RPC_TIMEOUT_MS = 2_147_483_647;
+
 export type JsonRpcProcessIdentity = {
   pid: number;
   processGroupId: number | null;
@@ -49,6 +58,13 @@ export type JsonRpcRequestOptions = {
   onProgress?: (value: unknown) => void;
 };
 
+export type JsonRpcLateResponse = TimedOutRequest & {
+  requestId: number;
+  receivedAt: number;
+  /** The exact decoded response object received from the supervised process. */
+  response: Readonly<Record<string, unknown>>;
+};
+
 export type JsonRpcServerRequestHandler = (
   method: string,
   params: unknown,
@@ -66,6 +82,12 @@ export type JsonRpcProcessOptions = {
   onNotification?: JsonRpcNotificationHandler;
   onRequest?: JsonRpcServerRequestHandler;
   onExit?: (error: Error) => void;
+  /**
+   * Receives responses for recently timed-out requests. The transport retains
+   * a bounded ledger so callers can correlate partial upstream success without
+   * allowing abandoned request metadata to grow without limit.
+   */
+  onLateResponse?: (response: JsonRpcLateResponse) => void;
   /** Codex App Server uses JSON-RPC semantics but omits the jsonrpc header on the wire. */
   omitJsonRpcHeader?: boolean;
 };
@@ -85,6 +107,7 @@ export class JsonRpcProcess {
   private lines?: ReadLineInterface;
   private nextRequestId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
+  private readonly timedOut = new Map<JsonRpcId, TimedOutRequest>();
   private readonly inboundQueue: unknown[] = [];
   private inboundDrainScheduled = false;
   private pendingExitError?: Error;
@@ -109,6 +132,11 @@ export class JsonRpcProcess {
       this.exitNotified ||
       (this.child && (this.child.exitCode !== null || this.child.signalCode !== null))
     );
+  }
+
+  /** Diagnostic count used to assert lifecycle cleanup without exposing request payloads. */
+  get pendingRequestCount(): number {
+    return this.pending.size;
   }
 
   async start(): Promise<JsonRpcProcessIdentity> {
@@ -170,10 +198,16 @@ export class JsonRpcProcess {
   }
 
   async request<T = unknown>(method: string, params?: unknown, options: JsonRpcRequestOptions = {}): Promise<T> {
-    await this.start();
-    if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
-      throw new Error("JSON-RPC timeout must be a positive integer when supplied.");
+    const timeoutMs = options.timeoutMs;
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_JSON_RPC_TIMEOUT_MS)
+    ) {
+      throw new Error(
+        `JSON-RPC timeout must be an integer between 1 and ${MAX_JSON_RPC_TIMEOUT_MS}ms when supplied.`
+      );
     }
+    await this.start();
     const id = this.nextRequestId++;
     const requestParams = options.progress ? addProgressToken(params, id) : params;
     const promise = new Promise<T>((resolve, reject) => {
@@ -182,11 +216,23 @@ export class JsonRpcProcess {
         reject,
         onProgress: options.onProgress
       };
-      if (options.timeoutMs !== undefined) {
+      if (timeoutMs !== undefined) {
         pending.timer = setTimeout(() => {
           if (!this.pending.delete(id)) return;
-          reject(Object.assign(new Error(`${method} timed out after ${options.timeoutMs}ms.`), { code: -32001 }));
-        }, options.timeoutMs);
+          const timedOutAt = Date.now();
+          this.rememberTimedOutRequest(id, {
+            method,
+            timeoutMs,
+            timedOutAt
+          });
+          reject(Object.assign(new Error(`${method} timed out after ${timeoutMs}ms (request ${id}).`), {
+            code: -32001,
+            requestId: id,
+            method,
+            timeoutMs,
+            processIdentity: this.identity
+          }));
+        }, timeoutMs);
       }
       this.pending.set(id, pending);
     });
@@ -212,6 +258,7 @@ export class JsonRpcProcess {
       return;
     }
     this.closing = true;
+    this.rejectPending(new Error(`${this.options.debugLabel} process was closed.`));
     if (!this.child || this.exited) return;
     try {
       this.child.stdin.end();
@@ -328,7 +375,10 @@ export class JsonRpcProcess {
     }
     if (typeof message.id !== "number") return;
     const pending = this.pending.get(message.id);
-    if (!pending) return;
+    if (!pending) {
+      this.reportLateResponse(message.id, message);
+      return;
+    }
     this.pending.delete(message.id);
     if (pending.timer) clearTimeout(pending.timer);
     if (isRecord(message.error)) {
@@ -380,6 +430,34 @@ export class JsonRpcProcess {
     this.pending.clear();
   }
 
+  private rememberTimedOutRequest(requestId: JsonRpcId, request: TimedOutRequest): void {
+    this.timedOut.set(requestId, request);
+    while (this.timedOut.size > MAX_TRACKED_TIMED_OUT_REQUESTS) {
+      const oldest = this.timedOut.keys().next().value as JsonRpcId | undefined;
+      if (oldest === undefined) break;
+      this.timedOut.delete(oldest);
+    }
+  }
+
+  private reportLateResponse(requestId: JsonRpcId, response: Record<string, unknown>): void {
+    const request = this.timedOut.get(requestId);
+    if (!request) return;
+    this.timedOut.delete(requestId);
+    try {
+      this.options.onLateResponse?.({
+        requestId,
+        ...request,
+        receivedAt: Date.now(),
+        response
+      });
+    } catch (error) {
+      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[${this.options.debugLabel}] late-response observer failed: ${message}\n`);
+      }
+    }
+  }
+
   private notifyProcessExit(error: Error): void {
     if (this.exitNotified || this.pendingExitError) return;
     if (this.inboundDrainScheduled || this.inboundQueue.length > 0) {
@@ -393,6 +471,7 @@ export class JsonRpcProcess {
     if (this.exitNotified) return;
     this.exitNotified = true;
     this.rejectPending(error);
+    this.timedOut.clear();
     this.resolveExit?.();
     this.resolveExit = undefined;
     this.options.onExit?.(error);
