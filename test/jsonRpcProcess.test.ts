@@ -105,7 +105,11 @@ describe("JsonRpcProcess", () => {
       onLateResponse: (response) => lateResponses.push(response)
     });
     try {
-      const held = rpc.request("hold", { marker: "late" }, { timeoutMs: 25 });
+      const held = rpc.request(
+        "hold",
+        { marker: "late", secret: "request-params-are-not-retained" },
+        { timeoutMs: 25, lateResponseContext: { threadId: "safe-thread-id" } }
+      );
       await expect(held).rejects.toMatchObject({
         code: -32001,
         requestId: 1,
@@ -120,8 +124,10 @@ describe("JsonRpcProcess", () => {
         requestId: 1,
         method: "hold",
         timeoutMs: 25,
+        lateResponseContext: { threadId: "safe-thread-id" },
         response: { id: 1, result: { released: true } }
       });
+      expect(JSON.stringify(lateResponses[0])).not.toContain("request-params-are-not-retained");
       expect(lateResponses[0]!.receivedAt).toBeGreaterThanOrEqual(lateResponses[0]!.timedOutAt);
 
       await expect(rpc.request("echo", { still: "tracked" }, { timeoutMs: 2_000 })).resolves.toEqual({
@@ -137,6 +143,12 @@ describe("JsonRpcProcess", () => {
     await expect(rpc.request("echo", {}, { timeoutMs: 0 })).rejects.toThrow(
       "JSON-RPC timeout must be an integer between 1"
     );
+    await expect(
+      rpc.request("echo", {}, {
+        timeoutMs: 100,
+        lateResponseContext: { threadId: "unsafe\nidentifier" }
+      })
+    ).rejects.toThrow("late-response context contains an invalid string identifier");
     expect(rpc.identity).toBeUndefined();
     await rpc.close();
   });

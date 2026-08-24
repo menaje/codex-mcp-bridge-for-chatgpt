@@ -4,16 +4,27 @@ import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { createHttpServer } from "./server.js";
 import { CodexUpstreamPool } from "./upstream.js";
 import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
+import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
 import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { BridgeStateStore } from "./stateStore.js";
 
 const config = loadConfig();
+const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
+const appServerLateResponses = new AppServerLateResponseJournal(stateStore);
 const upstream = new CodexBackendRouter(
   config.defaultBackend,
   new CodexUpstreamPool(config.codexCommand, config.upstreamPoolSize),
-  new CodexAppServerUpstreamPool(config.codexCommand, config.upstreamPoolSize)
+  new CodexAppServerUpstreamPool(config.codexCommand, config.upstreamPoolSize, {
+    onLateResponse: (response) => appServerLateResponses.observe(response)
+  })
 );
-const server = createHttpServer(config, upstream);
+const server = createHttpServer(config, upstream, undefined, {
+  stateStore,
+  healthDiagnostics: () => ({
+    appServerLateResponses: appServerLateResponses.status()
+  })
+});
 let shuttingDown = false;
 
 for (const warning of config.startupWarnings) console.warn(`warning: ${warning}`);
@@ -30,7 +41,11 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   console.log(`received ${signal}, shutting down`);
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  await upstream.close();
+  try {
+    await upstream.close();
+  } finally {
+    stateStore.close();
+  }
   process.exit(0);
 }
 

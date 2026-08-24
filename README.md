@@ -85,7 +85,9 @@ Local mode creates no public endpoint:
 npm run bridge:local -- --root /absolute/path/to/repository
 ```
 
-The launcher uses `http://127.0.0.1:8876/mcp`; health is at `/healthz`.
+The launcher uses `http://127.0.0.1:8876/mcp`; health is at `/healthz`. Its
+App Server diagnostics contain only aggregate late-response counters and the
+latest method/outcome class, never thread/turn identifiers or response bodies.
 Repeat `--root` to admit multiple disjoint operator roots in one bridge process:
 
 ```bash
@@ -152,7 +154,7 @@ layout setting.
 
 The Projects section clearly separates bridge-allowed roots from registered projects. Adding or editing a project resolves its folder with `realpath`, requires it to remain inside an allowed root, and rejects duplicate normalized IDs or canonical paths. Saved project IDs are stable; labels and folders remain editable. A legacy `defaultCwd` is deterministically migrated to the `default` project. If a saved folder later disappears or falls outside a narrowed root policy, its metadata remains visible for recovery but cannot be admitted until it is fixed or removed.
 
-In this settings/UI phase, the optional default project (or sole project) remains mirrored to the legacy `defaultCwd` execution policy. It is therefore the start path for a new Activity or explicit fresh Agent context; public per-task `projectId` routing is not yet exposed. With multiple projects and no default, fresh work still requires a compatibility default. Existing Agent threads keep their admission-time folder and sandbox even after Settings changes. A project folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
+`codex_task` projects the currently selectable project IDs and labels, never their paths. A new Activity/fresh context may choose `projectId`; omission uses the configured default or sole project and otherwise returns `PROJECT_REQUIRED`. Existing Activities and continued/forked Agent threads retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
 
 Access strategy and path policy are separate:
 
@@ -189,6 +191,7 @@ Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an 
 
 Routing fields are:
 
+- pass one projected `projectId` for a new Activity/fresh context, or omit it only when a default/sole project is available;
 - omit `activityId` to create a new Activity;
 - pass the exact returned `activityId` for another turn in the same open Activity;
 - pass `continuationOfActivityId` to create a linked Activity without reopening a terminal source Activity;
@@ -228,7 +231,7 @@ The card is one lightweight flat feed for the current ChatGPT conversation. Open
 
 Truly completed work moves into a collapsed **Completed Codex** group that reports both distinct Agent count and completed Activity count. Idle and ended Agents have separate collapsed groups. A completed Activity remains in the current feed while verification, a handoff, a tracked job, an interaction, or an App Server background process is still pending. Reusing the same Agent for a new Activity removes it from completed history and shows the new current Activity instead.
 
-The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show only their final folder names. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
+The card does not expose event timelines, Agent/job/thread IDs, full working paths, backend/worker details, command output, or general steering. When multiple projects are active, it may show their user-defined labels. Approval/user-input controls are sent only in a minimal UI-only metadata payload. GPT/operations can still retrieve detailed diagnostics with `codex_status`.
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
@@ -260,7 +263,7 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist an
 
 ## Persistence and recovery
 
-SQLite schema v4 stores conversation scopes, Agents, current/history threads, Activity-Agent assignments, Activities, jobs, bounded events/results, settings, bridge generations, scope versions, idempotent Agent mutations, and completion outbox rows.
+SQLite schema v5 stores conversation scopes, first-class project admission identity, Agents, current/history threads, Activity-Agent assignments, Activities, jobs, bounded events/results, settings, bridge generations, scope versions, idempotent Agent mutations, and completion outbox rows. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, or paths.
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 

@@ -51,6 +51,47 @@ lines.on("line", (line) => {
     send({ id: message.id, error: { code: -32000, message: "Not initialized" } });
     return;
   }
+  if (mode === "late-reconciliation") {
+    if (message.method === "thread/start") {
+      setTimeout(() => respond(message.id, {
+        thread: { id: "late-created-thread", secretPayload: "SECRET_LATE_SUCCESS_PAYLOAD" }
+      }), 120);
+      return;
+    }
+    if (message.method === "thread/resume") {
+      respond(message.id, { thread: { id: message.params.threadId } });
+      return;
+    }
+    if (message.method === "turn/start") {
+      setTimeout(() => respond(message.id, {
+        turn: { id: "late-created-turn", secretPayload: "SECRET_LATE_SUCCESS_PAYLOAD" }
+      }), 120);
+      return;
+    }
+    if (message.method === "thread/archive") {
+      setTimeout(() => {
+        if (message.params.threadId === "late-archive-error") {
+          send({
+            id: message.id,
+            error: {
+              code: -32055,
+              message: "SECRET_LATE_ERROR_MESSAGE",
+              data: { secret: "SECRET_LATE_ERROR_DATA" }
+            }
+          });
+        } else {
+          respond(message.id, { secretPayload: "SECRET_LATE_SUCCESS_PAYLOAD" });
+        }
+      }, 120);
+      return;
+    }
+    if (message.method === "thread/unarchive") {
+      setTimeout(() => respond(message.id, {
+        thread: { id: message.params.threadId, secretPayload: "SECRET_LATE_SUCCESS_PAYLOAD" }
+      }), 120);
+      return;
+    }
+  }
   if (message.method === "model/list") {
     modelListRequests += 1;
     const result = { data: [], nextCursor: null };

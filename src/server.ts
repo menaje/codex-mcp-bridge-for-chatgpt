@@ -29,6 +29,13 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
   "Call codex_task directly rather than through programmatic tool calling or an exec wrapper so ChatGPT preserves its native Activity UI. The saved always, background-only, or never setting is authoritative; activityPresentationId groups eligible cards but cannot choose visibility; never call codex_activity after codex_task. Use codex_activity only when the user explicitly asks to open or reopen the Activity view. Only the newest automatic presentation owns the scope live watch and completion handoff; older automatic cards stop cleanly, while explicit cards use separate bounded watcher admission and do not compete for automatic handoff. Use codex_status for authoritative detail or final job results. Use codex_cancel only to interrupt an active job, and codex_agent for reversible archive, restore, rename, detach, or exact background-process termination. Interruption and process termination never roll back filesystem changes."
 ].join(" ");
 
+export type BridgeHttpRuntimeOptions = {
+  /** Shared production store; when supplied, its lifecycle remains caller-owned. */
+  stateStore?: BridgeStateStore;
+  /** Sanitized, identifier-free operational counters exposed by /healthz. */
+  healthDiagnostics?: () => Record<string, unknown>;
+};
+
 export function createBridgeMcpServer(
   config: BridgeConfig,
   upstream: CodexUpstream,
@@ -68,13 +75,15 @@ export function createBridgeMcpServer(
 export function createHttpServer(
   config: BridgeConfig,
   upstream: CodexUpstream,
-  modelCatalogOverride?: CodexModelCatalogProvider
+  modelCatalogOverride?: CodexModelCatalogProvider,
+  runtimeOptions: BridgeHttpRuntimeOptions = {}
 ): HttpServer {
   const app = createMcpExpressApp({
     allowedHosts: config.allowedHosts,
     host: config.host
   });
-  const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
+  const stateStore = runtimeOptions.stateStore || new BridgeStateStore({ file: config.stateDatabaseFile });
+  const ownsStateStore = runtimeOptions.stateStore === undefined;
   const sessions = new SessionRegistry({
     stateFile: config.sessionStateFile,
     stateStore,
@@ -110,11 +119,13 @@ export function createHttpServer(
   );
 
   app.get("/healthz", (_req: Request, res: Response) => {
+    const diagnostics = runtimeOptions.healthDiagnostics?.();
     res.json({
       ok: true,
       name: PRODUCT_INFO.runtimeName,
       title: PRODUCT_INFO.displayName,
-      build: BRIDGE_BUILD_INFO
+      build: BRIDGE_BUILD_INFO,
+      ...(diagnostics ? { diagnostics } : {})
     });
   });
 
@@ -190,7 +201,7 @@ export function createHttpServer(
   });
 
   const httpServer = createServer(app);
-  httpServer.once("close", () => stateStore.close());
+  if (ownsStateStore) httpServer.once("close", () => stateStore.close());
   return httpServer;
 }
 

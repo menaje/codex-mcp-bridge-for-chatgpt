@@ -60,7 +60,10 @@ export type CodexAppServerProtocolOptions = {
   initializeTimeoutMs?: number;
   /** Per-stage deadline for the interrupt acknowledgement and completion confirmation. */
   interruptTimeoutMs?: number;
-  /** Receives exact responses for recently timed-out control requests. */
+  /**
+   * Receives exact responses for recently timed-out control requests. Raw
+   * payloads must be sanitized before logging or persistence.
+   */
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
 };
 
@@ -383,7 +386,10 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           this.codexCommand,
           `app-${worker.index}`,
           generation,
-          this.protocolOptions
+          {
+            ...this.protocolOptions,
+            onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
+          }
         );
         worker.startingConnection = connection;
         worker.connecting = connection.initializeForAdmission().then(async (initialized) => {
@@ -427,6 +433,14 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return check;
   }
 
+  private onWorkerLateResponse(worker: AppWorker, response: CodexAppServerLateResponse): void {
+    if (worker.generation === response.workerGeneration && lateResponseSucceeded(response)) {
+      const threadId = lateResponseThreadId(response);
+      if (threadId) this.threadWorkers.set(threadId, worker.index);
+    }
+    this.protocolOptions.onLateResponse?.(response);
+  }
+
   private forgetWorkerThreads(workerIndex: number): void {
     for (const [threadId, index] of this.threadWorkers) {
       if (index === workerIndex) this.threadWorkers.delete(threadId);
@@ -456,11 +470,15 @@ class AppServerConnection {
       onNotification: (method, params) => this.onNotification(method, params),
       onRequest: (method, params, requestId) => this.onServerRequest(method, params, requestId),
       onExit: (error) => this.onProcessExit(error),
-      onLateResponse: (response) => protocolOptions.onLateResponse?.({
-        ...response,
-        workerId,
-        workerGeneration: generation
-      })
+      onLateResponse: (response) => {
+        const appResponse = {
+          ...response,
+          workerId,
+          workerGeneration: generation
+        };
+        this.reconcileLateProtocolState(appResponse);
+        protocolOptions.onLateResponse?.(appResponse);
+      }
     });
   }
 
@@ -494,6 +512,25 @@ class AppServerConnection {
 
   get exited(): boolean {
     return this.rpc.exited;
+  }
+
+  private reconcileLateProtocolState(response: CodexAppServerLateResponse): void {
+    if (!lateResponseSucceeded(response)) return;
+    const threadId = lateResponseThreadId(response);
+    if (!threadId) return;
+    if (response.method === "thread/archive" || response.method === "thread/unarchive") {
+      // Archive invalidates the materialized thread. Unarchive restores durable
+      // persistence but still requires an explicit thread/resume on this worker.
+      this.loadedThreads.delete(threadId);
+      return;
+    }
+    if (
+      response.method === "thread/start" ||
+      response.method === "thread/fork" ||
+      response.method === "thread/resume"
+    ) {
+      this.loadedThreads.add(threadId);
+    }
   }
 
   async startThreadAndTurn(
@@ -540,7 +577,10 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
       { threadId: sourceThreadId },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { sourceThreadId }
+      }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/fork thread.id");
@@ -552,7 +592,10 @@ class AppServerConnection {
     await this.rpc.request(
       "thread/archive",
       { threadId },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { threadId }
+      }
     );
     this.loadedThreads.delete(threadId);
   }
@@ -561,7 +604,10 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/unarchive",
       { threadId },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { threadId }
+      }
     );
     const restoredThread = isRecord(response.thread) ? response.thread : undefined;
     const restoredThreadId = typeof restoredThread?.id === "string" ? restoredThread.id : undefined;
@@ -625,7 +671,10 @@ class AppServerConnection {
     await this.rpc.request(
       "thread/resume",
       { threadId },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { threadId }
+      }
     );
     this.loadedThreads.add(threadId);
   }
@@ -658,7 +707,10 @@ class AppServerConnection {
         expectedTurnId: turnId,
         input: [{ type: "text", text: prompt, text_elements: [] }]
       },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { threadId, turnId }
+      }
     );
     return { turnId: requiredString(result.turnId, "turn/steer turnId") };
   }
@@ -714,7 +766,10 @@ class AppServerConnection {
         await this.rpc.request(
           "turn/interrupt",
           { threadId: context.threadId, turnId },
-          { timeoutMs: this.protocolOptions.interruptTimeoutMs }
+          {
+            timeoutMs: this.protocolOptions.interruptTimeoutMs,
+            lateResponseContext: { threadId: context.threadId, turnId }
+          }
         );
         const confirmed = await Promise.race([
           context.done.then(() => true, () => true),
@@ -780,7 +835,10 @@ class AppServerConnection {
         effort: modelReasoningEffort(args.config) || null,
         serviceTier: optionalString(args.serviceTier) || null
       },
-      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+      {
+        timeoutMs: this.protocolOptions.requestTimeoutMs,
+        lateResponseContext: { threadId }
+      }
     );
     const turn = isRecord(response.turn) ? response.turn : undefined;
     const turnId = requiredString(turn?.id, "turn/start turn.id");
@@ -1165,6 +1223,43 @@ function requiredString(value: unknown, label: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function lateResponseSucceeded(response: CodexAppServerLateResponse): boolean {
+  return !isRecord(response.response.error) &&
+    Object.prototype.hasOwnProperty.call(response.response, "result");
+}
+
+function lateResponseThreadId(response: CodexAppServerLateResponse): string | undefined {
+  const context = response.lateResponseContext;
+  const contextualThreadId = safeLateIdentifier(context?.threadId);
+  const result = isRecord(response.response.result) ? response.response.result : undefined;
+  const returnedThread = result && isRecord(result.thread) ? result.thread : undefined;
+  const returnedThreadId = safeLateIdentifier(returnedThread?.id);
+
+  if (response.method === "thread/start" || response.method === "thread/fork") {
+    return returnedThreadId;
+  }
+  if (response.method === "thread/resume" || response.method === "thread/unarchive") {
+    if (returnedThreadId && contextualThreadId && returnedThreadId !== contextualThreadId) return undefined;
+    return returnedThreadId || contextualThreadId;
+  }
+  if (
+    response.method === "thread/archive" ||
+    response.method === "turn/start" ||
+    response.method === "turn/steer" ||
+    response.method === "turn/interrupt"
+  ) {
+    return contextualThreadId;
+  }
+  return undefined;
+}
+
+function safeLateIdentifier(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 200 || /[\u0000-\u001f\u007f]/.test(normalized)) return undefined;
+  return normalized;
 }
 
 function rawString(value: unknown): string | undefined {

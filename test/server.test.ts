@@ -4,13 +4,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { BRIDGE_MCP_INSTRUCTIONS, createHttpServer } from "../src/server.js";
+import {
+  BRIDGE_MCP_INSTRUCTIONS,
+  createHttpServer,
+  type BridgeHttpRuntimeOptions
+} from "../src/server.js";
 import { loadConfig } from "../src/config.js";
 import type {
   CodexModelCatalogProvider,
   CodexModelCatalogSnapshot
 } from "../src/modelCatalog.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
@@ -142,6 +147,48 @@ describe("http server", () => {
       title: PRODUCT_INFO.displayName,
       build: { version: PRODUCT_INFO.version, id: expect.any(String), sourceHash: expect.any(String) }
     });
+  });
+
+  it("exposes only the supplied aggregate runtime diagnostics through health", async () => {
+    const baseUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      new FakeUpstream(),
+      undefined,
+      {
+        healthDiagnostics: () => ({
+          appServerLateResponses: {
+            retained: 2,
+            totals: { observed: 7, success: 5, error: 2 },
+            latest: { method: "turn/start", outcome: "success", reconciliation: "identifier-recorded" }
+          }
+        })
+      }
+    );
+
+    const body = await (await fetch(`${baseUrl}/healthz`)).json() as Record<string, any>;
+    expect(body.diagnostics.appServerLateResponses).toEqual({
+      retained: 2,
+      totals: { observed: 7, success: 5, error: 2 },
+      latest: { method: "turn/start", outcome: "success", reconciliation: "identifier-recorded" }
+    });
+  });
+
+  it("leaves an injected production state store open for upstream shutdown", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-shared-state-"));
+    const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });
+    try {
+      await start(
+        { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+        new FakeUpstream(),
+        stateDirectory,
+        { stateStore }
+      );
+
+      await stopLastServer();
+      expect(stateStore.getMeta("schema_version")).toMatch(/^\d+$/);
+    } finally {
+      stateStore.close();
+    }
   });
 
   it("returns JSON for OAuth metadata probes in no-auth tunnel mode", async () => {
@@ -421,7 +468,8 @@ describe("http server", () => {
 async function start(
   env: NodeJS.ProcessEnv,
   upstream: CodexUpstream = new FakeUpstream(),
-  stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"))
+  stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-")),
+  runtimeOptions: BridgeHttpRuntimeOptions = {}
 ): Promise<string> {
   const config = loadConfig({
     ...env,
@@ -432,7 +480,7 @@ async function start(
     CODEX_MCP_BRIDGE_JOB_STATE_FILE: path.join(stateDirectory, "jobs.json"),
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite")
   });
-  const server = createHttpServer(config, upstream, new FakeModelCatalog());
+  const server = createHttpServer(config, upstream, new FakeModelCatalog(), runtimeOptions);
   servers.push(server);
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);

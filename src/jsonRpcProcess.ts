@@ -33,6 +33,7 @@ type TimedOutRequest = {
   method: string;
   timeoutMs: number;
   timedOutAt: number;
+  lateResponseContext?: JsonRpcLateResponseContext;
 };
 
 const MAX_TRACKED_TIMED_OUT_REQUESTS = 256;
@@ -56,7 +57,16 @@ export type JsonRpcRequestOptions = {
   timeoutMs?: number;
   progress?: boolean;
   onProgress?: (value: unknown) => void;
+  /**
+   * Bounded, non-sensitive identifiers needed to reconcile a response that
+   * arrives after timeout. Request parameters are deliberately never retained.
+   */
+  lateResponseContext?: JsonRpcLateResponseContext;
 };
+
+export type JsonRpcLateResponseContext = Readonly<
+  Record<string, string | number | boolean | null>
+>;
 
 export type JsonRpcLateResponse = TimedOutRequest & {
   requestId: number;
@@ -207,6 +217,9 @@ export class JsonRpcProcess {
         `JSON-RPC timeout must be an integer between 1 and ${MAX_JSON_RPC_TIMEOUT_MS}ms when supplied.`
       );
     }
+    const lateResponseContext = options.lateResponseContext
+      ? boundedLateResponseContext(options.lateResponseContext)
+      : undefined;
     await this.start();
     const id = this.nextRequestId++;
     const requestParams = options.progress ? addProgressToken(params, id) : params;
@@ -223,7 +236,8 @@ export class JsonRpcProcess {
           this.rememberTimedOutRequest(id, {
             method,
             timeoutMs,
-            timedOutAt
+            timedOutAt,
+            ...(lateResponseContext ? { lateResponseContext } : {})
           });
           reject(Object.assign(new Error(`${method} timed out after ${timeoutMs}ms (request ${id}).`), {
             code: -32001,
@@ -484,6 +498,39 @@ function addProgressToken(params: unknown, requestId: number): Record<string, un
   meta.progressToken = requestId;
   base._meta = meta;
   return base;
+}
+
+function boundedLateResponseContext(
+  value: JsonRpcLateResponseContext
+): JsonRpcLateResponseContext {
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.length > 8) {
+    throw new Error("JSON-RPC late-response context must contain between 1 and 8 safe identifiers.");
+  }
+  const normalized: Record<string, string | number | boolean | null> = {};
+  for (const [key, entry] of entries) {
+    if (!/^[a-z][a-zA-Z0-9]*$/.test(key) || key.length > 40) {
+      throw new Error("JSON-RPC late-response context contains an invalid key.");
+    }
+    if (typeof entry === "string") {
+      const identifier = entry.trim();
+      if (!identifier || identifier.length > 200 || /[\u0000-\u001f\u007f]/.test(identifier)) {
+        throw new Error("JSON-RPC late-response context contains an invalid string identifier.");
+      }
+      normalized[key] = identifier;
+      continue;
+    }
+    if (
+      entry === null ||
+      typeof entry === "boolean" ||
+      (typeof entry === "number" && Number.isSafeInteger(entry))
+    ) {
+      normalized[key] = entry;
+      continue;
+    }
+    throw new Error("JSON-RPC late-response context contains an unsupported value.");
+  }
+  return Object.freeze(normalized);
 }
 
 function inheritedChildEnvironment(): NodeJS.ProcessEnv {
