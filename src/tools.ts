@@ -4421,7 +4421,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a named, bridge-managed Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly, never through a programmatic or exec wrapper, so ChatGPT can preserve its native Activity card. Every new Activity requires GPT-supplied activityTitle, activityKind, agentRole, and contextMode; if it also needs a new Agent, GPT must additionally choose a unique human-friendly agentName. Adding a new Agent to an existing Activity likewise requires agentName, agentRole, and contextMode. Keep the person-like name, assignment role, Activity title, and kind separate. Omit activityId to create a new Activity; pass continuationOfActivityId to link a new Activity without reopening its source. Existing Agent/Activity follow-ups reuse stored metadata and route with the exact activityId and agentId. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, separately generate one UUID activityPresentationId for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. Reusing that presentation ID preserves card grouping, but presentation changes never create another Codex execution for the same requestId and execution semantics. On AGENT_NAME_REQUIRED, AGENT_METADATA_REQUIRED, or ACTIVITY_METADATA_REQUIRED, submit every listed missing field with a new requestId while keeping the response's activityPresentationId. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. Activity-card presentation correlation is supplied by host metadata when available and never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4433,11 +4433,13 @@ export function registerBridgeTools(
     async (args, { _meta }) => {
       try {
         const preferences = userSettings.current;
+        args = normalizeCodexTaskContract(args, _meta, preferences);
         const scope = scopeResolver.require(
           _meta as ToolCallMetadata,
           args.scopeId,
           "Codex task execution"
         );
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingV4Request?.requestHashVersion === CURRENT_TASK_REQUEST_HASH_VERSION) {
           if (Object.prototype.hasOwnProperty.call(args, "cwd")) {
@@ -4574,10 +4576,6 @@ export function registerBridgeTools(
           if (replay) {
             return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
           }
-          const agent = agentResolution.agent || jobs.createAgent({
-            scopeId: scope.scopeId,
-            agentName: agentResolution.newAgentName
-          });
           return await startNewSession({
             args,
             routing,
@@ -4591,7 +4589,8 @@ export function registerBridgeTools(
             modelCatalog,
             preferences,
             activityRequest,
-            agent,
+            agent: agentResolution.agent,
+            newAgentName: agentResolution.newAgentName,
             contextMode: "fresh",
             agentRole: agentResolution.role,
             projectAdmission,
@@ -4686,9 +4685,6 @@ export function registerBridgeTools(
         if (error instanceof ActivityPresentationContractError) {
           return activityPresentationContractErrorResult(error);
         }
-        if (error instanceof TaskCreationMetadataError) {
-          return taskCreationMetadataErrorResult(error);
-        }
         if (error instanceof AgentThreadResumeError) {
           return agentThreadResumeErrorResult(error);
         }
@@ -4700,12 +4696,31 @@ export function registerBridgeTools(
   policyProjection.attach(codexTaskTool);
 }
 
+type CodexTaskActivityInput =
+  | { mode: "existing"; id: string }
+  | {
+      mode: "new";
+      continuationOf?: string;
+      title?: string;
+      policy?: {
+        kind?: ActivityKind;
+        handoff?: ActivityHandoffPolicy;
+        completion?: ActivityCompletionTrigger;
+      };
+    };
+
+type CodexTaskAgentInput =
+  | { mode: "existing"; id: string; context?: AgentContextMode }
+  | { mode: "new"; name?: string };
+
 type CodexTaskArgs = {
   scopeId?: string;
   requestId: string;
   activityPresentationId?: string;
   prompt: string;
   projectId?: string;
+  activity?: CodexTaskActivityInput;
+  agent?: CodexTaskAgentInput;
   activityId?: string;
   continuationOfActivityId?: string;
   activityTitle?: string;
@@ -4724,27 +4739,117 @@ type CodexTaskArgs = {
   sandbox?: SandboxMode;
   modelPolicyRevision?: number;
   selection?: ModelChoice;
+  taskContract?: "nested" | "legacy-flat";
 };
 
-type TaskCreationMetadataErrorCode =
-  | "AGENT_NAME_REQUIRED"
-  | "AGENT_METADATA_REQUIRED"
-  | "ACTIVITY_METADATA_REQUIRED";
+const LEGACY_TASK_ROUTING_FIELDS = [
+  "activityId",
+  "continuationOfActivityId",
+  "activityTitle",
+  "activityKind",
+  "handoffPolicy",
+  "completionTrigger",
+  "agentId",
+  "agentName",
+  "agentRole",
+  "contextMode",
+  "sessionMode",
+  "threadId",
+  "adoptThread"
+] as const;
 
-class TaskCreationMetadataError extends Error {
-  constructor(
-    readonly code: TaskCreationMetadataErrorCode,
-    readonly subject: string,
-    readonly missingFields: string[],
-    readonly requiredFields: string[]
-  ) {
-    super(
-      `${code}: ${subject} requires complete GPT-supplied identity metadata. ` +
-      `Missing fields: ${missingFields.join(", ")}. Retry with a new requestId and every listed field. ` +
-      "Keep the human-friendly agentName, agentRole, activityTitle, and activityKind separate, and set contextMode explicitly."
+function normalizeCodexTaskContract(
+  input: CodexTaskArgs,
+  metadata: unknown,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+): CodexTaskArgs {
+  const args = { ...input };
+  const hasNestedRouting =
+    Object.prototype.hasOwnProperty.call(args, "activity") ||
+    Object.prototype.hasOwnProperty.call(args, "agent");
+  const legacyRoutingFields = LEGACY_TASK_ROUTING_FIELDS.filter((field) =>
+    Object.prototype.hasOwnProperty.call(args, field)
+  );
+  if (hasNestedRouting && legacyRoutingFields.length > 0) {
+    throw new Error(
+      `TASK_ROUTING_CONFLICT: Do not mix nested activity/agent routing with legacy flat fields: ${legacyRoutingFields.join(", ")}.`
     );
-    this.name = "TaskCreationMetadataError";
   }
+  args.taskContract = hasNestedRouting || legacyRoutingFields.length === 0
+    ? "nested"
+    : "legacy-flat";
+
+  if (args.taskContract === "nested") {
+    if (args.activity?.mode === "existing") {
+      args.activityId = args.activity.id;
+    } else if (args.activity?.mode === "new") {
+      args.continuationOfActivityId = args.activity.continuationOf;
+      args.activityTitle = args.activity.title;
+      args.activityKind = args.activity.policy?.kind;
+      args.handoffPolicy = args.activity.policy?.handoff;
+      args.completionTrigger = args.activity.policy?.completion;
+    }
+
+    if (args.agent?.mode === "existing") {
+      args.agentId = args.agent.id;
+      args.contextMode = args.agent.context;
+    } else if (args.agent?.mode === "new") {
+      args.agentName = args.agent.name || defaultTaskAgentName(args.requestId);
+      args.contextMode = "fresh";
+    } else if (!args.activity || args.activity.mode === "new") {
+      args.agentName = defaultTaskAgentName(args.requestId);
+      args.contextMode = "fresh";
+    }
+  }
+
+  args.agentRole ||= "primary";
+  const hostPresentationId = metadataString(metadata, "codex/activityPresentationId");
+  if (hostPresentationId && !SCOPE_ID_PATTERN.test(hostPresentationId.toLowerCase())) {
+    throw new Error("Host Activity presentation metadata must be UUID-formatted.");
+  }
+  if (hostPresentationId) {
+    args.activityPresentationId = hostPresentationId.toLowerCase();
+  } else if (
+    args.taskContract === "nested" &&
+    preferences.activityCardVisibility !== "never" &&
+    !args.activityPresentationId
+  ) {
+    // The MCP handler currently has no standard assistant-response identifier.
+    // requestId is a stable per-call fallback until the host supplies the
+    // presentation correlation metadata above.
+    args.activityPresentationId = args.requestId;
+  }
+  return args;
+}
+
+function resolveImplicitTaskAgent(
+  args: CodexTaskArgs,
+  jobs: CodexJobRegistry,
+  scopeId: string
+): void {
+  if (args.agentId || args.agentName || args.threadId) return;
+  const sourceActivityId = args.activityId || args.continuationOfActivityId;
+  if (!sourceActivityId) {
+    args.agentName = defaultTaskAgentName(args.requestId);
+    args.contextMode ||= "fresh";
+    return;
+  }
+  const candidateIds = [...new Set(
+    jobs.listActivityAgentAssignments(sourceActivityId).map((assignment) => assignment.agentId)
+  )];
+  if (candidateIds.length > 1) return;
+  if (candidateIds.length === 1) {
+    const agent = jobs.getAgent(candidateIds[0]);
+    if (agent?.scopeId === scopeId) args.agentId = agent.agentId;
+    return;
+  }
+  if (args.activityId) return;
+  args.agentName = defaultTaskAgentName(args.requestId);
+  args.contextMode ||= "fresh";
+}
+
+function defaultTaskAgentName(requestId: string): string {
+  return `Codex Agent ${requestId}`;
 }
 
 class ActivityPresentationContractError extends Error {
@@ -4752,10 +4857,8 @@ class ActivityPresentationContractError extends Error {
 
   constructor() {
     super(
-      "ACTIVITY_PRESENTATION_ID_REQUIRED: Automatic Activity cards require one UUID " +
-      "activityPresentationId for the current ChatGPT assistant response. Refresh the tool " +
-      "descriptor, generate the UUID once, reuse it for every codex_task in this response, " +
-      "and retain it on retries when possible so the response keeps one card grouping."
+      "ACTIVITY_PRESENTATION_ID_REQUIRED: This legacy flat task call predates host-owned " +
+      "Activity-card correlation. Refresh the tool descriptor and use nested Activity/Agent routing."
     );
     this.name = "ActivityPresentationContractError";
   }
@@ -4928,19 +5031,24 @@ function resolveAgentForTask(
     }
   }
 
-  requireTaskCreationMetadata(args, {
-    createsActivity: !activityRequest.activityId,
-    createsAgent: !agent
-  });
+  if (!agent && !args.agentName && activityRequest.activityId) {
+    throw new Error(
+      "AGENT_REQUIRED: This Activity has no Agent candidate. Choose agent mode='new' or an exact existing Agent."
+    );
+  }
 
   if (!agent) {
-    const contextMode = args.contextMode as AgentContextMode;
+    const contextMode = args.contextMode || "fresh";
     if (contextMode !== "fresh") {
       throw new Error(
         `AGENT_CONTEXT_UNAVAILABLE: A new Agent has no current thread to ${contextMode}. Use contextMode='fresh'.`
       );
     }
-    return { contextMode, role: args.agentRole, newAgentName: args.agentName as string };
+    return {
+      contextMode,
+      role: normalizeTaskAssignmentRole(args.agentRole),
+      newAgentName: args.agentName || defaultTaskAgentName(args.requestId)
+    };
   }
   if (agent.lifecycle === "archived") {
     throw new Error("The selected Agent is archived. Restore it with codex_agent before assigning work.");
@@ -4956,7 +5064,7 @@ function resolveAgentForTask(
       `AGENT_ORPHANED: ${agent.orphanedReason || "The current backend thread cannot be resumed."} Use contextMode='fresh' for an explicit replacement thread.`
     );
   }
-  return { agent, contextMode, role: args.agentRole };
+  return { agent, contextMode, role: normalizeTaskAssignmentRole(args.agentRole) };
 }
 
 function resolveTaskProjectAdmission(input: {
@@ -5107,36 +5215,6 @@ function taskProjectFromActivity(admission: ActivityProjectAdmission): TaskProje
 
 function taskProjectFromTarget(project: ProjectTarget): TaskProjectAdmission {
   return { projectId: project.id, projectLabel: project.label, cwd: project.cwd };
-}
-
-function requireTaskCreationMetadata(
-  args: CodexTaskArgs,
-  creation: { createsActivity: boolean; createsAgent: boolean }
-): void {
-  if (!creation.createsActivity && !creation.createsAgent) return;
-
-  const required: string[] = [];
-  if (creation.createsAgent) required.push("agentName");
-  required.push("agentRole");
-  if (creation.createsActivity) required.push("activityTitle", "activityKind");
-  required.push("contextMode");
-  const missing: string[] = [];
-  for (const field of required) {
-    if (!args[field as keyof CodexTaskArgs]) missing.push(field);
-  }
-  if (missing.length === 0) return;
-
-  const code = missing.includes("agentName")
-    ? "AGENT_NAME_REQUIRED"
-    : creation.createsActivity
-      ? "ACTIVITY_METADATA_REQUIRED"
-      : "AGENT_METADATA_REQUIRED";
-  const subject = creation.createsActivity && creation.createsAgent
-    ? "New Agent and Activity creation"
-    : creation.createsActivity
-      ? "New Activity creation"
-      : "New Agent creation";
-  throw new TaskCreationMetadataError(code, subject, missing, required);
 }
 
 async function requireAgentSession(
@@ -5376,7 +5454,8 @@ async function startNewSession(input: {
   modelCatalog: CodexModelCatalogProvider;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
-  agent: BridgeAgent;
+  agent?: BridgeAgent;
+  newAgentName?: string;
   contextMode: Extract<AgentContextMode, "fresh">;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
@@ -5429,6 +5508,7 @@ async function startNewSession(input: {
     activityRequest: input.activityRequest,
     executionMode: input.executionMode,
     agent: input.agent,
+    newAgentName: input.newAgentName,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
@@ -5446,7 +5526,7 @@ async function startNewSession(input: {
           onAssigned
         )
       : input.upstream.callTool("codex", payload, onProgress, onAssigned),
-    onComplete: (result) => {
+    onComplete: (result, agent) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const previous = input.sessions.get(threadId);
@@ -5471,7 +5551,7 @@ async function startNewSession(input: {
         lastUsedAt: now
       });
       input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
+        agentId: agent.agentId,
         threadId,
         projectId: input.projectAdmission?.projectId,
         projectLabel: input.projectAdmission?.projectLabel,
@@ -5774,7 +5854,8 @@ async function runCodex(input: {
   sessionDecision: SessionDecision;
   activityRequest: ActivityTaskRequest;
   executionMode: ActivityExecutionMode;
-  agent: BridgeAgent;
+  agent?: BridgeAgent;
+  newAgentName?: string;
   contextMode: AgentContextMode;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
@@ -5787,8 +5868,11 @@ async function runCodex(input: {
     onProgress: (progress: Progress) => void,
     onAssigned: (assignment: UpstreamWorkerAssignment) => void
   ) => Promise<ToolResult>;
-  onComplete?: (result: ToolResult) => void | (() => void);
+  onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
 }): Promise<ToolResult> {
+  if (!input.agent && !input.newAgentName) {
+    throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
+  }
   let job!: CodexJob;
   input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
@@ -5806,9 +5890,13 @@ async function runCodex(input: {
       input.routing.scopeId,
       input.projectAdmission
     );
+    const agent = input.agent || input.jobs.createAgent({
+      scopeId: input.routing.scopeId,
+      agentName: input.newAgentName as string
+    });
     input.jobs.assignAgent({
       activityId: activity.activityId,
-      agentId: input.agent.agentId,
+      agentId: agent.agentId,
       contextMode: input.contextMode,
       role: input.agentRole
     });
@@ -5819,7 +5907,7 @@ async function runCodex(input: {
         activityId: activity.activityId,
         projectId: input.projectAdmission?.projectId,
         projectLabel: input.projectAdmission?.projectLabel,
-        agentId: input.agent.agentId,
+        agentId: agent.agentId,
         contextMode: input.contextMode,
         executionMode: input.executionMode,
         cwd: input.cwd,
@@ -5833,13 +5921,15 @@ async function runCodex(input: {
         selectionKey: activitySelectionKey(activity.activityId, input.selectionKey),
         executionDecision: input.executionDecision,
         exclusiveKeys: [
-          agentExclusiveKey(input.agent.agentId),
+          agentExclusiveKey(agent.agentId),
           ...(input.exclusiveKeys || [])
         ],
         sessionDecision: input.sessionDecision
       },
       input.run,
-      input.onComplete,
+      input.onComplete
+        ? (result) => input.onComplete?.(result, agent)
+        : undefined,
       input.preferences.maxConcurrentJobs,
       input.rejectIfSelectionActive
     );
@@ -7051,7 +7141,47 @@ function codexTaskInputSchema(
   settings: BridgeUserSettings,
   catalog: CodexModelCatalogSnapshot | undefined
 ): z.ZodType<CodexTaskArgs> {
-  const common = {
+  const activity = z.discriminatedUnion("mode", [
+    z.strictObject({
+      mode: z.literal("existing"),
+      id: scopeIdSchema().describe("Exact open Activity id in this conversation scope.")
+    }),
+    z.strictObject({
+      mode: z.literal("new"),
+      continuationOf: scopeIdSchema().optional()
+        .describe("Optional prior Activity id for lineage; the source remains immutable."),
+      title: z.string().trim().min(1).max(120).optional()
+        .describe("Optional user-facing title. The bridge uses a neutral fallback when omitted."),
+      policy: z.strictObject({
+        kind: z.enum(ACTIVITY_KINDS).optional()
+          .describe("Display classification only; defaults to other."),
+        handoff: z.enum(ACTIVITY_HANDOFF_POLICIES).optional()
+          .describe("Completion handoff policy; defaults to none."),
+        completion: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
+          .describe("Completion trigger; defaults to manual.")
+      }).optional().describe(
+        "Policy committed atomically when the Activity is created. Existing policy changes use codex_activity_update."
+      )
+    })
+  ]).describe("Choose an existing Activity or describe one new Activity. Omission creates a new Activity with defaults.");
+  const agent = z.discriminatedUnion("mode", [
+    z.strictObject({
+      mode: z.literal("existing"),
+      id: scopeIdSchema().describe("Exact bridge-managed Agent id."),
+      context: z.enum(AGENT_CONTEXT_MODES).optional().describe(
+        "Continue the current thread, fork it, or deliberately start fresh. Defaults to continue when resumable."
+      )
+    }),
+    z.strictObject({
+      mode: z.literal("new"),
+      name: z.string().trim().min(1).max(80).optional().describe(
+        "Optional display name. The bridge generates a neutral scope-unique name when omitted; new Agents always start fresh."
+      )
+    })
+  ]).describe(
+    "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
+  );
+  const runtimeCommon = {
     scopeId: scopeIdSchema()
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
@@ -7059,48 +7189,40 @@ function codexTaskInputSchema(
       "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
     ),
     prompt: z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex."),
+    activity: activity.optional(),
+    agent: agent.optional(),
     activityId: scopeIdSchema()
       .optional()
-      .describe("Exact open Activity id in this conversation scope. Omit to create a new Activity."),
+      .describe("Legacy flat exact Activity id."),
     continuationOfActivityId: scopeIdSchema()
       .optional()
-      .describe("Exact prior Activity id when creating a new linked Activity. The source Activity remains immutable."),
+      .describe("Legacy flat continuation Activity id."),
     activityTitle: z.string().trim().min(1).max(120).optional()
-      .describe("GPT-supplied user-facing title required whenever activityId is omitted and a new Activity is created. Not accepted with activityId."),
+      .describe("Legacy flat new-Activity title."),
     activityKind: z.enum(ACTIVITY_KINDS).optional()
-      .describe("GPT-supplied classification required whenever activityId is omitted and a new Activity is created; it does not grant permission or imply completion."),
+      .describe("Legacy flat new-Activity classification."),
     executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional()
       .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background."),
     handoffPolicy: z.enum(ACTIVITY_HANDOFF_POLICIES).optional()
-      .describe("New-Activity handoff policy. Defaults to none and is not inferred from Codex output."),
+      .describe("Legacy flat new-Activity handoff policy."),
     completionTrigger: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
-      .describe("New-Activity completion trigger. Defaults to manual. Seal explicitly before using the terminal barrier."),
+      .describe("Legacy flat new-Activity completion trigger."),
     agentId: scopeIdSchema().optional()
-      .describe("Exact bridge-managed Agent id. Required when an Activity has multiple prior Agents."),
+      .describe("Legacy flat exact Agent id."),
     agentName: z.string().trim().min(1).max(80).optional()
-      .describe("GPT-chosen display name required when this call creates a new Agent. Keep role information in agentRole; the name is never used as a routing or authorization id."),
+      .describe("Legacy flat new-Agent display name."),
     agentRole: z.string().trim().min(1).max(80).optional()
-      .describe("GPT-supplied Activity assignment role required for every new Activity or new Agent. Existing Agent/Activity follow-ups reuse the stored role."),
+      .describe("Legacy flat display-only assignment role."),
     contextMode: z.enum(AGENT_CONTEXT_MODES).optional()
-      .describe("Explicit Codex context choice required for every new Activity or new Agent: continue the Agent's current thread, fork it, or start fresh context. Existing Agent/Activity follow-ups may omit it.")
+      .describe("Legacy flat Agent context choice.")
   };
   const publicCommon = {
-    ...common,
-    projectId: projectedProjectIdZod(config, settings)
-  };
-  const activityPresentationDescription =
-    "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. " +
-    "Generate it once for the response, reuse it for every codex_task in that response even " +
-    "across different Activities or Agents, and generate a new value for the next response. " +
-    "Reuse it on retries when possible to preserve card grouping. requestId deduplicates one " +
-    "Codex execution while activityPresentationId deduplicates one response's card and is not " +
-    "part of execution replay identity.";
-  const publicPresentation = {
-    activityPresentationId: settings.activityCardVisibility === "never"
-      ? scopeIdSchema().optional().describe(
-          `${activityPresentationDescription} Automatic display is currently disabled, so this value cannot override the saved visibility policy.`
-        )
-      : scopeIdSchema().describe(activityPresentationDescription)
+    requestId: runtimeCommon.requestId,
+    prompt: runtimeCommon.prompt,
+    projectId: projectedProjectIdZod(config, settings),
+    activity: activity.optional(),
+    agent: agent.optional(),
+    executionMode: runtimeCommon.executionMode
   };
   const adaptiveSandbox = settings.accessStrategy === "adaptive"
     ? {
@@ -7110,8 +7232,6 @@ function codexTaskInputSchema(
     : {};
   const publicModel = settings.modelPolicy.mode === "automatic"
     ? {
-        modelPolicyRevision: z.number().int().min(0).optional()
-          .describe(`Policy revision ${settings.revision} was current when this descriptor was projected. Refresh tools if the bridge reports MODEL_POLICY_CHANGED.`),
         selection: projectedSelectionZod(
           settings.modelPolicy,
           catalog,
@@ -7129,14 +7249,13 @@ function codexTaskInputSchema(
     : {};
   const projected = z.strictObject({
     ...publicCommon,
-    ...publicPresentation,
     ...adaptiveSandbox,
     ...publicModel
   });
   // Runtime parsing recognizes retired fields so the bridge can return an
   // identifiable refresh/migration error instead of silently dropping them.
   const runtime = z.strictObject({
-    ...common,
+    ...runtimeCommon,
     projectId: z.string().trim().min(1).max(64).optional(),
     activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
@@ -7482,6 +7601,8 @@ function requireTaskHashAgentId(value: string | undefined): string {
 }
 
 function normalizeTaskAssignmentRole(value: string | undefined): string {
+  // Assignment role is persisted and hashed only as display metadata. Routing,
+  // authorization, context, lifecycle, and handoff decisions must not branch on it.
   if (value === undefined) return "primary";
   return value
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -8739,8 +8860,8 @@ function activityPresentationContractErrorResult(
       missingFields: ["activityPresentationId"],
       nextActions: [
         "Refresh the codex_task descriptor.",
-        "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
-        "For an exact logical-call retry, reuse both requestId and activityPresentationId."
+        "Use nested activity and agent routing; the host supplies presentation correlation when available.",
+        "Reuse requestId only for the exact same execution retry."
       ]
     }
   };
@@ -8763,27 +8884,6 @@ function agentThreadResumeErrorResult(error: AgentThreadResumeError): ToolResult
         : error.code === "AGENT_THREAD_BUSY"
           ? ["Wait for the active turn to finish and retry the same logical request."]
           : ["Retry the same logical request; do not replace or detach the Agent thread."]
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
-}
-
-function taskCreationMetadataErrorResult(error: TaskCreationMetadataError): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      retryable: true,
-      missingFields: error.missingFields,
-      requiredFields: error.requiredFields,
-      nextActions: [
-        "Choose all missing identity metadata without inventing bridge IDs or combining the Agent name with its role.",
-        "Retry the logical turn once with a new requestId and every field listed in missingFields."
-      ]
     }
   };
   return {

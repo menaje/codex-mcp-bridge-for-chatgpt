@@ -252,27 +252,41 @@ is an available decision.
 
 In ChatGPT, omit `scopeId`; the bridge derives an opaque UUID from anonymous host conversation metadata. Compatibility MCP hosts without that metadata must generate and reuse an explicit UUID. Scope IDs are routing labels, not authentication credentials.
 
-Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an exact retry. The public contract intentionally has no `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread` field.
+Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an exact retry. The public contract intentionally has no caller scope, local path, arbitrary thread, presentation ID, model-policy revision, or legacy flat routing fields.
 
 Routing fields are:
 
 - pass one projected `projectId` for a new Activity/fresh context, or omit it only when a default/sole project is available;
-- omit `activityId` to create a new Activity;
-- pass the exact returned `activityId` for another turn in the same open Activity;
-- pass `continuationOfActivityId` to create a linked Activity without reopening a terminal source Activity;
-- pass exact `agentId` to reuse a bridge-managed Agent;
-- for every new Activity, GPT must supply `activityTitle`, `activityKind`, `agentRole`, and an explicit `contextMode`;
-- when creating a new Agent, GPT must also choose a unique human-friendly `agentName`; keep the assignment in the separate `agentRole` field;
-- when adding a new Agent to an existing Activity, supply `agentName`, `agentRole`, and `contextMode`.
+- use `activity: { mode: "existing", id }` for another turn in one exact open Activity;
+- use `activity: { mode: "new", continuationOf?, title?, policy? }` to create a new or linked Activity; `policy` may contain `kind`, `handoff`, and `completion`;
+- use `agent: { mode: "existing", id, context? }` to continue, fork, or deliberately replace one exact Agent context;
+- use `agent: { mode: "new", name? }` to create a fresh Agent;
+- omit `activity` and `agent` for a new Activity and Agent with neutral server defaults.
+
+For example:
+
+```json
+{
+  "requestId": "...",
+  "projectId": "bridge",
+  "activity": {
+    "mode": "new",
+    "title": "Implement the agreed design",
+    "policy": { "kind": "implementation" }
+  },
+  "agent": { "mode": "new", "name": "Mina" },
+  "prompt": "Implement the design and run the relevant checks"
+}
+```
 
 Recommended mappings:
 
 - same goal: same Activity + same Agent + `continue`;
 - new but dependent goal: new linked Activity + same Agent + `continue`;
-- independent verification/alternative: another Agent with `fork` or `fresh`;
+- independent verification/alternative: another fresh Agent, or an explicit fork of an existing Agent;
 - unrelated goal: new Activity + new Agent + `fresh`.
 
-One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an Activity has multiple Agent candidates, the bridge requires an exact `agentId` instead of guessing. The bridge never invents public identity metadata: GPT supplies a person-like display name such as `Mina`, while `agentRole` can say `implementation` or `review`. Missing creation fields are reported together through `AGENT_NAME_REQUIRED`, `AGENT_METADATA_REQUIRED`, or `ACTIVITY_METADATA_REQUIRED`, so GPT can retry once with a complete envelope and a new `requestId`. Existing Agent/Activity follow-ups reuse stored metadata. Agent names are Unicode-normalized and case-insensitively unique within a scope.
+One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an existing Activity has multiple Agent candidates, the bridge requires an exact nested Agent ID instead of guessing. Activity title, kind, handoff, completion, Agent name, fresh context, and assignment role have neutral defaults; generated Agent names are deterministic from `requestId` and remain unique within a scope. The assignment role defaults to `primary` and is display-only metadata: it is read only for Activity/history presentation and never participates in routing, authorization, context selection, lifecycle transitions, or handoff eligibility. New-Activity policy, Activity/Agent creation, assignment, v4 replay registration, and Job admission commit in one transaction. The legacy flat routing envelope remains runtime-compatible but is absent from discovery, and it cannot be mixed with the nested contract.
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
@@ -293,7 +307,7 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 `codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
-`requestId` and `activityPresentationId` have deliberately different scopes. GPT creates one `requestId` for each logical Codex call and reuses it only for the same execution retry. When automatic UI is enabled, GPT also creates one `activityPresentationId` UUID for the current assistant response, reuses it for every `codex_task` in that response even across Agents or Activities, and creates a new value for the next response. Keeping that ID on a retry preserves card grouping, but v4 replay identity excludes presentation state, so changing or losing only the presentation ID does not start another Codex execution. A new automatic-UI call still requires the presentation ID and receives retryable `ACTIVITY_PRESENTATION_ID_REQUIRED` if it is absent. The saved visibility policy remains authoritative and cannot be overridden by the ID.
+`requestId` is model-authored execution identity; Activity presentation correlation is not. A host may provide a response-level UUID through `codex/activityPresentationId` metadata so several calls share one automatic card reservation. When no such metadata exists, the bridge uses `requestId` as a stable per-call presentation fallback. The old argument remains runtime-only for stale flat callers. In every case v4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
 

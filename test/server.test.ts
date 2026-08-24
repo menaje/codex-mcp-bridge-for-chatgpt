@@ -122,12 +122,13 @@ afterEach(() => {
 
 describe("http server", () => {
   it("publishes the Agent-first public routing contract in server instructions", () => {
-    expect(BRIDGE_MCP_INSTRUCTIONS.slice(0, 512)).toContain("scope-owned Agent");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("activityTitle, activityKind, agentRole");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("AGENT_METADATA_REQUIRED");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("ACTIVITY_METADATA_REQUIRED");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("continuationOfActivityId");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("contextMode='continue'");
+    expect(BRIDGE_MCP_INSTRUCTIONS.slice(0, 512)).toContain("scope-owned Activity and Agent");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("nested discriminated inputs");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("continuationOf");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("context='continue'");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("primary-role");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("commit atomically");
+    expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("ACTIVITY_METADATA_REQUIRED");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectId exposed by the current codex_task descriptor");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("admission-time project");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");

@@ -106,12 +106,12 @@ the network as the current macOS user.
 - Thirty concurrent jobs at most.
 - Concurrent sessions are allowed in one working directory, including mutating jobs.
 - Overlapping mutations are coordinated by the caller or isolated with worktrees.
-- Scope-persistent named bridge Agents with immutable IDs, GPT-supplied normalized
-  unique human-friendly aliases, separate assignment roles, current/history thread
-  links, and Activity assignment history. The bridge does not invent public names
-  or creation metadata. New Agent/Activity admission validates the complete
-  conditional metadata envelope before writing state and returns a structured,
-  retryable list of every missing field.
+- Scope-persistent named bridge Agents with immutable IDs, normalized unique
+  aliases, separate assignment roles, current/history thread links, and Activity
+  assignment history. Optional names and titles receive neutral deterministic
+  display defaults. Assignment role defaults to `primary` and is consumed only by
+  Activity/history presentation; routing, authorization, context, lifecycle, and
+  handoff decisions never read it.
 - One active job per Agent/Codex thread.
 - Different Codex threads under the same conversation scope may run
   concurrently in the same working directory; parallelism is created on demand
@@ -121,14 +121,18 @@ the network as the current macOS user.
   UUIDs for retained-job retry deduplication.
 - Exact-scope Activity creation/attachment and server-validated lifecycle
   transitions. Existing Activity policy cannot be changed through `codex_task`,
-  and Codex output is never treated as transition authority.
+  and Codex output is never treated as transition authority. New-Activity policy,
+  Activity/Agent creation, assignment, replay registration, and Job admission are
+  one SQLite transaction, so failed admission leaves no partial identity or policy.
 - Operator model ceiling ∩ versioned user policy ∩ backend catalog/capability ∩
   request intent is the only model execution authority. Fixed mode rejects
   stale overrides; automatic mode accepts only exact nested selections. No
   bridge-maintained model aliases are interpreted.
 - 50,000 characters per prompt.
-- Exact Activity + Agent routing with explicit `continue`, `fork`, or `fresh`;
-  ambiguous candidates and arbitrary public thread IDs are rejected.
+- Discriminated nested Activity + Agent routing with exact existing IDs and optional
+  `continue`, `fork`, or `fresh` intent; ambiguous candidates and arbitrary public
+  thread IDs are rejected. Flat routing remains runtime-only and cannot be mixed
+  with the nested contract.
 - Durable sessions, bridge preferences, jobs, bounded results, Activities,
   Agent/thread history, Activity-Agent assignments, idempotent Agent mutations,
   append-only Activity/job events, scope versions, bridge generations, and a
@@ -149,8 +153,9 @@ the network as the current macOS user.
   validation, TERM→KILL escalation, collateral confirmation, and terminal state
   only after exit evidence. `termination-failed` remains an active slot.
 - Automatic Activity render reservations are in-memory and keyed by the
-  host-derived conversation scope plus GPT-supplied assistant-response
-  `activityPresentationId`; Activity id/generation remains a validity check,
+  host-derived conversation scope plus host-supplied response correlation, with
+  `requestId` used as a stable per-call fallback when the host supplies none;
+  Activity id/generation remains a validity check,
   not the presentation boundary. Only the newest automatic presentation owns
   scope watch and completion handoff. Superseded cards stop normally and
   release admission; at most three explicit user-opened cards may watch beside

@@ -142,12 +142,12 @@ Call `codex_status` and confirm:
 
 Inspect `tools/list`:
 
-- `codex_task` has no `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
+- `codex_task` has no caller `scopeId`, `activityPresentationId`, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
 - `projectId` lists only currently selectable registered IDs and their labels;
 - fixed access modes have no `sandbox`;
 - `adaptive` exposes only permitted sandboxes;
-- Agent fields are `agentId`, `agentName`, `agentRole`, and `contextMode`;
-- context modes are exactly `continue`, `fork`, and `fresh`.
+- Activity and Agent routing use separate discriminated `activity` and `agent` objects;
+- an existing Agent's optional `context` values are exactly `continue`, `fork`, and `fresh`.
 
 ## 6. Agent and Activity routing
 
@@ -157,32 +157,33 @@ Use these routes:
 
 ```json
 {
-  "activityTitle": "Implement the agreed design",
-  "activityKind": "implementation",
+  "requestId": "...",
   "projectId": "bridge",
-  "agentName": "Mina",
-  "agentRole": "implementation",
-  "contextMode": "fresh",
+  "activity": {
+    "mode": "new",
+    "title": "Implement the agreed design",
+    "policy": { "kind": "implementation" }
+  },
+  "agent": { "mode": "new", "name": "Mina" },
   "prompt": "Implement the design and run the relevant checks"
 }
 ```
 
-GPT must submit a complete creation envelope. Every new Activity requires
-`activityTitle`, `activityKind`, `agentRole`, and `contextMode`; every new Agent
-also requires a unique, human-friendly `agentName`. The bridge returns all
-missing fields together under `AGENT_NAME_REQUIRED`, `AGENT_METADATA_REQUIRED`,
-or `ACTIVITY_METADATA_REQUIRED` instead of inventing them. Retry with a new
-`requestId` and every listed field. Preserve the Agent name when continuing,
-forking, or starting another Activity with that Agent, and keep role text in
-`agentRole` rather than encoding it in the name.
+The creation envelope is intentionally optional. Omitting `activity` creates one
+with the neutral title `Codex activity`, kind `other`, handoff `none`, and manual
+completion. Omitting `agent` for a new Activity creates a deterministically named
+fresh Agent; `agent: { "mode": "new" }` does the same. The assignment role is
+server-owned `primary` display metadata and has no routing, authorization,
+context, lifecycle, or handoff meaning. Activity policy, Activity/Agent creation,
+assignment, replay registration, and Job admission commit atomically.
 
 The result returns immutable `activityId` and `agentId`. A same-goal follow-up uses both exact IDs and `continue`:
 
 ```json
 {
-  "activityId": "...",
-  "agentId": "...",
-  "contextMode": "continue",
+  "requestId": "...",
+  "activity": { "mode": "existing", "id": "..." },
+  "agent": { "mode": "existing", "id": "...", "context": "continue" },
   "prompt": "Address the remaining test failure"
 }
 ```
@@ -191,17 +192,19 @@ A new but dependent goal creates a linked Activity without reopening the complet
 
 ```json
 {
-  "continuationOfActivityId": "...",
-  "agentId": "...",
-  "contextMode": "continue",
-  "activityTitle": "Follow-up integration",
-  "activityKind": "implementation",
-  "agentRole": "integration",
+  "requestId": "...",
+  "activity": {
+    "mode": "new",
+    "continuationOf": "...",
+    "title": "Follow-up integration",
+    "policy": { "kind": "implementation" }
+  },
+  "agent": { "mode": "existing", "id": "...", "context": "continue" },
   "prompt": "Integrate the completed work with the next component"
 }
 ```
 
-For independent verification, create another named Agent with `fork` or `fresh`. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without exact `agentId`.
+For independent verification, create another fresh Agent or explicitly fork an existing Agent. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without an exact nested Agent ID. The former flat routing fields remain runtime-compatible for stale clients but are not advertised and cannot be mixed with nested routing.
 
 Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
@@ -216,13 +219,13 @@ only for a confirmed orphan; the original stays in thread history.
 
 `codex_task` owns automatic card presentation. When saved visibility is `always` or `background-only`, its descriptor points directly to the same Activity UI resource as `codex_activity`. Call `codex_task` directly—not through programmatic tool calling or an exec wrapper—so ChatGPT preserves that native UI. Do not call `codex_activity` afterward.
 
-For automatic UI, generate one UUID `activityPresentationId` at the first `codex_task` in the current assistant response and reuse it for every later `codex_task` in that same response, including calls for different Agents or Activities. Generate a new UUID for the next assistant response. `requestId` remains per logical Codex call and must be reused only for the same execution retry. Retain the presentation ID when possible for stable card grouping, but v4 replay excludes presentation state, so changing or losing only that ID does not start another Codex execution. A new automatic-UI call without it receives `ACTIVITY_PRESENTATION_ID_REQUIRED`. The presentation ID groups cards only and cannot select or bypass the saved visibility setting.
+`requestId` remains per logical Codex call and must be reused only for the same execution retry. Presentation correlation is absent from the public schema. A host can attach one response-level UUID as `codex/activityPresentationId` metadata to group several calls; otherwise the bridge uses each request ID as a stable per-call fallback. V4 replay excludes this presentation state, and it cannot select or bypass the saved visibility setting. Only stale flat callers can still submit the former argument at runtime.
 
 The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call in the same response may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
 The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. When multiple projects are relevant, project labels remain visible across both current and collapsed history rows; full paths remain private. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 
-The feed shows only Activity title, GPT-chosen Agent name, separate role, localized state, kind, timing, final project-folder name when multiple projects are relevant, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
+The feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
 
 The card deliberately omits a KPI dashboard, card-grid Agent list, layout selector, Activity `<details>`, timelines, Agent/job/thread IDs, full working paths, backend/worker data, command output, and general steering. Detailed diagnostics remain available in `codex_status`.
 

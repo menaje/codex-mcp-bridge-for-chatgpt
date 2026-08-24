@@ -489,7 +489,7 @@ describe("bridge tools", () => {
       "openai/outputTemplate": ACTIVITY_CARD_URI
     });
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
+      required: expect.arrayContaining(["requestId", "prompt"])
     });
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
@@ -499,16 +499,64 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("sessionMode");
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("adoptThread");
     expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
-      activityKind: { enum: ["discussion", "investigation", "review", "implementation", "other"] },
+      activity: { oneOf: expect.any(Array) },
+      agent: { oneOf: expect.any(Array) },
       executionMode: { enum: ["foreground", "background"] },
-      handoffPolicy: { enum: ["none", "notify", "verify"] },
-      completionTrigger: { enum: ["manual", "sealed-jobs-terminal"] },
-      contextMode: { enum: ["continue", "fork", "fresh"] },
-      agentId: expect.any(Object),
-      agentName: expect.any(Object),
-      continuationOfActivityId: expect.any(Object),
-      activityPresentationId: expect.any(Object)
+      requestId: expect.any(Object),
+      prompt: expect.any(Object)
     });
+    for (const hiddenTaskField of [
+      "scopeId",
+      "activityPresentationId",
+      "modelPolicyRevision",
+      "activityId",
+      "continuationOfActivityId",
+      "activityTitle",
+      "activityKind",
+      "handoffPolicy",
+      "completionTrigger",
+      "agentId",
+      "agentName",
+      "agentRole",
+      "contextMode"
+    ]) {
+      expect(byName.get("codex_task")?.inputSchema.properties)
+        .not.toHaveProperty(hiddenTaskField);
+    }
+    const taskProperties = byName.get("codex_task")?.inputSchema.properties as
+      | Record<string, any>
+      | undefined;
+    const activityVariants = taskProperties?.activity?.oneOf as Array<Record<string, any>>;
+    expect(activityVariants.map((variant) => variant.properties?.mode?.const).sort())
+      .toEqual(["existing", "new"]);
+    expect(activityVariants.find((variant) => variant.properties?.mode?.const === "existing"))
+      .toMatchObject({ required: expect.arrayContaining(["mode", "id"]) });
+    const newActivityVariant = activityVariants.find(
+      (variant) => variant.properties?.mode?.const === "new"
+    );
+    expect(newActivityVariant).toMatchObject({
+      properties: {
+        continuationOf: expect.any(Object),
+        title: expect.any(Object),
+        policy: expect.any(Object)
+      }
+    });
+    expect(newActivityVariant?.properties?.policy?.properties?.kind?.enum)
+      .toEqual(["discussion", "investigation", "review", "implementation", "other"]);
+    expect(newActivityVariant?.properties?.policy?.properties?.handoff?.enum)
+      .toEqual(["none", "notify", "verify"]);
+    expect(newActivityVariant?.properties?.policy?.properties?.completion?.enum)
+      .toEqual(["manual", "sealed-jobs-terminal"]);
+    const agentVariants = taskProperties?.agent?.oneOf as Array<Record<string, any>>;
+    expect(agentVariants.map((variant) => variant.properties?.mode?.const).sort())
+      .toEqual(["existing", "new"]);
+    expect(agentVariants.find((variant) => variant.properties?.mode?.const === "existing"))
+      .toMatchObject({
+        required: expect.arrayContaining(["mode", "id"]),
+        properties: { context: { enum: ["continue", "fork", "fresh"] } }
+      });
+    expect(agentVariants.find((variant) => variant.properties?.mode?.const === "new")?.properties)
+      .not.toHaveProperty("context");
     const agentInputProperties = byName.get("codex_agent")?.inputSchema.properties as
       | Record<string, any>
       | undefined;
@@ -1042,28 +1090,17 @@ describe("bridge tools", () => {
           },
           "name": "codex_task",
           "properties": [
-            "activityId",
-            "activityKind",
-            "activityPresentationId",
-            "activityTitle",
-            "agentId",
-            "agentName",
-            "agentRole",
-            "completionTrigger",
-            "contextMode",
-            "continuationOfActivityId",
+            "activity",
+            "agent",
             "executionMode",
-            "handoffPolicy",
-            "modelPolicyRevision",
             "projectId",
             "prompt",
             "requestId",
             "sandbox",
-            "scopeId",
             "selection",
           ],
-          "propertyCount": 19,
-          "schemaBytes": 5359,
+          "propertyCount": 8,
+          "schemaBytes": 4540,
           "visibility": {
             "app": true,
             "model": true,
@@ -1117,110 +1154,131 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("requires complete GPT-supplied creation metadata and preserves it across follow-ups", async () => {
+  it("applies neutral creation defaults and preserves explicit nested routing across follow-ups", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
 
-    const missingName = await rawCallTool({
+    const defaulted = await rawCallTool({
       name: "codex_task",
       arguments: {
         scopeId: SCOPE_A,
         requestId: "10101010-1010-4010-8010-101010101010",
-        activityPresentationId: "10101010-1010-4010-8010-101010101010",
         prompt: "review the design",
         executionMode: "foreground"
       }
     });
-    expect(missingName.isError).toBe(true);
-    const missingNameText = JSON.stringify(missingName);
-    expect(missingNameText).toContain("AGENT_NAME_REQUIRED");
-    for (const field of ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"]) {
-      expect(missingNameText).toContain(field);
-    }
-    expect((missingName as { structuredContent?: Record<string, any> }).structuredContent?.error)
-      .toMatchObject({
-        code: "AGENT_NAME_REQUIRED",
-        retryable: true,
-        missingFields: ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"],
-        requiredFields: ["agentName", "agentRole", "activityTitle", "activityKind", "contextMode"],
-        nextActions: expect.any(Array)
-      });
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
-    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-
-    const incompleteMetadata = await rawCallTool({
-      name: "codex_task",
-      arguments: {
-        scopeId: SCOPE_A,
-        requestId: "20202020-2020-4020-8020-202020202020",
-        activityPresentationId: "20202020-2020-4020-8020-202020202020",
-        prompt: "review the design",
-        agentName: "민아",
-        contextMode: "fresh",
-        executionMode: "foreground"
-      }
+    const defaultActivityId = taskActivityId(defaulted);
+    const defaultAgentId = (defaulted as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId as string;
+    expect(jobs.getActivity(defaultActivityId)).toMatchObject({
+      title: "Codex activity",
+      kind: "other",
+      executionMode: "foreground",
+      handoffPolicy: "none",
+      completionTrigger: "manual"
     });
-    const incompleteMetadataText = JSON.stringify(incompleteMetadata);
-    expect(incompleteMetadata.isError).toBe(true);
-    expect(incompleteMetadataText).toContain("ACTIVITY_METADATA_REQUIRED");
-    for (const field of ["agentRole", "activityTitle", "activityKind"]) {
-      expect(incompleteMetadataText).toContain(field);
-    }
-    expect((incompleteMetadata as { structuredContent?: Record<string, any> }).structuredContent?.error)
-      .toMatchObject({
-        retryable: true,
-        missingFields: ["agentRole", "activityTitle", "activityKind"]
-      });
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
-    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.getAgent(defaultAgentId)).toMatchObject({
+      agentName: "Codex Agent 10101010-1010-4010-8010-101010101010"
+    });
+    expect(jobs.listActivityAgentAssignments(defaultActivityId, defaultAgentId)).toEqual([
+      expect.objectContaining({ role: "primary", contextMode: "fresh" })
+    ]);
 
     const named = await runTask(client, {
       prompt: "review the design",
-      activityTitle: "Design review",
-      activityKind: "review",
-      agentName: "민아",
-      agentRole: "design reviewer",
-      contextMode: "fresh"
+      activity: {
+        mode: "new",
+        title: "Design review",
+        policy: { kind: "review", handoff: "verify", completion: "manual" }
+      },
+      agent: { mode: "new", name: "민아" }
     });
     const agentId = (named as { structuredContent?: Record<string, any> })
       .structuredContent?.bridgeActivity?.agentId as string;
     expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
+    expect(jobs.getActivity(taskActivityId(named))).toMatchObject({
+      title: "Design review",
+      kind: "review",
+      handoffPolicy: "verify",
+      completionTrigger: "manual"
+    });
     expect(jobs.listActivityAgentAssignments(undefined, agentId)).toEqual([
-      expect.objectContaining({ role: "design reviewer" })
+      expect.objectContaining({ role: "primary" })
     ]);
 
     await runTask(client, {
       prompt: "continue the review",
-      activityId: taskActivityId(named),
-      agentId
+      activity: { mode: "existing", id: taskActivityId(named) },
+      agent: { mode: "existing", id: agentId }
     });
     expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(2);
 
-    const incompleteSecondAgent = await rawCallTool({
+    const defaultedSecondAgent = await runTask(client, {
+      prompt: "independent review",
+      activity: { mode: "existing", id: taskActivityId(named) },
+      agent: { mode: "new" }
+    });
+    const secondAgentId = (defaultedSecondAgent as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId as string;
+    expect(jobs.getAgent(secondAgentId)?.agentName)
+      .toMatch(/^Codex Agent [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(3);
+    await close();
+  });
+
+  it("rejects mixed task routing contracts and lets host metadata own card correlation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const mixed = await rawCallTool({
       name: "codex_task",
       arguments: {
         scopeId: SCOPE_A,
-        requestId: "30303030-3030-4030-8030-303030303030",
-        activityPresentationId: "30303030-3030-4030-8030-303030303030",
-        prompt: "independent review",
-        activityId: taskActivityId(named),
-        agentName: "준"
+        requestId: "40404040-4040-4040-8040-404040404040",
+        activityPresentationId: "40404040-4040-4040-8040-404040404040",
+        prompt: "mixed routing must fail",
+        activity: { mode: "new" },
+        activityTitle: "Legacy title"
       }
     });
-    const incompleteSecondAgentText = JSON.stringify(incompleteSecondAgent);
-    expect(incompleteSecondAgent.isError).toBe(true);
-    expect(incompleteSecondAgentText).toContain("AGENT_METADATA_REQUIRED");
-    expect(incompleteSecondAgentText).toContain("agentRole");
-    expect(incompleteSecondAgentText).toContain("contextMode");
-    expect((incompleteSecondAgent as { structuredContent?: Record<string, any> }).structuredContent?.error)
+    expect(mixed.isError).toBe(true);
+    expect(JSON.stringify(mixed)).toContain("TASK_ROUTING_CONFLICT");
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+
+    const invalidNewAgentContext = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "41414141-4141-4141-8141-414141414141",
+        prompt: "new Agent cannot fork",
+        activity: { mode: "new" },
+        agent: { mode: "new", context: "fork" }
+      }
+    });
+    expect(invalidNewAgentContext.isError).toBe(true);
+    expect(upstream.calls).toEqual([]);
+
+    const hostPresentationId = "42424242-4242-4242-8242-424242424242";
+    const hostCorrelated = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "43434343-4343-4343-8343-434343434343",
+        activityPresentationId: "44444444-4444-4444-8444-444444444444",
+        prompt: "use host presentation correlation",
+        activity: { mode: "new" },
+        agent: { mode: "new" },
+        executionMode: "foreground"
+      },
+      _meta: { "codex/activityPresentationId": hostPresentationId }
+    });
+    expect((hostCorrelated as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
-        retryable: true,
-        missingFields: ["agentRole", "contextMode"],
-        requiredFields: ["agentName", "agentRole", "contextMode"]
+        bridgeActivity: { activityPresentationId: hostPresentationId }
       });
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
     await close();
   });
 
@@ -3539,14 +3597,15 @@ describe("bridge tools", () => {
       arguments: responseRequest,
       _meta: { "openai/widgetSessionId": widgetSessionId }
     }));
-    expect(responded).toMatchObject({
+    const stableInteractionResponse = {
       ok: true,
       action: "respond-interaction",
       activityId: started.activityId,
       promptOrAnswersPersisted: false
-    });
-    expect(concurrentResponse).toEqual(responded);
-    expect(responseReplay).toEqual(responded);
+    };
+    expect(responded).toMatchObject(stableInteractionResponse);
+    expect(concurrentResponse).toMatchObject(stableInteractionResponse);
+    expect(responseReplay).toMatchObject(stableInteractionResponse);
     expect(upstream.interactionResponses).toEqual([
       { interactionId: approval.interactionId, response: { decision: "acceptForSession" } }
     ]);
@@ -4636,11 +4695,12 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       requestId,
       prompt: "one logical task",
-      agentName: "Deduplicated Agent",
-      agentRole: "test role",
-      contextMode: "fresh" as const,
-      activityTitle: "Deduplicated Activity",
-      activityKind: "investigation" as const,
+      activity: {
+        mode: "new" as const,
+        title: "Deduplicated Activity",
+        policy: { kind: "investigation" as const }
+      },
+      agent: { mode: "new" as const, name: "Deduplicated Agent" },
       executionMode: "background" as const
     };
 
@@ -4672,7 +4732,10 @@ describe("bridge tools", () => {
     expect(JSON.stringify(changed)).toContain("already used for a different Codex task");
     const changedActivity = await client.callTool({
       name: "codex_task",
-      arguments: { ...arguments_, activityTitle: "Different Activity" }
+      arguments: {
+        ...arguments_,
+        activity: { ...arguments_.activity, title: "Different Activity" }
+      }
     });
     expect(changedActivity.isError).toBe(true);
     expect(JSON.stringify(changedActivity)).toContain("already used for a different Codex task");
@@ -4719,11 +4782,12 @@ describe("bridge tools", () => {
     const arguments_ = {
       requestId: "37373737-3737-4737-8737-373737373737",
       prompt: "one concurrent logical task",
-      agentName: "Concurrent Retry Agent",
-      agentRole: "implementation",
-      contextMode: "fresh" as const,
-      activityTitle: "Concurrent retry",
-      activityKind: "implementation" as const,
+      activity: {
+        mode: "new" as const,
+        title: "Concurrent retry",
+        policy: { kind: "implementation" as const }
+      },
+      agent: { mode: "new" as const, name: "Concurrent Retry Agent" },
       executionMode: "background" as const
     };
 
@@ -4743,6 +4807,54 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("rolls back nested Activity policy and Agent creation when job admission fails", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
+    });
+    const { client, jobs, close } = await connectTestClient(config, upstream);
+    const admitted = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "occupy the only admission slot",
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Occupying Agent" }
+      }
+    }));
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+
+    const rejected = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must roll back before admission",
+        activity: {
+          mode: "new",
+          title: "Rolled-back Activity",
+          policy: {
+            kind: "implementation",
+            handoff: "verify",
+            completion: "sealed-jobs-terminal"
+          }
+        },
+        agent: { mode: "new", name: "Rolled-back Agent" }
+      }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("Too many Codex jobs are running");
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listActivities(SCOPE_A, 100, 0))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ title: "Rolled-back Activity" })]));
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ agentName: "Rolled-back Agent" })]));
+
+    upstream.resolveNext(fakeCodexResult("occupying-thread"));
+    await waitForJobStatus(client, admitted.jobId, "completed");
+    await close();
+  });
+
   it("normalizes v4 defaults and exact model selection across semantic retries", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -4753,13 +4865,9 @@ describe("bridge tools", () => {
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "34343434-3434-4434-8434-343434343434",
-      activityPresentationId: "34343434-3434-4434-8434-343434343434",
       prompt: "normalize admitted defaults",
-      activityTitle: "Normalized defaults",
-      activityKind: "investigation" as const,
-      agentName: "Normalization Agent",
-      agentRole: "primary",
-      contextMode: "fresh" as const
+      activity: { mode: "new" as const, title: "Normalized defaults" },
+      agent: { mode: "new" as const }
     };
 
     const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
@@ -4780,9 +4888,13 @@ describe("bridge tools", () => {
       arguments: {
         ...arguments_,
         activityPresentationId: undefined,
+        activity: {
+          mode: "new",
+          title: "Normalized defaults",
+          policy: { kind: "other", handoff: "none", completion: "manual" }
+        },
+        agent: { mode: "new", name: "Codex Agent 34343434-3434-4434-8434-343434343434" },
         executionMode: "background",
-        handoffPolicy: "none",
-        completionTrigger: "manual",
         modelPolicyRevision: 999,
         selection: {
           model: effectiveSelection.model,
@@ -7162,28 +7274,6 @@ async function connectTestClient(
           typeof arguments_.activityPresentationId === "string"
             ? arguments_.activityPresentationId
             : requestId;
-        const createsActivity = !arguments_.activityId;
-        const createsUnattachedAgent =
-          !arguments_.agentId &&
-          !arguments_.agentName &&
-          createsActivity &&
-          !arguments_.continuationOfActivityId &&
-          !arguments_.threadId;
-        const testAgentName = `Test Agent ${requestId.replaceAll("-", "").slice(-8)}`;
-        const createsNamedAgent = Boolean(arguments_.agentName && !arguments_.agentId);
-        const needsCreationMetadata = createsActivity || createsNamedAgent;
-        const selectedAgent = typeof arguments_.agentId === "string"
-          ? jobRegistry.getAgent(arguments_.agentId)
-          : undefined;
-        const inferredContextMode = arguments_.sessionMode === "continue" || arguments_.threadId
-          ? "continue"
-          : arguments_.sessionMode === "new" || arguments_.agentName || createsUnattachedAgent
-            ? "fresh"
-            : selectedAgent?.currentThreadId
-              ? "continue"
-              : arguments_.continuationOfActivityId
-                ? "continue"
-                : "fresh";
         return rawCallTool(
           {
             ...request,
@@ -7191,19 +7281,6 @@ async function connectTestClient(
               scopeId: SCOPE_A,
               requestId,
               activityPresentationId,
-              ...(createsUnattachedAgent ? { agentName: testAgentName } : {}),
-              ...(needsCreationMetadata && !arguments_.agentRole
-                ? { agentRole: "test role" }
-                : {}),
-              ...(createsActivity && !arguments_.activityTitle
-                ? { activityTitle: `Test Activity ${requestId.replaceAll("-", "").slice(-8)}` }
-                : {}),
-              ...(createsActivity && !arguments_.activityKind
-                ? { activityKind: "other" }
-                : {}),
-              ...(needsCreationMetadata && !arguments_.contextMode
-                ? { contextMode: inferredContextMode }
-                : {}),
               ...arguments_
             }
           },
