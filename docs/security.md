@@ -23,9 +23,16 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   filesystem changes are not rolled back.
 - `codex_activity_update` performs server-validated Activity transitions,
   including whole-Activity force-stop and evidence-backed verification.
-- `codex_agent` applies idempotent scope-local Agent rename/detach/archive/restore
-  actions and can terminate one exact App Server background terminal. It never
-  permanently deletes an Agent or rolls back files.
+- `codex_agent` applies only idempotent scope-local Agent rename/archive/restore
+  actions. It never permanently deletes an Agent or rolls back files.
+- `codex_background_process_terminate` is app-private and destructive. It
+  requires a host-correlated mounted-card lease plus exact Activity generation,
+  presentation, Agent version, current App Server thread, and freshly listed
+  process ownership; it rejects an active/waiting Codex turn.
+- `codex_agent_recovery_detach` is private, disabled by default, and requires an
+  explicit operator capability plus exact Activity, Agent, request, and version
+  preconditions. Busy-state validation and assignment release occur in the same
+  SQLite transaction.
 - `codex_models` returns the target backend's validated selectable catalog,
   source, timestamp, and fingerprint.
 - `codex_settings` returns bridge limits, the saved named-project registry, and a
@@ -45,8 +52,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   The user's independent Priority preference is then applied privately by the
   bridge and the effective downstream selection is retained with the job.
 
-The bridge does not expose a raw shell tool, process-control tool, arbitrary
-Codex config, or a general Responses API proxy. An explicitly enabled
+The bridge does not expose a raw shell tool, arbitrary process control,
+arbitrary Codex config, or a general Responses API proxy. Its only direct
+process-control surface is the exact mounted-card terminal termination described
+above. An explicitly enabled
 `danger-full-access` Codex session can nevertheless execute commands and access
 the network as the current macOS user.
 
@@ -189,6 +198,10 @@ identity.
   and collateral acknowledgement, but cannot undo commands or file edits already performed. Verification
   evidence is bounded metadata supplied by the caller; it is an audit reference,
   not cryptographic proof that a test or artifact belongs only to that Activity.
+- Job admission has a hard maximum of 100. The environment ceiling, saved user
+  limit, Job Registry, job cancellation acknowledgement, and Activity
+  cancellation acknowledgement all share that invariant, so a valid affected
+  set cannot be rejected by a smaller confirmation schema.
 - Jobs are spread across a small local Codex MCP pool. A worker-process failure
   can still affect the subset of calls assigned to that worker.
 - Completion outbox claim/delivery state is transactional inside SQLite, but a

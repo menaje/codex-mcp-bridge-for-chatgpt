@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  HARD_MAX_CONCURRENT_JOBS,
   enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -23,6 +24,7 @@ describe("config policy", () => {
     expect(config.allowDangerFullAccess).toBe(false);
     expect(config.defaultApprovalPolicy).toBe("on-request");
     expect(config.maxConcurrentJobs).toBe(30);
+    expect(config.enableRecoveryTools).toBe(false);
     expect(config.defaultModel).toBeUndefined();
     expect(config.defaultReasoningEffort).toBeUndefined();
     expect(config.operatorModelCeiling).toBeUndefined();
@@ -205,6 +207,22 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3"
       })
     ).toThrow(/UPSTREAM_POOL_SIZE/);
+  });
+
+  it("enforces one hard maximum for active jobs and enables recovery only by explicit operator opt-in", () => {
+    expect(() =>
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: String(HARD_MAX_CONCURRENT_JOBS + 1),
+        CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: String(HARD_MAX_CONCURRENT_JOBS + 1)
+      })
+    ).toThrow(new RegExp(`MAX_CONCURRENT_JOBS cannot exceed ${HARD_MAX_CONCURRENT_JOBS}`));
+
+    const enabled = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1"
+    });
+    expect(enabled.enableRecoveryTools).toBe(true);
   });
 
   it("retains at least enough job records for every active job", () => {

@@ -36,12 +36,12 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state or make a bounded watch.
 - `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
 - `codex_activity_update`: apply one validated Activity lifecycle or verification transition.
-- `codex_agent`: rename, detach, archive, restore, or terminate one exact remaining App Server background process. It never deletes an Agent.
+- `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
 - `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
 - `codex_settings`: render saved named projects, policy, and preferences.
 
-`codex_update_settings` and `codex_activity_handoff` are app-only actions used by the cards.
+`codex_update_settings` and `codex_activity_handoff` are app-only actions used by the cards. `codex_background_process_terminate` is a destructive app-private control bound to an exact mounted-card lease, Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
 ## Security defaults
 
@@ -246,12 +246,10 @@ One Agent/thread admits only one active turn. Different Agents/threads can run i
 When a turn becomes terminal, its Agent returns to `idle`, releases the active Activity assignment, and remains reusable. `codex_agent` provides idempotent scope-local actions:
 
 - `rename`: changes the alias only;
-- `detach`: releases an active Activity assignment;
 - `archive`: hides an idle Agent while preserving its current/history threads and assignments;
-- `restore`: returns that exact archived Agent;
-- `terminate-background-process`: stops one exact App Server terminal process remaining after a turn.
+- `restore`: returns that exact archived Agent.
 
-Active/waiting Agents and Agents with a remaining background process cannot be archived. Force-stop, background-process termination, and archive are distinct operations; none rolls back filesystem changes. Permanent Agent/thread deletion is not exposed.
+Active/waiting Agents and Agents with a remaining background process cannot be archived. A mounted Activity card stops one exact remaining App Server terminal through the separate destructive `codex_background_process_terminate` capability. Exceptional assignment repair uses `codex_agent_recovery_detach`, requires exact Activity/Agent/version preconditions, rechecks idle state transactionally, and is disabled by default. Force-stop, background-process termination, recovery detach, and archive are distinct operations; none rolls back filesystem changes. Permanent Agent/thread deletion is not exposed.
 
 ## Activity card lifecycle
 
@@ -349,7 +347,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Successful catalog TTL |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Catalog refresh timeout |
 | `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` | `~/.codex-mcp-bridge/state.sqlite` | Primary private state |
-| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Operator/job admission ceiling |
+| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Operator/job admission ceiling; hard maximum `100` |
 | `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy upstream worker pool |
 | `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Prompt limit |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Active result-retention window |
@@ -357,6 +355,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Retained-job maximum |
 | `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Result-size maximum |
 | `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicit filename-preflight bypass |
+| `CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS` | unset | Explicitly enables private transaction-guarded Agent assignment recovery |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Local diagnostics/upstream stderr |
 
 Legacy `DEFAULT_SESSION_MODE`, `AUTO_RESUME_TTL_MS`, `FAST_RETURN_MS`, and `UPSTREAM_TIMEOUT_MS` variables are ignored with migration warnings. The pre-fork `CODEX_GPT_BRIDGE_*` prefix is a temporary compatibility fallback.

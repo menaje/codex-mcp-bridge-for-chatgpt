@@ -203,7 +203,7 @@ A new but dependent goal creates a linked Activity without reopening the complet
 
 For independent verification, create another named Agent with `fork` or `fresh`. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without exact `agentId`.
 
-Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. `codex_agent` provides idempotent `rename`, `detach`, `archive`, `restore`, and exact `terminate-background-process` actions. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. There is no GPT-facing permanent delete.
+Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only idempotent `rename`, `archive`, and `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
@@ -236,7 +236,7 @@ Only the newest automatic presentation owns the scope live watch and completion 
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts the exact App Server turn or tracked worker process and records cancellation only after exit evidence; it never rolls back changes.
 
-App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action uses `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop.
+App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. The immediately previous content-hashed Activity resource remains available for one compatibility revision, and its legacy process call is accepted only from an active scoped widget lease.
 
 ## 8. Smoke checklist after Plugin Refresh
 

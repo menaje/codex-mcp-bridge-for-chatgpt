@@ -8,6 +8,8 @@ import {
 } from "./uiResources.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 2;
+export const LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION = 1;
 export const ACTIVITY_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const ACTIVITY_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Activity Feed`,
@@ -24,7 +26,8 @@ export const ACTIVITY_CARD_CONTENT_METADATA = {
     "Shows response-grouped Codex work as a flat feed; only the newest automatic card keeps live watch ownership.",
   "openai/widgetPrefersBorder": true,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
-  "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+  "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+  "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
 } as const;
 
 export function registerActivityCardResource(server: McpServer): void {
@@ -39,7 +42,13 @@ export function registerActivityCardResource(server: McpServer): void {
             uri: revision.uri,
             mimeType: ACTIVITY_CARD_MIME_TYPE,
             text: htmlForUiResource("activity", revision.uri, ACTIVITY_CARD_HTML),
-            _meta: ACTIVITY_CARD_CONTENT_METADATA
+            _meta: {
+              ...ACTIVITY_CARD_CONTENT_METADATA,
+              "codex/uiContractGeneration": revision.contractGeneration ||
+                (index === 0
+                  ? ACTIVITY_CARD_CONTRACT_GENERATION
+                  : LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION)
+            }
           }
         ]
       })
@@ -114,7 +123,8 @@ export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
   function renderInteraction(row,agent,control,interaction){const panel=node("div","interaction"),title=node("strong","",interaction.kind==="user-input"?t["activity.inputRequired"]:t["activity.approval"]);panel.append(title,node("div","message",interaction.summary));const context=[];if(interaction.cwdLabel)context.push(interaction.cwdLabel);if(interaction.grantRootLabel)context.push(interaction.grantRootLabel);if(interaction.networkContext)context.push(interaction.networkContext.protocol+"://"+interaction.networkContext.host);if(context.length)panel.appendChild(node("div","meta",unique(context).join(" · ")));if(interaction.kind!=="user-input"){const actions=node("div","actions");for(const decision of interaction.availableDecisions||[]){let button;button=actionButton(interactionDecisionLabel(decision),()=>respondInteraction(row,agent,control,interaction,{interactionDecision:decision},button),decision==="cancel"?"danger":"");actions.appendChild(button)}if(actions.childElementCount)panel.appendChild(actions);return panel}const fields=[];for(const question of interaction.questions||[]){const input=document.createElement("input"),label=node("label","message",question.question);input.type=question.isSecret?"password":"text";input.autocomplete="off";input.dataset.questionId=question.id;panel.append(label,input);fields.push(input)}const send=actionButton(t["activity.answer"],()=>{const answers={};for(const field of fields)answers[field.dataset.questionId]=[field.value];void respondInteraction(row,agent,control,interaction,{interactionAnswers:answers},send)});panel.appendChild(send);return panel}
   async function respondInteraction(row,agent,control,interaction,response,button){button.disabled=true;try{await callTool("codex_activity_update",Object.assign({activityId:row.activityId,action:"respond-interaction",jobId:control.jobId,expectedJobVersion:control.jobVersion,interactionId:interaction.interactionId},response));await reload()}catch(error){showError(error);button.disabled=false}}
   async function forceAgent(row,agent,button){const control=controlFor(agent.agentId);if(!control.jobId)return;if(!confirm(t["activity.forceConfirmTitle"]+"\n\n"+t["activity.forceConfirm"]+"\n"+t["activity.partialChanges"]))return;button.disabled=true;message.textContent=t["activity.forceStopping"];try{await callTool("codex_cancel",{jobId:control.jobId,expectedVersion:control.jobVersion,acknowledgeAffectedJobIds:control.affectedJobIds||[control.jobId]});message.textContent=t["activity.forceStopped"];await reload()}catch(error){showError(error);button.disabled=false}}
-  async function terminateBackgroundProcesses(agent,control,button){if(!confirm(t["activity.backgroundConfirm"]))return;button.disabled=true;try{for(const process of control.backgroundProcesses||[]){const result=await callTool("codex_agent",{requestId:mutationId(),agentId:agent.agentId,action:"terminate-background-process",processId:process.processId}),payload=result&&result.structuredContent||result;if(payload&&payload.ok===false)throw new Error(t["common.error"])}await reload()}catch(error){showError(error);button.disabled=false}}
+  function processControlCard(){const lease=leaseArgs();if(!lease.mountedActivityId||!lease.cardGeneration||!lease.presentationKind||lease.presentationKind==="automatic"&&!lease.activityPresentationId)throw new Error(t["common.error"]);const presentation=lease.presentationKind==="automatic"?{kind:"automatic",activityPresentationId:lease.activityPresentationId}:{kind:"explicit"};return{activityId:lease.mountedActivityId,generation:lease.cardGeneration,presentation}}
+  async function terminateBackgroundProcesses(agent,control,button){if(!confirm(t["activity.backgroundConfirm"]))return;button.disabled=true;try{if(!control.agentVersion)throw new Error(t["common.error"]);const card=processControlCard();for(const process of control.backgroundProcesses||[]){const result=await callTool("codex_background_process_terminate",{requestId:mutationId(),agentId:agent.agentId,expectedAgentVersion:control.agentVersion,processId:process.processId,card}),payload=result&&result.structuredContent||result;if(payload&&payload.ok===false)throw new Error(t["common.error"])}await reload()}catch(error){showError(error);button.disabled=false}}
   async function requestFollowUp(kind,row,button){button.disabled=true;const prompt=kind==="verify"?"Verify Codex Activity "+row.activityId+". Retrieve authoritative results with codex_status, inspect files, diffs, tests, and artifacts independently, then perform the exact verification transition. Do not infer success from Codex output alone.":"Retry or recover Codex Activity "+row.activityId+". Retrieve authoritative status with codex_status, explain the failure or interruption, and ask before materially changing scope.";try{await sendFollowUp(prompt);message.textContent=t["activity.followUpSent"]}catch(error){showError(error);button.disabled=false}}
   function showError(error){message.textContent=String(error&&error.message||error);message.classList.add("error")}
   function leaseArgs(){const mountedActivity=snapshot&&snapshot.mountedActivity||mountedActivityHint,presentation=snapshot&&snapshot.mountedPresentation||mountedPresentationHint,args={};if(mountedActivity){args.mountedActivityId=mountedActivity.activityId;args.cardGeneration=mountedActivity.cardGeneration}if(presentation&&presentation.kind==="automatic"){args.presentationKind="automatic";args.activityPresentationId=presentation.activityPresentationId}else if(presentation&&presentation.kind==="explicit")args.presentationKind="explicit";return args}

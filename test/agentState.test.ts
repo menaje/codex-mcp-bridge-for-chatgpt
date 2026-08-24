@@ -10,6 +10,53 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("scope-level bridge Agents", () => {
+  it("guards recovery detach inside the assignment transaction", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    store.createActivity({ activityId: ACTIVITY_A, scopeId: SCOPE_A, title: "Recovery goal" });
+    const agent = store.createAgent({ scopeId: SCOPE_A, agentName: "Recovery Agent" });
+    const assignment = store.assignAgent({
+      activityId: ACTIVITY_A,
+      agentId: agent.agentId,
+      contextMode: "fresh"
+    });
+    const active = store.setAgentExecutionState(agent.agentId, "active", { currentJobId: "job-active" });
+
+    expect(() => store.detachIdleAgentAssignment({
+      activityId: ACTIVITY_A,
+      agentId: agent.agentId,
+      expectedAgentVersion: active.version
+    })).toThrow(/AGENT_BUSY/);
+    expect(store.listActivityAgentAssignments(ACTIVITY_A, agent.agentId)[0]?.releasedAt).toBeUndefined();
+
+    const idle = store.setAgentExecutionState(agent.agentId, "idle");
+    expect(() => store.detachIdleAgentAssignment({
+      activityId: ACTIVITY_A,
+      agentId: agent.agentId,
+      expectedAgentVersion: idle.version - 1
+    })).toThrow(/AGENT_VERSION_CHANGED/);
+
+    const detached = store.detachIdleAgentAssignment({
+      activityId: ACTIVITY_A,
+      agentId: agent.agentId,
+      expectedAgentVersion: idle.version
+    });
+    expect(detached).toMatchObject({
+      alreadyReleased: false,
+      assignment: { assignmentId: assignment.assignmentId, releasedAt: expect.any(Number) },
+      agent: { version: idle.version + 1 }
+    });
+    const replayedState = store.detachIdleAgentAssignment({
+      activityId: ACTIVITY_A,
+      agentId: agent.agentId,
+      expectedAgentVersion: detached.agent.version
+    });
+    expect(replayedState).toMatchObject({
+      alreadyReleased: true,
+      assignment: { assignmentId: assignment.assignmentId }
+    });
+    store.close();
+  });
+
   it("persists normalized names, assignments, current/history threads, and mutations", () => {
     const file = path.join(mkdtempSync(path.join(tmpdir(), "bridge-agent-state-")), "state.sqlite");
     const store = new BridgeStateStore({ file });

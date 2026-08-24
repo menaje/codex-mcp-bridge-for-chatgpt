@@ -240,7 +240,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');
     expect(ACTIVITY_CARD_HTML).not.toContain("renderActivities(next)");
     expect(ACTIVITY_CARD_HTML).not.toContain("renderAgents(next)");
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_agent"');
+    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_agent"');
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_background_process_terminate"');
+    expect(ACTIVITY_CARD_HTML).toContain("expectedAgentVersion:control.agentVersion");
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",Object.assign({activityView:true,activityLimit:viewLimit}');

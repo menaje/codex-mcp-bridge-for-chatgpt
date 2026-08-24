@@ -9,6 +9,8 @@ export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
 export type CodexBackendKind = "mcp-server" | "app-server";
 
+export const HARD_MAX_CONCURRENT_JOBS = 100;
+
 export type BridgeConfig = {
   host: string;
   port: number;
@@ -35,6 +37,7 @@ export type BridgeConfig = {
   jobStateFile: string;
   upstreamPoolSize: number;
   secretScan: boolean;
+  enableRecoveryTools: boolean;
   maxConcurrentJobs: number;
   maxPromptChars: number;
   jobTtlMs: number;
@@ -91,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     "job state file"
   );
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
+  const enableRecoveryTools = parseBool(read("ENABLE_RECOVERY_TOOLS"));
   const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "30");
   const upstreamPoolSize = parsePositiveInt(read("UPSTREAM_POOL_SIZE") || String(Math.min(4, maxConcurrentJobs)));
   const maxPromptChars = parsePositiveInt(read("MAX_PROMPT_CHARS") || "50000");
@@ -148,6 +152,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
       "CODEX_MCP_BRIDGE_DEFAULT_MODEL requires CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT because model policy selections are exact pairs."
     );
   }
+  if (maxConcurrentJobs > HARD_MAX_CONCURRENT_JOBS) {
+    throw new Error(
+      `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS cannot exceed ${HARD_MAX_CONCURRENT_JOBS}.`
+    );
+  }
   if (upstreamPoolSize > maxConcurrentJobs) {
     throw new Error("CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE cannot exceed CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS.");
   }
@@ -181,6 +190,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     jobStateFile,
     upstreamPoolSize,
     secretScan,
+    enableRecoveryTools,
     maxConcurrentJobs,
     maxPromptChars,
     jobTtlMs,

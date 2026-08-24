@@ -29,6 +29,7 @@ import type { BridgeConfig, CodexBackendKind, SandboxMode } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./appServerCompatibility.js";
 import {
+  HARD_MAX_CONCURRENT_JOBS,
   enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -66,8 +67,16 @@ import {
   SCOPE_ID_PATTERN,
   SessionRegistry
 } from "./sessionRegistry.js";
-import { registerSettingsCardResource, SETTINGS_CARD_URI } from "./settingsCard.js";
-import { registerActivityCardResource, ACTIVITY_CARD_URI } from "./activityCard.js";
+import {
+  registerSettingsCardResource,
+  SETTINGS_CARD_CONTRACT_GENERATION,
+  SETTINGS_CARD_URI
+} from "./settingsCard.js";
+import {
+  ACTIVITY_CARD_CONTRACT_GENERATION,
+  registerActivityCardResource,
+  ACTIVITY_CARD_URI
+} from "./activityCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
@@ -435,7 +444,17 @@ export class CodexJobRegistry {
   private lastPersistedAt = 0;
 
   constructor(options: CodexJobRegistryOptions = {}) {
-    this.maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
+    const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
+    if (
+      !Number.isInteger(maxConcurrentJobs) ||
+      maxConcurrentJobs < 1 ||
+      maxConcurrentJobs > HARD_MAX_CONCURRENT_JOBS
+    ) {
+      throw new Error(
+        `Codex job concurrency must be between 1 and ${HARD_MAX_CONCURRENT_JOBS}.`
+      );
+    }
+    this.maxConcurrentJobs = maxConcurrentJobs;
     this.ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
     this.maxJobs = options.maxJobs ?? 100;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
@@ -606,6 +625,45 @@ export class CodexJobRegistry {
         presentation
       )
     );
+  }
+
+  requireActivityCardLease(
+    scopeId: string,
+    activityId: string,
+    cardGeneration: number,
+    widgetSessionId: string,
+    presentation: ActivityCardPresentationContext
+  ): void {
+    const activity = this.getActivity(activityId);
+    if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
+      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity card generation is no longer valid.");
+    }
+    this.pruneActivityCardLeases();
+    if (this.isPresentationSuperseded(scopeId, presentation)) {
+      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity presentation has been superseded.");
+    }
+    const key = this.activityCardLeaseKey(
+      scopeId,
+      activityId,
+      cardGeneration,
+      widgetSessionId,
+      presentation
+    );
+    if ((this.activityCardLeases.get(key) || 0) <= Date.now()) {
+      throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
+    }
+  }
+
+  requireActivityCardSession(scopeId: string, widgetSessionId: string): void {
+    this.pruneActivityCardLeases();
+    const prefix = `${scopeId}\0`;
+    const suffix = `\0${widgetSessionId}`;
+    const active = [...this.activityCardLeases].some(
+      ([key, expiresAt]) => key.startsWith(prefix) && key.endsWith(suffix) && expiresAt > Date.now()
+    );
+    if (!active) {
+      throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
+    }
   }
 
   activityPresentationWatcherPolicy(
@@ -868,6 +926,16 @@ export class CodexJobRegistry {
     const agent = this.activityStore.getAgent(agentId);
     if (agent) this.notifyScope(agent.scopeId);
     return assignment;
+  }
+
+  detachIdleAgentAssignment(input: {
+    activityId: string;
+    agentId: string;
+    expectedAgentVersion: number;
+  }) {
+    const detached = this.activityStore.detachIdleAgentAssignment(input);
+    this.notifyScope(detached.agent.scopeId);
+    return detached;
   }
 
   linkAgentThread(input: {
@@ -2643,7 +2711,8 @@ export function registerBridgeTools(
       _meta: {
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
-        "openai/widgetAccessible": true
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
       }
     },
     async (args, { _meta }) => {
@@ -2745,22 +2814,34 @@ export function registerBridgeTools(
     }
   );
 
+  const codexAgentRuntimeInput = z.strictObject({
+    scopeId: scopeIdSchema().optional()
+      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+    requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
+    agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
+    action: z.enum(["archive", "restore", "rename", "detach", "terminate-background-process"]),
+    agentName: z.string().trim().min(1).max(80).optional(),
+    activityId: scopeIdSchema().optional(),
+    expectedAgentVersion: z.number().int().min(1).optional(),
+    processId: z.string().trim().min(1).max(200).optional()
+  });
+  const codexAgentPublicInput = z.strictObject({
+    scopeId: scopeIdSchema().optional()
+      .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+    requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
+    agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
+    action: z.enum(["archive", "restore", "rename"]),
+    agentName: z.string().trim().min(1).max(80).optional()
+      .describe("New display name, required only for action='rename'.")
+  });
+
   server.registerTool(
     "codex_agent",
     {
       title: "Manage Codex Agent",
       description:
-        "Apply one idempotent scope-local management action to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias; detach releases an active Activity assignment; terminate-background-process stops one exact App Server background terminal after its turn has ended. This tool never deletes an Agent or rolls back filesystem changes.",
-      inputSchema: {
-        scopeId: scopeIdSchema().optional()
-          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        requestId: scopeIdSchema().describe("Unique UUID for this logical Agent mutation and its exact retries."),
-        agentId: scopeIdSchema().describe("Immutable Agent routing id in the current conversation scope."),
-        action: z.enum(["archive", "restore", "rename", "detach", "terminate-background-process"]),
-        agentName: z.string().trim().min(1).max(80).optional(),
-        activityId: scopeIdSchema().optional(),
-        processId: z.string().trim().min(1).max(200).optional()
-      },
+        "Apply one idempotent scope-local management action to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. Recovery detach and destructive background-process control use separate restricted tools.",
+      inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2782,11 +2863,27 @@ export function registerBridgeTools(
       if (args.action === "rename" ? !args.agentName : args.agentName !== undefined) {
         throw new Error("agentName is required only for action='rename'.");
       }
-      if (args.action !== "detach" && args.activityId !== undefined) {
-        throw new Error("activityId is accepted only for action='detach'.");
+      if (args.action === "detach") {
+        throw new Error(
+          "AGENT_DETACH_MOVED: Recovery detach is no longer a model-facing Agent action. Use the restricted codex_agent_recovery_detach capability with exact Activity and Agent version preconditions."
+        );
+      }
+      if (args.activityId !== undefined || args.expectedAgentVersion !== undefined) {
+        throw new Error("activityId and expectedAgentVersion are accepted only by recovery detach tooling.");
       }
       if (args.action === "terminate-background-process" ? !args.processId : args.processId !== undefined) {
-        throw new Error("processId is required only for action='terminate-background-process'.");
+        throw new Error("processId is required only for the legacy terminate-background-process compatibility action.");
+      }
+      const legacyProcessWidgetSessionId = args.action === "terminate-background-process"
+        ? metadataString(_meta, "openai/widgetSessionId")
+        : undefined;
+      if (args.action === "terminate-background-process") {
+        if (!legacyProcessWidgetSessionId) {
+          throw new Error(
+            "BACKGROUND_PROCESS_TOOL_MOVED: Refresh the Activity card and use codex_background_process_terminate."
+          );
+        }
+        jobs.requireActivityCardSession(scope.scopeId, legacyProcessWidgetSessionId);
       }
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
@@ -2794,6 +2891,7 @@ export function registerBridgeTools(
           action: args.action,
           agentName: args.agentName || null,
           activityId: args.activityId || null,
+          expectedAgentVersion: args.expectedAgentVersion ?? null,
           processId: args.processId || null
         }))
         .digest("hex");
@@ -2847,29 +2945,17 @@ export function registerBridgeTools(
         }
       }
       if (args.action === "terminate-background-process") {
-        if (!currentThread || !upstream.terminateBackgroundTerminal) {
-          throw new Error("BACKGROUND_PROCESS_CONTROL_UNAVAILABLE: This Agent has no controllable App Server thread.");
-        }
-        const termination = await upstream.terminateBackgroundTerminal(
-          currentThread.threadId,
-          args.processId as string,
-          currentThread.backendKind as CodexBackendKind
-        );
-        const mutationResult = {
-          ok: termination.terminated,
-          action: args.action,
-          agent: formatAgentSummary(agent, jobs),
-          processId: args.processId,
-          terminated: termination.terminated,
-          historyPreserved: true,
-          deletionPerformed: false,
-          warning: "Background process termination does not roll back filesystem changes."
-        };
+        const mutationResult = await terminateAgentBackgroundProcess({
+          jobs,
+          upstream,
+          scopeId: scope.scopeId,
+          agentId: agent.agentId,
+          processId: args.processId as string
+        });
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
         return textResult(mutationResult);
       }
       let updated: BridgeAgent = agent;
-      let detached: ActivityAgentAssignment | undefined;
       let restoreThreadResumable = false;
       if (args.action === "restore" && agent.lifecycle === "archived" && currentThread) {
         const session = sessions.get(currentThread.threadId);
@@ -2895,28 +2981,10 @@ export function registerBridgeTools(
           }
         }
         if (args.action === "rename") updated = jobs.renameAgent(agent.agentId, args.agentName as string);
-        if (args.action === "detach") {
-          const activeAssignments = jobs
-            .listActivityAgentAssignments(undefined, agent.agentId)
-            .filter((assignment) => assignment.releasedAt === undefined);
-          const targetActivityId = args.activityId ||
-            (activeAssignments.length === 1 ? activeAssignments[0].activityId : undefined);
-          if (!targetActivityId) {
-            throw new Error(
-              activeAssignments.length > 1
-                ? "ACTIVITY_ID_REQUIRED: This Agent has multiple active Activity assignments."
-                : "The Agent has no active Activity assignment to detach."
-            );
-          }
-          detached = jobs.releaseAgentAssignment(targetActivityId, agent.agentId);
-          if (!detached) throw new Error("The requested active Activity assignment does not exist.");
-          updated = jobs.getAgent(agent.agentId) as BridgeAgent;
-        }
         const mutationResult = {
           ok: true,
           action: args.action,
           agent: formatAgentSummary(updated, jobs),
-          ...(detached ? { detachedAssignment: detached } : {}),
           historyPreserved: true,
           deletionPerformed: false
         };
@@ -2924,6 +2992,174 @@ export function registerBridgeTools(
         return mutationResult;
       });
       return textResult(result);
+    }
+  );
+
+  server.registerTool(
+    "codex_agent_recovery_detach",
+    {
+      title: "Recovery Detach Codex Agent",
+      description:
+        "Release one exact idle Agent assignment for operator-authorized recovery. This capability is disabled by default, rejects active or waiting Agents inside the same state transaction, and never stops a running job.",
+      inputSchema: {
+        scopeId: scopeIdSchema().optional()
+          .describe("Exact conversation scope for compatibility/admin MCP hosts without ChatGPT session metadata."),
+        requestId: scopeIdSchema().describe("Unique UUID for this exact recovery mutation and its retries."),
+        agentId: scopeIdSchema().describe("Exact bridge-managed Agent id."),
+        activityId: scopeIdSchema().describe("Exact active Activity assignment to release."),
+        expectedAgentVersion: z.number().int().min(1)
+          .describe("Authoritative Agent version observed immediately before recovery detach.")
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private"
+      }
+    },
+    async (args, { _meta }) => {
+      if (!config.enableRecoveryTools) {
+        throw new Error(
+          "RECOVERY_OPERATION_DISABLED: The operator must explicitly enable recovery tools before detaching an Agent assignment."
+        );
+      }
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Codex Agent recovery detach"
+      );
+      const actionHash = createHash("sha256")
+        .update(JSON.stringify({
+          action: "recovery-detach",
+          agentId: args.agentId,
+          activityId: args.activityId,
+          expectedAgentVersion: args.expectedAgentVersion
+        }))
+        .digest("hex");
+      const result = jobs.activityTransaction(() => {
+        const replay = jobs.getAgentMutation(scope.scopeId, args.requestId);
+        if (replay) {
+          if (replay.actionHash !== actionHash) {
+            throw new Error("requestId was already used for a different Agent mutation in this scope.");
+          }
+          return replay.result;
+        }
+        const agent = jobs.getAgent(args.agentId);
+        if (!agent || agent.scopeId !== scope.scopeId) {
+          throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
+        }
+        const detached = jobs.detachIdleAgentAssignment({
+          activityId: args.activityId,
+          agentId: args.agentId,
+          expectedAgentVersion: args.expectedAgentVersion
+        });
+        const mutationResult = {
+          ok: true,
+          action: "recovery-detach",
+          agent: formatAgentSummary(detached.agent, jobs),
+          detachedAssignment: detached.assignment,
+          alreadyReleased: detached.alreadyReleased,
+          historyPreserved: true,
+          deletionPerformed: false
+        };
+        jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
+        return mutationResult;
+      });
+      return textResult(result);
+    }
+  );
+
+  server.registerTool(
+    "codex_background_process_terminate",
+    {
+      title: "Stop Codex Background Process",
+      description:
+        "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
+      inputSchema: {
+        scopeId: scopeIdSchema().optional()
+          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+        requestId: scopeIdSchema().describe("Unique UUID for this exact process termination and its retries."),
+        agentId: scopeIdSchema().describe("Exact Agent that owns the current App Server thread."),
+        expectedAgentVersion: z.number().int().min(1),
+        processId: z.string().trim().min(1).max(200),
+        card: z.strictObject({
+          activityId: scopeIdSchema(),
+          generation: z.number().int().min(1),
+          presentation: z.discriminatedUnion("kind", [
+            z.strictObject({
+              kind: z.literal("automatic"),
+              activityPresentationId: scopeIdSchema()
+            }),
+            z.strictObject({ kind: z.literal("explicit") })
+          ])
+        })
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      }
+    },
+    async (args, { _meta }) => {
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Codex background process termination"
+      );
+      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      if (!widgetSessionId) {
+        throw new Error("CARD_LEASE_REQUIRED: Background process termination requires a mounted Activity card.");
+      }
+      const presentation: ActivityCardPresentationContext = args.card.presentation.kind === "automatic"
+        ? {
+            kind: "automatic",
+            activityPresentationId: args.card.presentation.activityPresentationId
+          }
+        : { kind: "explicit" };
+      jobs.requireActivityCardLease(
+        scope.scopeId,
+        args.card.activityId,
+        args.card.generation,
+        widgetSessionId,
+        presentation
+      );
+      const actionHash = createHash("sha256")
+        .update(JSON.stringify({
+          action: "terminate-background-process",
+          agentId: args.agentId,
+          expectedAgentVersion: args.expectedAgentVersion,
+          processId: args.processId,
+          card: args.card
+        }))
+        .digest("hex");
+      const replay = jobs.getAgentMutation(scope.scopeId, args.requestId);
+      if (replay) {
+        if (replay.actionHash !== actionHash) {
+          throw new Error("requestId was already used for a different Agent mutation in this scope.");
+        }
+        return textResult(replay.result);
+      }
+      const mutationResult = await terminateAgentBackgroundProcess({
+        jobs,
+        upstream,
+        scopeId: scope.scopeId,
+        agentId: args.agentId,
+        expectedAgentVersion: args.expectedAgentVersion,
+        processId: args.processId
+      });
+      jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
+      return textResult(mutationResult);
     }
   );
 
@@ -2937,11 +3173,11 @@ export function registerBridgeTools(
         scopeId: scopeIdSchema()
           .optional()
           .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        jobId: z.string().trim().min(1).describe("Active job id returned by codex_task."),
+        jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
         expectedVersion: z.number().int().min(1).optional(),
         acknowledgeAffectedJobIds: z
           .array(z.string().trim().min(1).max(200))
-          .max(30)
+          .max(HARD_MAX_CONCURRENT_JOBS)
           .optional()
           .describe(
             "Exact affected-job list shown by authoritative status/card confirmation when a worker is shared."
@@ -3026,7 +3262,7 @@ export function registerBridgeTools(
         completionTrigger: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional(),
         acknowledgeAffectedJobIds: z
           .array(z.string().trim().min(1).max(200))
-          .max(30)
+          .max(HARD_MAX_CONCURRENT_JOBS)
           .optional()
           .describe("Exact affected-job list confirmed by the Activity card when a worker is shared."),
         jobId: z.string().trim().min(1).max(200).optional(),
@@ -3286,7 +3522,8 @@ export function registerBridgeTools(
           visibility: ["model", "app"]
         },
         "openai/outputTemplate": SETTINGS_CARD_URI,
-        "openai/widgetAccessible": true
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
       }
     },
     async (args, { _meta }) => {
@@ -3333,7 +3570,8 @@ export function registerBridgeTools(
           visibility: ["app"]
         },
         "openai/widgetAccessible": true,
-        "openai/visibility": "private"
+        "openai/visibility": "private",
+        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
       }
     },
     async (args, { _meta }) => {
@@ -5096,6 +5334,87 @@ function formatAgentThreadSummary(
   };
 }
 
+async function terminateAgentBackgroundProcess(input: {
+  jobs: CodexJobRegistry;
+  upstream: CodexUpstream;
+  scopeId: string;
+  agentId: string;
+  expectedAgentVersion?: number;
+  processId: string;
+}): Promise<Record<string, unknown>> {
+  const requireIdleOwner = () => {
+    const agent = input.jobs.getAgent(input.agentId);
+    if (!agent || agent.scopeId !== input.scopeId) {
+      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
+    }
+    if (input.expectedAgentVersion !== undefined && agent.version !== input.expectedAgentVersion) {
+      throw new Error(
+        `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Activity card before retrying process termination.`
+      );
+    }
+    if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
+      throw new Error(
+        `AGENT_BUSY: Refusing background process termination while Codex job ${agent.currentJobId || "unknown"} is active.`
+      );
+    }
+    const currentThread = input.jobs
+      .listAgentThreads(agent.agentId)
+      .find((thread) => thread.isCurrent);
+    return { agent, currentThread };
+  };
+
+  const initial = requireIdleOwner();
+  const currentThread = initial.currentThread;
+  if (
+    !currentThread ||
+    currentThread.backendKind !== "app-server" ||
+    !input.upstream.listBackgroundTerminals ||
+    !input.upstream.terminateBackgroundTerminal
+  ) {
+    throw new Error("BACKGROUND_PROCESS_CONTROL_UNAVAILABLE: This Agent has no controllable App Server thread.");
+  }
+  const terminals = await input.upstream.listBackgroundTerminals(
+    currentThread.threadId,
+    currentThread.backendKind as CodexBackendKind
+  );
+  const terminal = terminals.find((entry) => entry.processId === input.processId);
+  if (!terminal) {
+    throw new Error(
+      "BACKGROUND_PROCESS_NOT_FOUND: The exact process is no longer a background terminal on this Agent thread."
+    );
+  }
+  // The upstream inventory lookup is asynchronous. Re-read bridge state after
+  // it returns so a turn or thread change that raced with the lookup cannot
+  // terminate a process under stale ownership assumptions. There is no await
+  // between this check and invoking the exact upstream terminate operation.
+  const authoritative = requireIdleOwner();
+  if (
+    !authoritative.currentThread ||
+    authoritative.currentThread.threadId !== currentThread.threadId ||
+    authoritative.currentThread.backendKind !== currentThread.backendKind
+  ) {
+    throw new Error(
+      "BACKGROUND_PROCESS_OWNERSHIP_CHANGED: The Agent's current App Server thread changed during validation."
+    );
+  }
+  const termination = await input.upstream.terminateBackgroundTerminal(
+    currentThread.threadId,
+    terminal.processId,
+    currentThread.backendKind as CodexBackendKind
+  );
+  return {
+    ok: termination.terminated,
+    action: "terminate-background-process",
+    agent: formatAgentSummary(authoritative.agent, input.jobs),
+    threadId: currentThread.threadId,
+    processId: terminal.processId,
+    terminated: termination.terminated,
+    historyPreserved: true,
+    deletionPerformed: false,
+    warning: "Background process termination does not roll back filesystem changes."
+  };
+}
+
 function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<string, unknown> {
   const assignments = jobs.listActivityAgentAssignments(undefined, agent.agentId);
   const threads = jobs.listAgentThreads(agent.agentId);
@@ -5174,6 +5493,7 @@ async function buildLegacyActivityView(
     if (activeJob || pending.length > 0) {
       controlRows.push({
         agentId: agent.agentId,
+        agentVersion: agent.version,
         jobId: activeJob?.jobId || null,
         jobVersion: activeJob?.version || null,
         canForceStop: Boolean(activeJob && isActiveActivityJobStatus(activeJob.status)),
@@ -5218,9 +5538,14 @@ async function buildLegacyActivityView(
       row.canArchive = false;
       let control = controlRows.find((entry) => entry.agentId === row.agentId);
       if (!control) {
-        control = { agentId: row.agentId };
+        const agent = allAgents.find((entry) => entry.agentId === row.agentId);
+        control = {
+          agentId: row.agentId,
+          agentVersion: agent?.version || null
+        };
         controlRows.push(control);
       }
+      control.agentVersion ??= allAgents.find((entry) => entry.agentId === row.agentId)?.version || null;
       control.backgroundProcesses = terminals.map((terminal) => ({ processId: terminal.processId }));
     } catch {
       row.backgroundProcessState = "unavailable";
@@ -6079,7 +6404,11 @@ function withJsonSchemaProjection<T extends z.ZodType>(
   const internals = runtime._zod as typeof runtime._zod & {
     toJSONSchema?: () => Record<string, unknown>;
   };
-  internals.toJSONSchema = () => jsonSchema as Record<string, unknown>;
+  // Zod's JSON Schema converter and the MCP SDK may annotate the returned
+  // object while assembling a tools/list response. Return a fresh projection
+  // for every serialization so later dynamic descriptor refreshes cannot see
+  // a projection that was mutated by an earlier response.
+  internals.toJSONSchema = () => structuredClone(jsonSchema) as Record<string, unknown>;
   return runtime;
 }
 
@@ -7273,7 +7602,8 @@ function activityCardToolMetadata(): Record<string, unknown> {
   return {
     ui: { resourceUri: ACTIVITY_CARD_URI },
     "openai/outputTemplate": ACTIVITY_CARD_URI,
-    "openai/widgetAccessible": true
+    "openai/widgetAccessible": true,
+    "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
   };
 }
 

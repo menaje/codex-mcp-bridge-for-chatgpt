@@ -893,6 +893,73 @@ export class BridgeStateStore {
     });
   }
 
+  detachIdleAgentAssignment(input: {
+    activityId: string;
+    agentId: string;
+    expectedAgentVersion: number;
+    now?: number;
+  }): {
+    agent: BridgeAgent;
+    assignment: ActivityAgentAssignment;
+    alreadyReleased: boolean;
+  } {
+    const now = input.now ?? Date.now();
+    return this.transaction(() => {
+      const activity = this.requireActivity(input.activityId);
+      const agent = this.requireAgent(input.agentId);
+      if (activity.scopeId !== agent.scopeId) {
+        throw new Error("The Activity and Agent belong to different conversation scopes.");
+      }
+      if (agent.version !== input.expectedAgentVersion) {
+        throw new Error(
+          `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh authoritative state before retrying recovery detach.`
+        );
+      }
+      if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
+        throw new Error(
+          `AGENT_BUSY: Agent has active job ${agent.currentJobId || "unknown"}. Force-stop that job and wait for terminal settlement before recovery detach.`
+        );
+      }
+
+      const active = this.database
+        .prepare(`
+          SELECT * FROM activity_agents
+           WHERE activity_id = ? AND agent_id = ? AND released_at IS NULL
+        `)
+        .get(activity.activityId, agent.agentId) as ActivityAgentStorageRow | undefined;
+      if (!active) {
+        const historical = this.database
+          .prepare(`
+            SELECT * FROM activity_agents
+             WHERE activity_id = ? AND agent_id = ? AND released_at IS NOT NULL
+             ORDER BY assigned_at DESC LIMIT 1
+          `)
+          .get(activity.activityId, agent.agentId) as ActivityAgentStorageRow | undefined;
+        if (!historical) {
+          throw new Error("The exact Activity assignment does not exist for this Agent.");
+        }
+        return {
+          agent,
+          assignment: readActivityAgentRow(historical),
+          alreadyReleased: true
+        };
+      }
+
+      this.database
+        .prepare("UPDATE activity_agents SET released_at = ? WHERE assignment_id = ?")
+        .run(now, active.assignment_id);
+      this.database
+        .prepare("UPDATE agents SET version = version + 1, updated_at = ? WHERE agent_id = ?")
+        .run(now, agent.agentId);
+      this.nextScopeVersion(activity.scopeId, now);
+      return {
+        agent: this.requireAgent(agent.agentId),
+        assignment: { ...readActivityAgentRow(active), releasedAt: now },
+        alreadyReleased: false
+      };
+    });
+  }
+
   setAgentExecutionState(
     agentId: string,
     lifecycle: Extract<BridgeAgentLifecycle, "idle" | "active" | "waiting-input" | "orphaned">,

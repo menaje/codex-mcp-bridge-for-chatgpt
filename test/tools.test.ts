@@ -8,12 +8,19 @@ import {
   type Progress
 } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { HARD_MAX_CONCURRENT_JOBS, loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
-import { ACTIVITY_CARD_URI } from "../src/activityCard.js";
-import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
+import {
+  ACTIVITY_CARD_CONTRACT_GENERATION,
+  ACTIVITY_CARD_URI,
+  LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION
+} from "../src/activityCard.js";
+import {
+  SETTINGS_CARD_CONTRACT_GENERATION,
+  SETTINGS_CARD_URI
+} from "../src/settingsCard.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import { uiResourceRevisions } from "../src/uiResources.js";
 import type {
@@ -160,7 +167,7 @@ class ForkLifecycleUpstream extends FakeUpstream {
       supportsEffortOverrideOnContinue: true,
       supportsServiceTierOverrideOnContinue: true,
       supportsFork: true
-    } as const;
+    };
   }
 
   async forkThread(input: CodexThreadForkRequest): Promise<ToolResult> {
@@ -206,23 +213,38 @@ class InteractionUpstream extends DeferredUpstream {
 
 class BackgroundTerminalUpstream extends FakeUpstream {
   public terminationCalls: Array<{ threadId: string; processId: string }> = [];
+  public beforeNextList?: () => void;
   private readonly terminals = new Map<string, CodexBackgroundTerminal[]>();
 
   override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const result = await super.callTool(name, args);
     const threadId = (result.structuredContent as { threadId: string }).threadId;
-    this.terminals.set(threadId, [{
-      processId: "background-process-1",
-      itemId: "background-item-1",
-      command: "private background command",
-      cwd: "/private/background/path",
-      osPid: 12345
-    }]);
+    this.terminals.set(threadId, [
+      {
+        processId: "background-process-1",
+        itemId: "background-item-1",
+        command: "private background command",
+        cwd: "/private/background/path",
+        osPid: 12345
+      },
+      {
+        processId: "legacy-background-process-2",
+        itemId: "legacy-background-item-2",
+        command: "private legacy background command",
+        cwd: "/private/legacy/background/path",
+        osPid: 12346
+      }
+    ]);
     return result;
   }
 
   async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
-    return [...(this.terminals.get(threadId) || [])];
+    const terminals = [...(this.terminals.get(threadId) || [])];
+    const beforeListReturns = this.beforeNextList;
+    this.beforeNextList = undefined;
+    beforeListReturns?.();
+    await Promise.resolve();
+    return terminals;
   }
 
   async terminateBackgroundTerminal(
@@ -356,6 +378,8 @@ describe("bridge tools", () => {
       "codex_activity_handoff",
       "codex_activity_update",
       "codex_agent",
+      "codex_agent_recovery_detach",
+      "codex_background_process_terminate",
       "codex_cancel",
       "codex_models",
       "codex_settings",
@@ -383,7 +407,8 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?._meta).toMatchObject({
       ui: { resourceUri: ACTIVITY_CARD_URI },
       "openai/outputTemplate": ACTIVITY_CARD_URI,
-      "openai/widgetAccessible": true
+      "openai/widgetAccessible": true,
+      "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
     });
     expect(byName.get("codex_activity")?._meta).toMatchObject({
       ui: { resourceUri: ACTIVITY_CARD_URI },
@@ -411,13 +436,34 @@ describe("bridge tools", () => {
       activityPresentationId: expect.any(Object)
     });
     expect(byName.get("codex_agent")?.inputSchema.properties).toMatchObject({
-      action: { enum: ["archive", "restore", "rename", "detach", "terminate-background-process"] },
+      action: { enum: ["archive", "restore", "rename"] },
       agentId: expect.any(Object),
-      requestId: expect.any(Object),
-      processId: expect.any(Object)
+      requestId: expect.any(Object)
     });
+    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("activityId");
+    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("processId");
     expect((byName.get("codex_agent")?.inputSchema.properties?.action as { enum?: string[] }).enum)
       .not.toContain("delete");
+    expect(byName.get("codex_agent_recovery_detach")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private"
+    });
+    expect(byName.get("codex_background_process_terminate")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(byName.get("codex_background_process_terminate")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true,
+      "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+    });
+    expect(byName.get("codex_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
+      .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
+    expect(byName.get("codex_activity_update")?.inputSchema.properties?.acknowledgeAffectedJobIds)
+      .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
     expect(byName.get("codex_activity_update")?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,
@@ -426,7 +472,8 @@ describe("bridge tools", () => {
     });
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
-      "openai/outputTemplate": SETTINGS_CARD_URI
+      "openai/outputTemplate": SETTINGS_CARD_URI,
+      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
     });
     expect(byName.get("codex_update_settings")?._meta).toMatchObject({
       ui: { visibility: ["app"] },
@@ -448,6 +495,360 @@ describe("bridge tools", () => {
       .not.toHaveProperty("defaultSessionMode");
     expect(byName.get("codex_update_settings")?.inputSchema.properties)
       .not.toHaveProperty("autoResumeTtlMs");
+
+    const discoveryInventory = tools.tools.map((tool) => {
+      const meta = (tool._meta || {}) as Record<string, any>;
+      const declaredVisibility = Array.isArray(meta.ui?.visibility)
+        ? meta.ui.visibility as string[]
+        : undefined;
+      const properties = Object.keys(tool.inputSchema.properties || {}).sort();
+      return {
+        name: tool.name,
+        visibility: {
+          model: declaredVisibility
+            ? declaredVisibility.includes("model")
+            : meta["openai/visibility"] !== "private",
+          app: declaredVisibility
+            ? declaredVisibility.includes("app")
+            : meta["openai/widgetAccessible"] === true,
+          operatorCapability: tool.name === "codex_agent_recovery_detach"
+        },
+        propertyCount: properties.length,
+        properties,
+        schemaBytes: Buffer.byteLength(JSON.stringify(tool.inputSchema), "utf8"),
+        annotations: {
+          readOnly: tool.annotations?.readOnlyHint ?? null,
+          destructive: tool.annotations?.destructiveHint ?? null,
+          idempotent: tool.annotations?.idempotentHint ?? null,
+          openWorld: tool.annotations?.openWorldHint ?? null
+        }
+      };
+    });
+    expect(discoveryInventory).toMatchInlineSnapshot(`
+      [
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_status",
+          "properties": [
+            "activityCursor",
+            "activityId",
+            "activityLimit",
+            "activityOffset",
+            "activityPresentationId",
+            "activityView",
+            "afterVersion",
+            "cardGeneration",
+            "includeAllScopes",
+            "jobCursor",
+            "jobId",
+            "jobLimit",
+            "jobOffset",
+            "mountedActivityId",
+            "presentationKind",
+            "scopeId",
+            "sessionCursor",
+            "sessionLimit",
+            "sessionOffset",
+            "threadId",
+            "waitFor",
+            "waitMs",
+          ],
+          "propertyCount": 22,
+          "schemaBytes": 3368,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_activity",
+          "properties": [
+            "activityId",
+            "cardGeneration",
+            "forceNewCard",
+            "limit",
+            "scopeId",
+            "sinceVersion",
+            "waitMs",
+          ],
+          "propertyCount": 7,
+          "schemaBytes": 987,
+          "visibility": {
+            "app": true,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_activity_handoff",
+          "properties": [
+            "action",
+            "activityPresentationId",
+            "outboxId",
+            "outboxIds",
+            "presentationKind",
+            "scopeId",
+          ],
+          "propertyCount": 6,
+          "schemaBytes": 719,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_agent",
+          "properties": [
+            "action",
+            "agentId",
+            "agentName",
+            "requestId",
+            "scopeId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 923,
+          "visibility": {
+            "app": true,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_agent_recovery_detach",
+          "properties": [
+            "activityId",
+            "agentId",
+            "expectedAgentVersion",
+            "requestId",
+            "scopeId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 1037,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": true,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_background_process_terminate",
+          "properties": [
+            "agentId",
+            "card",
+            "expectedAgentVersion",
+            "processId",
+            "requestId",
+            "scopeId",
+          ],
+          "propertyCount": 6,
+          "schemaBytes": 1586,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_cancel",
+          "properties": [
+            "acknowledgeAffectedJobIds",
+            "expectedVersion",
+            "jobId",
+            "scopeId",
+          ],
+          "propertyCount": 4,
+          "schemaBytes": 724,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": false,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_activity_update",
+          "properties": [
+            "acknowledgeAffectedJobIds",
+            "action",
+            "activityId",
+            "activityKind",
+            "completionTrigger",
+            "evidence",
+            "executionMode",
+            "expectedJobVersion",
+            "expectedVersion",
+            "handoffPolicy",
+            "interactionAnswers",
+            "interactionDecision",
+            "interactionId",
+            "jobId",
+            "reason",
+            "scopeId",
+            "steeringPrompt",
+          ],
+          "propertyCount": 17,
+          "schemaBytes": 2976,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": true,
+            "readOnly": true,
+          },
+          "name": "codex_models",
+          "properties": [
+            "refresh",
+          ],
+          "propertyCount": 1,
+          "schemaBytes": 215,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": true,
+            "readOnly": true,
+          },
+          "name": "codex_settings",
+          "properties": [
+            "refreshModels",
+          ],
+          "propertyCount": 1,
+          "schemaBytes": 203,
+          "visibility": {
+            "app": true,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_update_settings",
+          "properties": [
+            "accessStrategy",
+            "activityCardVisibility",
+            "completionHandoff",
+            "defaultCwd",
+            "defaultProjectId",
+            "expectedRevision",
+            "maxConcurrentJobs",
+            "modelPolicy",
+            "projects",
+            "reset",
+            "uiLocalePreference",
+            "usePriorityServiceTier",
+          ],
+          "propertyCount": 12,
+          "schemaBytes": 2848,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": false,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_task",
+          "properties": [
+            "activityId",
+            "activityKind",
+            "activityPresentationId",
+            "activityTitle",
+            "agentId",
+            "agentName",
+            "agentRole",
+            "completionTrigger",
+            "contextMode",
+            "continuationOfActivityId",
+            "executionMode",
+            "handoffPolicy",
+            "modelPolicyRevision",
+            "projectId",
+            "prompt",
+            "requestId",
+            "sandbox",
+            "scopeId",
+            "selection",
+          ],
+          "propertyCount": 19,
+          "schemaBytes": 5314,
+          "visibility": {
+            "app": true,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+      ]
+    `);
 
     await close();
   });
@@ -647,7 +1048,8 @@ describe("bridge tools", () => {
         domain: "https://web-sandbox.oaiusercontent.com"
       },
       "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
-      "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+      "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
     });
 
     await close();
@@ -666,7 +1068,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions).toHaveLength(2);
       expect(revisions[0].uri).toBe(currentUri);
-      for (const revision of revisions) {
+      for (const [index, revision] of revisions.entries()) {
         expect(listedUris).toContain(revision.uri);
         const resource = await client.readResource({ uri: revision.uri });
         expect(resource.contents[0]).toMatchObject({
@@ -674,6 +1076,24 @@ describe("bridge tools", () => {
           mimeType: "text/html;profile=mcp-app"
         });
         expect((resource.contents[0] as { text?: string }).text).toContain("<!doctype html>");
+        if (name === "activity") {
+          const html = (resource.contents[0] as { text?: string }).text || "";
+          if (index === 0) {
+            expect(html).toContain('callTool("codex_background_process_terminate"');
+            expect(html).not.toContain('callTool("codex_agent"');
+          } else {
+            expect(html).toContain('callTool("codex_agent"');
+            expect(html).not.toContain('callTool("codex_background_process_terminate"');
+          }
+        }
+        expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
+          .toMatchObject({
+            "codex/uiContractGeneration": name === "activity" && index > 0
+              ? LEGACY_ACTIVITY_CARD_CONTRACT_GENERATION
+              : name === "activity"
+                ? ACTIVITY_CARD_CONTRACT_GENERATION
+                : SETTINGS_CARD_CONTRACT_GENERATION
+          });
       }
     }
 
@@ -2229,7 +2649,10 @@ describe("bridge tools", () => {
   it("manages Agent lifecycle through one scope-local idempotent tool without deleting history", async () => {
     const root = temporaryRoot();
     const upstream = new ManagedDeferredUpstream();
-    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }),
+      upstream
+    );
     const started = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
@@ -2252,6 +2675,20 @@ describe("bridge tools", () => {
       warning: expect.stringContaining("does not roll back filesystem changes")
     });
 
+    const activeDetach = await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "11111111-2020-4020-8020-202020202020",
+        agentId,
+        activityId: started.activityId,
+        expectedAgentVersion: jobs.getAgent(agentId)?.version
+      }
+    });
+    expect(activeDetach.isError).toBe(true);
+    expect(JSON.stringify(activeDetach)).toContain("AGENT_BUSY");
+    expect(jobs.listActivityAgentAssignments(started.activityId, agentId)[0]?.releasedAt)
+      .toBeUndefined();
+
     upstream.resolveNext(fakeCodexResult("managed-thread"));
     await waitForJobStatus(client, started.jobId, "completed");
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "managed-thread" });
@@ -2266,18 +2703,35 @@ describe("bridge tools", () => {
 
     const detachedActivity = jobs.createActivity({ scopeId: SCOPE_A, title: "Detached assignment" });
     jobs.assignAgent({ activityId: detachedActivity.activityId, agentId, contextMode: "continue" });
+    const detachVersion = jobs.getAgent(agentId)?.version as number;
     const detached = parseToolJson(await client.callTool({
-      name: "codex_agent",
+      name: "codex_agent_recovery_detach",
       arguments: {
         requestId: "20202020-2020-4020-8020-202020202020",
         agentId,
-        action: "detach",
-        activityId: detachedActivity.activityId
+        activityId: detachedActivity.activityId,
+        expectedAgentVersion: detachVersion
       }
     }));
-    expect(detached).toMatchObject({ ok: true, action: "detach", historyPreserved: true });
+    expect(detached).toMatchObject({
+      ok: true,
+      action: "recovery-detach",
+      alreadyReleased: false,
+      historyPreserved: true,
+      agent: { version: detachVersion + 1 }
+    });
     expect(jobs.listActivityAgentAssignments(detachedActivity.activityId, agentId)[0]?.releasedAt)
       .toEqual(expect.any(Number));
+    const detachReplay = parseToolJson(await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "20202020-2020-4020-8020-202020202020",
+        agentId,
+        activityId: detachedActivity.activityId,
+        expectedAgentVersion: detachVersion
+      }
+    }));
+    expect(detachReplay).toEqual(detached);
 
     const renameArguments = {
       requestId: "30303030-3030-4030-8030-303030303030",
@@ -2356,6 +2810,29 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("keeps recovery detach disabled without explicit operator capability", async () => {
+    const root = temporaryRoot();
+    const { client, jobs, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const activity = jobs.createActivity({ scopeId: SCOPE_A, title: "Disabled recovery" });
+    const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Disabled Recovery Agent" });
+    jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+
+    const denied = await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "29292929-2929-4929-8929-292929292929",
+        agentId: agent.agentId,
+        activityId: activity.activityId,
+        expectedAgentVersion: agent.version
+      }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("RECOVERY_OPERATION_DISABLED");
+    expect(jobs.listActivityAgentAssignments(activity.activityId, agent.agentId)[0]?.releasedAt)
+      .toBeUndefined();
+    await close();
+  });
+
   it("archives a logical Agent without archiving an upstream thread that has a fork descendant", async () => {
     const root = temporaryRoot();
     const upstream = new ManagedDeferredUpstream();
@@ -2431,7 +2908,7 @@ describe("bridge tools", () => {
   it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
     const root = temporaryRoot();
     const upstream = new BackgroundTerminalUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
@@ -2446,16 +2923,23 @@ describe("bridge tools", () => {
     });
     const agentId = (completedResult as { structuredContent?: Record<string, any> })
       .structuredContent?.bridgeActivity?.agentId as string;
+    const activityId = (completedResult as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId as string;
     expect(agentId).toEqual(expect.any(String));
 
-    const card = await client.callTool({ name: "codex_activity", arguments: {} });
+    const widgetSessionId = "background-process-card";
+    const card = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
     const view = (card as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(view.agents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         agentId,
         lifecycle: "idle",
         backgroundProcessState: "running",
-        backgroundProcessCount: 1,
+        backgroundProcessCount: 2,
         canArchive: false
       })
     ]));
@@ -2463,11 +2947,21 @@ describe("bridge tools", () => {
       .toEqual(expect.arrayContaining([
         expect.objectContaining({
           agentId,
-          backgroundProcesses: [{ processId: "background-process-1" }]
+          backgroundProcesses: [
+            { processId: "background-process-1" },
+            { processId: "legacy-background-process-2" }
+          ]
         })
       ]));
     expect(JSON.stringify(card)).not.toContain("private background command");
     expect(JSON.stringify(card)).not.toContain("/private/background/path");
+    const processControl = (card as { _meta?: Record<string, any> })._meta
+      ?.interactionControls?.agents?.find((entry: Record<string, unknown>) => entry.agentId === agentId);
+    const mountedActivity = view.mountedActivity;
+    const mountedPresentation = view.mountedPresentation;
+    expect(processControl).toMatchObject({ agentId, agentVersion: expect.any(Number) });
+    expect(mountedActivity).toMatchObject({ activityId, cardGeneration: expect.any(Number) });
+    expect(mountedPresentation).toEqual({ kind: "explicit" });
 
     const archiveConflict = parseToolJson(await client.callTool({
       name: "codex_agent",
@@ -2480,27 +2974,113 @@ describe("bridge tools", () => {
     expect(archiveConflict).toMatchObject({
       ok: false,
       code: "AGENT_BACKGROUND_PROCESS",
-      backgroundProcesses: [{ processId: "background-process-1" }]
+      backgroundProcesses: [
+        { processId: "background-process-1" },
+        { processId: "legacy-background-process-2" }
+      ]
     });
 
     const terminateArguments = {
       requestId: "80808080-8080-4080-8080-808080808080",
       agentId,
-      action: "terminate-background-process",
-      processId: "background-process-1"
-    } as const;
+      expectedAgentVersion: processControl.agentVersion,
+      processId: "background-process-1",
+      card: {
+        activityId: mountedActivity.activityId,
+        generation: mountedActivity.cardGeneration,
+        presentation: mountedPresentation
+      }
+    };
+    const withoutLease = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "81818181-8181-4181-8181-818181818181"
+      }
+    });
+    expect(withoutLease.isError).toBe(true);
+    expect(JSON.stringify(withoutLease)).toContain("CARD_LEASE_REQUIRED");
+
+    const staleAgent = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "82828282-8282-4282-8282-828282828282",
+        expectedAgentVersion: processControl.agentVersion + 1
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(staleAgent.isError).toBe(true);
+    expect(JSON.stringify(staleAgent)).toContain("AGENT_VERSION_CHANGED");
+
+    const activeAgent = jobs.setAgentExecutionState(agentId, "active", {
+      currentJobId: "racing-codex-turn"
+    });
+    const whileActive = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "83838383-8383-4383-8383-838383838383",
+        expectedAgentVersion: activeAgent.version
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(whileActive.isError).toBe(true);
+    expect(JSON.stringify(whileActive)).toContain("AGENT_BUSY");
+    const idleAgent = jobs.setAgentExecutionState(agentId, "idle");
+    upstream.beforeNextList = () => {
+      jobs.setAgentExecutionState(agentId, "active", { currentJobId: "raced-codex-turn" });
+    };
+    const racedTurn = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "85858585-8585-4585-8585-858585858585",
+        expectedAgentVersion: idleAgent.version
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(racedTurn.isError).toBe(true);
+    expect(JSON.stringify(racedTurn)).toContain("AGENT_VERSION_CHANGED");
+    expect(upstream.terminationCalls).toEqual([]);
+    const finalIdleAgent = jobs.setAgentExecutionState(agentId, "idle");
+    terminateArguments.expectedAgentVersion = finalIdleAgent.version;
+
     const terminated = parseToolJson(await client.callTool({
-      name: "codex_agent",
-      arguments: terminateArguments
+      name: "codex_background_process_terminate",
+      arguments: terminateArguments,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
     }));
     const replay = parseToolJson(await client.callTool({
-      name: "codex_agent",
-      arguments: terminateArguments
+      name: "codex_background_process_terminate",
+      arguments: terminateArguments,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
     }));
     expect(terminated).toMatchObject({ ok: true, terminated: true, historyPreserved: true });
     expect(replay).toEqual(terminated);
     expect(upstream.terminationCalls).toEqual([
       { threadId: "thread-1", processId: "background-process-1" }
+    ]);
+
+    const legacyTerminated = parseToolJson(await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "84848484-8484-4484-8484-848484848484",
+        agentId,
+        action: "terminate-background-process",
+        processId: "legacy-background-process-2"
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(legacyTerminated).toMatchObject({
+      ok: true,
+      action: "terminate-background-process",
+      processId: "legacy-background-process-2",
+      terminated: true
+    });
+    expect(upstream.terminationCalls).toEqual([
+      { threadId: "thread-1", processId: "background-process-1" },
+      { threadId: "thread-1", processId: "legacy-background-process-2" }
     ]);
 
     const after = await client.callTool({ name: "codex_activity", arguments: {} });
@@ -5004,6 +5584,40 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("accepts cancellation acknowledgement sets above the former 30-job boundary", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const acknowledged = Array.from({ length: 31 }, (_, index) => `affected-job-${index + 1}`);
+
+    const jobCancellation = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: "missing-job",
+        acknowledgeAffectedJobIds: acknowledged
+      }
+    });
+    expect(jobCancellation.isError).toBe(true);
+    expect(JSON.stringify(jobCancellation)).toContain("Unknown Codex job id");
+
+    const activityCancellation = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: SCOPE_B,
+        action: "cancel",
+        acknowledgeAffectedJobIds: acknowledged
+      }
+    });
+    expect(activityCancellation.isError).toBe(true);
+    expect(JSON.stringify(activityCancellation)).toContain("Unknown Activity id");
+
+    expect(() => new CodexJobRegistry({
+      maxConcurrentJobs: HARD_MAX_CONCURRENT_JOBS + 1
+    })).toThrow(new RegExp(`between 1 and ${HARD_MAX_CONCURRENT_JOBS}`));
+    await close();
+  });
+
   it("requires wait options to target a specific job", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
@@ -5804,7 +6418,9 @@ async function connectTestClient(
           request.name === "codex_status" ||
           request.name === "codex_activity" ||
           request.name === "codex_activity_update" ||
-          request.name === "codex_agent"
+          request.name === "codex_agent" ||
+          request.name === "codex_agent_recovery_detach" ||
+          request.name === "codex_background_process_terminate"
         ) &&
         !arguments_.scopeId &&
         !arguments_.includeAllScopes

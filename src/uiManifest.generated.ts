@@ -10,8 +10,8 @@ export const UI_RESOURCE_MANIFEST = {
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "704961afedea9e257e940ab8410b003980a379135285f3866946b195b6e12d38",
-      "uri": "ui://codex-mcp-bridge/settings/704961afedea.html",
+      "digest": "350b7062c4e30c707c00bf14dc37ef1fab9f3515b80a3c5be10ccbe6aec44f15",
+      "uri": "ui://codex-mcp-bridge/settings/350b7062c4e3.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -33,13 +33,14 @@ export const UI_RESOURCE_MANIFEST = {
             "connect_domains": [],
             "resource_domains": []
           },
-          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 1
         }
       },
       "previous": [
         {
-          "digest": "790154778c0d51a6ecdaec114800a031173a20d25838a11f031e380ce5a9bb66",
-          "uri": "ui://codex-mcp-bridge/settings/790154778c0d.html",
+          "digest": "704961afedea9e257e940ab8410b003980a379135285f3866946b195b6e12d38",
+          "uri": "ui://codex-mcp-bridge/settings/704961afedea.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -68,8 +69,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "activity": {
-      "digest": "be3a57e8d37c6b4bc76a279d35a5ccbd0ee2a1f0094ac7ad5735e0f06e2b6a58",
-      "uri": "ui://codex-mcp-bridge/activity/be3a57e8d37c.html",
+      "digest": "5b43d93a37494423df207bf3401b728df8dab92bd36ba0599c10d79a957d943d",
+      "uri": "ui://codex-mcp-bridge/activity/5b43d93a3749.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -91,13 +92,14 @@ export const UI_RESOURCE_MANIFEST = {
             "connect_domains": [],
             "resource_domains": []
           },
-          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 2
         }
       },
       "previous": [
         {
-          "digest": "9df1e6f82a4d29e4a16d49a7f054272286e008c91ccf9fddac2a4cdf36539c5d",
-          "uri": "ui://codex-mcp-bridge/activity/9df1e6f82a4d.html",
+          "digest": "be3a57e8d37c6b4bc76a279d35a5ccbd0ee2a1f0094ac7ad5735e0f06e2b6a58",
+          "uri": "ui://codex-mcp-bridge/activity/be3a57e8d37c.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",

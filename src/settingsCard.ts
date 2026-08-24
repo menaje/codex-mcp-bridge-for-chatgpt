@@ -8,6 +8,7 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
+export const SETTINGS_CARD_CONTRACT_GENERATION = 1;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Settings`,
@@ -24,7 +25,8 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     `Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and per-response Activity-card visibility for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": true,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
-  "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+  "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+  "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
 } as const;
 
 export function registerSettingsCardResource(server: McpServer): void {
@@ -39,7 +41,11 @@ export function registerSettingsCardResource(server: McpServer): void {
             uri: revision.uri,
             mimeType: SETTINGS_CARD_MIME_TYPE,
             text: htmlForUiResource("settings", revision.uri, SETTINGS_CARD_HTML),
-            _meta: SETTINGS_CARD_CONTENT_METADATA
+            _meta: {
+              ...SETTINGS_CARD_CONTENT_METADATA,
+              "codex/uiContractGeneration": revision.contractGeneration ||
+                SETTINGS_CARD_CONTRACT_GENERATION
+            }
           }
         ]
       })

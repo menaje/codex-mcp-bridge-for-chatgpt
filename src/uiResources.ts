@@ -2,22 +2,44 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { UI_RESOURCE_MANIFEST, type UiResourceName } from "./uiManifest.generated.js";
 
-type UiResourceRevision = { digest: string; uri: string };
+type UiResourceRevision = {
+  digest: string;
+  uri: string;
+  contractGeneration?: number;
+};
 
 export function currentUiResourceUri(name: UiResourceName): string {
   return UI_RESOURCE_MANIFEST.resources[name].uri;
 }
 
 export function uiResourceRevisions(name: UiResourceName): UiResourceRevision[] {
-  const resource = UI_RESOURCE_MANIFEST.resources[name] as {
-    digest: string;
-    uri: string;
-    previous: readonly UiResourceRevision[];
+  const resource = UI_RESOURCE_MANIFEST.resources[name] as unknown as {
+    readonly digest: string;
+    readonly uri: string;
+    readonly metadata?: { readonly content?: Readonly<Record<string, unknown>> };
+    readonly previous: ReadonlyArray<UiResourceRevision & {
+      readonly metadata?: { readonly content?: Readonly<Record<string, unknown>> };
+    }>;
   };
   return [
-    { digest: resource.digest, uri: resource.uri },
-    ...resource.previous.map((entry) => ({ ...entry }))
+    {
+      digest: resource.digest,
+      uri: resource.uri,
+      contractGeneration: readContractGeneration(resource.metadata)
+    },
+    ...resource.previous.map((entry) => ({
+      digest: entry.digest,
+      uri: entry.uri,
+      contractGeneration: readContractGeneration(entry.metadata)
+    }))
   ];
+}
+
+function readContractGeneration(
+  metadata: { readonly content?: Readonly<Record<string, unknown>> } | undefined
+): number | undefined {
+  const value = metadata?.content?.["codex/uiContractGeneration"];
+  return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 
 export function htmlForUiResource(
