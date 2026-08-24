@@ -81,7 +81,6 @@ import type {
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
   ACTIVITY_CARD_VISIBILITIES,
-  ACTIVITY_CARD_VIEWS,
   COMPLETION_HANDOFF_MODES,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
@@ -134,7 +133,6 @@ const bridgeUserSettingsOutputSchema = z.object({
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  activityCardView: z.enum(ACTIVITY_CARD_VIEWS),
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
 
@@ -176,7 +174,6 @@ const settingsViewOutputSchema = z.object({
     allowedRoots: z.array(z.string()),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
-    availableActivityCardViews: z.array(z.enum(ACTIVITY_CARD_VIEWS)),
     availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     maxConcurrentJobs: z.number().int().positive(),
     allowWorkspaceWrite: z.boolean(),
@@ -2024,7 +2021,6 @@ export function registerBridgeTools(
         modelCatalogCacheTtlMs: config.modelCatalogCacheTtlMs,
         codexExecutionDeadline: "none",
         activityCardVisibility: preferences.activityCardVisibility,
-        activityCardView: preferences.activityCardView,
         completionHandoff: preferences.completionHandoff,
         defaultBackend: config.defaultBackend,
         upstreamPoolSize: config.upstreamPoolSize,
@@ -2918,7 +2914,6 @@ export function registerBridgeTools(
         uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
         maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
         activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
-        activityCardView: z.enum(ACTIVITY_CARD_VIEWS).optional(),
         completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
       },
       outputSchema: settingsViewOutputSchema,
@@ -2944,7 +2939,6 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "activityCardVisibility",
-        "activityCardView",
         "completionHandoff"
       ] as const;
       let validatedCatalog: CodexModelCatalogSnapshot | undefined;
@@ -4478,7 +4472,6 @@ async function buildLegacyActivityView(
     structured: {
       scopeVersion: jobs.getScopeVersion(scopeId),
       generatedAt: new Date().toISOString(),
-      viewMode: preferences.activityCardView,
       aggregates,
       agents: visibleAgents,
       archivedAgents,
@@ -4821,8 +4814,6 @@ async function buildActivityView(
     ...legacy,
     structured: {
       ...legacy.structured,
-      // Both retired preference values intentionally resolve to the one flat feed.
-      viewMode: "agent-list" as const,
       feed: {
         activeCount: activeRows.length,
         active: visibleActiveRows,
@@ -5282,7 +5273,6 @@ async function buildSettingsView(
       allowedRoots: [...config.allowedRoots],
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
-      availableActivityCardViews: [...ACTIVITY_CARD_VIEWS],
       availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
       maxConcurrentJobs: config.maxConcurrentJobs,
       allowWorkspaceWrite: config.allowWorkspaceWrite,

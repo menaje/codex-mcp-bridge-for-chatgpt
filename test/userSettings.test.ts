@@ -117,6 +117,7 @@ describe("user settings store", () => {
         defaultCwd: root,
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
+        activityCardView: "activity-summary",
         completionDeliveryMode: "auto-handoff"
       }
     }));
@@ -130,17 +131,55 @@ describe("user settings store", () => {
         allowedSelections: { kind: "catalog-visible" }
       },
       activityCardVisibility: "always",
-      activityCardView: "agent-list",
       completionHandoff: "auto-handoff"
     });
     const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
-    expect(persisted).toMatchObject({ activityCardView: "agent-list" });
+    expect(migrated.current).not.toHaveProperty("activityCardView");
+    expect(persisted).not.toHaveProperty("activityCardView");
     expect(persisted).not.toHaveProperty("completionDeliveryMode");
     expect(migrated.loadWarnings).toEqual([
       expect.stringContaining("model policy"),
       expect.stringContaining("completionDeliveryMode was migrated")
     ]);
   });
+
+  it.each(["agent-list", "activity-summary"])(
+    "discards the retired %s Activity layout without changing the flat-feed settings",
+    (activityCardView) => {
+      const root = temporaryDirectory("bridge-root-");
+      const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+      const config = loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_ROOTS: root
+      });
+      writeFileSync(stateFile, JSON.stringify({
+        version: 2,
+        settings: {
+          schemaVersion: 2,
+          revision: 2,
+          updatedAt: "2026-08-21T00:00:00.000Z",
+          accessStrategy: "adaptive",
+          modelPolicy: {
+            mode: "automatic",
+            allowedSelections: { kind: "catalog-visible" },
+            constraints: { allowDelegation: true }
+          },
+          defaultCwd: root,
+          uiLocalePreference: "auto",
+          maxConcurrentJobs: 30,
+          activityCardVisibility: "always",
+          activityCardView,
+          completionHandoff: "off"
+        }
+      }));
+
+      const migrated = new UserSettingsStore(config, { stateFile });
+      const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+      expect(migrated.current).toMatchObject({ revision: 3, activityCardVisibility: "always" });
+      expect(migrated.current).not.toHaveProperty("activityCardView");
+      expect(persisted).not.toHaveProperty("activityCardView");
+    }
+  );
 
   it("preserves a legacy JSON model-only default until its exact effort is materialized", () => {
     const root = temporaryDirectory("bridge-root-");

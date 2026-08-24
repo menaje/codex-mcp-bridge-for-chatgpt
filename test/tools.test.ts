@@ -399,9 +399,11 @@ describe("bridge tools", () => {
         enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
       },
       activityCardVisibility: { enum: ["always", "background-only", "never"] },
-      activityCardView: { enum: ["agent-list", "activity-summary"] },
       completionHandoff: { enum: ["off", "auto-handoff"] }
     });
+    expect(byName.get("codex_update_settings")?.inputSchema.properties)
+      .not.toHaveProperty("activityCardView");
+    expect(JSON.stringify(byName.get("codex_update_settings")?.inputSchema)).not.toContain('"all"');
     expect(byName.get("codex_update_settings")?.inputSchema.properties)
       .not.toHaveProperty("defaultSessionMode");
     expect(byName.get("codex_update_settings")?.inputSchema.properties)
@@ -540,6 +542,12 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("Number.isSafeInteger(value)");
     expect(contents.text).toContain("if(modelPolicyDirty)args.modelPolicy=buildModelPolicy()");
     expect(contents.text).toContain("settings.legacyPreferredModel");
+    expect(contents.text).toContain('id="allowed-models"');
+    expect(contents.text).toContain('id="effort-groups"');
+    expect(contents.text).toContain('all.dataset.action="all-efforts"');
+    expect(contents.text).toContain('id="retry-models"');
+    expect(contents.text).not.toContain('id="refresh"');
+    expect(contents.text).toContain('aria-describedby="access-hint full-warning"');
     expect(contents.text).not.toContain("view.settings.defaultReasoningEffort = null");
     expect(contents._meta).toMatchObject({
       ui: {
@@ -707,6 +715,25 @@ describe("bridge tools", () => {
     ]);
     expect(catalog.calls).toEqual([{ refresh: true, backendKind: "mcp-server" }]);
 
+    await close();
+  });
+
+  it("opens Settings through the normal catalog cache path and forces refresh only for retry", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+
+    await client.callTool({ name: "codex_settings", arguments: {} });
+    await client.callTool({ name: "codex_settings", arguments: { refreshModels: true } });
+    expect(catalog.calls).toEqual([
+      { refresh: false, backendKind: "mcp-server" },
+      { refresh: true, backendKind: "mcp-server" }
+    ]);
     await close();
   });
 
@@ -1275,6 +1302,28 @@ describe("bridge tools", () => {
     });
     expect(unsupported.isError).toBe(true);
     expect(JSON.stringify(unsupported)).toContain("MODEL_UNAVAILABLE");
+    await close();
+  });
+
+  it("ignores a retired Activity layout sent by a stale Settings card", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        activityCardView: "activity-summary",
+        uiLocalePreference: "ko"
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    const settings = (saved as { structuredContent?: Record<string, any> }).structuredContent?.settings;
+    expect(settings).toMatchObject({ revision: 1, uiLocalePreference: "ko" });
+    expect(settings).not.toHaveProperty("activityCardView");
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).not.toHaveProperty("activityCardView");
     await close();
   });
 
@@ -3471,11 +3520,10 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("maps retired Activity layouts to one scoped flat feed and folds completed work by Agent", async () => {
+  it("renders one scoped flat feed and folds completed work by Agent", async () => {
     const root = temporaryRoot();
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
-    settings.update({ activityCardView: "activity-summary" }, settings.current.revision);
     const { client, close } = await connectTestClient(
       config,
       new FakeUpstream(),
@@ -3499,7 +3547,6 @@ describe("bridge tools", () => {
     });
     const summary = (summaryResult as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(summary).toMatchObject({
-      viewMode: "agent-list",
       feed: {
         activeCount: 1,
         active: [expect.objectContaining({
@@ -3511,18 +3558,18 @@ describe("bridge tools", () => {
         completed: { agentCount: 0, activityCount: 0 }
       }
     });
+    expect(summary).not.toHaveProperty("viewMode");
 
     await client.callTool({
       name: "codex_activity_update",
       arguments: { activityId, action: "complete" }
     });
-    settings.update({ activityCardView: "agent-list" }, settings.current.revision);
     const agentsResult = await client.callTool({
       name: "codex_activity",
       arguments: { activityId, forceNewCard: true }
     });
     const agents = (agentsResult as { structuredContent?: Record<string, any> }).structuredContent!;
-    expect(agents.viewMode).toBe("agent-list");
+    expect(agents).not.toHaveProperty("viewMode");
     expect(agents.feed).toMatchObject({
       activeCount: 0,
       completed: {

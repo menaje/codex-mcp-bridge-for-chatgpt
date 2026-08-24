@@ -55,6 +55,9 @@ describe("human-facing UI localization", () => {
     ).join("\n");
     expect(settingsText).not.toMatch(/\boperator\b|운영자|管理者|管理员|管理員|operador|opérateur|Betreiber/i);
     expect(UI_TRANSLATIONS.ko["settings.reset"]).toBe("기본 설정으로 복원");
+    expect(UI_TRANSLATIONS.ko["settings.fullWarning"]).toBe(
+      "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다."
+    );
   });
 
   it("supports automatic host language and fixed saved language preferences", () => {
@@ -120,6 +123,9 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
     expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
+    expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
+    expect(ACTIVITY_CARD_HTML).not.toContain("viewMode");
+    expect(serialized).not.toContain("settings.cardView");
     expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
     expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
@@ -144,6 +150,24 @@ describe("human-facing UI localization", () => {
     );
     expect(SETTINGS_CARD_HTML).toContain('id="effort-description" aria-live="polite"');
     expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
+    expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
+    expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
+    expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
+    expect(SETTINGS_CARD_HTML).toContain('document.createElement("fieldset")');
+    expect(SETTINGS_CARD_HTML).toContain('document.createElement("legend")');
+    expect(SETTINGS_CARD_HTML).toContain('all.dataset.action="all-efforts"');
+    expect(SETTINGS_CARD_HTML).toContain("all.indeterminate=");
+    expect(SETTINGS_CARD_HTML).toContain('all.indeterminate?"mixed"');
+    expect(SETTINGS_CARD_HTML).toContain('id="selection-count" aria-live="polite"');
+    expect(SETTINGS_CARD_HTML).toContain('id="retry-models" type="button"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="refresh"');
+    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="access-hint full-warning"');
+    expect(SETTINGS_CARD_HTML).toContain('elements.fullWarning.classList.toggle("show",value==="always-full")');
+    expect(SETTINGS_CARD_HTML.indexOf('id="full-warning"')).toBeLessThan(
+      SETTINGS_CARD_HTML.indexOf('id="model-policy-mode"')
+    );
+    expect(SETTINGS_CARD_HTML).toContain('elements.retryModels.hidden=!catalogProblem');
+    expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
     expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
     expect(ACTIVITY_CARD_HTML).not.toContain("<details");

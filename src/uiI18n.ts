@@ -56,12 +56,19 @@ const ENGLISH = {
   "settings.allowedScope": "Allowed range",
   "settings.allowedScope.catalog": "All catalog-visible selections",
   "settings.allowedScope.explicit": "Explicit exact selections",
-  "settings.allowedExactSelections": "Allowed exact model / reasoning effort / service tier selections",
+  "settings.allowedExactSelections": "Select models first, then choose the reasoning efforts allowed for each model.",
+  "settings.allowedModels": "Models",
+  "settings.effortsByModel": "Reasoning efforts by selected model",
+  "settings.selectAllEfforts": "All",
+  "settings.partialEffortsSelected": "Some efforts are selected.",
+  "settings.additionalServiceTiers": "Additional service-tier variants",
+  "settings.selectionCount": "{count} exact selections",
   "settings.preferredSelection": "Preferred selection",
   "settings.preferred.none": "Validated backend default",
-  "settings.automaticNotice": "GPT may send only an exact model and reasoningEffort pair in this range. Display names are never stored as aliases; catalog-visible mode automatically includes newly discovered selections.",
+  "settings.automaticNotice": "GPT may send only an exact model, reasoningEffort, and optional serviceTier from this range. ‘All’ is expanded into the current exact selections before saving and is not sent to GPT. Catalog-visible mode automatically includes newly discovered selections.",
   "settings.selectionRequired": "Choose an exact model and reasoning effort.",
   "settings.explicitRequired": "Select at least one allowed exact selection.",
+  "settings.modelEffortRequired": "Choose at least one reasoning effort for {model}.",
   "settings.cwd": "Default working folder",
   "settings.cwdHint": "Only allowed working roots can be saved:",
   "settings.language": "Interface language",
@@ -72,21 +79,18 @@ const ENGLISH = {
   "settings.cardVisibility.always": "Always show",
   "settings.cardVisibility.background": "Background work only",
   "settings.cardVisibility.never": "Do not show automatically",
-  "settings.cardView": "Activity card view",
-  "settings.cardView.agentList": "Agent list",
-  "settings.cardView.activitySummary": "Activity summary",
   "settings.handoff": "Completion handoff",
   "settings.handoff.off": "Off",
   "settings.handoff.auto": "Automatic GPT handoff while card is open",
   "settings.handoffRequiresCard": "Automatic handoff requires a visible Activity card.",
   "settings.conflict": "Settings changed elsewhere. The latest values were loaded; review them and save again.",
   "settings.save": "Save settings",
-  "settings.refreshModels": "Refresh model list",
+  "settings.refreshModels": "Retry model lookup",
   "settings.reset": "Restore default settings",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
-  "settings.refreshing": "Refreshing…",
-  "settings.refreshed": "Model list refreshed.",
+  "settings.refreshing": "Retrying model lookup…",
+  "settings.refreshed": "Model list loaded.",
   "settings.resetting": "Restoring…",
   "settings.resetDone": "Default settings restored.",
   "settings.invalidResponse": "The settings tool returned an invalid response.",
@@ -214,33 +218,31 @@ const ISSUE19_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTran
   ko: {
     "settings.effortFallbackDescription": "현재 Codex 모델 카탈로그에서 제공된 새 추론 단계입니다.", "settings.unsupportedEffort": "저장된 추론 단계는 더 이상 지원되지 않습니다. 권장 모델 기본값:",
     "effort.minimal.label": "최소", "effort.minimal.description": "필수 추론만 사용해 가장 빠르게 응답합니다.", "effort.low.label": "낮음", "effort.low.description": "가벼운 추론으로 빠르게 응답합니다.", "effort.medium.label": "중간", "effort.medium.description": "추론 깊이와 응답 시간의 균형을 맞춥니다.", "effort.high.label": "높음", "effort.high.description": "복잡한 작업을 더 깊게 검토하지만 응답 시간이 늘어날 수 있습니다.", "effort.xhigh.label": "매우 높음", "effort.xhigh.description": "어려운 작업을 매우 깊게 추론하므로 응답이 상당히 오래 걸릴 수 있습니다.", "effort.max.label": "최대", "effort.max.description": "까다로운 작업에 사용할 수 있는 최대 추론 깊이입니다.", "effort.ultra.label": "울트라", "effort.ultra.description": "가장 까다로운 작업을 위해 확장 추론과 위임을 사용합니다.",
-    "settings.cardView": "Activity 카드 보기", "settings.cardView.agentList": "에이전트 목록", "settings.cardView.activitySummary": "Activity 요약",
     "activity.agents": "Codex 에이전트", "activity.noAgents": "이 대화에는 아직 Codex 에이전트가 없습니다.", "activity.idleAgents": "대기 중인 에이전트", "activity.archivedAgents": "보관된 에이전트", "activity.temporaryJob": "에이전트 시작 중", "activity.currentActivity": "현재 Activity", "activity.elapsed": "경과 시간", "activity.lastChanged": "마지막 변경", "activity.showMore": "더 보기", "activity.archive": "보관", "activity.restore": "복원", "activity.rename": "이름 변경", "activity.detach": "Activity에서 해제", "activity.renamePrompt": "새 에이전트 이름을 입력하세요.", "activity.archiveConfirm": "이 유휴 에이전트를 보관할까요? 스레드 이력은 유지됩니다.", "activity.archiveConflict": "turn·승인·입력 요청이 활성 상태인 동안에는 에이전트를 보관할 수 없습니다.", "activity.backgroundProcesses": "백그라운드 프로세스 실행 중", "activity.agentId": "에이전트 ID",
     "agent.idle": "유휴", "agent.active": "실행 중", "agent.waiting-input": "입력 대기", "agent.archived": "보관됨", "agent.orphaned": "스레드 사용 불가"
   },
   ja: {
     "settings.effortFallbackDescription": "現在の Codex モデルカタログで提供される新しい推論レベルです。", "settings.unsupportedEffort": "保存済みの推論レベルはサポートされなくなりました。推奨されるモデル既定値:",
     "effort.minimal.label": "最小", "effort.minimal.description": "必要最小限の推論で最速に応答します。", "effort.low.label": "低", "effort.low.description": "軽い推論で素早く応答します。", "effort.medium.label": "中", "effort.medium.description": "推論の深さと応答時間のバランスを取ります。", "effort.high.label": "高", "effort.high.description": "複雑な作業を深く検討しますが応答時間が長くなる場合があります。", "effort.xhigh.label": "非常に高い", "effort.xhigh.description": "難しい作業を非常に深く推論するため、応答にかなり時間がかかる場合があります。", "effort.max.label": "最大", "effort.max.description": "要求の高い作業に利用できる最大の推論深度です。", "effort.ultra.label": "ウルトラ", "effort.ultra.description": "最も難しい作業に拡張推論と委任を使用します。",
-    "settings.cardView": "Activity カード表示", "settings.cardView.agentList": "エージェント一覧", "settings.cardView.activitySummary": "Activity 概要",
     "activity.agents": "Codex エージェント", "activity.noAgents": "この会話にはまだ Codex エージェントがありません。", "activity.idleAgents": "待機中のエージェント", "activity.archivedAgents": "アーカイブ済みエージェント", "activity.temporaryJob": "エージェントを開始中", "activity.currentActivity": "現在の Activity", "activity.elapsed": "経過時間", "activity.lastChanged": "最終変更", "activity.showMore": "さらに表示", "activity.archive": "アーカイブ", "activity.restore": "復元", "activity.rename": "名前を変更", "activity.detach": "Activity から解除", "activity.renamePrompt": "新しいエージェント名を入力してください。", "activity.archiveConfirm": "この待機中エージェントをアーカイブしますか？スレッド履歴は保持されます。", "activity.archiveConflict": "turn、承認、入力要求が有効な間はアーカイブできません。", "activity.backgroundProcesses": "バックグラウンドプロセス実行中", "activity.agentId": "エージェント ID", "agent.idle": "待機中", "agent.active": "実行中", "agent.waiting-input": "入力待ち", "agent.archived": "アーカイブ済み", "agent.orphaned": "スレッド利用不可"
   },
   "zh-Hans": {
-    "settings.effortFallbackDescription": "这是当前 Codex 模型目录提供的新推理级别。", "settings.unsupportedEffort": "已保存的推理级别不再受支持。建议的模型默认值：", "effort.minimal.label": "最小", "effort.minimal.description": "仅使用必要推理，响应最快。", "effort.low.label": "低", "effort.low.description": "使用较轻推理快速响应。", "effort.medium.label": "中", "effort.medium.description": "平衡推理深度和响应时间。", "effort.high.label": "高", "effort.high.description": "更深入检查复杂任务，但响应可能更慢。", "effort.xhigh.label": "极高", "effort.xhigh.description": "对困难任务进行非常深入的推理，响应可能明显更慢。", "effort.max.label": "最大", "effort.max.description": "为高难度任务提供最大推理深度。", "effort.ultra.label": "超高", "effort.ultra.description": "为最困难的任务使用扩展推理和委派。", "settings.cardView": "Activity 卡片视图", "settings.cardView.agentList": "代理列表", "settings.cardView.activitySummary": "Activity 摘要", "activity.agents": "Codex 代理", "activity.noAgents": "此对话中还没有 Codex 代理。", "activity.idleAgents": "空闲代理", "activity.archivedAgents": "已归档代理", "activity.temporaryJob": "正在启动代理", "activity.currentActivity": "当前 Activity", "activity.elapsed": "已用时间", "activity.lastChanged": "最后更改", "activity.showMore": "显示更多", "activity.archive": "归档", "activity.restore": "恢复", "activity.rename": "重命名", "activity.detach": "从 Activity 分离", "activity.renamePrompt": "输入新的代理名称。", "activity.archiveConfirm": "归档此空闲代理？线程历史将保留。", "activity.archiveConflict": "turn、审批或输入请求处于活动状态时无法归档。", "activity.backgroundProcesses": "后台进程仍在运行", "activity.agentId": "代理 ID", "agent.idle": "空闲", "agent.active": "活动", "agent.waiting-input": "等待输入", "agent.archived": "已归档", "agent.orphaned": "线程不可用"
+    "settings.effortFallbackDescription": "这是当前 Codex 模型目录提供的新推理级别。", "settings.unsupportedEffort": "已保存的推理级别不再受支持。建议的模型默认值：", "effort.minimal.label": "最小", "effort.minimal.description": "仅使用必要推理，响应最快。", "effort.low.label": "低", "effort.low.description": "使用较轻推理快速响应。", "effort.medium.label": "中", "effort.medium.description": "平衡推理深度和响应时间。", "effort.high.label": "高", "effort.high.description": "更深入检查复杂任务，但响应可能更慢。", "effort.xhigh.label": "极高", "effort.xhigh.description": "对困难任务进行非常深入的推理，响应可能明显更慢。", "effort.max.label": "最大", "effort.max.description": "为高难度任务提供最大推理深度。", "effort.ultra.label": "超高", "effort.ultra.description": "为最困难的任务使用扩展推理和委派。", "activity.agents": "Codex 代理", "activity.noAgents": "此对话中还没有 Codex 代理。", "activity.idleAgents": "空闲代理", "activity.archivedAgents": "已归档代理", "activity.temporaryJob": "正在启动代理", "activity.currentActivity": "当前 Activity", "activity.elapsed": "已用时间", "activity.lastChanged": "最后更改", "activity.showMore": "显示更多", "activity.archive": "归档", "activity.restore": "恢复", "activity.rename": "重命名", "activity.detach": "从 Activity 分离", "activity.renamePrompt": "输入新的代理名称。", "activity.archiveConfirm": "归档此空闲代理？线程历史将保留。", "activity.archiveConflict": "turn、审批或输入请求处于活动状态时无法归档。", "activity.backgroundProcesses": "后台进程仍在运行", "activity.agentId": "代理 ID", "agent.idle": "空闲", "agent.active": "活动", "agent.waiting-input": "等待输入", "agent.archived": "已归档", "agent.orphaned": "线程不可用"
   },
   "zh-Hant": {
-    "settings.effortFallbackDescription": "這是目前 Codex 模型目錄提供的新推理層級。", "settings.unsupportedEffort": "已儲存的推理層級已不再支援。建議的模型預設值：", "effort.minimal.label": "最小", "effort.minimal.description": "只使用必要推理，回應最快。", "effort.low.label": "低", "effort.low.description": "以較輕量的推理快速回應。", "effort.medium.label": "中", "effort.medium.description": "平衡推理深度與回應時間。", "effort.high.label": "高", "effort.high.description": "更深入檢查複雜工作，但回應可能較慢。", "effort.xhigh.label": "極高", "effort.xhigh.description": "對困難工作進行非常深入的推理，回應可能明顯較慢。", "effort.max.label": "最大", "effort.max.description": "為高難度工作提供最大的推理深度。", "effort.ultra.label": "超高", "effort.ultra.description": "為最困難的工作使用擴充推理與委派。", "settings.cardView": "Activity 卡片檢視", "settings.cardView.agentList": "代理程式清單", "settings.cardView.activitySummary": "Activity 摘要", "activity.agents": "Codex 代理程式", "activity.noAgents": "此對話中尚無 Codex 代理程式。", "activity.idleAgents": "閒置代理程式", "activity.archivedAgents": "已封存代理程式", "activity.temporaryJob": "正在啟動代理程式", "activity.currentActivity": "目前 Activity", "activity.elapsed": "經過時間", "activity.lastChanged": "最後變更", "activity.showMore": "顯示更多", "activity.archive": "封存", "activity.restore": "還原", "activity.rename": "重新命名", "activity.detach": "從 Activity 卸離", "activity.renamePrompt": "輸入新的代理程式名稱。", "activity.archiveConfirm": "要封存此閒置代理程式嗎？執行緒歷程會保留。", "activity.archiveConflict": "turn、核准或輸入要求仍在作用時無法封存。", "activity.backgroundProcesses": "背景程序仍在執行", "activity.agentId": "代理程式 ID", "agent.idle": "閒置", "agent.active": "執行中", "agent.waiting-input": "等待輸入", "agent.archived": "已封存", "agent.orphaned": "執行緒無法使用"
+    "settings.effortFallbackDescription": "這是目前 Codex 模型目錄提供的新推理層級。", "settings.unsupportedEffort": "已儲存的推理層級已不再支援。建議的模型預設值：", "effort.minimal.label": "最小", "effort.minimal.description": "只使用必要推理，回應最快。", "effort.low.label": "低", "effort.low.description": "以較輕量的推理快速回應。", "effort.medium.label": "中", "effort.medium.description": "平衡推理深度與回應時間。", "effort.high.label": "高", "effort.high.description": "更深入檢查複雜工作，但回應可能較慢。", "effort.xhigh.label": "極高", "effort.xhigh.description": "對困難工作進行非常深入的推理，回應可能明顯較慢。", "effort.max.label": "最大", "effort.max.description": "為高難度工作提供最大的推理深度。", "effort.ultra.label": "超高", "effort.ultra.description": "為最困難的工作使用擴充推理與委派。", "activity.agents": "Codex 代理程式", "activity.noAgents": "此對話中尚無 Codex 代理程式。", "activity.idleAgents": "閒置代理程式", "activity.archivedAgents": "已封存代理程式", "activity.temporaryJob": "正在啟動代理程式", "activity.currentActivity": "目前 Activity", "activity.elapsed": "經過時間", "activity.lastChanged": "最後變更", "activity.showMore": "顯示更多", "activity.archive": "封存", "activity.restore": "還原", "activity.rename": "重新命名", "activity.detach": "從 Activity 卸離", "activity.renamePrompt": "輸入新的代理程式名稱。", "activity.archiveConfirm": "要封存此閒置代理程式嗎？執行緒歷程會保留。", "activity.archiveConflict": "turn、核准或輸入要求仍在作用時無法封存。", "activity.backgroundProcesses": "背景程序仍在執行", "activity.agentId": "代理程式 ID", "agent.idle": "閒置", "agent.active": "執行中", "agent.waiting-input": "等待輸入", "agent.archived": "已封存", "agent.orphaned": "執行緒無法使用"
   },
   es: {
-    "settings.effortFallbackDescription": "Un nuevo nivel de razonamiento ofrecido por el catálogo actual de Codex.", "settings.unsupportedEffort": "El nivel guardado ya no es compatible. Valor predeterminado sugerido:", "effort.minimal.label": "Mínimo", "effort.minimal.description": "Respuesta más rápida con solo el razonamiento esencial.", "effort.low.label": "Bajo", "effort.low.description": "Respuestas rápidas con razonamiento ligero.", "effort.medium.label": "Medio", "effort.medium.description": "Equilibra profundidad de razonamiento y tiempo de respuesta.", "effort.high.label": "Alto", "effort.high.description": "Revisión más profunda para tareas complejas, con mayor tiempo de respuesta.", "effort.xhigh.label": "Muy alto", "effort.xhigh.description": "Razonamiento muy profundo para tareas difíciles; puede tardar bastante más.", "effort.max.label": "Máximo", "effort.max.description": "Máxima profundidad de razonamiento disponible para tareas exigentes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Razonamiento ampliado y delegación para las tareas más exigentes.", "settings.cardView": "Vista de la tarjeta Activity", "settings.cardView.agentList": "Lista de agentes", "settings.cardView.activitySummary": "Resumen de Activity", "activity.agents": "Agentes Codex", "activity.noAgents": "Aún no hay agentes Codex en esta conversación.", "activity.idleAgents": "Agentes inactivos", "activity.archivedAgents": "Agentes archivados", "activity.temporaryJob": "Iniciando agente", "activity.currentActivity": "Activity actual", "activity.elapsed": "Transcurrido", "activity.lastChanged": "Último cambio", "activity.showMore": "Mostrar más", "activity.archive": "Archivar", "activity.restore": "Restaurar", "activity.rename": "Cambiar nombre", "activity.detach": "Desvincular de Activity", "activity.renamePrompt": "Introduce un nuevo nombre de agente.", "activity.archiveConfirm": "¿Archivar este agente inactivo? Se conservará el historial.", "activity.archiveConflict": "No se puede archivar mientras haya un turno, aprobación o solicitud de entrada activos.", "activity.backgroundProcesses": "Procesos en segundo plano activos", "activity.agentId": "ID de agente", "agent.idle": "Inactivo", "agent.active": "Activo", "agent.waiting-input": "Esperando entrada", "agent.archived": "Archivado", "agent.orphaned": "Hilo no disponible"
+    "settings.effortFallbackDescription": "Un nuevo nivel de razonamiento ofrecido por el catálogo actual de Codex.", "settings.unsupportedEffort": "El nivel guardado ya no es compatible. Valor predeterminado sugerido:", "effort.minimal.label": "Mínimo", "effort.minimal.description": "Respuesta más rápida con solo el razonamiento esencial.", "effort.low.label": "Bajo", "effort.low.description": "Respuestas rápidas con razonamiento ligero.", "effort.medium.label": "Medio", "effort.medium.description": "Equilibra profundidad de razonamiento y tiempo de respuesta.", "effort.high.label": "Alto", "effort.high.description": "Revisión más profunda para tareas complejas, con mayor tiempo de respuesta.", "effort.xhigh.label": "Muy alto", "effort.xhigh.description": "Razonamiento muy profundo para tareas difíciles; puede tardar bastante más.", "effort.max.label": "Máximo", "effort.max.description": "Máxima profundidad de razonamiento disponible para tareas exigentes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Razonamiento ampliado y delegación para las tareas más exigentes.", "activity.agents": "Agentes Codex", "activity.noAgents": "Aún no hay agentes Codex en esta conversación.", "activity.idleAgents": "Agentes inactivos", "activity.archivedAgents": "Agentes archivados", "activity.temporaryJob": "Iniciando agente", "activity.currentActivity": "Activity actual", "activity.elapsed": "Transcurrido", "activity.lastChanged": "Último cambio", "activity.showMore": "Mostrar más", "activity.archive": "Archivar", "activity.restore": "Restaurar", "activity.rename": "Cambiar nombre", "activity.detach": "Desvincular de Activity", "activity.renamePrompt": "Introduce un nuevo nombre de agente.", "activity.archiveConfirm": "¿Archivar este agente inactivo? Se conservará el historial.", "activity.archiveConflict": "No se puede archivar mientras haya un turno, aprobación o solicitud de entrada activos.", "activity.backgroundProcesses": "Procesos en segundo plano activos", "activity.agentId": "ID de agente", "agent.idle": "Inactivo", "agent.active": "Activo", "agent.waiting-input": "Esperando entrada", "agent.archived": "Archivado", "agent.orphaned": "Hilo no disponible"
   },
   fr: {
-    "settings.effortFallbackDescription": "Un nouveau niveau de raisonnement fourni par le catalogue Codex actuel.", "settings.unsupportedEffort": "Le niveau enregistré n’est plus pris en charge. Valeur par défaut suggérée :", "effort.minimal.label": "Minimal", "effort.minimal.description": "Réponse la plus rapide avec le raisonnement essentiel uniquement.", "effort.low.label": "Faible", "effort.low.description": "Réponses rapides avec un raisonnement léger.", "effort.medium.label": "Moyen", "effort.medium.description": "Équilibre profondeur du raisonnement et temps de réponse.", "effort.high.label": "Élevé", "effort.high.description": "Examen approfondi des tâches complexes, avec un temps de réponse accru.", "effort.xhigh.label": "Très élevé", "effort.xhigh.description": "Raisonnement très approfondi pour les tâches difficiles ; la réponse peut être nettement plus longue.", "effort.max.label": "Maximum", "effort.max.description": "Profondeur de raisonnement maximale pour les tâches exigeantes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Raisonnement étendu et délégation pour les tâches les plus exigeantes.", "settings.cardView": "Vue de la carte Activity", "settings.cardView.agentList": "Liste des agents", "settings.cardView.activitySummary": "Résumé Activity", "activity.agents": "Agents Codex", "activity.noAgents": "Aucun agent Codex dans cette conversation.", "activity.idleAgents": "Agents inactifs", "activity.archivedAgents": "Agents archivés", "activity.temporaryJob": "Démarrage de l’agent", "activity.currentActivity": "Activity actuelle", "activity.elapsed": "Durée", "activity.lastChanged": "Dernière modification", "activity.showMore": "Afficher plus", "activity.archive": "Archiver", "activity.restore": "Restaurer", "activity.rename": "Renommer", "activity.detach": "Détacher de l’Activity", "activity.renamePrompt": "Saisissez un nouveau nom d’agent.", "activity.archiveConfirm": "Archiver cet agent inactif ? L’historique sera conservé.", "activity.archiveConflict": "Impossible d’archiver pendant un turn, une approbation ou une demande de saisie.", "activity.backgroundProcesses": "Processus en arrière-plan actifs", "activity.agentId": "ID de l’agent", "agent.idle": "Inactif", "agent.active": "Actif", "agent.waiting-input": "En attente de saisie", "agent.archived": "Archivé", "agent.orphaned": "Thread indisponible"
+    "settings.effortFallbackDescription": "Un nouveau niveau de raisonnement fourni par le catalogue Codex actuel.", "settings.unsupportedEffort": "Le niveau enregistré n’est plus pris en charge. Valeur par défaut suggérée :", "effort.minimal.label": "Minimal", "effort.minimal.description": "Réponse la plus rapide avec le raisonnement essentiel uniquement.", "effort.low.label": "Faible", "effort.low.description": "Réponses rapides avec un raisonnement léger.", "effort.medium.label": "Moyen", "effort.medium.description": "Équilibre profondeur du raisonnement et temps de réponse.", "effort.high.label": "Élevé", "effort.high.description": "Examen approfondi des tâches complexes, avec un temps de réponse accru.", "effort.xhigh.label": "Très élevé", "effort.xhigh.description": "Raisonnement très approfondi pour les tâches difficiles ; la réponse peut être nettement plus longue.", "effort.max.label": "Maximum", "effort.max.description": "Profondeur de raisonnement maximale pour les tâches exigeantes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Raisonnement étendu et délégation pour les tâches les plus exigeantes.", "activity.agents": "Agents Codex", "activity.noAgents": "Aucun agent Codex dans cette conversation.", "activity.idleAgents": "Agents inactifs", "activity.archivedAgents": "Agents archivés", "activity.temporaryJob": "Démarrage de l’agent", "activity.currentActivity": "Activity actuelle", "activity.elapsed": "Durée", "activity.lastChanged": "Dernière modification", "activity.showMore": "Afficher plus", "activity.archive": "Archiver", "activity.restore": "Restaurer", "activity.rename": "Renommer", "activity.detach": "Détacher de l’Activity", "activity.renamePrompt": "Saisissez un nouveau nom d’agent.", "activity.archiveConfirm": "Archiver cet agent inactif ? L’historique sera conservé.", "activity.archiveConflict": "Impossible d’archiver pendant un turn, une approbation ou une demande de saisie.", "activity.backgroundProcesses": "Processus en arrière-plan actifs", "activity.agentId": "ID de l’agent", "agent.idle": "Inactif", "agent.active": "Actif", "agent.waiting-input": "En attente de saisie", "agent.archived": "Archivé", "agent.orphaned": "Thread indisponible"
   },
   de: {
-    "settings.effortFallbackDescription": "Eine neue Reasoning-Stufe aus dem aktuellen Codex-Modellkatalog.", "settings.unsupportedEffort": "Die gespeicherte Reasoning-Stufe wird nicht mehr unterstützt. Empfohlener Modellstandard:", "effort.minimal.label": "Minimal", "effort.minimal.description": "Schnellste Antworten mit nur dem nötigen Reasoning.", "effort.low.label": "Niedrig", "effort.low.description": "Schnelle Antworten mit leichtem Reasoning.", "effort.medium.label": "Mittel", "effort.medium.description": "Ausgewogenes Verhältnis von Reasoning-Tiefe und Antwortzeit.", "effort.high.label": "Hoch", "effort.high.description": "Tiefere Prüfung komplexer Aufgaben mit längerer Antwortzeit.", "effort.xhigh.label": "Sehr hoch", "effort.xhigh.description": "Sehr tiefes Reasoning für schwierige Aufgaben; Antworten können deutlich länger dauern.", "effort.max.label": "Maximum", "effort.max.description": "Maximale verfügbare Reasoning-Tiefe für anspruchsvolle Aufgaben.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Erweitertes Reasoning und Delegation für besonders anspruchsvolle Aufgaben.", "settings.cardView": "Activity-Kartenansicht", "settings.cardView.agentList": "Agentenliste", "settings.cardView.activitySummary": "Activity-Zusammenfassung", "activity.agents": "Codex-Agenten", "activity.noAgents": "Noch keine Codex-Agenten in dieser Unterhaltung.", "activity.idleAgents": "Inaktive Agenten", "activity.archivedAgents": "Archivierte Agenten", "activity.temporaryJob": "Agent wird gestartet", "activity.currentActivity": "Aktuelle Activity", "activity.elapsed": "Vergangen", "activity.lastChanged": "Letzte Änderung", "activity.showMore": "Mehr anzeigen", "activity.archive": "Archivieren", "activity.restore": "Wiederherstellen", "activity.rename": "Umbenennen", "activity.detach": "Von Activity lösen", "activity.renamePrompt": "Geben Sie einen neuen Agentennamen ein.", "activity.archiveConfirm": "Diesen inaktiven Agenten archivieren? Der Threadverlauf bleibt erhalten.", "activity.archiveConflict": "Während eines aktiven Turns, einer Genehmigung oder Eingabeanforderung ist Archivieren nicht möglich.", "activity.backgroundProcesses": "Hintergrundprozesse laufen", "activity.agentId": "Agenten-ID", "agent.idle": "Inaktiv", "agent.active": "Aktiv", "agent.waiting-input": "Wartet auf Eingabe", "agent.archived": "Archiviert", "agent.orphaned": "Thread nicht verfügbar"
+    "settings.effortFallbackDescription": "Eine neue Reasoning-Stufe aus dem aktuellen Codex-Modellkatalog.", "settings.unsupportedEffort": "Die gespeicherte Reasoning-Stufe wird nicht mehr unterstützt. Empfohlener Modellstandard:", "effort.minimal.label": "Minimal", "effort.minimal.description": "Schnellste Antworten mit nur dem nötigen Reasoning.", "effort.low.label": "Niedrig", "effort.low.description": "Schnelle Antworten mit leichtem Reasoning.", "effort.medium.label": "Mittel", "effort.medium.description": "Ausgewogenes Verhältnis von Reasoning-Tiefe und Antwortzeit.", "effort.high.label": "Hoch", "effort.high.description": "Tiefere Prüfung komplexer Aufgaben mit längerer Antwortzeit.", "effort.xhigh.label": "Sehr hoch", "effort.xhigh.description": "Sehr tiefes Reasoning für schwierige Aufgaben; Antworten können deutlich länger dauern.", "effort.max.label": "Maximum", "effort.max.description": "Maximale verfügbare Reasoning-Tiefe für anspruchsvolle Aufgaben.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Erweitertes Reasoning und Delegation für besonders anspruchsvolle Aufgaben.", "activity.agents": "Codex-Agenten", "activity.noAgents": "Noch keine Codex-Agenten in dieser Unterhaltung.", "activity.idleAgents": "Inaktive Agenten", "activity.archivedAgents": "Archivierte Agenten", "activity.temporaryJob": "Agent wird gestartet", "activity.currentActivity": "Aktuelle Activity", "activity.elapsed": "Vergangen", "activity.lastChanged": "Letzte Änderung", "activity.showMore": "Mehr anzeigen", "activity.archive": "Archivieren", "activity.restore": "Wiederherstellen", "activity.rename": "Umbenennen", "activity.detach": "Von Activity lösen", "activity.renamePrompt": "Geben Sie einen neuen Agentennamen ein.", "activity.archiveConfirm": "Diesen inaktiven Agenten archivieren? Der Threadverlauf bleibt erhalten.", "activity.archiveConflict": "Während eines aktiven Turns, einer Genehmigung oder Eingabeanforderung ist Archivieren nicht möglich.", "activity.backgroundProcesses": "Hintergrundprozesse laufen", "activity.agentId": "Agenten-ID", "agent.idle": "Inaktiv", "agent.active": "Aktiv", "agent.waiting-input": "Wartet auf Eingabe", "agent.archived": "Archiviert", "agent.orphaned": "Thread nicht verfügbar"
   },
   pt: {
-    "settings.effortFallbackDescription": "Um novo nível de raciocínio fornecido pelo catálogo atual do Codex.", "settings.unsupportedEffort": "O nível salvo não é mais compatível. Padrão sugerido do modelo:", "effort.minimal.label": "Mínimo", "effort.minimal.description": "Resposta mais rápida usando apenas o raciocínio essencial.", "effort.low.label": "Baixo", "effort.low.description": "Respostas rápidas com raciocínio leve.", "effort.medium.label": "Médio", "effort.medium.description": "Equilibra profundidade de raciocínio e tempo de resposta.", "effort.high.label": "Alto", "effort.high.description": "Revisão mais profunda de tarefas complexas, com maior tempo de resposta.", "effort.xhigh.label": "Muito alto", "effort.xhigh.description": "Raciocínio muito profundo para tarefas difíceis; a resposta pode demorar bem mais.", "effort.max.label": "Máximo", "effort.max.description": "Profundidade máxima de raciocínio para tarefas exigentes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Raciocínio ampliado e delegação para as tarefas mais exigentes.", "settings.cardView": "Visualização do cartão Activity", "settings.cardView.agentList": "Lista de agentes", "settings.cardView.activitySummary": "Resumo de Activity", "activity.agents": "Agentes Codex", "activity.noAgents": "Ainda não há agentes Codex nesta conversa.", "activity.idleAgents": "Agentes ociosos", "activity.archivedAgents": "Agentes arquivados", "activity.temporaryJob": "Iniciando agente", "activity.currentActivity": "Activity atual", "activity.elapsed": "Decorrido", "activity.lastChanged": "Última alteração", "activity.showMore": "Mostrar mais", "activity.archive": "Arquivar", "activity.restore": "Restaurar", "activity.rename": "Renomear", "activity.detach": "Desvincular da Activity", "activity.renamePrompt": "Digite um novo nome para o agente.", "activity.archiveConfirm": "Arquivar este agente ocioso? O histórico será preservado.", "activity.archiveConflict": "Não é possível arquivar enquanto houver turn, aprovação ou solicitação de entrada ativa.", "activity.backgroundProcesses": "Processos em segundo plano ativos", "activity.agentId": "ID do agente", "agent.idle": "Ocioso", "agent.active": "Ativo", "agent.waiting-input": "Aguardando entrada", "agent.archived": "Arquivado", "agent.orphaned": "Thread indisponível"
+    "settings.effortFallbackDescription": "Um novo nível de raciocínio fornecido pelo catálogo atual do Codex.", "settings.unsupportedEffort": "O nível salvo não é mais compatível. Padrão sugerido do modelo:", "effort.minimal.label": "Mínimo", "effort.minimal.description": "Resposta mais rápida usando apenas o raciocínio essencial.", "effort.low.label": "Baixo", "effort.low.description": "Respostas rápidas com raciocínio leve.", "effort.medium.label": "Médio", "effort.medium.description": "Equilibra profundidade de raciocínio e tempo de resposta.", "effort.high.label": "Alto", "effort.high.description": "Revisão mais profunda de tarefas complexas, com maior tempo de resposta.", "effort.xhigh.label": "Muito alto", "effort.xhigh.description": "Raciocínio muito profundo para tarefas difíceis; a resposta pode demorar bem mais.", "effort.max.label": "Máximo", "effort.max.description": "Profundidade máxima de raciocínio para tarefas exigentes.", "effort.ultra.label": "Ultra", "effort.ultra.description": "Raciocínio ampliado e delegação para as tarefas mais exigentes.", "activity.agents": "Agentes Codex", "activity.noAgents": "Ainda não há agentes Codex nesta conversa.", "activity.idleAgents": "Agentes ociosos", "activity.archivedAgents": "Agentes arquivados", "activity.temporaryJob": "Iniciando agente", "activity.currentActivity": "Activity atual", "activity.elapsed": "Decorrido", "activity.lastChanged": "Última alteração", "activity.showMore": "Mostrar mais", "activity.archive": "Arquivar", "activity.restore": "Restaurar", "activity.rename": "Renomear", "activity.detach": "Desvincular da Activity", "activity.renamePrompt": "Digite um novo nome para o agente.", "activity.archiveConfirm": "Arquivar este agente ocioso? O histórico será preservado.", "activity.archiveConflict": "Não é possível arquivar enquanto houver turn, aprovação ou solicitação de entrada ativa.", "activity.backgroundProcesses": "Processos em segundo plano ativos", "activity.agentId": "ID do agente", "agent.idle": "Ocioso", "agent.active": "Ativo", "agent.waiting-input": "Aguardando entrada", "agent.archived": "Arquivado", "agent.orphaned": "Thread indisponível"
   }
 };
 
@@ -780,14 +782,131 @@ const BACKGROUND_PROCESS_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Par
   }
 };
 
+const ISSUE21_OVERRIDES: Partial<
+  Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>>
+> = {
+  ko: {
+    "settings.allowedExactSelections": "먼저 모델을 선택한 다음, 모델별로 허용할 추론 에포트를 고르세요.",
+    "settings.allowedModels": "모델",
+    "settings.effortsByModel": "선택한 모델별 추론 에포트",
+    "settings.selectAllEfforts": "모두",
+    "settings.partialEffortsSelected": "일부 에포트가 선택되어 있습니다.",
+    "settings.additionalServiceTiers": "추가 서비스 티어 조합",
+    "settings.selectionCount": "정확한 selection {count}개",
+    "settings.automaticNotice": "GPT는 이 범위에 포함된 정확한 model, reasoningEffort, 선택적 serviceTier만 전달할 수 있습니다. ‘모두’는 저장할 때 현재 exact selection들로 펼쳐지며 GPT에게 전달되지 않습니다. 카탈로그 전체 모드는 새 selection을 자동 반영합니다.",
+    "settings.modelEffortRequired": "{model} 모델의 추론 에포트를 하나 이상 선택하세요.",
+    "settings.refreshModels": "모델 불러오기 재시도",
+    "settings.refreshing": "모델을 다시 불러오는 중…",
+    "settings.refreshed": "모델 목록을 불러왔습니다."
+  },
+  ja: {
+    "settings.allowedExactSelections": "最初にモデルを選び、モデルごとに許可する推論エフォートを選択してください。",
+    "settings.allowedModels": "モデル",
+    "settings.effortsByModel": "選択したモデルごとの推論エフォート",
+    "settings.selectAllEfforts": "すべて",
+    "settings.partialEffortsSelected": "一部のエフォートが選択されています。",
+    "settings.additionalServiceTiers": "追加のサービスティア構成",
+    "settings.selectionCount": "完全一致の選択: {count} 件",
+    "settings.automaticNotice": "GPT は、この範囲に含まれる正確な model、reasoningEffort、および任意の serviceTier のみ送信できます。「すべて」は保存時に現在の exact selection に展開され、GPT には送信されません。カタログ全体モードでは新しい selection が自動的に追加されます。",
+    "settings.modelEffortRequired": "{model} の推論エフォートを 1 つ以上選択してください。",
+    "settings.refreshModels": "モデル読み込みを再試行",
+    "settings.refreshing": "モデルを再読み込み中…",
+    "settings.refreshed": "モデル一覧を読み込みました。"
+  },
+  "zh-Hans": {
+    "settings.allowedExactSelections": "请先选择模型，再为每个模型选择允许的推理强度。",
+    "settings.allowedModels": "模型",
+    "settings.effortsByModel": "所选模型的推理强度",
+    "settings.selectAllEfforts": "全部",
+    "settings.partialEffortsSelected": "已选择部分推理强度。",
+    "settings.additionalServiceTiers": "其他服务层级组合",
+    "settings.selectionCount": "{count} 个精确选择",
+    "settings.automaticNotice": "GPT 只能发送此范围内的精确 model、reasoningEffort 和可选 serviceTier。“全部”会在保存时展开为当前的精确选择，不会发送给 GPT。目录可见模式会自动包含新发现的选择。",
+    "settings.modelEffortRequired": "请为 {model} 至少选择一个推理强度。",
+    "settings.refreshModels": "重试加载模型",
+    "settings.refreshing": "正在重新加载模型…",
+    "settings.refreshed": "已加载模型列表。"
+  },
+  "zh-Hant": {
+    "settings.allowedExactSelections": "請先選擇模型，再為每個模型選擇允許的推理強度。",
+    "settings.allowedModels": "模型",
+    "settings.effortsByModel": "所選模型的推理強度",
+    "settings.selectAllEfforts": "全部",
+    "settings.partialEffortsSelected": "已選擇部分推理強度。",
+    "settings.additionalServiceTiers": "其他服務層級組合",
+    "settings.selectionCount": "{count} 個精確選擇",
+    "settings.automaticNotice": "GPT 只能傳送此範圍內的精確 model、reasoningEffort 和選用 serviceTier。「全部」會在儲存時展開為目前的精確選擇，不會傳送給 GPT。目錄可見模式會自動包含新發現的選擇。",
+    "settings.modelEffortRequired": "請為 {model} 至少選擇一個推理強度。",
+    "settings.refreshModels": "重試載入模型",
+    "settings.refreshing": "正在重新載入模型…",
+    "settings.refreshed": "已載入模型清單。"
+  },
+  es: {
+    "settings.allowedExactSelections": "Selecciona primero los modelos y después los niveles de razonamiento permitidos para cada uno.",
+    "settings.allowedModels": "Modelos",
+    "settings.effortsByModel": "Niveles de razonamiento por modelo seleccionado",
+    "settings.selectAllEfforts": "Todos",
+    "settings.partialEffortsSelected": "Hay algunos niveles seleccionados.",
+    "settings.additionalServiceTiers": "Variantes adicionales de nivel de servicio",
+    "settings.selectionCount": "{count} selecciones exactas",
+    "settings.automaticNotice": "GPT solo puede enviar un model, reasoningEffort y serviceTier opcional exactos incluidos en este intervalo. «Todos» se expande a las selecciones exactas actuales al guardar y no se envía a GPT. El modo de catálogo visible incluye automáticamente las selecciones nuevas.",
+    "settings.modelEffortRequired": "Selecciona al menos un nivel de razonamiento para {model}.",
+    "settings.refreshModels": "Reintentar la carga de modelos",
+    "settings.refreshing": "Reintentando la carga de modelos…",
+    "settings.refreshed": "Lista de modelos cargada."
+  },
+  fr: {
+    "settings.allowedExactSelections": "Sélectionnez d’abord les modèles, puis les niveaux de raisonnement autorisés pour chacun.",
+    "settings.allowedModels": "Modèles",
+    "settings.effortsByModel": "Niveaux de raisonnement par modèle sélectionné",
+    "settings.selectAllEfforts": "Tous",
+    "settings.partialEffortsSelected": "Certains niveaux sont sélectionnés.",
+    "settings.additionalServiceTiers": "Variantes supplémentaires de niveau de service",
+    "settings.selectionCount": "{count} sélections exactes",
+    "settings.automaticNotice": "GPT ne peut envoyer qu’un model, un reasoningEffort et un serviceTier facultatif exacts compris dans cette plage. « Tous » est développé en sélections exactes actuelles lors de l’enregistrement et n’est pas envoyé à GPT. Le mode catalogue visible inclut automatiquement les nouvelles sélections.",
+    "settings.modelEffortRequired": "Sélectionnez au moins un niveau de raisonnement pour {model}.",
+    "settings.refreshModels": "Réessayer de charger les modèles",
+    "settings.refreshing": "Nouvelle tentative de chargement des modèles…",
+    "settings.refreshed": "Liste des modèles chargée."
+  },
+  de: {
+    "settings.allowedExactSelections": "Wählen Sie zuerst die Modelle und dann die zulässigen Reasoning-Stufen für jedes Modell aus.",
+    "settings.allowedModels": "Modelle",
+    "settings.effortsByModel": "Reasoning-Stufen nach ausgewähltem Modell",
+    "settings.selectAllEfforts": "Alle",
+    "settings.partialEffortsSelected": "Einige Reasoning-Stufen sind ausgewählt.",
+    "settings.additionalServiceTiers": "Zusätzliche Service-Tier-Varianten",
+    "settings.selectionCount": "{count} exakte Auswahlen",
+    "settings.automaticNotice": "GPT kann nur ein exaktes model, reasoningEffort und optionales serviceTier aus diesem Bereich senden. „Alle“ wird beim Speichern in die aktuellen exakten Auswahlen aufgelöst und nicht an GPT gesendet. Der katalogsichtbare Modus übernimmt neue Auswahlen automatisch.",
+    "settings.modelEffortRequired": "Wählen Sie mindestens eine Reasoning-Stufe für {model} aus.",
+    "settings.refreshModels": "Laden der Modelle erneut versuchen",
+    "settings.refreshing": "Modelle werden erneut geladen…",
+    "settings.refreshed": "Modellliste geladen."
+  },
+  pt: {
+    "settings.allowedExactSelections": "Selecione primeiro os modelos e depois os níveis de raciocínio permitidos para cada um.",
+    "settings.allowedModels": "Modelos",
+    "settings.effortsByModel": "Níveis de raciocínio por modelo selecionado",
+    "settings.selectAllEfforts": "Todos",
+    "settings.partialEffortsSelected": "Alguns níveis estão selecionados.",
+    "settings.additionalServiceTiers": "Variantes adicionais de nível de serviço",
+    "settings.selectionCount": "{count} seleções exatas",
+    "settings.automaticNotice": "O GPT só pode enviar model, reasoningEffort e serviceTier opcional exatos dentro deste intervalo. “Todos” é expandido para as seleções exatas atuais ao salvar e não é enviado ao GPT. O modo de catálogo visível inclui automaticamente novas seleções.",
+    "settings.modelEffortRequired": "Selecione pelo menos um nível de raciocínio para {model}.",
+    "settings.refreshModels": "Tentar carregar os modelos novamente",
+    "settings.refreshing": "Tentando carregar os modelos novamente…",
+    "settings.refreshed": "Lista de modelos carregada."
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

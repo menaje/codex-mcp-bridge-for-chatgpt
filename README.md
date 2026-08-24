@@ -120,9 +120,13 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - Activity-card visibility: `always`, `background-only`, or `never`;
 - completion handoff: `off` or `auto-handoff` while a card is mounted.
 
+In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary exact `ModelSelection` entries; no synthetic `all` value is persisted or exposed to GPT, and service-tier variants remain separate. Catalog-visible mode stays dynamic and can include later catalog additions.
+
+Opening Settings resolves the model catalog through the normal short-lived cache. There is no persistent refresh control or polling; when the lookup is stale or fails, the card keeps the last-known-good catalog and shows a contextual retry action.
+
 The Activity card has one conversation-scoped flat-feed layout. Older saved
-`agent-list` and `activity-summary` values are migrated to that same feed; there
-is no layout selector.
+layout preferences are safely discarded; there is no layout selector or active
+layout setting.
 
 The saved default folder is the only start path for a new Activity or explicit fresh Agent context. Existing Agent threads keep their admission-time folder and sandbox even after Settings changes. The folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
 

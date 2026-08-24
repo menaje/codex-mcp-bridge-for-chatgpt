@@ -16,8 +16,6 @@ import {
 
 export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
 export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
-export const ACTIVITY_CARD_VIEWS = ["agent-list", "activity-summary"] as const;
-export type ActivityCardView = (typeof ACTIVITY_CARD_VIEWS)[number];
 export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
@@ -37,7 +35,6 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   activityCardVisibility: ActivityCardVisibility;
-  activityCardView: ActivityCardView;
   completionHandoff: CompletionHandoffMode;
 };
 
@@ -93,7 +90,6 @@ export class UserSettingsStore {
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       activityCardVisibility: "always",
-      activityCardView: "agent-list",
       completionHandoff: "off"
     });
     this.settings = cloneSettings(this.initial);
@@ -236,9 +232,6 @@ export class UserSettingsStore {
     if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
       throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
     }
-    if (!ACTIVITY_CARD_VIEWS.includes(candidate.activityCardView)) {
-      throw new Error(`Invalid Activity card view: ${String(candidate.activityCardView)}`);
-    }
     if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
       throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
     }
@@ -367,7 +360,8 @@ export class UserSettingsStore {
       "autoResumeTtlMs",
       "completionDeliveryMode",
       "defaultModel",
-      "defaultReasoningEffort"
+      "defaultReasoningEffort",
+      "activityCardView"
     ].filter(
       (key) => key in value
     );
@@ -377,7 +371,6 @@ export class UserSettingsStore {
       "modelPolicy" in value &&
       "uiLocalePreference" in value &&
       "activityCardVisibility" in value &&
-      "activityCardView" in value &&
       "completionHandoff" in value
     ) return;
     this.retiredSettingsMigrationPending = true;
@@ -495,10 +488,6 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Bridge
       value.activityCardVisibility === "never"
         ? value.activityCardVisibility
         : "always",
-    activityCardView:
-      value.activityCardView === "agent-list" || value.activityCardView === "activity-summary"
-        ? value.activityCardView
-        : "agent-list",
     completionHandoff:
       value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
         ? value.completionHandoff

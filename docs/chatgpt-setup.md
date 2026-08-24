@@ -80,8 +80,12 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 - card visibility;
 - optional completion handoff.
 
+For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved selections; it does not add an `all` value to the tool schema, does not select every service tier, and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
+
+The model catalog is loaded when Settings opens, using the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails.
+
 There is one conversation-scoped flat Activity feed. Retired saved layout
-values map to this feed and are not selectable in Settings.
+preferences are safely discarded and are not selectable in Settings.
 
 With one allowed root the default folder starts as that root. With multiple allowed roots, save one folder before starting a new Activity. The card cannot widen operator roots/capabilities, change tunnel credentials, or change the Codex approval policy.
 
@@ -95,7 +99,7 @@ The public `codex_task` descriptor must never contain `cwd`. New Activities and 
 
 ### Dynamic model/effort behavior
 
-Opening or manually refreshing Settings uses the same bridge catalog adapter. App Server `model/list` is authoritative for App Server, including picker visibility, supported/default efforts, upgrade metadata, and service tiers. A short TTL avoids redundant lookup; a refresh failure preserves and labels the last known good catalog instead of replacing it with an empty list.
+Opening Settings and its failure-only retry action use the same bridge catalog adapter. App Server `model/list` is authoritative for App Server, including picker visibility, supported/default efforts, upgrade metadata, and service tiers. A short TTL avoids redundant lookup; a failed lookup preserves and labels the last known good catalog instead of replacing it with an empty list.
 
 Effort options display short localized names only. The selected description is a separate helper linked with `aria-describedby`. Changing model immediately rebuilds supported efforts and the helper. Unknown new effort IDs remain visible with their canonical label and deterministic localized fallback description.
 
@@ -204,7 +208,7 @@ In a new ChatGPT conversation:
 
 1. open Settings and confirm it renders without an old-resource error;
 2. change a harmless preference and save;
-3. select **Refresh model list** and confirm catalog source/fingerprint remains populated;
+3. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 4. choose **Restore default settings**, confirm, and verify the card rerenders;
 5. confirm `codex_task` has no `cwd` and fixed access modes have no `sandbox`;
 6. start a narrow foreground read-only Activity and confirm it uses the saved folder;
