@@ -5,7 +5,6 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PA
 
 SCRIPT_DIR="${0:A:h}"
 REPO_ROOT="${CODEX_MCP_BRIDGE_REPO_ROOT:-${SCRIPT_DIR:h}}"
-BRIDGE_ROOT="${CODEX_MCP_BRIDGE_ROOT:-$REPO_ROOT}"
 ACCOUNT="${USER:-$(id -un)}"
 
 if [[ -z "${CONTROL_PLANE_API_KEY:-}" ]]; then
@@ -23,13 +22,4 @@ if [[ -z "$NPM_BIN" ]]; then
 fi
 
 cd "$REPO_ROOT"
-LAUNCHER_ROOT_ARGS=(--root "$BRIDGE_ROOT")
-for LAUNCHER_ARG in "$@"; do
-  if [[ "$LAUNCHER_ARG" == "--root" ]]; then
-    # Explicit repeatable roots replace the compatibility default instead of
-    # silently adding the repository root to the operator's allowlist.
-    LAUNCHER_ROOT_ARGS=()
-    break
-  fi
-done
-exec "$NPM_BIN" run bridge:secure -- "${LAUNCHER_ROOT_ARGS[@]}" --no-build "$@"
+exec "$NPM_BIN" run bridge:secure -- --no-build "$@"

@@ -14,6 +14,7 @@ import {
   PROJECT_LIMIT_EXCEEDED,
   PROJECT_NOT_FOUND,
   PROJECT_REQUIRED,
+  PROJECT_SETUP_REQUIRED,
   PROJECT_UNAVAILABLE,
   ProjectRegistry,
   legacyDefaultProject,
@@ -60,11 +61,11 @@ describe("project registry", () => {
     expect(() => new ProjectRegistry(
       [{ id: "outside", label: "Outside", cwd: outside }],
       [root]
-    )).toThrow(/outside allowed roots/);
+    )).toThrow(/legacy operator restriction/);
     expect(() => new ProjectRegistry(
       [{ id: "missing", label: "Missing", cwd: path.join(root, "missing") }],
       [root]
-    )).toThrow(/unavailable/);
+    )).toThrow(/available folder/);
     expect(() => new ProjectRegistry(
       [{ id: "relative", label: "Relative", cwd: "workspace" }],
       [root]
@@ -86,7 +87,19 @@ describe("project registry", () => {
 
     expect(() => new ProjectRegistry([
       { id: "escaped", label: "Escaped", cwd: path.join(configuredRoot, "workspace") }
-    ], [startupCeiling])).toThrow(/outside allowed roots/);
+    ], [startupCeiling])).toThrow(/legacy operator restriction/);
+  });
+
+  it("registers unrelated absolute folders when no legacy operator restriction is configured", () => {
+    const first = temporaryDirectory("project-anywhere-first-");
+    const second = temporaryDirectory("project-anywhere-second-");
+    const registry = new ProjectRegistry([
+      { id: "first", label: "First", cwd: first },
+      { id: "second", label: "Second", cwd: second }
+    ], [], { defaultProjectId: "second" });
+
+    expect(registry.projects.map(({ cwd }) => cwd)).toEqual([first, second]);
+    expect(registry.resolve()).toMatchObject({ id: "second", cwd: second });
   });
 
   it("rejects IDs and canonical paths that collide after normalization", () => {
@@ -134,7 +147,10 @@ describe("project registry", () => {
     expect(new ProjectRegistry(projects, [root], {
       defaultProjectId: "second"
     }).resolve()).toMatchObject({ id: "second", cwd: second });
-    expect(new ProjectRegistry([projects[0]!], [root]).resolve()).toMatchObject({ id: "first" });
+    const sole = new ProjectRegistry([projects[0]!], [root]);
+    expect(sole.defaultProjectId).toBe("first");
+    expect(sole.resolve()).toMatchObject({ id: "first" });
+    expect(() => new ProjectRegistry([], []).resolve()).toThrow(PROJECT_SETUP_REQUIRED);
     expect(() => new ProjectRegistry(projects, [root]).resolve()).toThrow(PROJECT_REQUIRED);
     expect(() => new ProjectRegistry(projects, [root]).resolve("unknown")).toThrow(
       PROJECT_NOT_FOUND

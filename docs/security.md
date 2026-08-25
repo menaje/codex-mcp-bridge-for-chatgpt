@@ -2,7 +2,7 @@
 
 ## Trust boundary
 
-The bridge is designed for a single trusted operator connecting ChatGPT to a narrow local repository through OpenAI Secure MCP Tunnel. It binds to loopback and does not create a public ingress endpoint.
+The bridge is designed for a single trusted operator connecting ChatGPT to explicitly registered local project folders through OpenAI Secure MCP Tunnel. It binds to loopback and does not create a public ingress endpoint.
 
 The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, filesystem permissions, and operating-system isolation are separate layers. No one layer replaces the others.
 
@@ -19,8 +19,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   lease correlated to the mounted widget session. `codex_activity` explicitly
   opens that localized flat Activity feed. Its
   private metadata remains bounded and redacted; public rows omit Agent/job/thread
-  IDs and expose only final folder names when multiple projects must be distinguished,
-  never full working paths.
+  IDs, expose each Agent's current or latest effective model/effort selection, and
+  show only final folder names when multiple projects must be distinguished, never
+  full working paths.
 - `codex_cancel` force-stops one scope-owned running job through exact App
   Server turn interruption or the tracked worker process group; partial
   filesystem changes are not rolled back.
@@ -63,11 +64,12 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   revision is checked before fresh target-backend catalog work and again
   immediately before the single atomic commit, so a concurrent card cannot be
   overwritten across that await boundary. An unverified CLI fallback cannot
-  activate policy changes. Project folders are resolved with `realpath`, checked
-  against immutable allowed roots, and rejected on normalized-ID or canonical-path
-  collisions. The operation cannot widen either the root policy or model-selection
-  ceiling. Settings generation 3 is current and retained generation 2 uses the
-  same operation contract; generation-1 flat inputs are rejected.
+  activate policy changes. Project folders are resolved with `realpath`, must be
+  existing directories, and are rejected on normalized-ID or canonical-path
+  collisions. The card generates stable routing IDs internally; users edit only
+  project names and folders. Reset preserves the complete project registry,
+  including order, recovery entries, and default project. The current Settings
+  resource uses generation 5 and retains generation 4 for in-flight compatibility.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
@@ -90,21 +92,19 @@ the network as the current macOS user.
 ## Enforced defaults
 
 - Loopback host binding.
-- Real-path allowlist for working directories. The bundled launcher accepts a
-  repeatable `--root <path>`, canonicalizes and de-duplicates each existing
-  directory, and fails before startup when an entry cannot be represented
-  exactly. These roots remain an operator ceiling, not GPT-selectable paths.
-- A settings-managed registry of stable project IDs, Unicode labels, and
-  canonical folders beneath allowed roots. `codex_task` accepts only projected
+- A single settings-managed registry of stable project IDs, Unicode labels, and
+  canonical existing folders. A normal fresh install starts with no project;
+  the first registered entry becomes the default automatically. `codex_task`
+  accepts only projected
   registered project IDs, resolves paths internally, and pins the admitted
-  identity to the Activity, job, session, and Agent thread. An optional default
-  (or sole project) handles omission; existing Activities and continued/forked
+  identity to the Activity, job, session, and Agent thread. The default project
+  handles omission; existing Activities and continued/forked
   threads cannot silently switch projects. Per-call cwd is absent from and
-  rejected by the strict Task contract.
-- Recovery-only project metadata is retained when a saved folder disappears or
-  no longer satisfies a narrowed root policy. It is marked unavailable in the
-  Settings view and cannot admit work; saving requires fixing or
-  removing every unavailable entry.
+  rejected by the strict Task contract. With an empty registry, the task returns
+  structured `PROJECT_SETUP_REQUIRED` and directs GPT to `codex_settings`.
+- Recovery-only project metadata is retained when a saved folder disappears. It
+  is marked unavailable in Settings and cannot admit new work; restoring general
+  defaults does not erase or rewrite it.
 - Read-only sandbox.
 - `on-request` approval policy.
 - Thirty concurrent jobs at most.

@@ -92,11 +92,17 @@ export class UserSettingsStore {
     this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.now = options.now || Date.now;
-    const initialDefaultCwd = config.allowedRoots.length === 1 ? config.allowedRoots[0] : null;
-    const initialRegistry = new ProjectRegistry(
-      initialDefaultCwd === null ? [] : [legacyDefaultProject(initialDefaultCwd)],
+    // Preserve the former single-root bootstrap only for deployments that
+    // still explicitly configure the retired ROOTS compatibility ceiling.
+    // The bundled launcher sets no roots, so every normal fresh install starts
+    // empty and onboards projects through Settings.
+    const legacyBootstrapCwd = config.allowedRoots.length === 1
+      ? config.allowedRoots[0]!
+      : null;
+    const legacyBootstrapRegistry = new ProjectRegistry(
+      legacyBootstrapCwd ? [legacyDefaultProject(legacyBootstrapCwd)] : [],
       config.allowedRoots,
-      { defaultProjectId: initialDefaultCwd === null ? null : "default" }
+      { defaultProjectId: legacyBootstrapCwd ? "default" : null }
     );
     this.initial = this.validate({
       schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
@@ -112,9 +118,9 @@ export class UserSettingsStore {
           : undefined
       ),
       usePriorityServiceTier: false,
-      projects: initialRegistry.projects,
-      defaultProjectId: initialRegistry.defaultProjectId,
-      defaultCwd: initialDefaultCwd,
+      projects: legacyBootstrapRegistry.projects,
+      defaultProjectId: legacyBootstrapRegistry.defaultProjectId,
+      defaultCwd: legacyBootstrapCwd,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
       activityCardVisibility: "always",
@@ -166,7 +172,7 @@ export class UserSettingsStore {
       !hasOwn(patch, "defaultProjectId")
     ) {
       throw new Error(
-        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is outside the current allowed roots. Save an allowed default working folder with this update.`
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project folder is unavailable. Update that project folder with this save.`
       );
     }
     const candidate: BridgeUserSettings = {
@@ -258,15 +264,33 @@ export class UserSettingsStore {
 
   reset(expectedRevision: number): BridgeUserSettings {
     this.assertRevision(expectedRevision);
+    // Restoring defaults applies only to general bridge preferences. Projects
+    // are user data: preserve their IDs, labels, paths, order, availability,
+    // and selected default exactly across the reset.
+    const preservedRegistry = new ProjectRegistry(
+      this.settings.projects,
+      this.config.allowedRoots,
+      {
+        defaultProjectId: this.settings.defaultProjectId,
+        retainUnavailable: true
+      }
+    );
     const validated = this.validate({
       ...this.initial,
+      projects: preservedRegistry.projects,
+      defaultProjectId: preservedRegistry.defaultProjectId,
+      defaultCwd: this.settings.defaultCwd,
       revision: this.settings.revision + 1,
       updatedAt: new Date(this.now()).toISOString()
+    }, { retainUnavailableProjects: true });
+    // Runtime settings hide an unavailable compatibility mirror, while the
+    // persisted recovery record retains it exactly as loading does.
+    this.persist({
+      ...validated,
+      defaultCwd: compatibilityDefaultCwd(preservedRegistry)
     });
-    this.persist(validated);
     this.settings = validated;
-    this.unavailableDefaultCwd = undefined;
-    this.unavailableProjectIds.clear();
+    this.refreshProjectAvailability(validated);
     return this.current;
   }
 
@@ -283,19 +307,19 @@ export class UserSettingsStore {
   resolveCwd(): string {
     if (this.unavailableDefaultCwd !== undefined) {
       throw new Error(
-        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is no longer inside an allowed root. Update Codex settings before starting a new Activity.`
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project folder is unavailable. Update it in Codex settings before starting a new Activity.`
       );
     }
     if (!this.settings.defaultCwd) {
       throw new Error(
-        `${DEFAULT_CWD_REQUIRED}: Save a default working folder in Codex settings before starting a new Activity.`
+        `${DEFAULT_CWD_REQUIRED}: Register a project folder in Codex settings before starting a new Activity.`
       );
     }
     try {
       return requireAllowedCwd(this.settings.defaultCwd, this.config.allowedRoots);
     } catch {
       throw new Error(
-        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default working folder is no longer inside an allowed root. Update Codex settings before starting a new Activity.`
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project folder is unavailable. Update it in Codex settings before starting a new Activity.`
       );
     }
   }
@@ -572,13 +596,13 @@ export class UserSettingsStore {
       reconciled.defaultCwd = null;
       persisted.defaultCwd = effectiveDefault.project.cwd;
       this.warnings.push(
-        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project is outside the current allowed roots or unavailable. Save an allowed default before starting a new Activity.`
+        `${DEFAULT_CWD_NOT_ALLOWED}: The saved default project folder is unavailable. Update it in Codex settings before starting a new Activity.`
       );
     }
     for (const entry of projectRegistry.availability) {
       if (entry.available || entry.project.id === effectiveDefaultId) continue;
       this.warnings.push(
-        `PROJECT_UNAVAILABLE: Saved project "${entry.project.id}" is outside the current allowed roots or unavailable. Its metadata was retained for recovery, but it cannot admit new work.`
+        `PROJECT_UNAVAILABLE: Saved project "${entry.project.id}" folder is unavailable. Its metadata was retained for recovery, but it cannot admit new work.`
       );
     }
     if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {

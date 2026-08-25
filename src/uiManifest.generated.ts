@@ -10,8 +10,8 @@ export const UI_RESOURCE_MANIFEST = {
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "26e3f302a3f067250eb94111f8d639c2724c8e9a5879256551ae329bf51aad7d",
-      "uri": "ui://codex-mcp-bridge/settings/26e3f302a3f0.html",
+      "digest": "5fd94685e0708f71bdc678bc88e6f0216a477449c8442afabb396648c359d264",
+      "uri": "ui://codex-mcp-bridge/settings/5fd94685e070.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -27,20 +27,20 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and per-response Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 3
+          "codex/uiContractGeneration": 5
         }
       },
       "previous": [
         {
-          "digest": "783769560252f4a8d482d2b596f628c16b0023542b7feb80595ede7b15952943",
-          "uri": "ui://codex-mcp-bridge/settings/783769560252.html",
+          "digest": "ee7d1ab2163eba701352a52d559e41198e4fb9f1af9f38bb2f45d49014a90279",
+          "uri": "ui://codex-mcp-bridge/settings/ee7d1ab2163e.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -56,26 +56,26 @@ export const UI_RESOURCE_MANIFEST = {
                 },
                 "domain": "https://web-sandbox.oaiusercontent.com"
               },
-              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and per-response Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
               "openai/widgetPrefersBorder": true,
               "openai/widgetCSP": {
                 "connect_domains": [],
                 "resource_domains": []
               },
               "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-              "codex/uiContractGeneration": 2
+              "codex/uiContractGeneration": 4
             }
           }
         }
       ]
     },
     "activity": {
-      "digest": "bf10235bcfdd297702f6193f6ea39725594b9c8a3acba91f5341e3ddc3498251",
-      "uri": "ui://codex-mcp-bridge/activity/bf10235bcfdd.html",
+      "digest": "bdc1b6148bc3db3ff48c80005f27c4f2aef55c59a53f5f7fe5d92e4debebaed8",
+      "uri": "ui://codex-mcp-bridge/activity/bdc1b6148bc3.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
-          "description": "Localized response-grouped flat feed for the current conversation's Codex Activities and Agents.",
+          "description": "Localized flat feed with current or latest Codex model and effort selections.",
           "mimeType": "text/html;profile=mcp-app"
         },
         "content": {
@@ -87,7 +87,7 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Shows response-grouped Codex work as a flat feed; only the newest automatic card keeps live watch ownership.",
+          "openai/widgetDescription": "Shows Codex work and each Agent's current or latest model and effort selection as a flat feed.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             "connect_domains": [],
@@ -99,12 +99,12 @@ export const UI_RESOURCE_MANIFEST = {
       },
       "previous": [
         {
-          "digest": "577a42a7231c64f0ee314431e5f0010b1a4f3684affbaa0c1e72ee54f3cc0d7b",
-          "uri": "ui://codex-mcp-bridge/activity/577a42a7231c.html",
+          "digest": "0012c27272a00a5bb7ff93b1de7942f35ea7f622d1282d1d8f8a05a5e565bc2c",
+          "uri": "ui://codex-mcp-bridge/activity/0012c27272a0.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",
-              "description": "Localized response-grouped flat feed for the current conversation's Codex Activities and Agents.",
+              "description": "Localized flat feed with current or latest Codex model and effort selections.",
               "mimeType": "text/html;profile=mcp-app"
             },
             "content": {
@@ -116,14 +116,14 @@ export const UI_RESOURCE_MANIFEST = {
                 },
                 "domain": "https://web-sandbox.oaiusercontent.com"
               },
-              "openai/widgetDescription": "Shows response-grouped Codex work as a flat feed; only the newest automatic card keeps live watch ownership.",
+              "openai/widgetDescription": "Shows Codex work and each Agent's current or latest model and effort selection as a flat feed.",
               "openai/widgetPrefersBorder": true,
               "openai/widgetCSP": {
                 "connect_domains": [],
                 "resource_domains": []
               },
               "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-              "codex/uiContractGeneration": 3
+              "codex/uiContractGeneration": 4
             }
           }
         }

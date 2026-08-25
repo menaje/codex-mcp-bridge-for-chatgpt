@@ -5,6 +5,7 @@ export const PROJECT_ID_MAX_LENGTH = 64;
 export const PROJECT_LABEL_MAX_LENGTH = 120;
 export const MAX_REGISTERED_PROJECTS = 100;
 
+export const PROJECT_SETUP_REQUIRED = "PROJECT_SETUP_REQUIRED";
 export const PROJECT_REQUIRED = "PROJECT_REQUIRED";
 export const PROJECT_NOT_FOUND = "PROJECT_NOT_FOUND";
 export const PROJECT_UNAVAILABLE = "PROJECT_UNAVAILABLE";
@@ -114,10 +115,9 @@ export class ProjectRegistry {
       if (!path.isAbsolute(root) || /[\r\n\0]/u.test(root)) {
         throw new Error("Allowed project roots must be absolute paths.");
       }
-      // BridgeConfig canonicalizes this security ceiling once at startup.
-      // Never realpath it again here: if the original directory is later
-      // replaced by a symlink, re-resolving would silently move the ceiling to
-      // the symlink target and admit a path the operator never configured.
+      // Explicit roots are retained only for backwards-compatible operator
+      // restrictions. A normal installation passes an empty list and uses the
+      // project registry itself as the sole source of working folders.
       return path.normalize(root);
     });
     const seenIds = new Set<string>();
@@ -145,7 +145,7 @@ export class ProjectRegistry {
       } catch (error) {
         if (!options.retainUnavailable) {
           throw new Error(
-            `${PROJECT_CWD_NOT_ALLOWED}: Project "${id}" cwd is unavailable or outside allowed roots: ${error instanceof Error ? error.message : String(error)}`
+            `${PROJECT_CWD_NOT_ALLOWED}: Project "${id}" must point to an available folder: ${error instanceof Error ? error.message : String(error)}`
           );
         }
         unavailableReason = error instanceof Error ? error.message : String(error);
@@ -167,7 +167,7 @@ export class ProjectRegistry {
 
     const requestedDefault = options.defaultProjectId ?? null;
     this.selectedDefaultProjectId = requestedDefault === null
-      ? null
+      ? this.entries.length === 1 ? this.entries[0]!.project.id : null
       : normalizeProjectId(requestedDefault);
     if (
       this.selectedDefaultProjectId !== null &&
@@ -212,6 +212,11 @@ export class ProjectRegistry {
   }
 
   resolve(projectId?: string): ProjectTarget {
+    if (this.entries.length === 0) {
+      throw new Error(
+        `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting new work.`
+      );
+    }
     const selectedId = projectId === undefined
       ? this.effectiveDefaultProjectId
       : normalizeProjectId(projectId);
@@ -226,7 +231,7 @@ export class ProjectRegistry {
     }
     if (!entry.available) {
       throw new Error(
-        `${PROJECT_UNAVAILABLE}: Project "${selectedId}" is unavailable or outside the current allowed roots.`
+        `${PROJECT_UNAVAILABLE}: Project "${selectedId}" folder is unavailable. Check or update it in Codex settings.`
       );
     }
     return { ...entry.project };

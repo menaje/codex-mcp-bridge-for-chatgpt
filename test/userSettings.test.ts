@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,11 +8,9 @@ import { UserSettingsStore } from "../src/userSettings.js";
 
 describe("user settings store", () => {
   it("persists validated settings atomically with private file permissions", () => {
-    const root = temporaryDirectory("bridge-root-");
     const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_ROOTS: root,
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
       CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
@@ -31,7 +29,9 @@ describe("user settings store", () => {
         constraints: { allowDelegation: true }
       },
       usePriorityServiceTier: false,
-      defaultCwd: config.allowedRoots[0],
+      projects: [],
+      defaultProjectId: null,
+      defaultCwd: null,
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
       activityCardVisibility: "always",
@@ -75,6 +75,45 @@ describe("user settings store", () => {
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
   });
 
+  it("registers unrelated folders, makes the first project default, and preserves projects on reset", () => {
+    const first = temporaryDirectory("bridge-project-first-");
+    const second = temporaryDirectory("bridge-project-second-");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1"
+    });
+    const store = new UserSettingsStore(config);
+
+    const firstSaved = store.updateWithProjectOperations({}, [{
+      kind: "add",
+      project: { id: "first", label: "첫 프로젝트", cwd: first }
+    }], 0);
+    expect(firstSaved).toMatchObject({
+      defaultProjectId: "first",
+      defaultCwd: realpathSync(first)
+    });
+
+    const customized = store.updateWithProjectOperations({
+      accessStrategy: "always-full",
+      uiLocalePreference: "ko",
+      defaultProjectId: "second"
+    }, [{
+      kind: "add",
+      project: { id: "second", label: "Second", cwd: second }
+    }], 1);
+    const projectsBeforeReset = customized.projects;
+
+    const reset = store.reset(2);
+    expect(reset).toMatchObject({
+      revision: 3,
+      accessStrategy: "adaptive",
+      uiLocalePreference: "auto",
+      projects: projectsBeforeReset,
+      defaultProjectId: "second",
+      defaultCwd: realpathSync(second)
+    });
+  });
+
   it("rejects stale cards and values beyond bridge-enforced limits", () => {
     const root = temporaryDirectory("bridge-root-");
     const outside = temporaryDirectory("bridge-outside-");
@@ -90,7 +129,7 @@ describe("user settings store", () => {
 
     expect(() => store.update({ uiLocalePreference: "auto" }, 0)).toThrow(/SETTINGS_REVISION_CONFLICT/);
     expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/security policy disables/);
-    expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/outside allowed roots/);
+    expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/legacy operator restriction/);
     expect(() => store.update({ maxConcurrentJobs: 5 }, 1)).toThrow(/Concurrent job limit/);
     expect(() =>
       store.update({ uiLocalePreference: "it" as "ko" }, 1)
@@ -687,6 +726,20 @@ describe("user settings store", () => {
       defaultCwd: oldCanonicalRoot
     });
 
+    const reset = narrowed.reset(4);
+    expect(reset).toMatchObject({
+      revision: 5,
+      projects: [{ id: "default", cwd: oldCanonicalRoot }],
+      defaultProjectId: "default",
+      defaultCwd: null
+    });
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
+      revision: 5,
+      projects: [{ id: "default", cwd: oldCanonicalRoot }],
+      defaultProjectId: "default",
+      defaultCwd: oldCanonicalRoot
+    });
+
     const restored = new UserSettingsStore(oldConfig, { stateFile });
     expect(restored.resolveProject()).toMatchObject({ id: "default", cwd: oldCanonicalRoot });
     expect(restored.current.defaultCwd).toBe(oldCanonicalRoot);
@@ -835,8 +888,7 @@ describe("user settings store", () => {
     expect(reconciled.current).not.toHaveProperty("autoResumeTtlMs");
     expect(reconciled.loadWarnings).toHaveLength(5);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
-    expect(reconciled.loadWarnings.join(" ")).toMatch(/outside the current allowed roots/);
-    expect(reconciled.loadWarnings.join(" ")).toMatch(/save an allowed default/i);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/default project folder is unavailable/i);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/taskTimeoutMs was retired and removed/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/Activity-managed/);
     expect(() => reconciled.resolveCwd()).toThrow(/DEFAULT_CWD_NOT_ALLOWED/);

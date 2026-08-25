@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
@@ -58,7 +58,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const noAuth = parseBool(read("NO_AUTH"));
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
   const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "mcp-server");
-  const allowedRoots = parseAllowedRoots(read("ROOTS") || process.cwd());
+  // Project folders are registered in user settings. ROOTS remains only as a
+  // backwards-compatible operator ceiling for existing deployments that set
+  // it explicitly; a normal installation has no second root registry.
+  const configuredRoots = normalizeOptional(read("ROOTS"));
+  const allowedRoots = parseAllowedRoots(configuredRoots);
   const defaultSandbox = parseSandbox(read("DEFAULT_SANDBOX") || "read-only");
   const defaultAccessStrategy = parseAccessStrategy(read("DEFAULT_ACCESS_STRATEGY") || "adaptive");
   const allowWorkspaceWrite = parseBool(read("ALLOW_WRITE"));
@@ -103,6 +107,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  if (configuredRoots) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. Remove it to manage all project folders only from Codex settings."
+    );
+  }
   if (normalizeOptional(read("FAST_RETURN_MS"))) {
     startupWarnings.push(
       "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
@@ -240,13 +249,17 @@ function parseModelSelectionCeiling(value: string | undefined): ModelChoice[] | 
 
 export function requireAllowedCwd(input: string, allowedRoots: string[]): string {
   if (!input || !path.isAbsolute(input)) {
-    throw new Error("cwd must be an absolute path inside CODEX_MCP_BRIDGE_ROOTS.");
+    throw new Error("cwd must be an absolute folder path.");
   }
 
   const cwd = realpathSync(input);
+  if (!statSync(cwd).isDirectory()) {
+    throw new Error(`cwd must be a folder: ${cwd}`);
+  }
+  if (allowedRoots.length === 0) return cwd;
   const match = allowedRoots.some((root) => isPathWithinRoot(cwd, root));
   if (!match) {
-    throw new Error(`cwd is outside allowed roots: ${cwd}`);
+    throw new Error(`cwd is outside the legacy operator restriction: ${cwd}`);
   }
   return cwd;
 }
@@ -270,7 +283,7 @@ export function resolveAllowedCwd(input: string | undefined, allowedRoots: strin
   if (allowedRoots.length === 1) {
     return allowedRoots[0];
   }
-  throw new Error("cwd is required when multiple CODEX_MCP_BRIDGE_ROOTS are configured.");
+  throw new Error("A registered project folder is required.");
 }
 
 export function enforceSandbox(config: BridgeConfig, requested?: SandboxMode): SandboxMode {
@@ -368,7 +381,8 @@ async function scanSensitiveFiles(root: string, maxFindings: number): Promise<st
   return findings.sort();
 }
 
-function parseAllowedRoots(raw: string): string[] {
+function parseAllowedRoots(raw: string | undefined): string[] {
+  if (!raw) return [];
   const roots = raw
     .split(",")
     .map((part) => part.trim())
@@ -379,9 +393,6 @@ function parseAllowedRoots(raw: string): string[] {
       }
       return realpathSync(part);
     });
-  if (roots.length === 0) {
-    throw new Error("At least one allowed root is required.");
-  }
   return Array.from(new Set(roots));
 }
 

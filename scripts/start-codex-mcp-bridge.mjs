@@ -5,11 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
-import {
-  parseLauncherArgs,
-  resolveLauncherRoots,
-  serializeLauncherRoots
-} from "./launcher-options.mjs";
+import { parseLauncherArgs } from "./launcher-options.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -35,11 +31,9 @@ async function main() {
   if (mode !== "local" && mode !== "secure") {
     throw new Error(`Unknown mode: ${mode}. Use local or secure.`);
   }
-  const roots = resolveLauncherRoots(args.roots);
-
   ensurePrerequisites();
   ensureBuilt();
-  startBridge(roots);
+  startBridge();
   await waitForHealth(`${localOriginUrl}/healthz`);
 
   if (mode === "local") {
@@ -151,13 +145,12 @@ async function startSecureTunnel() {
   await waitForever();
 }
 
-function startBridge(roots) {
+function startBridge() {
   const env = {
     ...process.env,
     CODEX_MCP_BRIDGE_HOST: host,
     CODEX_MCP_BRIDGE_PORT: port,
     CODEX_MCP_BRIDGE_NO_AUTH: "1",
-    CODEX_MCP_BRIDGE_ROOTS: serializeLauncherRoots(roots),
     CODEX_MCP_BRIDGE_ALLOWED_HOSTS: "127.0.0.1,localhost"
   };
   if (args.write) {
@@ -226,12 +219,10 @@ function isIgnorableNoAuthDoctorFailure(output) {
 
 function printHelp() {
   console.log(`Usage:
-  npm run bridge:local -- --root /absolute/repo
-  npm run bridge:local -- --root /absolute/repo-a --root /absolute/repo-b
-  npm run bridge:secure -- --root /absolute/repo --tunnel-id tunnel_...
+  npm run bridge:local
+  npm run bridge:secure -- --tunnel-id tunnel_...
 
 Options:
-  --root <path>          Allowed repository root. Repeat for multiple roots; defaults to cwd.
   --write                Enable workspace-write for this process.
   --allow-write          Keep read-only as the default, but allow explicit workspace-write calls.
   --allow-full-access    Keep read-only as the default, but allow workspace-write and danger-full-access calls.

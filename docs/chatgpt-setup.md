@@ -29,28 +29,19 @@ Create an MCP tunnel in OpenAI Platform and associate it with the ChatGPT worksp
 export CONTROL_PLANE_API_KEY="<runtime-key>"
 export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
 
-npm run bridge:secure -- --root /absolute/path/to/repository
+npm run bridge:secure
 ```
 
-For multiple disjoint operator roots, repeat `--root`; do not combine local
-paths into one broad parent merely to launch the bridge:
-
-```bash
-npm run bridge:secure -- \
-  --root /absolute/path/to/repository-a \
-  --root /absolute/path/to/repository-b
-```
-
-The launcher canonicalizes existing directories and passes the exact
-de-duplicated allowlist to the bridge. Operator roots define only the security
-ceiling. Register the named selectable projects inside those roots in Settings;
-GPT receives project IDs, not these paths.
+The launcher deliberately does not choose a filesystem project. After the
+connection is available, register one or more existing absolute folders in the
+Settings card. They may be unrelated locations anywhere on this PC. GPT receives
+only their project IDs, never their paths.
 
 The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
 
 ```bash
-npm run bridge:secure -- --root /absolute/path/to/projects --allow-write
-npm run bridge:secure -- --root /absolute/path/to/projects --allow-full-access
+npm run bridge:secure -- --allow-write
+npm run bridge:secure -- --allow-full-access
 ```
 
 Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT plugin permission is deliberately the single approval boundary.
@@ -108,19 +99,23 @@ The model catalog is loaded when Settings opens, using the bridge's short TTL an
 There is one conversation-scoped flat Activity feed. Retired saved layout
 preferences are safely discarded and are not selectable in Settings.
 
-The **Projects** section lists bridge-allowed roots separately from registered projects. Each project has a stable normalized ID, a Unicode display label, and an absolute folder. New or edited folders are canonicalized with `realpath` and must remain inside an allowed root. The card reports normalized-ID and canonical-path collisions inline. Saved IDs are read-only in the card; edit the label or folder, or remove and add the entry only when a new identity is intended.
+The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The card automatically allocates a stable normalized routing ID, keeps it out of the form, and preserves it when the name or folder changes. New or edited folders are canonicalized with `realpath`; files, missing folders, and canonical-path collisions are rejected. The first project becomes the default automatically. Removing and adding an entry creates a new internal identity.
 
-Settings card generation 3 sends `expectedRevision` and exactly one `reset` or
+Settings card generation 5 sends `expectedRevision` and exactly one `reset` or
 `patch` operation. A patch groups the ordinary settings and a bounded atomic list
 of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
 the whole saved project array. The bridge checks the revision both before a fresh
-model-catalog lookup and immediately before commit. The sole retained generation-2
-card uses the same operation contract. Generation 1 and its former flat payload
-have been evicted from the one-revision UI retention window and are rejected.
+model-catalog lookup and immediately before commit. Reset restores general
+preferences only: project IDs, names, paths, order, recovery entries, and default
+project are preserved. Generation 4 is retained in the one-revision UI window.
 
-The bundled launcher accepts disjoint operator roots as repeated `--root <path>` options. Those roots are a security ceiling, not selectable project entries, and the card cannot widen them or change tunnel credentials, operator capabilities, or the Codex approval policy.
-
-With one allowed root, existing single-folder settings migrate to a `default` project. With multiple projects, choose an optional default. A project whose folder disappears or is no longer inside a narrowed root remains visible as **Needs recovery**, but it cannot be saved or admitted until its folder is fixed or the entry is removed. The card cannot widen allowed roots/capabilities, change tunnel credentials, or change the Codex approval policy.
+On a fresh install the list is empty. When `codex_task` needs new context it returns
+`PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action, so GPT can show
+the card and explain what must be registered. A project whose folder disappears
+remains visible as **Needs recovery**, but it cannot admit work until its folder is
+fixed or the entry is removed. Existing Activity/Agent threads keep their pinned
+admission-time folder. The card cannot change tunnel credentials, operator
+capabilities, or the Codex approval policy.
 
 The compatibility default project and access strategy are independent:
 
@@ -143,7 +138,7 @@ If a saved effort is no longer supported, Settings warns instead of rewriting it
 Call `codex_status` and confirm:
 
 - the saved projects/default-project compatibility mirror, `accessStrategy`, card visibility, and language;
-- the operator-root count and mutation capability flags;
+- the saved project/default-project registry and mutation capability flags;
 - default backend and active build ID;
 - settings schema/model policy and catalog source/fingerprint/LKG status;
 - SQLite state is reachable.
@@ -229,17 +224,17 @@ only for a confirmed orphan; the original stays in thread history.
 
 `requestId` remains per logical Codex call and must be reused only for the same execution retry. Presentation correlation is absent from the public schema. A host can attach one response-level UUID as `codex/activityPresentationId` metadata to group several calls; otherwise the bridge uses each request ID as a stable per-call fallback. V4 replay excludes this presentation state, and it cannot select or bypass the saved visibility setting. The former caller-authored presentation argument has expired and is rejected.
 
-The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call in the same response may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
+The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call carrying the same host presentation identifier may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
 The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. When multiple projects are relevant, project labels remain visible across both current and collapsed history rows; full paths remain private. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 
-The feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
+The feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, each Agent's current or latest effective model/reasoning-effort selection, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input. Model labels match the Settings catalog display names and fall back to internal IDs only when necessary. A reported App Server model reroute is rendered as `selected → rerouted`; the effort remains the Job's admission-time effective effort. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
 
 The card deliberately omits a KPI dashboard, card-grid Agent list, layout selector, Activity `<details>`, timelines, Agent/job/thread IDs, full working paths, backend/worker data, command output, and general steering. Detailed diagnostics remain available in `codex_status`.
 
 Automatic duplicate suppression is keyed by `scopeId + activityPresentationId`; `activityId + cardGeneration` is retained only to validate a mounted Activity reference. The first eligible result for a presentation reserves it across all Agents, Activities, and exact retries. A new presentation can render even while an older card for the same Activity remains mounted.
 
-Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. Activity generation 4 is current and generation 3 is the sole retained content-hashed resource; both use the exact app-private snapshot, proof, control, and batch-handoff contracts. Generation 2 and its legacy calls have expired. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
+Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. The current and sole retained content-hashed Activity revisions both use generation 4 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Older legacy calls have expired. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
 
 `executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
 
@@ -257,7 +252,7 @@ In a new ChatGPT conversation:
 
 1. open Settings and confirm it renders without an old-resource error;
 2. add two project folders, verify IDs normalize, duplicate IDs/paths are rejected inline, choose a default, and save;
-3. edit one project label/folder, remove the unused project, and confirm allowed roots remain a separate read-only list;
+3. add projects from two unrelated absolute locations, edit one label/folder, remove the unused project, and confirm no separate allowed-root list is shown;
 4. change a harmless preference and save;
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
@@ -295,7 +290,8 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: deploy current server first, use plugin **Refresh**, then start a new conversation if the old one stays cached.
 - `DEFAULT_CWD_REQUIRED`: choose a default project (or keep exactly one available project) in Settings.
-- `PROJECT_DUPLICATE_ID` / `PROJECT_DUPLICATE_PATH`: correct the highlighted duplicate project values.
+- `PROJECT_DUPLICATE_PATH`: choose a different folder for one of the highlighted projects.
+- `PROJECT_DUPLICATE_ID`: refresh Settings; project IDs are internal and generated automatically.
 - `PROJECT_UNAVAILABLE`: fix or remove the **Needs recovery** project before saving or admitting work.
 - Unrecognized Task `cwd`: refresh the plugin/tool list; select a registered `projectId` instead.
 - `SANDBOX_OVERRIDE_UNAVAILABLE`: refresh tools; the fixed saved access strategy is authoritative.

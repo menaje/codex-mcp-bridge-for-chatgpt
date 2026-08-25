@@ -323,9 +323,9 @@ class FakeModelCatalog implements CodexModelCatalogProvider {
 
   protected snapshot(cached: boolean): CodexModelCatalogSnapshot {
     const models = [
-      model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"], true),
-      model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"]),
-      model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"])
+      model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"], true, "GPT-5.6 Sol"),
+      model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"], false, "GPT-5.6 Terra"),
+      model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"], false, "GPT-5.5")
     ];
     return {
       source: "codex-cli",
@@ -541,6 +541,15 @@ describe("bridge tools", () => {
     const taskProperties = byName.get("codex_task")?.inputSchema.properties as
       | Record<string, any>
       | undefined;
+    expect(taskProperties?.executionMode?.description).toContain(
+      "Controls Codex execution timing, not Activity-card visibility"
+    );
+    expect(taskProperties?.executionMode?.description).toContain(
+      "default a new Activity to background"
+    );
+    expect(taskProperties?.requestId?.description).toContain(
+      "Never reuse it to group different tasks or multiple calls in one GPT response"
+    );
     const activityVariants = taskProperties?.activity?.oneOf as Array<Record<string, any>>;
     expect(activityVariants.map((variant) => variant.properties?.mode?.const).sort())
       .toEqual(["existing", "new"]);
@@ -1126,7 +1135,7 @@ describe("bridge tools", () => {
             "selection",
           ],
           "propertyCount": 8,
-          "schemaBytes": 4540,
+          "schemaBytes": 4934,
           "visibility": {
             "app": true,
             "model": true,
@@ -1368,6 +1377,8 @@ describe("bridge tools", () => {
     expect(contents.text).toContain('id="concurrency" type="number" min="1" step="1" required');
     expect(contents.text).toContain("const REQUEST_TIMEOUT_MS = 90000;");
     expect(contents.text).toContain("result&&result.isError");
+    expect(contents.text).toContain("function parsedToolText(result)");
+    expect(contents.text).toContain("if(text&&!parsed)throw new Error(text)");
     expect(contents.text).toContain("!elements.form.reportValidity()");
     expect(contents.text).toContain("Number.isSafeInteger(value)");
     expect(contents.text).toContain("if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy()");
@@ -1378,7 +1389,14 @@ describe("bridge tools", () => {
     expect(contents.text).toContain('id="project-list"');
     expect(contents.text).toContain('id="add-project" type="button"');
     expect(contents.text).toContain('id="default-project"');
+    expect(contents.text).not.toContain('id="allowed-roots"');
+    expect(contents.text).not.toContain('id="allowed-root-list"');
+    expect(contents.text).toContain('data-i18n="settings.resetHint"');
+    expect(contents.text).toContain('t["settings.addFirstProject"]');
     expect(contents.text).not.toContain('id="default-cwd"');
+    expect(contents.text).not.toContain('className="project-id-input"');
+    expect(contents.text).not.toContain('projectField("settings.projectId"');
+    expect(contents.text).toContain("allocateProjectId(record.label,record.cwd,reservedIds)");
     expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(contents.text).toContain("defaultProjectId:projectSettings.defaultProjectId");
     expect(contents.text).toContain('operation:{kind:"patch",settings}');
@@ -1524,10 +1542,13 @@ describe("bridge tools", () => {
     mkdirSync(movedApi);
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
 
-    const initial = (await client.callTool({
+    const initialResult = await client.callTool({
       name: "codex_settings",
       arguments: {}
-    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    });
+    const initial = privateSettingsView(initialResult);
+    expect(JSON.stringify((initialResult as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(realpathSync(root));
     expect(initial.settings).toMatchObject({
       projects: [{ id: "default", cwd: realpathSync(root) }],
       defaultProjectId: "default"
@@ -1554,7 +1575,7 @@ describe("bridge tools", () => {
       }
     });
     expect(saved.isError).not.toBe(true);
-    const view = (saved as { structuredContent?: Record<string, any> }).structuredContent!;
+    const view = privateSettingsView(saved);
     expect(view.settings).toMatchObject({
       revision: 1,
       projects: [
@@ -1631,7 +1652,7 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect((edited as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+    expect(privateSettingsView(edited).settings)
       .toMatchObject({
         revision: 2,
         projects: [
@@ -1665,6 +1686,78 @@ describe("bridge tools", () => {
     });
     expect(incompleteRename.isError).toBe(true);
     expect(pollutedRemove.isError).toBe(true);
+    await close();
+  });
+
+  it("onboards arbitrary PC folders from Settings and preserves them when general defaults are restored", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+
+    const opened = (await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(opened.settings).toMatchObject({
+      revision: 0,
+      projects: [],
+      defaultProjectId: null
+    });
+    expect(opened.capabilities).not.toHaveProperty("allowedRoots");
+
+    const firstSave = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { id: "first", label: "First", cwd: first } }
+            ]
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(firstSave).settings)
+      .toMatchObject({ defaultProjectId: "first", defaultCwd: realpathSync(first) });
+
+    const secondSave = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            uiLocalePreference: "ko",
+            defaultProjectId: "second",
+            projectOperations: [
+              { kind: "add", project: { id: "second", label: "Second", cwd: second } }
+            ]
+          }
+        }
+      }
+    });
+    const beforeReset = privateSettingsView(secondSave).settings;
+    const restored = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 2,
+        operation: { kind: "reset" }
+      }
+    });
+    expect(privateSettingsView(restored).settings)
+      .toMatchObject({
+        revision: 3,
+        uiLocalePreference: "auto",
+        projects: beforeReset.projects,
+        defaultProjectId: "second",
+        defaultCwd: realpathSync(second)
+      });
+
+    const task = await runTask(client, { prompt: "work here", projectId: "first" });
+    expect(task).toMatchObject({ structuredContent: { bridgeActivity: { projectId: "first" } } });
     await close();
   });
 
@@ -1704,6 +1797,13 @@ describe("bridge tools", () => {
     expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
     expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
     expect(view.settings.projects).toContainEqual({
+      id: "recovery",
+      label: "Recovery"
+    });
+    expect(privateSettingsView(await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    })).settings.projects).toContainEqual({
       id: "recovery",
       label: "Recovery",
       cwd: realpathSync(second)
@@ -1795,7 +1895,6 @@ describe("bridge tools", () => {
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      allowedRootCount: 1,
       defaultProjectId: "default",
       projects: [{ projectId: "default", projectLabel: path.basename(root), available: true }],
       modelPolicy: {
@@ -1855,7 +1954,8 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(config, new FakeUpstream());
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status).toMatchObject({ allowedRootCount: 2, defaultProjectId: null, projects: [] });
+    expect(status).toMatchObject({ defaultProjectId: null, projects: [] });
+    expect(status).not.toHaveProperty("allowedRootCount");
     await close();
   });
 
@@ -2343,7 +2443,7 @@ describe("bridge tools", () => {
           preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
           allowedSelections: { kind: "catalog-visible" }
         },
-        defaultCwd: realpathSync(root),
+        projects: [{ id: "default", label: path.basename(root) }],
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
         activityCardVisibility: "always",
@@ -2351,13 +2451,18 @@ describe("bridge tools", () => {
       },
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
-        allowedRoots: [realpathSync(root)],
         availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
         availableActivityCardVisibilities: ["always", "background-only", "never"],
         availableCompletionHandoffs: ["off", "auto-handoff"],
         maxConcurrentJobs: 30,
         allowDangerFullAccess: true
       }
+    });
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(realpathSync(root));
+    expect(privateSettingsView(opened).settings).toMatchObject({
+      projects: [{ id: "default", cwd: realpathSync(root) }],
+      defaultCwd: realpathSync(root)
     });
 
     const saved = await client.callTool({
@@ -5559,6 +5664,12 @@ describe("bridge tools", () => {
     expect(initial.activities).toEqual([
       expect.objectContaining({ activityId: started.activityId, lifecycle: "open" })
     ]);
+    expect(initial.feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      isCurrent: true
+    });
     expect((rendered as { _meta?: Record<string, any> })._meta).toMatchObject({
       "openai/locale": "ko",
       hostLocale: "ko-KR"
@@ -5589,13 +5700,19 @@ describe("bridge tools", () => {
     upstream.progressNext({
       progress: 1,
       total: 2,
-      message: "public progress",
+      message: "model rerouted",
       event: {
         eventId: "public-progress-1",
-        type: "turn",
+        type: "model",
         phase: "updated",
         createdAt: Date.now(),
-        summary: "Public progress"
+        summary: "Model rerouted.",
+        details: {
+          kind: "rerouted",
+          fromModel: "gpt-5.6-sol",
+          toModel: "gpt-5.6-terra",
+          reason: "test"
+        }
       }
     } as Progress);
     const watched = await watchPromise;
@@ -5603,10 +5720,28 @@ describe("bridge tools", () => {
     expect(next.scopeVersion).toBeGreaterThan(initial.scopeVersion);
     expect(next.wait).toMatchObject({ changed: true, timedOut: false });
     expect(next.agents[0]).toMatchObject({ displayState: "running", activityId: started.activityId });
+    expect(next.feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      reroutedModel: "gpt-5.6-terra",
+      reroutedModelDisplayName: "GPT-5.6 Terra",
+      isCurrent: true
+    });
     expect(next.activities[0]).not.toHaveProperty("jobs");
 
     upstream.resolveNext(fakeCodexResult("watched-thread"));
     await waitForJobStatus(client, started.jobId, "completed");
+    const completed = await client.callTool({ name: "codex_activity", arguments: {} });
+    expect((completed as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      reroutedModel: "gpt-5.6-terra",
+      reroutedModelDisplayName: "GPT-5.6 Terra",
+      isCurrent: false
+    });
     await close();
   });
 
@@ -6004,6 +6139,17 @@ describe("bridge tools", () => {
     expect(new Set(cardView.feed.active.flatMap(
       (activity: { workspaceLabels: string[] }) => activity.workspaceLabels
     ))).toEqual(new Set([path.basename(first), path.basename(second)]));
+    const otherModel = cardView.feed.active.find((activity: { agents: Array<{ agentName: string }> }) =>
+      activity.agents.some((agent) => agent.agentName === "Other Model")
+    );
+    expect(otherModel.agents.find((agent: { agentName: string }) =>
+      agent.agentName === "Other Model"
+    )?.execution).toEqual({
+      model: "gpt-5.6-terra",
+      modelDisplayName: "GPT-5.6 Terra",
+      reasoningEffort: "medium",
+      isCurrent: false
+    });
     expect(JSON.stringify(card)).not.toContain(realpathSync(first));
     expect(JSON.stringify(card)).not.toContain(realpathSync(second));
 
@@ -6025,6 +6171,14 @@ describe("bridge tools", () => {
     expect(new Set(historyView.feed.completed.rows.flatMap(
       (row: { workspaceLabels: string[] }) => row.workspaceLabels
     ))).toEqual(new Set([path.basename(first), path.basename(second)]));
+    expect(historyView.feed.completed.rows.find(
+      (row: { agentName: string }) => row.agentName === "First Root"
+    )?.execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      isCurrent: false
+    });
     await close();
   });
 
@@ -7061,7 +7215,15 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "inspect", agentName: "Missing Cwd", contextMode: "fresh" }
     });
-    expect(JSON.stringify(missing)).toContain("PROJECT_REQUIRED");
+    expect(missing).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "PROJECT_SETUP_REQUIRED",
+          nextAction: { tool: "codex_settings", arguments: {} }
+        }
+      }
+    });
     expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
     const denied = await client.callTool({
       name: "codex_task",
@@ -7084,7 +7246,7 @@ describe("bridge tools", () => {
       }
     });
     expect(invalidSave.isError).toBe(true);
-    expect(JSON.stringify(invalidSave)).toContain("outside allowed roots");
+    expect(JSON.stringify(invalidSave)).toContain("legacy operator restriction");
     const saved = await client.callTool({
       name: "codex_update_settings",
       arguments: {
@@ -7580,9 +7742,10 @@ async function connectTestClient(
   upstream: CodexUpstream,
   sessions?: SessionRegistry,
   modelCatalog: CodexModelCatalogProvider = new FakeModelCatalog(),
-  userSettings: UserSettingsStore = new UserSettingsStore(config),
+  userSettings?: UserSettingsStore,
   jobs?: CodexJobRegistry
 ) {
+  const settingsStore = userSettings || new UserSettingsStore(config);
   const jobRegistry = jobs || new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
@@ -7597,7 +7760,7 @@ async function connectTestClient(
     sessions,
     jobRegistry,
     modelCatalog,
-    userSettings
+    settingsStore
   );
   const client = new Client({ name: "test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -7930,10 +8093,16 @@ function fakeCodexResult(threadId: string): ToolResult {
   };
 }
 
-function model(id: string, defaultEffort: string, efforts: string[], isDefault = false) {
+function model(
+  id: string,
+  defaultEffort: string,
+  efforts: string[],
+  isDefault = false,
+  displayName = id
+) {
   return {
     id,
-    displayName: id,
+    displayName,
     defaultReasoningEffort: defaultEffort,
     supportedReasoningEfforts: efforts.map((effort) => ({ effort })),
     isDefault,
@@ -7946,6 +8115,15 @@ function model(id: string, defaultEffort: string, efforts: string[], isDefault =
 function parseToolJson(result: unknown): Record<string, any> {
   const content = (result as { content?: Array<{ text?: string }> }).content;
   return JSON.parse(content?.[0]?.text || "{}");
+}
+
+function privateSettingsView(result: unknown): Record<string, any> {
+  const candidate = (result as { _meta?: Record<string, any> } | undefined)
+    ?._meta?.["codex/settingsView"];
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("Missing private Settings-card view metadata.");
+  }
+  return candidate;
 }
 
 async function waitForJobStatus(client: Client, jobId: string, expected: string): Promise<Record<string, any>> {

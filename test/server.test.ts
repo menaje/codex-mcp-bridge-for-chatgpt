@@ -277,6 +277,7 @@ describe("http server", () => {
       version: "0.0.0"
     });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    await registerProject(client, mkdtempSync(path.join(tmpdir(), "bridge-http-project-")));
 
     const policy = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: {} })
@@ -331,6 +332,10 @@ describe("http server", () => {
     );
     const firstClient = new Client({ name: "http-derived-client", version: "0.0.0" });
     await firstClient.connect(new StreamableHTTPClientTransport(new URL(`${firstUrl}/mcp`)));
+    await registerProject(
+      firstClient,
+      mkdtempSync(path.join(tmpdir(), "bridge-derived-scope-project-"))
+    );
     const started = await firstClient.callTool({
       name: "codex_task",
       arguments: {
@@ -395,6 +400,10 @@ describe("http server", () => {
     );
     const firstClient = new Client({ name: "http-activity-client", version: "0.0.0" });
     await firstClient.connect(new StreamableHTTPClientTransport(new URL(`${firstUrl}/mcp`)));
+    await registerProject(
+      firstClient,
+      mkdtempSync(path.join(tmpdir(), "bridge-activity-project-"))
+    );
     const started = await firstClient.callTool({
       name: "codex_task",
       arguments: {
@@ -512,6 +521,28 @@ async function stopLastServer(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error?: Error) => (error ? reject(error) : resolve()));
   });
+}
+
+async function registerProject(client: Client, cwd: string): Promise<void> {
+  const opened = await client.callTool({ name: "codex_settings", arguments: {} });
+  const revision = (opened as { structuredContent?: Record<string, any> })
+    .structuredContent?.settings?.revision;
+  if (!Number.isInteger(revision)) throw new Error("Expected Settings revision.");
+  const saved = await client.callTool({
+    name: "codex_update_settings",
+    arguments: {
+      expectedRevision: revision,
+      operation: {
+        kind: "patch",
+        settings: {
+          projectOperations: [
+            { kind: "add", project: { id: "test-project", label: "Test project", cwd } }
+          ]
+        }
+      }
+    }
+  });
+  if (saved.isError) throw new Error(JSON.stringify(saved));
 }
 
 function parseToolJson(result: unknown): Record<string, any> {

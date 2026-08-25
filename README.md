@@ -13,8 +13,8 @@ ChatGPT
   -> sticky backend router
        -> codex mcp-server (stable default)
        -> codex app-server (richer thread and process controls)
-  -> settings-managed named projects inside operator-allowed roots
-       -> one optional compatibility default for fresh work
+  -> settings-managed named project folders
+       -> first project becomes the default automatically
 ```
 
 The bridge presents local Codex as durable, conversation-scoped Agents and user-goal Activities:
@@ -80,10 +80,10 @@ current `operation` contract or `codex_activity_cancel` as appropriate.
 
 - Binds to `127.0.0.1`.
 - Uses `read-only` and `on-request` unless the operator enables broader capabilities.
-- Uses a settings-managed registry of stable project IDs, Unicode labels, and canonical folders. A single-root bridge starts with one migrated compatibility project; multiple projects may have an optional default.
+- Uses one settings-managed registry of stable project IDs, Unicode labels, and canonical folders. A normal fresh install starts empty and the first registered project becomes the default automatically.
 - Rejects per-call `cwd` in the strict Task schema instead of running in an unintended repository.
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
-- Validates every newly saved project folder against real-path allowed roots, rejects duplicate IDs/paths, and checks common secret filenames before new execution.
+- Resolves every newly saved project to an existing canonical folder, rejects files and duplicate IDs/paths, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
 - Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, and bounded results in a private SQLite database.
 
@@ -115,25 +115,16 @@ Official references:
 Local mode creates no public endpoint:
 
 ```bash
-npm run bridge:local -- --root /absolute/path/to/repository
+npm run bridge:local
 ```
 
 The launcher uses `http://127.0.0.1:8876/mcp`; health is at `/healthz`. Its
 App Server diagnostics contain only aggregate late-response counters and the
 latest method/outcome class, never thread/turn identifiers or response bodies.
-Repeat `--root` to admit multiple disjoint operator roots in one bridge process:
-
-```bash
-npm run bridge:local -- \
-  --root /absolute/path/to/repository-a \
-  --root /absolute/path/to/repository-b
-```
-
-Each launcher root must already exist and resolve to a directory. The launcher
-canonicalizes and de-duplicates them before startup. These roots are only the
-immutable operator security ceiling; Settings still controls which named
-projects inside that ceiling are selectable. A single `--root` and omission
-(which uses the current directory) retain their previous behavior.
+The launcher does not choose a project folder. After first startup, open the
+Settings card and register one or more existing absolute folders from anywhere
+on this PC. If none is registered, `codex_task` directs GPT to open Settings
+instead of guessing a local path.
 
 For a tunnel connection:
 
@@ -141,21 +132,21 @@ For a tunnel connection:
 export CONTROL_PLANE_API_KEY="<runtime-key>"
 export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
 
-npm run bridge:secure -- --root /absolute/path/to/repository
+npm run bridge:secure
 ```
 
 Capability profiles are operator ceilings:
 
 ```bash
 # Fixed full-access starting policy
-npm run bridge:secure -- --root /absolute/path/to/repository --write
+npm run bridge:secure -- --write
 
 # Adaptive policy may choose workspace-write
-npm run bridge:secure -- --root /absolute/path/to/projects --allow-write
+npm run bridge:secure -- --allow-write
 
 # Adaptive policy may choose workspace-write or danger-full-access;
 # the Settings card may also select fixed always-full.
-npm run bridge:secure -- --root /absolute/path/to/projects --allow-full-access
+npm run bridge:secure -- --allow-full-access
 ```
 
 Do not leave a broader profile running when it is not needed.
@@ -167,12 +158,12 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - access strategy: `read-only`, `adaptive`, or operator-enabled `always-full`;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- named projects with stable normalized IDs, Unicode labels, canonical folders inside allowed roots, and an optional default project;
+- named projects with stable normalized IDs, Unicode labels, canonical folders anywhere on the PC, and a default project;
 - UI language;
 - active-job limit;
-- Activity-card visibility: `always` means one automatic card per GPT response,
-  `background-only` means one per response that has eligible background work,
-  and `never` disables automatic cards;
+- Activity-card visibility: `always` makes all Codex work eligible for automatic
+  display, `background-only` limits automatic display to jobs using
+  `executionMode: background`, and `never` disables automatic cards;
 - completion handoff: `off` or `auto-handoff` while a card is mounted.
 
 In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary model/effort entries; no synthetic `all` value is persisted or exposed to GPT. Catalog-visible mode stays dynamic and can include later catalog additions.
@@ -185,13 +176,13 @@ The Activity card has one conversation-scoped flat-feed layout. Older saved
 layout preferences are safely discarded; there is no layout selector or active
 layout setting.
 
-The Projects section clearly separates bridge-allowed roots from registered projects. Adding or editing a project resolves its folder with `realpath`, requires it to remain inside an allowed root, and rejects duplicate normalized IDs or canonical paths. Saved project IDs are stable; labels and folders remain editable. A legacy `defaultCwd` is deterministically migrated to the `default` project. If a saved folder later disappears or falls outside a narrowed root policy, its metadata remains visible for recovery but cannot be admitted until it is fixed or removed.
+The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the card allocates a stable normalized routing ID automatically and keeps it hidden. The folders may be unrelated and live anywhere on the PC. Adding or editing a project resolves its folder with `realpath`, rejects files and duplicate canonical paths, and preserves identity across name/folder edits. The first project becomes the default automatically. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until it is fixed or removed. A legacy `defaultCwd` is deterministically migrated to the `default` project.
 
-The generation-3 Settings card saves one atomic `operation`. `reset` has no unrelated payload; `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 2 is the sole retained Settings resource and uses the same operation contract. Generation 1 and its former flat payload are no longer registered or accepted.
+The generation-5 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, recovery metadata, and the default project. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 4 is retained for in-flight compatibility.
 
-`codex_task` projects the currently selectable project IDs and labels, never their paths. A new Activity/fresh context may choose `projectId`; omission uses the configured default or sole project and otherwise returns `PROJECT_REQUIRED`. Existing Activities and continued/forked Agent threads retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder limits where Codex starts; it does not grant or reduce permissions, and Codex may explore child repositories within its saved access policy.
+`codex_task` projects the currently selectable project IDs and labels, never their paths. A new Activity/fresh context may choose `projectId`; omission uses the configured default or sole project. With no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Existing Activities and continued/forked Agent threads retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder selects where Codex starts; filesystem reach remains governed by the saved access/sandbox policy.
 
-Access strategy and path policy are separate:
+Access strategy and project selection are separate:
 
 - `read-only`: every new context is read-only and `codex_task` has no `sandbox` input.
 - `always-full`: every new context is `danger-full-access` and `codex_task` has no `sandbox` input.
@@ -307,11 +298,11 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 ## Activity card lifecycle
 
-`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current GPT-response presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the response presentation, so a later background call in that same response can still display the one card. `codex_activity` remains available only for an explicit user-requested open or reopen.
+`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current automatic presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the presentation, so a later background call carrying the same host presentation identifier may display the card. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
 `requestId` is model-authored execution identity; Activity presentation correlation is not. A host may provide a response-level UUID through `codex/activityPresentationId` metadata so several calls share one automatic card reservation. When no such metadata exists, the bridge uses `requestId` as a stable per-call presentation fallback. The former caller-authored presentation argument has expired. In every case v4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
 
-The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, and only the action needed now. It has no KPI dashboard, card-grid Agent list, or layout selector.
+The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, each participant's current or latest effective model/reasoning-effort selection, and only the action needed now. Models use the same catalog display names as Settings and fall back to their internal IDs only when no display name is available. If App Server reports a model reroute, the card shows the admitted model and rerouted model as `selected → rerouted`; the effort remains the admission-time effective effort. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
 Truly completed work moves into a collapsed **Completed Codex** group that reports both distinct Agent count and completed Activity count. Idle and ended Agents have separate collapsed groups. When more than one project is relevant, its label remains visible in current and collapsed history rows without exposing the folder path. A completed Activity remains in the current feed while verification, a handoff, a tracked job, an interaction, or an App Server background process is still pending. Reusing the same Agent for a new Activity removes it from completed history and shows the new current Activity instead.
 
@@ -321,7 +312,7 @@ The card does not expose event timelines, Agent/job/thread IDs, full working pat
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. Activity generation 4 is current and generation 3 is the sole retained content-hashed resource; both use the exact app-private snapshot, proof, control, and batch-handoff contracts. Generation 2 and its flat status/control calls are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The current and sole retained content-hashed Activity revisions both use generation 4 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Older flat status/control generations are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 
@@ -388,7 +379,6 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_TOKEN` | unset | Bearer token unless loopback no-auth is used |
 | `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Allowed only on loopback |
 | `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI command; App Server requires the manifest-pinned exact version |
-| `CODEX_MCP_BRIDGE_ROOTS` | current directory | Direct-server comma-separated absolute starting-root allowlist; the bundled launcher uses repeatable `--root` |
 | `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | Adaptive omission/default sandbox |
 | `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial saved access strategy |
 | `CODEX_MCP_BRIDGE_ALLOW_WRITE` | unset | Enables workspace-write capability |
@@ -422,12 +412,11 @@ The service strings are retained runtime compatibility keys:
 security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-api-key" -w "<runtime-key>" -U
 security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-tunnel-id" -w "tunnel_..." -U
 
-CODEX_MCP_BRIDGE_ROOT=/absolute/path/to/repository npm run bridge:secure:keychain
-
-# Explicit --root arguments replace the compatibility root above and may repeat.
-npm run bridge:secure:keychain -- \
-  --root /absolute/path/to/repository-a \
-  --root /absolute/path/to/repository-b
+npm run bridge:secure:keychain
 ```
+
+`CODEX_MCP_BRIDGE_ROOTS` remains accepted only as a backwards-compatible
+restriction for older direct-server deployments. The bundled launchers never
+set it; remove it to use the Settings project registry as the sole folder list.
 
 Historical attribution is in [UPSTREAM.md](UPSTREAM.md).

@@ -91,6 +91,7 @@ import {
   PROJECT_ID_MAX_LENGTH,
   PROJECT_LABEL_MAX_LENGTH,
   PROJECT_CONTEXT_CONFLICT,
+  PROJECT_SETUP_REQUIRED,
   PROJECT_UNAVAILABLE,
   ProjectRegistry,
   normalizeProjectId,
@@ -173,6 +174,15 @@ const bridgeUserSettingsOutputSchema = z.object({
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
 
+const publicBridgeUserSettingsOutputSchema = bridgeUserSettingsOutputSchema
+  .omit({ projects: true, defaultCwd: true })
+  .extend({
+    projects: z.array(z.object({
+      id: z.string(),
+      label: z.string()
+    }))
+  });
+
 const catalogModelOutputSchema = z.object({
   id: z.string(),
   catalogId: z.string().optional(),
@@ -204,11 +214,10 @@ const catalogModelOutputSchema = z.object({
 });
 
 const settingsViewOutputSchema = z.object({
-  settings: bridgeUserSettingsOutputSchema,
-  operatorDefaults: bridgeUserSettingsOutputSchema,
+  settings: publicBridgeUserSettingsOutputSchema,
+  operatorDefaults: publicBridgeUserSettingsOutputSchema,
   capabilities: z.object({
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
-    allowedRoots: z.array(z.string()),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
     availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
@@ -245,7 +254,11 @@ const settingsViewOutputSchema = z.object({
   })
 });
 
-type SettingsView = z.infer<typeof settingsViewOutputSchema>;
+type PublicSettingsView = z.infer<typeof settingsViewOutputSchema>;
+type SettingsView = Omit<PublicSettingsView, "settings" | "operatorDefaults"> & {
+  settings: BridgeUserSettings;
+  operatorDefaults: BridgeUserSettings;
+};
 
 type SessionDecision = {
   requestedMode: SessionMode;
@@ -2433,7 +2446,6 @@ export function registerBridgeTools(
         product: PRODUCT_INFO.displayName,
         build: BRIDGE_BUILD_INFO,
         auth: config.token && !config.noAuth ? "bearer-token" : "none",
-        allowedRootCount: config.allowedRoots.length,
         projects: userSettings.projectRegistry.availability.map(({ project, available }) => ({
           projectId: project.id,
           projectLabel: project.label,
@@ -2602,6 +2614,7 @@ export function registerBridgeTools(
       const view = await buildActivityView(
         jobs,
         upstream,
+        modelCatalog,
         config,
         userSettings.current,
         scope.scopeId,
@@ -2697,6 +2710,7 @@ export function registerBridgeTools(
         await buildActivityView(
           jobs,
           upstream,
+          modelCatalog,
           config,
           userSettings.current,
           scope.scopeId,
@@ -3733,7 +3747,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, bridge-enforced limits, allowed roots, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge.",
+        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, bridge-enforced limits, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge, and whenever codex_task returns PROJECT_SETUP_REQUIRED so the user can register a project folder.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -3848,7 +3862,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations; bridge security capabilities, operator ceilings, and allowed roots cannot be changed here.",
+        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations. Reset restores general preferences only and preserves every project entry, its order, and the default project.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -4005,7 +4019,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. Activity-card presentation correlation is supplied by host metadata when available and never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. Activity-card presentation correlation is supplied by host metadata when available and never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4099,7 +4113,7 @@ export function registerBridgeTools(
             cwd = resolveAllowedCwd(pinnedCwd, config.allowedRoots);
           } catch {
             throw new Error(
-              `${PROJECT_UNAVAILABLE}: The selected Activity project is no longer available inside the operator-allowed roots.`
+              `${PROJECT_UNAVAILABLE}: The selected Activity project folder is no longer available.`
             );
           }
           if (cwd !== pinnedCwd) {
@@ -4250,6 +4264,12 @@ export function registerBridgeTools(
           return agentThreadResumeErrorResult(error);
         }
         if (error instanceof ModelPolicyError) return modelPolicyErrorResult(error);
+        if (
+          error instanceof Error &&
+          error.message.startsWith(`${PROJECT_SETUP_REQUIRED}:`)
+        ) {
+          return projectSetupRequiredResult(error.message);
+        }
         throw error;
       }
     }
@@ -4927,7 +4947,7 @@ function resolvePinnedAgentCwd(input: {
     currentCwd = resolveAllowedCwd(input.session.cwd, input.config.allowedRoots);
   } catch {
     throw new Error(
-      "PROJECT_UNAVAILABLE: The Agent thread project folder is unavailable or outside the operator-allowed roots. Restore the admitted folder/root or use contextMode='fresh' in an available project."
+      "PROJECT_UNAVAILABLE: The Agent thread project folder is unavailable. Restore that folder or use contextMode='fresh' in an available project."
     );
   }
   if (currentCwd !== input.session.cwd) {
@@ -5721,6 +5741,7 @@ function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<
 async function buildLegacyActivityView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
+  modelCatalog: CodexModelCatalogProvider,
   _config: BridgeConfig,
   preferences: BridgeUserSettings,
   scopeId: string,
@@ -5785,6 +5806,7 @@ async function buildLegacyActivityView(
       });
     }
     const changedAt = Math.max(agent.updatedAt, latestJob?.updatedAt || 0, activity?.updatedAt || 0);
+    const execution = activityCardExecution(activeJob || latestJob, modelCatalog);
     return {
       agentId: agent.agentId,
       shortAgentId: agent.agentId.slice(0, 8),
@@ -5802,7 +5824,8 @@ async function buildLegacyActivityView(
       canRestore: agent.lifecycle === "archived",
       backgroundProcessState: "none" as "none" | "running" | "unavailable",
       backgroundProcessCount: 0,
-      orphanedReason: agent.orphanedReason || null
+      orphanedReason: agent.orphanedReason || null,
+      ...(execution ? { execution } : {})
     };
   });
   await Promise.all(agentRows.map(async (row) => {
@@ -5950,9 +5973,56 @@ async function buildLegacyActivityView(
   };
 }
 
+type ActivityCardExecution = {
+  model: string;
+  modelDisplayName?: string;
+  reasoningEffort: string;
+  reroutedModel?: string;
+  reroutedModelDisplayName?: string;
+  isCurrent: boolean;
+};
+
+function activityCardExecution(
+  job: CodexJob | undefined,
+  modelCatalog: CodexModelCatalogProvider
+): ActivityCardExecution | undefined {
+  const selection = job?.executionDecision?.effectiveSelection;
+  if (!job || !selection) return undefined;
+  const catalog = modelCatalog.getCachedCatalog?.({
+    backendKind: job.backendKind === "app-server" ? "app-server" : "mcp-server"
+  });
+  const displayNameFor = (modelId: string): string =>
+    catalog?.models.find((entry) => entry.id === modelId)?.displayName || modelId;
+  const modelDisplayName = displayNameFor(selection.model);
+  const reroutedModel = [...job.publicEvents].reverse().find((event) =>
+    event.type === "model" &&
+    event.details?.kind === "rerouted" &&
+    typeof event.details.toModel === "string" &&
+    event.details.toModel.trim()
+  )?.details?.toModel;
+  const normalizedReroutedModel =
+    typeof reroutedModel === "string" && reroutedModel !== selection.model
+      ? reroutedModel
+      : undefined;
+  const reroutedModelDisplayName = normalizedReroutedModel
+    ? displayNameFor(normalizedReroutedModel)
+    : undefined;
+  return {
+    model: selection.model,
+    ...(modelDisplayName !== selection.model ? { modelDisplayName } : {}),
+    reasoningEffort: selection.reasoningEffort,
+    ...(normalizedReroutedModel ? { reroutedModel: normalizedReroutedModel } : {}),
+    ...(reroutedModelDisplayName && reroutedModelDisplayName !== normalizedReroutedModel
+      ? { reroutedModelDisplayName }
+      : {}),
+    isCurrent: isActiveActivityJobStatus(job.status)
+  };
+}
+
 async function buildActivityView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
+  modelCatalog: CodexModelCatalogProvider,
   config: BridgeConfig,
   preferences: BridgeUserSettings,
   scopeId: string,
@@ -5964,6 +6034,7 @@ async function buildActivityView(
   const legacy = await buildLegacyActivityView(
     jobs,
     upstream,
+    modelCatalog,
     config,
     preferences,
     scopeId,
@@ -6083,6 +6154,11 @@ async function buildActivityView(
       const current = legacyAgentById.get(agentId);
       const assignment = assignmentFor(activity.activityId, agentId);
       const currentForActivity = current?.activityId === activity.activityId;
+      const agentActivityJobs = activityJobs.filter((job) => job.agentId === agentId);
+      const activeAgentJob = [...agentActivityJobs]
+        .reverse()
+        .find((job) => isActiveActivityJobStatus(job.status));
+      const execution = activityCardExecution(activeAgentJob || agentActivityJobs.at(-1), modelCatalog);
       return {
         agentId,
         agentName: agent.agentName,
@@ -6091,7 +6167,8 @@ async function buildActivityView(
         displayState: currentForActivity ? current.displayState : displayState,
         canForceStop: Boolean(currentForActivity && current.canForceStop),
         backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
-        backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0
+        backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0,
+        ...(execution ? { execution } : {})
       };
     });
     const activeStartedAt = activeJobs.length > 0
@@ -6182,6 +6259,7 @@ async function buildActivityView(
     activityIds: string[];
     workspaceLabels: string[];
     verification: string;
+    execution?: ActivityCardExecution;
     updatedAt: string;
   }> = [];
   const idleAgentRows: Array<Record<string, unknown>> = [];
@@ -6198,6 +6276,12 @@ async function buildActivityView(
     const completedActivities = assignedActivities.filter((activity) =>
       completedActivityRows.has(activity.activityId)
     );
+    const latestActivityJob = latestActivity
+      ? [...(jobsByActivity.get(latestActivity.activityId) || [])]
+          .reverse()
+          .find((job) => job.agentId === agent.agentId)
+      : jobs.listForAgent(agent.agentId).at(-1);
+    const execution = activityCardExecution(latestActivityJob, modelCatalog);
     if (latestActivity && completedActivityRows.has(latestActivity.activityId)) {
       const assignment = assignmentFor(latestActivity.activityId, agent.agentId);
       completedAgentRows.push({
@@ -6211,6 +6295,7 @@ async function buildActivityView(
         activityIds: completedActivities.map((activity) => activity.activityId),
         workspaceLabels: hasMultipleWorkspaces ? workspacesFor(latestActivity.activityId) : [],
         verification: latestActivity.verification,
+        ...(execution ? { execution } : {}),
         updatedAt: new Date(latestActivity.completedAt || latestActivity.updatedAt).toISOString()
       });
       continue;
@@ -6231,6 +6316,7 @@ async function buildActivityView(
           ? workspacesFor(latestActivity.activityId)
           : [],
         displayState: latestActivity?.lifecycle || "archived",
+        ...(execution ? { execution } : {}),
         updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
       });
       continue;
@@ -6246,6 +6332,7 @@ async function buildActivityView(
       workspaceLabels: hasMultipleWorkspaces && latestActivity
         ? workspacesFor(latestActivity.activityId)
         : [],
+      ...(execution ? { execution } : {}),
       updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
     });
   }
@@ -6532,11 +6619,11 @@ function codexTaskInputSchema(
     "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
   );
   const requestId = scopeIdSchema().describe(
-    "Unique UUID for this logical Codex turn. Reuse the exact value only when retrying the same call."
+    "Unique idempotency UUID for one logical Codex task. Reuse the exact value only when retrying an identical task. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
   const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
   const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
-    .describe("Per-turn response mode: foreground waits for the terminal Codex result; background returns a tracked job immediately. Defaults to background.");
+    .describe("Controls Codex execution timing, not Activity-card visibility. Choose background when Codex should return a tracked job immediately and continue asynchronously. Choose foreground only when this tool call should wait for the final Codex result before GPT continues. Omit it to keep an existing Activity's mode or default a new Activity to background.");
   const runtimeCommon = {
     scopeId: scopeIdSchema()
       .optional()
@@ -6617,7 +6704,7 @@ function projectedProjectIdZod(
   return withJsonSchemaProjection(z.string(), projected)
     .optional()
     .describe(
-      "Stable ID of a Settings-registered project. Use it for a new Activity or fresh context; existing Activity/thread contexts retain their pinned project. Never provide a local path."
+      "Stable ID of a Settings-registered project. Use it for a new Activity or fresh context; existing Activity/thread contexts retain their pinned project. If no project choice is exposed, call codex_settings so the user can register one. Never provide or infer a local path."
     );
 }
 
@@ -7000,7 +7087,6 @@ async function buildSettingsView(
     operatorDefaults: userSettings.defaults,
     capabilities: {
       availableAccessStrategies,
-      allowedRoots: [...config.allowedRoots],
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
       availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
@@ -7099,18 +7185,23 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
       }))
     }
   };
+  const publicView = settingsViewOutputSchema.parse({
+    ...localizedView,
+    settings: publicUserSettings(localizedView.settings),
+    operatorDefaults: publicUserSettings(localizedView.operatorDefaults)
+  });
   return {
-    structuredContent: localizedView,
+    structuredContent: publicView,
     content: [
       {
         type: "text",
         text: JSON.stringify(
           {
-            settings: localizedView.settings,
-            capabilities: localizedView.capabilities,
-            catalog: localizedView.catalog,
-            warnings: localizedView.warnings,
-            scopeNotice: localizedView.scopeNotice
+            settings: publicView.settings,
+            capabilities: publicView.capabilities,
+            catalog: publicView.catalog,
+            warnings: publicView.warnings,
+            scopeNotice: publicView.scopeNotice
           },
           null,
           2
@@ -7118,10 +7209,22 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
       }
     ],
     _meta: {
+      // MCP result metadata is delivered to the mounted app but not the model.
+      // Paths are required for editing in Settings and stay private here.
+      "codex/settingsView": localizedView,
       "openai/locale": effectiveLocale,
       hostLocale: locale || null
     }
   };
+}
+
+function publicUserSettings(
+  settings: BridgeUserSettings
+): z.infer<typeof publicBridgeUserSettingsOutputSchema> {
+  return publicBridgeUserSettingsOutputSchema.parse({
+    ...settings,
+    projects: settings.projects.map(({ id, label }) => ({ id, label }))
+  });
 }
 
 function resolveTaskCwd(
@@ -7130,14 +7233,14 @@ function resolveTaskCwd(
 ): string {
   if (!preferences.defaultCwd) {
     throw new Error(
-      "DEFAULT_CWD_REQUIRED: Save a default working folder in Codex settings before starting a new Activity or fresh Agent context."
+      `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting a new Activity or fresh Agent context.`
     );
   }
   try {
     return requireAllowedCwd(preferences.defaultCwd, config.allowedRoots);
   } catch {
     throw new Error(
-      "DEFAULT_CWD_NOT_ALLOWED: The saved default working folder is outside the current allowed roots. Update Codex settings before starting new work."
+      "PROJECT_UNAVAILABLE: The saved default project folder is unavailable. Update it in Codex settings before starting new work."
     );
   }
 }
@@ -7369,7 +7472,7 @@ async function enforceSensitiveFilePreflight(
   const sensitiveFiles = await findSensitiveFiles(cwd);
   if (sensitiveFiles.length > 0) {
     throw new Error(
-      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found under the allowed root. Move them outside the root or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
+      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
     );
   }
 }
@@ -8154,6 +8257,25 @@ function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
       message: error.message.replace(`${error.code}: `, ""),
       policyRevision: error.policyRevision,
       nextActions: error.nextActions
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function projectSetupRequiredResult(message: string): ToolResult {
+  const structuredContent = {
+    error: {
+      code: PROJECT_SETUP_REQUIRED,
+      message: message.replace(`${PROJECT_SETUP_REQUIRED}: `, ""),
+      nextAction: {
+        tool: "codex_settings",
+        arguments: {},
+        userPrompt: "Open settings and register the folder where Codex should work."
+      }
     }
   };
   return {

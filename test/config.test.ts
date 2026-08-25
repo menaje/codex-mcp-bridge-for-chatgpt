@@ -12,12 +12,12 @@ import {
 } from "../src/config.js";
 
 describe("config policy", () => {
-  it("defaults to current directory as the only allowed root", () => {
+  it("starts without a second allowed-root registry", () => {
     const config = loadConfig({
       CODEX_GPT_BRIDGE_NO_AUTH: "1"
     });
 
-    expect(config.allowedRoots).toEqual([realpathSync(process.cwd())]);
+    expect(config.allowedRoots).toEqual([]);
     expect(config.defaultSandbox).toBe("read-only");
     expect(config.defaultAccessStrategy).toBe("adaptive");
     expect(config.allowWorkspaceWrite).toBe(false);
@@ -259,12 +259,21 @@ describe("config policy", () => {
     expect(config.allowedHosts).toEqual(["127.0.0.1", "localhost", "example.trycloudflare.com"]);
   });
 
-  it("rejects cwd outside allowed roots", () => {
+  it("admits registered folders anywhere by default and retains explicit legacy restrictions", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const other = mkdtempSync(path.join(tmpdir(), "bridge-other-"));
 
     expect(requireAllowedCwd(root, [realpathSync(root)])).toBe(realpathSync(root));
-    expect(() => requireAllowedCwd(other, [realpathSync(root)])).toThrow(/outside allowed roots/);
+    expect(requireAllowedCwd(other, [])).toBe(realpathSync(other));
+    expect(() => requireAllowedCwd(other, [realpathSync(root)])).toThrow(/legacy operator restriction/);
+  });
+
+  it("requires a project target to be an existing folder rather than a file", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-folder-"));
+    const file = path.join(root, "file.txt");
+    writeFileSync(file, "not a folder");
+
+    expect(() => requireAllowedCwd(file, [])).toThrow(/must be a folder/);
   });
 
   it("treats the filesystem root as a valid containment ceiling", () => {

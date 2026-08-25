@@ -29,7 +29,7 @@ const ENGLISH = {
   "settings.access.readOnlyHint": "Every new task is forced to read-only.",
   "settings.access.adaptiveHint": "GPT may choose read-only, workspace write, or full access within the allowed limits.",
   "settings.access.fullHint": "Every new task is forced to danger-full-access.",
-  "settings.fullWarning": "Full access runs Codex with this macOS user's filesystem and network permissions. Allowed roots limit only the starting directory; they are not OS isolation.",
+  "settings.fullWarning": "Full access runs Codex with this macOS user's filesystem and network permissions. A project folder selects where work starts; it is not OS isolation.",
   "settings.modelPolicy": "Execution model policy",
   "settings.modelPolicy.fixed": "Fixed",
   "settings.modelPolicy.automatic": "Automatic selection",
@@ -55,9 +55,9 @@ const ENGLISH = {
   "settings.usePriority": "Use Priority (Fast processing)",
   "settings.usePriorityHint": "Applied privately by the bridge when Codex is called. GPT selects only the model and reasoning effort.",
   "settings.fixedNotice": "This exact selection is enforced for Codex turns admitted after saving. An already active turn keeps its admission-time decision.",
-  "settings.allowedScope": "Allowed range",
-  "settings.allowedScope.catalog": "All catalog-visible selections",
-  "settings.allowedScope.explicit": "Explicit exact selections",
+  "settings.allowedScope": "GPT selection range",
+  "settings.allowedScope.catalog": "All available models and efforts",
+  "settings.allowedScope.explicit": "Only models and efforts I choose",
   "settings.allowedExactSelections": "Select models first, then choose the reasoning efforts allowed for each model.",
   "settings.allowedModels": "Models",
   "settings.effortsByModel": "Reasoning efforts by selected model",
@@ -66,34 +66,33 @@ const ENGLISH = {
   "settings.additionalServiceTiers": "Additional service-tier variants",
   "settings.selectionCount": "{count} exact selections",
   "settings.preferredSelection": "Preferred selection",
-  "settings.preferred.none": "Validated backend default",
-  "settings.automaticNotice": "GPT may select only a model and reasoningEffort from this range. Priority is applied privately by the bridge and is never exposed as a GPT choice. Catalog-visible mode automatically includes newly discovered model/effort choices.",
+  "settings.preferredModel": "Preferred model",
+  "settings.preferredEffort": "Preferred reasoning effort",
+  "settings.preferred.none": "Use Codex default",
+  "settings.automaticNotice": "GPT may choose only a model and reasoning effort from this range. Priority is applied separately by the bridge. Choosing all available models and efforts automatically includes newly added options.",
   "settings.selectionRequired": "Choose an exact model and reasoning effort.",
   "settings.explicitRequired": "Select at least one allowed exact selection.",
   "settings.modelEffortRequired": "Choose at least one reasoning effort for {model}.",
   "settings.cwd": "Default working folder",
   "settings.cwdHint": "Only allowed working roots can be saved:",
   "settings.projects": "Projects",
-  "settings.projectsHint": "Register named folders here. Project IDs are stable routing keys; labels and folders can be edited.",
+  "settings.projectsHint": "Register the folders where Codex may start work. You can add multiple unrelated locations on this PC; internal routing IDs are managed automatically.",
   "settings.allowedRoots": "Bridge-allowed roots",
   "settings.allowedRootsHint": "Projects must resolve inside one of these security ceilings. Registering a project cannot widen them.",
   "settings.addProject": "Add project",
-  "settings.noProjects": "No projects are registered. Add one before starting new work when no compatibility default is available.",
-  "settings.projectId": "Project ID",
-  "settings.projectIdHint": "Saved project IDs are stable. Remove and add a project only when a new identity is intended.",
-  "settings.projectLabel": "Display label",
+  "settings.addFirstProject": "Register first project",
+  "settings.noProjects": "Register a project first. Codex needs a folder where it can start work, and you may add multiple folders from different locations on this PC.",
+  "settings.projectLabel": "Project name",
   "settings.projectCwd": "Absolute folder",
-  "settings.defaultProject": "Optional default project",
-  "settings.defaultProjectHint": "With multiple projects, this is the compatibility default. Choosing none requires an explicit project once project-aware task routing is enabled.",
+  "settings.defaultProject": "Default project",
+  "settings.defaultProjectHint": "The first project becomes the default automatically. With multiple projects, GPT may select another registered project when appropriate.",
   "settings.defaultProjectNone": "No default project",
   "settings.projectAvailable": "Available",
   "settings.projectUnavailable": "Needs recovery",
   "settings.projectNew": "New",
   "settings.removeProject": "Remove",
-  "settings.projectInvalidId": "Use 1–64 lowercase ASCII letters or digits separated by hyphens. Spaces and underscores are normalized.",
-  "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project label.",
-  "settings.projectInvalidCwd": "Enter an existing absolute folder inside a bridge-allowed root.",
-  "settings.projectDuplicateId": "Project IDs must be unique after normalization.",
+  "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project name.",
+  "settings.projectInvalidCwd": "Enter an existing absolute folder path.",
   "settings.projectDuplicatePath": "Each project must use a different canonical folder.",
   "settings.projectDefaultMissing": "Choose a default that still exists in the project list, or choose no default.",
   "settings.projectUnavailableSave": "Fix or remove every project that needs recovery before saving.",
@@ -104,9 +103,9 @@ const ENGLISH = {
   "settings.languageHint": "Automatic follows the host application's language.",
   "settings.concurrency": "Maximum concurrent jobs",
   "settings.cardVisibility": "Activity card",
-  "settings.cardVisibility.always": "One card per GPT response",
-  "settings.cardVisibility.background": "One card per response with background work",
-  "settings.cardVisibility.never": "No automatic cards",
+  "settings.cardVisibility.always": "Automatically show for all Codex work",
+  "settings.cardVisibility.background": "Automatically show only for background Codex work",
+  "settings.cardVisibility.never": "Do not show automatically",
   "settings.handoff": "Completion handoff",
   "settings.handoff.off": "Off",
   "settings.handoff.auto": "Automatic GPT handoff while card is open",
@@ -114,13 +113,14 @@ const ENGLISH = {
   "settings.conflict": "Settings changed elsewhere. The latest values were loaded; review them and save again.",
   "settings.save": "Save settings",
   "settings.refreshModels": "Retry model lookup",
-  "settings.reset": "Restore default settings",
+  "settings.reset": "Restore general defaults",
+  "settings.resetHint": "Restores access, model, interface, concurrency, and Activity settings. Projects, their order, and the default project are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.refreshing": "Retrying model lookup…",
   "settings.refreshed": "Model list loaded.",
   "settings.resetting": "Restoring…",
-  "settings.resetDone": "Default settings restored.",
+  "settings.resetDone": "General defaults restored. Projects were kept.",
   "settings.invalidResponse": "The settings tool returned an invalid response.",
   "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed here.",
   "activity.title": "Codex activities",
@@ -139,6 +139,9 @@ const ENGLISH = {
   "activity.retry": "Retry",
   "activity.followUpSent": "A GPT follow-up was added to this conversation.",
   "activity.moreActivities": "Additional completed activities:",
+  "activity.currentExecution": "Current run",
+  "activity.latestExecution": "Latest run",
+  "activity.reasoningEffort": "effort",
   "activity.running": "Running",
   "activity.attention": "Needs attention",
   "activity.verification": "Ready for verification",
@@ -945,57 +948,189 @@ const ISSUE21_OVERRIDES: Partial<
   }
 };
 
+const MODEL_POLICY_UX_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "settings.allowedScope": "GPT 자동 선택 범위",
+    "settings.allowedScope.catalog": "사용 가능한 모든 모델·에포트",
+    "settings.allowedScope.explicit": "직접 선택한 모델·에포트만",
+    "settings.preferredModel": "선호 모델",
+    "settings.preferredEffort": "선호 추론 에포트",
+    "settings.preferred.none": "Codex 기본값 사용",
+    "settings.selectionCount": "허용한 모델·에포트 조합 {count}개",
+    "settings.automaticNotice": "GPT는 이 범위 안에서만 모델과 추론 에포트를 선택합니다. Priority는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다."
+  },
+  ja: {
+    "settings.allowedScope": "GPT が選択できる範囲",
+    "settings.allowedScope.catalog": "利用可能なすべてのモデルとエフォート",
+    "settings.allowedScope.explicit": "自分で選んだモデルとエフォートのみ",
+    "settings.preferredModel": "優先モデル",
+    "settings.preferredEffort": "優先する推論エフォート",
+    "settings.preferred.none": "Codex の既定値を使用",
+    "settings.selectionCount": "許可したモデル・エフォートの組み合わせ: {count} 件",
+    "settings.automaticNotice": "GPT はこの範囲内のモデルと推論エフォートだけを選択できます。Priority はブリッジが別途適用します。利用可能なすべての項目を選ぶと、新しく追加された項目も自動的に含まれます。"
+  },
+  "zh-Hans": {
+    "settings.allowedScope": "GPT 可选范围",
+    "settings.allowedScope.catalog": "所有可用模型和推理强度",
+    "settings.allowedScope.explicit": "仅限我选择的模型和推理强度",
+    "settings.preferredModel": "首选模型",
+    "settings.preferredEffort": "首选推理强度",
+    "settings.preferred.none": "使用 Codex 默认值",
+    "settings.selectionCount": "已允许 {count} 个模型与推理强度组合",
+    "settings.automaticNotice": "GPT 只能从此范围选择模型和推理强度。Priority 由桥接单独应用。选择所有可用项时，新增加的项也会自动包含。"
+  },
+  "zh-Hant": {
+    "settings.allowedScope": "GPT 可選範圍",
+    "settings.allowedScope.catalog": "所有可用模型與推理強度",
+    "settings.allowedScope.explicit": "僅限我選擇的模型與推理強度",
+    "settings.preferredModel": "偏好模型",
+    "settings.preferredEffort": "偏好推理強度",
+    "settings.preferred.none": "使用 Codex 預設值",
+    "settings.selectionCount": "已允許 {count} 個模型與推理強度組合",
+    "settings.automaticNotice": "GPT 只能從此範圍選擇模型與推理強度。Priority 由橋接另外套用。選擇所有可用項目時，新加入的項目也會自動包含。"
+  },
+  es: {
+    "settings.allowedScope": "Opciones disponibles para GPT",
+    "settings.allowedScope.catalog": "Todos los modelos y niveles disponibles",
+    "settings.allowedScope.explicit": "Solo los modelos y niveles que elija",
+    "settings.preferredModel": "Modelo preferido",
+    "settings.preferredEffort": "Nivel de razonamiento preferido",
+    "settings.preferred.none": "Usar el valor predeterminado de Codex",
+    "settings.selectionCount": "Combinaciones permitidas: {count}",
+    "settings.automaticNotice": "GPT solo puede elegir un modelo y un nivel de razonamiento de este intervalo. El puente aplica Priority por separado. Al elegir todas las opciones disponibles, las nuevas opciones se incluyen automáticamente."
+  },
+  fr: {
+    "settings.allowedScope": "Choix disponibles pour GPT",
+    "settings.allowedScope.catalog": "Tous les modèles et niveaux disponibles",
+    "settings.allowedScope.explicit": "Uniquement les modèles et niveaux choisis",
+    "settings.preferredModel": "Modèle préféré",
+    "settings.preferredEffort": "Effort de raisonnement préféré",
+    "settings.preferred.none": "Utiliser la valeur par défaut de Codex",
+    "settings.selectionCount": "Combinaisons autorisées : {count}",
+    "settings.automaticNotice": "GPT ne peut choisir qu’un modèle et un effort de raisonnement de cette plage. Le pont applique Priority séparément. Si toutes les options disponibles sont sélectionnées, les nouvelles options sont incluses automatiquement."
+  },
+  de: {
+    "settings.allowedScope": "Auswahlbereich für GPT",
+    "settings.allowedScope.catalog": "Alle verfügbaren Modelle und Reasoning-Stufen",
+    "settings.allowedScope.explicit": "Nur selbst gewählte Modelle und Reasoning-Stufen",
+    "settings.preferredModel": "Bevorzugtes Modell",
+    "settings.preferredEffort": "Bevorzugte Reasoning-Stufe",
+    "settings.preferred.none": "Codex-Standard verwenden",
+    "settings.selectionCount": "Zulässige Kombinationen: {count}",
+    "settings.automaticNotice": "GPT kann nur ein Modell und eine Reasoning-Stufe aus diesem Bereich auswählen. Priority wird von der Bridge separat angewendet. Bei Auswahl aller verfügbaren Optionen werden neue Optionen automatisch einbezogen."
+  },
+  pt: {
+    "settings.allowedScope": "Opções disponíveis para o GPT",
+    "settings.allowedScope.catalog": "Todos os modelos e níveis disponíveis",
+    "settings.allowedScope.explicit": "Somente os modelos e níveis escolhidos",
+    "settings.preferredModel": "Modelo preferido",
+    "settings.preferredEffort": "Nível de raciocínio preferido",
+    "settings.preferred.none": "Usar o padrão do Codex",
+    "settings.selectionCount": "Combinações permitidas: {count}",
+    "settings.automaticNotice": "O GPT só pode escolher um modelo e um nível de raciocínio deste intervalo. A ponte aplica Priority separadamente. Ao escolher todas as opções disponíveis, novas opções são incluídas automaticamente."
+  }
+};
+
 const ISSUE24_OVERRIDES: Record<
   Exclude<SupportedUiLocale, "en">,
   Partial<UiTranslationBundle>
 > = {
   ko: {
-    "settings.cardVisibility.always": "GPT 응답마다 카드 1개",
-    "settings.cardVisibility.background": "백그라운드 작업이 있는 응답마다 카드 1개",
+    "settings.cardVisibility.always": "모든 Codex 작업에 자동 표시",
+    "settings.cardVisibility.background": "백그라운드 Codex 작업에만 자동 표시",
     "settings.cardVisibility.never": "자동 카드 표시 안 함",
     "activity.superseded": "더 최신 Activity 카드가 실시간 갱신을 맡았습니다. 이 스냅샷은 그대로 볼 수 있습니다."
   },
   ja: {
-    "settings.cardVisibility.always": "GPT 応答ごとにカード 1 枚",
-    "settings.cardVisibility.background": "バックグラウンド作業を含む応答ごとにカード 1 枚",
+    "settings.cardVisibility.always": "すべての Codex 作業に自動表示",
+    "settings.cardVisibility.background": "バックグラウンドの Codex 作業にのみ自動表示",
     "settings.cardVisibility.never": "自動カードを表示しない",
     "activity.superseded": "新しい Activity カードがライブ更新を引き継ぎました。このスナップショットは引き続き表示できます。"
   },
   "zh-Hans": {
-    "settings.cardVisibility.always": "每个 GPT 回复一张卡片",
-    "settings.cardVisibility.background": "每个含后台任务的回复一张卡片",
+    "settings.cardVisibility.always": "为所有 Codex 工作自动显示",
+    "settings.cardVisibility.background": "仅为后台 Codex 工作自动显示",
     "settings.cardVisibility.never": "不自动显示卡片",
     "activity.superseded": "较新的 Activity 卡片已接管实时更新。此快照仍可查看。"
   },
   "zh-Hant": {
-    "settings.cardVisibility.always": "每個 GPT 回覆一張卡片",
-    "settings.cardVisibility.background": "每個含背景工作的回覆一張卡片",
+    "settings.cardVisibility.always": "為所有 Codex 工作自動顯示",
+    "settings.cardVisibility.background": "僅為背景 Codex 工作自動顯示",
     "settings.cardVisibility.never": "不自動顯示卡片",
     "activity.superseded": "較新的 Activity 卡片已接管即時更新。此快照仍可查看。"
   },
   es: {
-    "settings.cardVisibility.always": "Una tarjeta por respuesta de GPT",
-    "settings.cardVisibility.background": "Una tarjeta por respuesta con trabajo en segundo plano",
+    "settings.cardVisibility.always": "Mostrar automáticamente para todo el trabajo de Codex",
+    "settings.cardVisibility.background": "Mostrar automáticamente solo para trabajo de Codex en segundo plano",
     "settings.cardVisibility.never": "Sin tarjetas automáticas",
     "activity.superseded": "Una tarjeta de Activity más reciente controla ahora las actualizaciones en vivo. Esta instantánea seguirá disponible."
   },
   fr: {
-    "settings.cardVisibility.always": "Une carte par réponse GPT",
-    "settings.cardVisibility.background": "Une carte par réponse avec travail en arrière-plan",
+    "settings.cardVisibility.always": "Afficher automatiquement pour tout travail Codex",
+    "settings.cardVisibility.background": "Afficher automatiquement uniquement pour le travail Codex en arrière-plan",
     "settings.cardVisibility.never": "Aucune carte automatique",
     "activity.superseded": "Une carte Activity plus récente gère désormais les mises à jour en direct. Cet instantané reste disponible."
   },
   de: {
-    "settings.cardVisibility.always": "Eine Karte pro GPT-Antwort",
-    "settings.cardVisibility.background": "Eine Karte pro Antwort mit Hintergrundarbeit",
+    "settings.cardVisibility.always": "Für alle Codex-Arbeiten automatisch anzeigen",
+    "settings.cardVisibility.background": "Nur für Codex-Hintergrundarbeiten automatisch anzeigen",
     "settings.cardVisibility.never": "Keine automatischen Karten",
     "activity.superseded": "Eine neuere Activity-Karte übernimmt jetzt die Live-Aktualisierung. Dieser Snapshot bleibt verfügbar."
   },
   pt: {
-    "settings.cardVisibility.always": "Um cartão por resposta do GPT",
-    "settings.cardVisibility.background": "Um cartão por resposta com trabalho em segundo plano",
+    "settings.cardVisibility.always": "Mostrar automaticamente para todo trabalho do Codex",
+    "settings.cardVisibility.background": "Mostrar automaticamente apenas para trabalho do Codex em segundo plano",
     "settings.cardVisibility.never": "Sem cartões automáticos",
     "activity.superseded": "Um cartão de Activity mais recente agora controla as atualizações ao vivo. Este instantâneo continuará disponível."
+  }
+};
+
+const ACTIVITY_EXECUTION_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "activity.currentExecution": "현재 실행",
+    "activity.latestExecution": "최근 실행",
+    "activity.reasoningEffort": "에포트"
+  },
+  ja: {
+    "activity.currentExecution": "現在の実行",
+    "activity.latestExecution": "最新の実行",
+    "activity.reasoningEffort": "エフォート"
+  },
+  "zh-Hans": {
+    "activity.currentExecution": "当前执行",
+    "activity.latestExecution": "最近执行",
+    "activity.reasoningEffort": "推理强度"
+  },
+  "zh-Hant": {
+    "activity.currentExecution": "目前執行",
+    "activity.latestExecution": "最近執行",
+    "activity.reasoningEffort": "推理強度"
+  },
+  es: {
+    "activity.currentExecution": "Ejecución actual",
+    "activity.latestExecution": "Última ejecución",
+    "activity.reasoningEffort": "esfuerzo"
+  },
+  fr: {
+    "activity.currentExecution": "Exécution actuelle",
+    "activity.latestExecution": "Dernière exécution",
+    "activity.reasoningEffort": "effort"
+  },
+  de: {
+    "activity.currentExecution": "Aktuelle Ausführung",
+    "activity.latestExecution": "Letzte Ausführung",
+    "activity.reasoningEffort": "Reasoning-Stufe"
+  },
+  pt: {
+    "activity.currentExecution": "Execução atual",
+    "activity.latestExecution": "Última execução",
+    "activity.reasoningEffort": "esforço"
   }
 };
 
@@ -1005,42 +1140,40 @@ const ISSUE22_OVERRIDES: Record<
 > = {
   ko: {
     "settings.projects": "프로젝트",
-    "settings.projectsHint": "이름을 붙인 폴더를 등록하세요. 프로젝트 ID는 안정적인 라우팅 키이며 표시 이름과 폴더는 수정할 수 있습니다.",
+    "settings.projectsHint": "Codex가 작업을 시작할 폴더를 등록하세요. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있으며 내부 ID는 자동으로 관리됩니다.",
     "settings.allowedRoots": "브리지 허용 루트",
     "settings.allowedRootsHint": "프로젝트 실경로는 이 보안 상한 중 하나 안에 있어야 합니다. 프로젝트를 등록해도 범위는 넓어지지 않습니다.",
     "settings.addProject": "프로젝트 추가",
-    "settings.noProjects": "등록된 프로젝트가 없습니다. 호환 기본값이 없다면 새 작업을 시작하기 전에 추가하세요.",
-    "settings.projectId": "프로젝트 ID",
-    "settings.projectIdHint": "저장된 프로젝트 ID는 유지됩니다. 새 식별자가 필요할 때만 제거한 뒤 다시 추가하세요.",
-    "settings.projectLabel": "표시 이름",
+    "settings.addFirstProject": "첫 프로젝트 등록",
+    "settings.noProjects": "먼저 프로젝트를 등록하세요. Codex가 작업을 시작할 폴더가 필요합니다. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있습니다.",
+    "settings.projectLabel": "프로젝트 이름",
     "settings.projectCwd": "절대 폴더 경로",
-    "settings.defaultProject": "선택적 기본 프로젝트",
-    "settings.defaultProjectHint": "프로젝트가 여러 개일 때 사용하는 호환 기본값입니다. 프로젝트별 작업 라우팅이 활성화된 뒤 기본값을 비워 두면 프로젝트를 명시해야 합니다.",
+    "settings.defaultProject": "기본 프로젝트",
+    "settings.defaultProjectHint": "첫 프로젝트는 자동으로 기본 프로젝트가 됩니다. 여러 개라면 상황에 맞는 다른 등록 프로젝트를 GPT가 선택할 수 있습니다.",
     "settings.defaultProjectNone": "기본 프로젝트 없음",
     "settings.projectAvailable": "사용 가능",
     "settings.projectUnavailable": "복구 필요",
     "settings.projectNew": "새 항목",
     "settings.removeProject": "제거",
-    "settings.projectInvalidId": "소문자 ASCII 영문·숫자를 하이픈으로 구분해 1~64자로 입력하세요. 공백과 밑줄은 정규화됩니다.",
-    "settings.projectInvalidLabel": "프로젝트 표시 이름을 출력 가능한 Unicode 1~120자로 입력하세요.",
-    "settings.projectInvalidCwd": "브리지 허용 루트 안에 존재하는 절대 폴더를 입력하세요.",
-    "settings.projectDuplicateId": "정규화한 프로젝트 ID는 서로 달라야 합니다.",
+    "settings.projectInvalidLabel": "프로젝트 이름을 출력 가능한 Unicode 1~120자로 입력하세요.",
+    "settings.projectInvalidCwd": "현재 존재하는 절대 폴더 경로를 입력하세요.",
     "settings.projectDuplicatePath": "각 프로젝트는 서로 다른 canonical 폴더를 사용해야 합니다.",
     "settings.projectDefaultMissing": "프로젝트 목록에 남아 있는 기본값을 선택하거나 기본값 없음을 선택하세요.",
     "settings.projectUnavailableSave": "저장하기 전에 복구가 필요한 모든 프로젝트를 수정하거나 제거하세요.",
     "settings.projectLimit": "프로젝트는 최대 100개까지 등록할 수 있습니다.",
-    "settings.projectError": "프로젝트 섹션의 강조된 값을 확인하고 수정하세요."
+    "settings.projectError": "프로젝트 섹션의 강조된 값을 확인하고 수정하세요.",
+    "settings.reset": "일반 설정 기본값 복원",
+    "settings.resetHint": "접근, 모델, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트·순서·기본 프로젝트는 유지됩니다.",
+    "settings.resetDone": "일반 설정을 기본값으로 복원했습니다. 프로젝트는 유지되었습니다."
   },
   ja: {
     "settings.projects": "プロジェクト",
-    "settings.projectsHint": "名前付きフォルダーを登録します。プロジェクト ID は安定したルーティングキーで、表示名とフォルダーは編集できます。",
+    "settings.projectsHint": "プロジェクト名とフォルダーを入力してください。内部ルーティング ID は自動的に管理されます。",
     "settings.allowedRoots": "ブリッジで許可されたルート",
     "settings.allowedRootsHint": "プロジェクトの実体パスは、このセキュリティ上限のいずれかに含まれる必要があります。登録しても範囲は広がりません。",
     "settings.addProject": "プロジェクトを追加",
     "settings.noProjects": "登録済みプロジェクトはありません。互換用の既定値がない場合は、新しい作業の前に追加してください。",
-    "settings.projectId": "プロジェクト ID",
-    "settings.projectIdHint": "保存済み ID は固定です。新しい識別子が必要な場合だけ削除して追加し直してください。",
-    "settings.projectLabel": "表示名",
+    "settings.projectLabel": "プロジェクト名",
     "settings.projectCwd": "絶対フォルダー",
     "settings.defaultProject": "任意の既定プロジェクト",
     "settings.defaultProjectHint": "複数プロジェクト用の互換既定値です。プロジェクト対応ルーティングの有効化後、未指定なら明示的な選択が必要です。",
@@ -1049,10 +1182,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "復旧が必要",
     "settings.projectNew": "新規",
     "settings.removeProject": "削除",
-    "settings.projectInvalidId": "小文字 ASCII 英数字をハイフンで区切り、1～64 文字で入力してください。空白とアンダースコアは正規化されます。",
     "settings.projectInvalidLabel": "表示名を印刷可能な Unicode 1～120 文字で入力してください。",
     "settings.projectInvalidCwd": "許可されたルート内に存在する絶対フォルダーを入力してください。",
-    "settings.projectDuplicateId": "正規化後のプロジェクト ID は一意である必要があります。",
     "settings.projectDuplicatePath": "各プロジェクトには異なる正規フォルダーが必要です。",
     "settings.projectDefaultMissing": "一覧に残っている既定値を選ぶか、既定なしを選択してください。",
     "settings.projectUnavailableSave": "保存する前に、復旧が必要なプロジェクトをすべて修正または削除してください。",
@@ -1061,14 +1192,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   "zh-Hans": {
     "settings.projects": "项目",
-    "settings.projectsHint": "在此注册命名文件夹。项目 ID 是稳定的路由键；显示名称和文件夹可以编辑。",
+    "settings.projectsHint": "请输入项目名称和文件夹。内部路由 ID 会自动管理。",
     "settings.allowedRoots": "桥接允许的根目录",
     "settings.allowedRootsHint": "项目的真实路径必须位于这些安全上限之一。注册项目不会扩大范围。",
     "settings.addProject": "添加项目",
     "settings.noProjects": "尚未注册项目。如果没有兼容默认值，请在开始新工作前添加一个。",
-    "settings.projectId": "项目 ID",
-    "settings.projectIdHint": "已保存的项目 ID 保持稳定。只有确实需要新身份时才删除并重新添加。",
-    "settings.projectLabel": "显示名称",
+    "settings.projectLabel": "项目名称",
     "settings.projectCwd": "绝对文件夹",
     "settings.defaultProject": "可选默认项目",
     "settings.defaultProjectHint": "多个项目时使用的兼容默认值。启用项目感知路由后，留空将要求明确选择项目。",
@@ -1077,10 +1206,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "需要恢复",
     "settings.projectNew": "新建",
     "settings.removeProject": "移除",
-    "settings.projectInvalidId": "请输入 1–64 个由连字符分隔的小写 ASCII 字母或数字。空格和下划线会被规范化。",
     "settings.projectInvalidLabel": "请输入 1–120 个可打印 Unicode 字符作为项目名称。",
     "settings.projectInvalidCwd": "请输入桥接允许根目录内现有文件夹的绝对路径。",
-    "settings.projectDuplicateId": "规范化后的项目 ID 必须唯一。",
     "settings.projectDuplicatePath": "每个项目必须使用不同的规范文件夹。",
     "settings.projectDefaultMissing": "请选择列表中仍存在的默认项目，或选择无默认项目。",
     "settings.projectUnavailableSave": "保存前请修复或移除所有需要恢复的项目。",
@@ -1089,14 +1216,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   "zh-Hant": {
     "settings.projects": "專案",
-    "settings.projectsHint": "在此登錄具名資料夾。專案 ID 是穩定的路由鍵；顯示名稱與資料夾可以編輯。",
+    "settings.projectsHint": "請輸入專案名稱和資料夾。內部路由 ID 會自動管理。",
     "settings.allowedRoots": "橋接允許的根目錄",
     "settings.allowedRootsHint": "專案的實際路徑必須位於這些安全上限之一。登錄專案不會擴大範圍。",
     "settings.addProject": "新增專案",
     "settings.noProjects": "尚未登錄專案。如果沒有相容預設值，請在開始新工作前新增一個。",
-    "settings.projectId": "專案 ID",
-    "settings.projectIdHint": "已儲存的專案 ID 會保持穩定。只有需要新識別身分時才移除並重新新增。",
-    "settings.projectLabel": "顯示名稱",
+    "settings.projectLabel": "專案名稱",
     "settings.projectCwd": "絕對資料夾",
     "settings.defaultProject": "選用預設專案",
     "settings.defaultProjectHint": "多個專案時使用的相容預設值。啟用專案感知路由後，留空將需要明確選擇專案。",
@@ -1105,10 +1230,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "需要復原",
     "settings.projectNew": "新增",
     "settings.removeProject": "移除",
-    "settings.projectInvalidId": "請輸入 1–64 個以連字號分隔的小寫 ASCII 字母或數字。空格與底線會被正規化。",
     "settings.projectInvalidLabel": "請輸入 1–120 個可列印 Unicode 字元作為專案名稱。",
     "settings.projectInvalidCwd": "請輸入橋接允許根目錄內現有資料夾的絕對路徑。",
-    "settings.projectDuplicateId": "正規化後的專案 ID 必須唯一。",
     "settings.projectDuplicatePath": "每個專案必須使用不同的正規資料夾。",
     "settings.projectDefaultMissing": "請選擇清單中仍存在的預設專案，或選擇無預設專案。",
     "settings.projectUnavailableSave": "儲存前請修正或移除所有需要復原的專案。",
@@ -1117,14 +1240,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   es: {
     "settings.projects": "Proyectos",
-    "settings.projectsHint": "Registra carpetas con nombre. El ID es una clave de enrutamiento estable; la etiqueta y la carpeta se pueden editar.",
+    "settings.projectsHint": "Introduce el nombre y la carpeta del proyecto. Los ID internos de enrutamiento se gestionan automáticamente.",
     "settings.allowedRoots": "Raíces permitidas por el puente",
     "settings.allowedRootsHint": "La ruta real de cada proyecto debe estar dentro de uno de estos límites de seguridad. Registrar un proyecto no los amplía.",
     "settings.addProject": "Añadir proyecto",
     "settings.noProjects": "No hay proyectos registrados. Añade uno antes de iniciar trabajo nuevo si no existe un valor predeterminado compatible.",
-    "settings.projectId": "ID del proyecto",
-    "settings.projectIdHint": "Los ID guardados son estables. Elimina y vuelve a añadir solo si necesitas una identidad nueva.",
-    "settings.projectLabel": "Nombre visible",
+    "settings.projectLabel": "Nombre del proyecto",
     "settings.projectCwd": "Carpeta absoluta",
     "settings.defaultProject": "Proyecto predeterminado opcional",
     "settings.defaultProjectHint": "Valor compatible para varios proyectos. Cuando se active el enrutamiento por proyecto, dejarlo vacío exigirá una selección explícita.",
@@ -1133,10 +1254,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "Necesita recuperación",
     "settings.projectNew": "Nuevo",
     "settings.removeProject": "Eliminar",
-    "settings.projectInvalidId": "Usa de 1 a 64 letras ASCII minúsculas o dígitos separados por guiones. Los espacios y guiones bajos se normalizan.",
     "settings.projectInvalidLabel": "Introduce de 1 a 120 caracteres Unicode imprimibles para el nombre.",
     "settings.projectInvalidCwd": "Introduce una carpeta absoluta existente dentro de una raíz permitida.",
-    "settings.projectDuplicateId": "Los ID deben ser únicos después de normalizarlos.",
     "settings.projectDuplicatePath": "Cada proyecto debe usar una carpeta canónica distinta.",
     "settings.projectDefaultMissing": "Elige un proyecto que siga en la lista o selecciona ninguno.",
     "settings.projectUnavailableSave": "Corrige o elimina todos los proyectos que necesitan recuperación antes de guardar.",
@@ -1145,14 +1264,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   fr: {
     "settings.projects": "Projets",
-    "settings.projectsHint": "Enregistrez des dossiers nommés. L’ID est une clé de routage stable ; le libellé et le dossier restent modifiables.",
+    "settings.projectsHint": "Saisissez le nom et le dossier du projet. Les ID de routage internes sont gérés automatiquement.",
     "settings.allowedRoots": "Racines autorisées par le pont",
     "settings.allowedRootsHint": "Le chemin réel de chaque projet doit rester dans l’une de ces limites de sécurité. Enregistrer un projet ne les élargit pas.",
     "settings.addProject": "Ajouter un projet",
     "settings.noProjects": "Aucun projet enregistré. Ajoutez-en un avant un nouveau travail si aucune valeur compatible n’est disponible.",
-    "settings.projectId": "ID du projet",
-    "settings.projectIdHint": "Les ID enregistrés sont stables. Supprimez puis recréez uniquement si une nouvelle identité est voulue.",
-    "settings.projectLabel": "Libellé affiché",
+    "settings.projectLabel": "Nom du projet",
     "settings.projectCwd": "Dossier absolu",
     "settings.defaultProject": "Projet par défaut facultatif",
     "settings.defaultProjectHint": "Valeur compatible pour plusieurs projets. Une fois le routage par projet activé, l’absence de valeur imposera un choix explicite.",
@@ -1161,10 +1278,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "Récupération requise",
     "settings.projectNew": "Nouveau",
     "settings.removeProject": "Supprimer",
-    "settings.projectInvalidId": "Utilisez 1 à 64 lettres ASCII minuscules ou chiffres séparés par des tirets. Espaces et underscores sont normalisés.",
     "settings.projectInvalidLabel": "Saisissez 1 à 120 caractères Unicode imprimables pour le libellé.",
     "settings.projectInvalidCwd": "Saisissez un dossier absolu existant dans une racine autorisée.",
-    "settings.projectDuplicateId": "Les ID doivent être uniques après normalisation.",
     "settings.projectDuplicatePath": "Chaque projet doit utiliser un dossier canonique différent.",
     "settings.projectDefaultMissing": "Choisissez un projet encore présent dans la liste, ou aucun projet par défaut.",
     "settings.projectUnavailableSave": "Corrigez ou supprimez tous les projets à récupérer avant l’enregistrement.",
@@ -1173,14 +1288,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   de: {
     "settings.projects": "Projekte",
-    "settings.projectsHint": "Registrieren Sie benannte Ordner. Die Projekt-ID ist ein stabiler Routing-Schlüssel; Anzeigename und Ordner sind bearbeitbar.",
+    "settings.projectsHint": "Geben Sie Projektname und Ordner ein. Interne Routing-IDs werden automatisch verwaltet.",
     "settings.allowedRoots": "Von der Bridge erlaubte Stammordner",
     "settings.allowedRootsHint": "Der reale Projektpfad muss innerhalb einer dieser Sicherheitsgrenzen liegen. Ein Projekt erweitert sie nicht.",
     "settings.addProject": "Projekt hinzufügen",
     "settings.noProjects": "Keine Projekte registriert. Fügen Sie vor neuer Arbeit eines hinzu, wenn kein kompatibler Standard vorhanden ist.",
-    "settings.projectId": "Projekt-ID",
-    "settings.projectIdHint": "Gespeicherte Projekt-IDs bleiben stabil. Nur für eine neue Identität entfernen und neu hinzufügen.",
-    "settings.projectLabel": "Anzeigename",
+    "settings.projectLabel": "Projektname",
     "settings.projectCwd": "Absoluter Ordner",
     "settings.defaultProject": "Optionales Standardprojekt",
     "settings.defaultProjectHint": "Kompatibler Standard bei mehreren Projekten. Nach Aktivierung des projektbezogenen Routings erfordert keine Auswahl ein explizites Projekt.",
@@ -1189,10 +1302,8 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "Wiederherstellung nötig",
     "settings.projectNew": "Neu",
     "settings.removeProject": "Entfernen",
-    "settings.projectInvalidId": "Verwenden Sie 1–64 kleine ASCII-Buchstaben oder Ziffern, getrennt durch Bindestriche. Leerzeichen und Unterstriche werden normalisiert.",
     "settings.projectInvalidLabel": "Geben Sie 1–120 druckbare Unicode-Zeichen als Anzeigename ein.",
     "settings.projectInvalidCwd": "Geben Sie einen vorhandenen absoluten Ordner innerhalb eines erlaubten Stammordners ein.",
-    "settings.projectDuplicateId": "Normalisierte Projekt-IDs müssen eindeutig sein.",
     "settings.projectDuplicatePath": "Jedes Projekt muss einen anderen kanonischen Ordner verwenden.",
     "settings.projectDefaultMissing": "Wählen Sie ein noch vorhandenes Projekt oder kein Standardprojekt.",
     "settings.projectUnavailableSave": "Korrigieren oder entfernen Sie vor dem Speichern alle wiederherzustellenden Projekte.",
@@ -1201,14 +1312,12 @@ const ISSUE22_OVERRIDES: Record<
   },
   pt: {
     "settings.projects": "Projetos",
-    "settings.projectsHint": "Registre pastas nomeadas. O ID é uma chave de roteamento estável; o rótulo e a pasta podem ser editados.",
+    "settings.projectsHint": "Informe o nome e a pasta do projeto. Os IDs internos de roteamento são gerenciados automaticamente.",
     "settings.allowedRoots": "Raízes permitidas pela ponte",
     "settings.allowedRootsHint": "O caminho real de cada projeto deve ficar dentro de um destes limites de segurança. Registrar um projeto não os amplia.",
     "settings.addProject": "Adicionar projeto",
     "settings.noProjects": "Nenhum projeto registrado. Adicione um antes de iniciar novo trabalho se não houver um padrão compatível.",
-    "settings.projectId": "ID do projeto",
-    "settings.projectIdHint": "IDs salvos são estáveis. Remova e adicione novamente apenas quando quiser uma nova identidade.",
-    "settings.projectLabel": "Rótulo de exibição",
+    "settings.projectLabel": "Nome do projeto",
     "settings.projectCwd": "Pasta absoluta",
     "settings.defaultProject": "Projeto padrão opcional",
     "settings.defaultProjectHint": "Padrão compatível para vários projetos. Quando o roteamento por projeto for ativado, deixar vazio exigirá uma seleção explícita.",
@@ -1217,15 +1326,106 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectUnavailable": "Precisa de recuperação",
     "settings.projectNew": "Novo",
     "settings.removeProject": "Remover",
-    "settings.projectInvalidId": "Use de 1 a 64 letras ASCII minúsculas ou dígitos separados por hífens. Espaços e sublinhados são normalizados.",
     "settings.projectInvalidLabel": "Digite de 1 a 120 caracteres Unicode imprimíveis para o rótulo.",
     "settings.projectInvalidCwd": "Digite uma pasta absoluta existente dentro de uma raiz permitida.",
-    "settings.projectDuplicateId": "Os IDs devem ser exclusivos após a normalização.",
     "settings.projectDuplicatePath": "Cada projeto deve usar uma pasta canônica diferente.",
     "settings.projectDefaultMissing": "Escolha um projeto que permaneça na lista ou nenhum projeto padrão.",
     "settings.projectUnavailableSave": "Corrija ou remova todos os projetos que precisam de recuperação antes de salvar.",
     "settings.projectLimit": "No máximo 100 projetos podem ser registrados.",
     "settings.projectError": "Revise a seção Projetos e corrija os valores destacados."
+  }
+};
+
+const ISSUE26_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 프로젝트 폴더는 작업 시작 위치를 정할 뿐 OS 격리가 아닙니다."
+  },
+  ja: {
+    "settings.fullWarning": "フルアクセスでは、この macOS ユーザーのファイルシステム権限とネットワーク権限で Codex が実行されます。プロジェクトフォルダーは開始位置を選ぶだけで、OS レベルの隔離ではありません。",
+    "settings.projectsHint": "Codex が作業を開始するフォルダーを登録します。この PC 上の異なる場所を複数追加でき、内部 ID は自動管理されます。",
+    "settings.addFirstProject": "最初のプロジェクトを登録",
+    "settings.noProjects": "まずプロジェクトを登録してください。Codex が作業を開始するフォルダーが必要です。この PC 上の異なる場所を複数追加できます。",
+    "settings.defaultProject": "既定のプロジェクト",
+    "settings.defaultProjectHint": "最初のプロジェクトは自動的に既定になります。複数ある場合、GPT は状況に合う別の登録済みプロジェクトを選択できます。",
+    "settings.projectInvalidCwd": "存在する絶対フォルダーパスを入力してください。",
+    "settings.reset": "一般設定を既定値に戻す",
+    "settings.resetHint": "アクセス、モデル、表示、同時実行数、Activity の設定だけを戻します。プロジェクト、順序、既定のプロジェクトは保持されます。",
+    "settings.resetDone": "一般設定を既定値に戻しました。プロジェクトは保持されています。"
+  },
+  "zh-Hans": {
+    "settings.fullWarning": "完全访问会使用此 macOS 用户的文件系统和网络权限运行 Codex。项目文件夹只决定工作起点，并不提供操作系统隔离。",
+    "settings.projectsHint": "注册 Codex 开始工作的文件夹。可添加此电脑上多个互不相关的位置；内部 ID 会自动管理。",
+    "settings.addFirstProject": "注册第一个项目",
+    "settings.noProjects": "请先注册项目。Codex 需要一个开始工作的文件夹；你可以添加此电脑上不同位置的多个文件夹。",
+    "settings.defaultProject": "默认项目",
+    "settings.defaultProjectHint": "第一个项目会自动成为默认项目。存在多个项目时，GPT 可按情况选择其他已注册项目。",
+    "settings.projectInvalidCwd": "请输入现有文件夹的绝对路径。",
+    "settings.reset": "恢复常规设置默认值",
+    "settings.resetHint": "仅恢复访问、模型、界面、并发数和 Activity 设置。项目、顺序和默认项目会保留。",
+    "settings.resetDone": "已恢复常规设置默认值。项目已保留。"
+  },
+  "zh-Hant": {
+    "settings.fullWarning": "完整存取會以此 macOS 使用者的檔案系統與網路權限執行 Codex。專案資料夾只決定工作起點，並非作業系統隔離。",
+    "settings.projectsHint": "登錄 Codex 開始工作的資料夾。可加入此電腦上多個互不相關的位置；內部 ID 會自動管理。",
+    "settings.addFirstProject": "登錄第一個專案",
+    "settings.noProjects": "請先登錄專案。Codex 需要一個開始工作的資料夾；你可以加入此電腦上不同位置的多個資料夾。",
+    "settings.defaultProject": "預設專案",
+    "settings.defaultProjectHint": "第一個專案會自動成為預設專案。有多個專案時，GPT 可依情況選擇其他已登錄專案。",
+    "settings.projectInvalidCwd": "請輸入現有資料夾的絕對路徑。",
+    "settings.reset": "還原一般設定預設值",
+    "settings.resetHint": "只還原存取、模型、介面、並行數與 Activity 設定。專案、順序與預設專案會保留。",
+    "settings.resetDone": "已還原一般設定預設值。專案已保留。"
+  },
+  es: {
+    "settings.fullWarning": "El acceso total ejecuta Codex con los permisos de archivos y red de este usuario de macOS. La carpeta del proyecto solo elige dónde empieza el trabajo; no aísla el sistema operativo.",
+    "settings.projectsHint": "Registra las carpetas donde Codex puede empezar a trabajar. Puedes añadir varias ubicaciones independientes de este PC; los ID internos se gestionan automáticamente.",
+    "settings.addFirstProject": "Registrar primer proyecto",
+    "settings.noProjects": "Registra primero un proyecto. Codex necesita una carpeta donde empezar a trabajar; puedes añadir varias carpetas de distintas ubicaciones de este PC.",
+    "settings.defaultProject": "Proyecto predeterminado",
+    "settings.defaultProjectHint": "El primer proyecto se convierte automáticamente en el predeterminado. Si hay varios, GPT puede elegir otro proyecto registrado cuando corresponda.",
+    "settings.projectInvalidCwd": "Introduce la ruta absoluta de una carpeta existente.",
+    "settings.reset": "Restaurar valores generales",
+    "settings.resetHint": "Restaura solo acceso, modelo, interfaz, concurrencia y Activity. Se conservan los proyectos, su orden y el proyecto predeterminado.",
+    "settings.resetDone": "Se restauraron los valores generales. Los proyectos se conservaron."
+  },
+  fr: {
+    "settings.fullWarning": "L’accès complet exécute Codex avec les autorisations de fichiers et de réseau de cet utilisateur macOS. Le dossier du projet choisit seulement le point de départ du travail ; il n’isole pas le système.",
+    "settings.projectsHint": "Enregistrez les dossiers où Codex peut commencer à travailler. Vous pouvez ajouter plusieurs emplacements indépendants sur ce PC ; les ID internes sont gérés automatiquement.",
+    "settings.addFirstProject": "Enregistrer le premier projet",
+    "settings.noProjects": "Enregistrez d’abord un projet. Codex a besoin d’un dossier où commencer ; vous pouvez ajouter plusieurs dossiers situés à différents endroits sur ce PC.",
+    "settings.defaultProject": "Projet par défaut",
+    "settings.defaultProjectHint": "Le premier projet devient automatiquement le projet par défaut. S’il y en a plusieurs, GPT peut choisir un autre projet enregistré selon le contexte.",
+    "settings.projectInvalidCwd": "Saisissez le chemin absolu d’un dossier existant.",
+    "settings.reset": "Rétablir les valeurs générales",
+    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, l’interface, la simultanéité et Activity. Les projets, leur ordre et le projet par défaut sont conservés.",
+    "settings.resetDone": "Les valeurs générales ont été rétablies. Les projets ont été conservés."
+  },
+  de: {
+    "settings.fullWarning": "Vollzugriff führt Codex mit den Datei- und Netzwerkrechten dieses macOS-Benutzers aus. Der Projektordner legt nur den Arbeitsbeginn fest und ist keine Betriebssystem-Isolation.",
+    "settings.projectsHint": "Registrieren Sie die Ordner, in denen Codex die Arbeit beginnen darf. Sie können mehrere unabhängige Orte auf diesem PC hinzufügen; interne IDs werden automatisch verwaltet.",
+    "settings.addFirstProject": "Erstes Projekt registrieren",
+    "settings.noProjects": "Registrieren Sie zuerst ein Projekt. Codex benötigt einen Startordner; Sie können mehrere Ordner an verschiedenen Orten dieses PCs hinzufügen.",
+    "settings.defaultProject": "Standardprojekt",
+    "settings.defaultProjectHint": "Das erste Projekt wird automatisch zum Standardprojekt. Bei mehreren Projekten kann GPT passend ein anderes registriertes Projekt wählen.",
+    "settings.projectInvalidCwd": "Geben Sie den absoluten Pfad eines vorhandenen Ordners ein.",
+    "settings.reset": "Allgemeine Standardwerte wiederherstellen",
+    "settings.resetHint": "Setzt nur Zugriff, Modell, Oberfläche, Parallelität und Activity zurück. Projekte, Reihenfolge und Standardprojekt bleiben erhalten.",
+    "settings.resetDone": "Allgemeine Standardwerte wurden wiederhergestellt. Projekte wurden beibehalten."
+  },
+  pt: {
+    "settings.fullWarning": "O acesso total executa o Codex com as permissões de arquivos e rede deste usuário do macOS. A pasta do projeto apenas define onde o trabalho começa; não isola o sistema operacional.",
+    "settings.projectsHint": "Registre as pastas onde o Codex pode começar a trabalhar. Você pode adicionar vários locais independentes deste PC; os IDs internos são gerenciados automaticamente.",
+    "settings.addFirstProject": "Registrar primeiro projeto",
+    "settings.noProjects": "Registre primeiro um projeto. O Codex precisa de uma pasta onde começar; você pode adicionar várias pastas de locais diferentes deste PC.",
+    "settings.defaultProject": "Projeto padrão",
+    "settings.defaultProjectHint": "O primeiro projeto vira o padrão automaticamente. Com vários projetos, o GPT pode escolher outro projeto registrado quando apropriado.",
+    "settings.projectInvalidCwd": "Digite o caminho absoluto de uma pasta existente.",
+    "settings.reset": "Restaurar padrões gerais",
+    "settings.resetHint": "Restaura apenas acesso, modelo, interface, concorrência e Activity. Projetos, ordem e projeto padrão são mantidos.",
+    "settings.resetDone": "Os padrões gerais foram restaurados. Os projetos foram mantidos."
   }
 };
 
@@ -1235,8 +1435,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
