@@ -107,6 +107,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     .field-error { display:none; margin:8px 0 0; color:var(--danger); font-size:12px; line-height:1.4; }
     .field-error.show { display:block; }
     .notice { margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:10px; font-size:12px; color:var(--muted); line-height:1.45; }
+    .experimental-notice { margin:0 0 14px; border-color:color-mix(in srgb,var(--danger) 45%,transparent); color:var(--danger); }
     .inline-warning { color:var(--danger); }
     .warning { display:none; margin-top:12px; border:1px solid color-mix(in srgb,var(--danger) 45%,transparent); border-radius:10px; padding:10px; color:var(--danger); font-size:12px; line-height:1.45; white-space:pre-line; }
     .warning.show { display:block; } .warning button { margin-top:8px; } .access-warning { margin-top:2px; }
@@ -121,6 +122,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
 <body>
   <main class="card">
     <header><div><h1>${PRODUCT_INFO.displayName}</h1><p class="scope" data-i18n="settings.scope"></p></div></header>
+    <aside class="notice experimental-notice" data-i18n="settings.appServerExperimental"></aside>
     <form id="settings-form">
       <div class="grid">
         <label class="wide"><span data-i18n="settings.access"></span><select id="access-strategy" aria-describedby="access-hint full-warning"></select><span class="hint" id="access-hint"></span><span class="warning access-warning" id="full-warning" role="status" aria-live="polite" aria-atomic="true" data-i18n="settings.fullWarning"></span></label>

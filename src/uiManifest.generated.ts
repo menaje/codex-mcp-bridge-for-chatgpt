@@ -10,8 +10,8 @@ export const UI_RESOURCE_MANIFEST = {
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "0cef3dd8da8bca378b0c2b37b315aa132a0ce64fc07674584d1c64962cf512c9",
-      "uri": "ui://codex-mcp-bridge/settings/0cef3dd8da8b.html",
+      "digest": "00b18e9d3e236e8b4204e837abbc20d5f9af683f54ce4ea7cdb00f36ec8add88",
+      "uri": "ui://codex-mcp-bridge/settings/00b18e9d3e23.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -39,8 +39,8 @@ export const UI_RESOURCE_MANIFEST = {
       },
       "previous": [
         {
-          "digest": "5fd94685e0708f71bdc678bc88e6f0216a477449c8442afabb396648c359d264",
-          "uri": "ui://codex-mcp-bridge/settings/5fd94685e070.html",
+          "digest": "0cef3dd8da8bca378b0c2b37b315aa132a0ce64fc07674584d1c64962cf512c9",
+          "uri": "ui://codex-mcp-bridge/settings/0cef3dd8da8b.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -70,8 +70,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "activity": {
-      "digest": "617e8b7beea0b58634a521997818f61ddf8ecdba50026b66db604517fa8954d1",
-      "uri": "ui://codex-mcp-bridge/activity/617e8b7beea0.html",
+      "digest": "3f875b5c2775fb2f732edae1eea1211e70185570f2e81a94d83234981e8bb5b9",
+      "uri": "ui://codex-mcp-bridge/activity/3f875b5c2775.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -99,8 +99,8 @@ export const UI_RESOURCE_MANIFEST = {
       },
       "previous": [
         {
-          "digest": "9d4ce5aced85deee04b1aae805cc1a4ac22004d1b9f56e8a6fa951a5190d38ff",
-          "uri": "ui://codex-mcp-bridge/activity/9d4ce5aced85.html",
+          "digest": "617e8b7beea0b58634a521997818f61ddf8ecdba50026b66db604517fa8954d1",
+          "uri": "ui://codex-mcp-bridge/activity/617e8b7beea0.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",

@@ -103,6 +103,9 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
     expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
+    expect(UI_TRANSLATIONS.ko["settings.appServerExperimental"]).toContain(
+      "개인·개발 환경에서만 사용"
+    );
     expect(UI_TRANSLATIONS.ko["settings.allowedScope.catalog"]).toBe(
       "사용 가능한 모든 모델·에포트"
     );
@@ -215,6 +218,9 @@ describe("human-facing UI localization", () => {
     }
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
+    expect(SETTINGS_CARD_HTML).toContain(
+      'class="notice experimental-notice" data-i18n="settings.appServerExperimental"'
+    );
     expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
     expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
     expect(SETTINGS_CARD_HTML).toContain(

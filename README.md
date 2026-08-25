@@ -2,6 +2,13 @@
 
 A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.
 
+> [!WARNING]
+> The `mcp-server` backend is the stable default. Codex App Server integration is
+> experimental and is not officially supported for production workloads. If an
+> operator enables it, use it only for personal or development work, monitor
+> failures, and be ready to restore `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server`
+> and restart the bridge. Existing App Server Agents remain pinned to that backend.
+
 - Repository: `menaje/codex-mcp-bridge-for-chatgpt`
 - npm package: `codex-mcp-bridge-for-chatgpt`
 - Product name: **Codex MCP Bridge for ChatGPT**

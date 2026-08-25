@@ -1,5 +1,12 @@
 # Connect Codex MCP Bridge for ChatGPT
 
+> [!WARNING]
+> The stable default backend is `mcp-server`. App Server is experimental and is
+> not officially supported for production workloads. Enable it only for personal
+> or development use with monitoring and rollback ownership. Roll back by restoring
+> `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and restarting the bridge; existing
+> App Server Agents remain pinned to their original backend.
+
 ## 1. Prepare Codex and the bridge
 
 Confirm that Codex is installed and authenticated:
