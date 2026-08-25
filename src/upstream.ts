@@ -92,7 +92,14 @@ export type CodexPendingInteraction = {
   }>;
 };
 
-export type CodexThreadResumeProbe =
+export type CodexThreadLineage = {
+  /** App Server session-tree identity reported by the upstream protocol. */
+  sessionId?: string;
+  /** Direct source thread reported when this thread was created by fork. */
+  forkedFromThreadId?: string;
+};
+
+export type CodexThreadResumeProbe = (
   | {
       state: "resumable";
       runtimeStatus: "notLoaded" | "idle";
@@ -115,7 +122,8 @@ export type CodexThreadResumeProbe =
       reason: "unsupported" | "transient";
       threadId: string;
       retryable: true;
-    };
+    }
+) & CodexThreadLineage;
 
 export type UpstreamWorkerAssignment = {
   backendKind: "mcp-server" | "app-server";

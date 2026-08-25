@@ -122,12 +122,22 @@ check above, a real restart continuation, and two real turns that use different
 allowed model/effort selections.
 
 During the canary, inspect `codex_status` for catalog freshness, aggregate
-worker health, retryable probe failures, and orphaned-Agent count. Exercise
+worker RSS/FD, startup/crash/config/MCP health, retryable probe failures, and
+orphaned-Agent count. Record both turns' requested/effective/actual selection
+audits, any reroute reason, the stable session/thread continuation after an App
+Server and bridge restart, and a summary-only cross-backend handoff. Exercise
 command, file, permission, and user-input resolution—including cancel,
 decline, session acceptance when advertised, automatic resolution, and expiry.
 Rollback by restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and
 restarting. The setting applies only to new threads; existing App Server
 threads stay pinned and are neither converted nor deleted.
+
+The live canary consumes authenticated model capacity and is therefore a
+manual release gate, not an ordinary fixture CI step. Attach the dated canary
+record and the accountable operator's explicit experimental-risk acceptance to
+the release or epic before changing the default backend. Schema compatibility,
+fixture recovery tests, or a maintainer's code review do not substitute for
+those two records.
 
 ### Legacy runtime namespace
 

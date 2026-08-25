@@ -17,6 +17,8 @@ export type ThreadIdentity = {
   threadId: string;
   scopeId: string;
   backendKind: CodexBackendKind;
+  sessionId?: string;
+  forkedFromThreadId?: string;
 };
 
 export type ThreadExecutionState = {
@@ -41,7 +43,7 @@ export type SessionMatch = {
 };
 
 type PersistedSessionState = {
-  version: 6;
+  version: 7;
   sessions: TrackedCodexSession[];
 };
 
@@ -81,6 +83,14 @@ export class SessionRegistry {
   record(session: TrackedCodexSession): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
+    const sessionId = normalizeOptionalLineageId(
+      session.sessionId ?? existing?.sessionId,
+      "sessionId"
+    );
+    const forkedFromThreadId = normalizeOptionalLineageId(
+      session.forkedFromThreadId ?? existing?.forkedFromThreadId,
+      "forkedFromThreadId"
+    );
     if ((session.projectId === undefined) !== (session.projectLabel === undefined)) {
       throw new Error("Session project metadata requires both projectId and projectLabel.");
     }
@@ -89,6 +99,8 @@ export class SessionRegistry {
       threadId: session.threadId,
       scopeId: session.scopeId,
       backendKind: session.backendKind,
+      ...(sessionId ? { sessionId } : {}),
+      ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
       cwd: session.cwd,
       ...(session.projectId && session.projectLabel
         ? {
@@ -219,7 +231,7 @@ export class SessionRegistry {
     if (this.stateStore) {
       const stored = this.stateStore.listSessions();
       const decoded = stored
-        .map((session) => readPersistedSession(session, 6))
+        .map((session) => readPersistedSession(session, 7))
         .filter((session): session is TrackedCodexSession => Boolean(session))
         .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
       const sessions = decoded.slice(-this.maxSessions);
@@ -256,12 +268,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7;
     const sessions = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -271,7 +283,7 @@ export class SessionRegistry {
     for (const session of sessions) {
       this.sessions.set(session.threadId, session);
     }
-    if (stateVersion !== 5) this.persist();
+    if (stateVersion !== 7) this.persist();
   }
 
   private importLegacyState(): void {
@@ -288,12 +300,12 @@ export class SessionRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7) ||
       !Array.isArray(parsed.sessions)
     ) {
       throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7;
     const imported = parsed.sessions
       .map((session) => readPersistedSession(session, stateVersion))
       .filter((session): session is TrackedCodexSession => Boolean(session))
@@ -319,7 +331,7 @@ export class SessionRegistry {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSessionState = {
-      version: 6,
+      version: 7,
       sessions: this.list()
     };
     writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -372,7 +384,7 @@ export function extractThreadId(result: ToolResult): string | undefined {
 
 function readPersistedSession(
   value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6
+  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7
 ): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
@@ -394,6 +406,19 @@ function readPersistedSession(
     return undefined;
   }
   const policyRevision = stateVersion >= 5 ? value.policyRevision : undefined;
+  const sessionId = stateVersion >= 7
+    ? normalizePersistedLineageId(value.sessionId)
+    : undefined;
+  const forkedFromThreadId = stateVersion >= 7
+    ? normalizePersistedLineageId(value.forkedFromThreadId)
+    : undefined;
+  if (
+    stateVersion >= 7 &&
+    ((value.sessionId !== undefined && !sessionId) ||
+      (value.forkedFromThreadId !== undefined && !forkedFromThreadId))
+  ) {
+    return undefined;
+  }
   const updatedAt = stateVersion >= 5 && isTimestamp(value.updatedAt)
     ? value.updatedAt
     : isTimestamp(value.lastUsedAt)
@@ -430,6 +455,8 @@ function readPersistedSession(
   return {
     threadId: value.threadId,
     scopeId: scopeId.toLowerCase(),
+    ...(sessionId ? { sessionId } : {}),
+    ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
     cwd: value.cwd,
     ...(project || {}),
     sandbox,
@@ -468,6 +495,19 @@ function isTimestamp(value: unknown): value is number {
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+function normalizeOptionalLineageId(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalizePersistedLineageId(value);
+  if (!normalized) throw new Error(`Session ${label} must be a non-empty string of at most 200 characters.`);
+  return normalized;
+}
+
+function normalizePersistedLineageId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized && normalized.length <= 200 ? normalized : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

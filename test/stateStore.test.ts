@@ -109,7 +109,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(5);
+    expect(restored.schemaVersion).toBe(6);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe("bridge");
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })

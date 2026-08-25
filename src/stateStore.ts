@@ -42,7 +42,7 @@ import {
   normalizeProjectLabel
 } from "./projectRegistry.js";
 
-const CURRENT_SCHEMA_VERSION = "5";
+const CURRENT_SCHEMA_VERSION = "6";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type SessionRowInput = {
@@ -175,6 +175,7 @@ type AgentStorageRow = {
 
 type AgentThreadStorageRow = {
   thread_id: string;
+  session_id: string | null;
   agent_id: string;
   scope_id: string;
   project_id: string | null;
@@ -289,6 +290,7 @@ export class BridgeStateStore {
       existingVersion !== "2" &&
       existingVersion !== "3" &&
       existingVersion !== "4" &&
+      existingVersion !== "5" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -302,6 +304,7 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "2") this.migrateV2ToV3();
       if (this.getMeta("schema_version") === "3") this.migrateV3ToV4();
       if (this.getMeta("schema_version") === "4") this.migrateV4ToV5();
+      if (this.getMeta("schema_version") === "5") this.migrateV5ToV6();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -708,6 +711,7 @@ export class BridgeStateStore {
   linkAgentThread(input: {
     agentId: string;
     threadId: string;
+    sessionId?: string;
     projectId?: string;
     projectLabel?: string;
     backendKind: string;
@@ -752,6 +756,9 @@ export class BridgeStateStore {
       const forkedFromThreadId = input.forkedFromThreadId
         ? normalizeRequiredString(input.forkedFromThreadId, "forkedFromThreadId", 200)
         : undefined;
+      const sessionId = input.sessionId
+        ? normalizeRequiredString(input.sessionId, "sessionId", 200)
+        : undefined;
       this.database
         .prepare(`
           UPDATE agent_threads
@@ -762,11 +769,12 @@ export class BridgeStateStore {
       this.database
         .prepare(`
           INSERT INTO agent_threads(
-            thread_id, agent_id, scope_id, project_id, project_label,
+            thread_id, session_id, agent_id, scope_id, project_id, project_label,
             backend_kind, cwd, sandbox, context_mode,
             is_current, linked_at, replaced_at, forked_from_thread_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
+            session_id = COALESCE(excluded.session_id, agent_threads.session_id),
             project_id = COALESCE(agent_threads.project_id, excluded.project_id),
             project_label = COALESCE(agent_threads.project_label, excluded.project_label),
             backend_kind = excluded.backend_kind,
@@ -778,6 +786,7 @@ export class BridgeStateStore {
         `)
         .run(
           threadId,
+          sessionId || null,
           agent.agentId,
           agent.scopeId,
           project?.projectId || null,
@@ -2198,8 +2207,19 @@ export class BridgeStateStore {
         ALTER TABLE agent_threads ADD COLUMN project_label TEXT;
       `);
       const now = Date.now();
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "5");
       this.setMeta("schema_v5_migrated_at", new Date(now).toISOString());
+    });
+  }
+
+  private migrateV5ToV6(): void {
+    this.transaction(() => {
+      this.database.exec(`
+        ALTER TABLE agent_threads ADD COLUMN session_id TEXT;
+      `);
+      const now = Date.now();
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v6_migrated_at", new Date(now).toISOString());
     });
   }
 
@@ -3097,6 +3117,7 @@ function readAgentThreadRow(row: AgentThreadStorageRow): BridgeAgentThread {
   }
   return {
     threadId: row.thread_id,
+    sessionId: row.session_id || undefined,
     agentId: row.agent_id,
     scopeId: row.scope_id,
     projectId: row.project_id || undefined,

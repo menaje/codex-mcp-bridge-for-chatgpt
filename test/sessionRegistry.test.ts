@@ -15,7 +15,11 @@ describe("SessionRegistry", () => {
     const first = new SessionRegistry({ stateFile, allowedRoots: [root] });
     first.record({
       threadId: "thread-1",
+      sessionId: "session-tree-1",
+      forkedFromThreadId: "thread-parent",
       scopeId: SCOPE_A,
+      sessionId: "session-tree-1",
+      forkedFromThreadId: "thread-parent",
       cwd: root,
       projectId: "bridge",
       projectLabel: "Codex MCP Bridge",
@@ -296,7 +300,7 @@ describe("SessionRegistry", () => {
     expect(sessions.get("legacy-thread")).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
     expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -324,7 +328,7 @@ describe("SessionRegistry", () => {
     const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
     expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
     expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 6 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
     expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -353,7 +357,7 @@ describe("SessionRegistry", () => {
       backendKind: "app-server"
     });
     const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 6 });
+    expect(persisted).toMatchObject({ version: 7 });
     expect(persisted.sessions[0]).not.toHaveProperty("model");
     expect(persisted.sessions[0]).not.toHaveProperty("reasoningEffort");
   });

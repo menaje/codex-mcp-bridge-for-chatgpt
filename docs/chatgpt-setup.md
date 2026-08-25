@@ -101,6 +101,11 @@ preferences are safely discarded and are not selectable in Settings.
 
 The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The card automatically allocates a stable normalized routing ID, keeps it out of the form, and preserves it when the name or folder changes. New or edited folders are canonicalized with `realpath`; files, missing folders, and canonical-path collisions are rejected. The first project becomes the default automatically. Removing and adding an entry creates a new internal identity.
 
+Settings also warns that changing the default backend affects only new threads.
+Existing Agents stay pinned. To move one deliberately, use that Agent with
+fresh context and an explicit handoff summary; only the summary reaches the new
+backend thread, not the prior transcript or backend state.
+
 Settings card generation 5 sends `expectedRevision` and exactly one `reset` or
 `patch` operation. A patch groups the ordinary settings and a bounded atomic list
 of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
@@ -145,7 +150,7 @@ Call `codex_status` and confirm:
 
 Inspect `tools/list`:
 
-- `codex_task` has no caller `scopeId`, `activityPresentationId`, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
+- `codex_task` has no caller `scopeId`, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`; when automatic Activity UI is enabled it requires one response-scoped `activityPresentationId`;
 - `projectId` lists only currently selectable registered IDs and their labels;
 - fixed access modes have no `sandbox`;
 - `adaptive` exposes only permitted sandboxes;
@@ -154,13 +159,14 @@ Inspect `tools/list`:
 
 ## 6. Agent and Activity routing
 
-ChatGPT omits `scopeId`; the bridge derives it from anonymous conversation host metadata. A non-ChatGPT compatibility host must generate/reuse an explicit scope UUID. Every logical `codex_task` turn gets a fresh UUID `requestId`; reuse it only for an exact retry.
+ChatGPT omits `scopeId`; the bridge derives it from anonymous conversation host metadata. A non-ChatGPT compatibility host must generate/reuse an explicit scope UUID. Every logical `codex_task` turn gets a fresh UUID `requestId`; reuse it only for an exact retry. When the descriptor exposes `activityPresentationId`, generate one separate UUID for the current assistant response and reuse it across every Codex call in that response.
 
 Use these routes:
 
 ```json
 {
   "requestId": "...",
+  "activityPresentationId": "...",
   "projectId": "bridge",
   "activity": {
     "mode": "new",
@@ -185,6 +191,7 @@ The result returns immutable `activityId` and `agentId`. A same-goal follow-up u
 ```json
 {
   "requestId": "...",
+  "activityPresentationId": "...",
   "activity": { "mode": "existing", "id": "..." },
   "agent": { "mode": "existing", "id": "...", "context": "continue" },
   "prompt": "Address the remaining test failure"
@@ -196,6 +203,7 @@ A new but dependent goal creates a linked Activity without reopening the complet
 ```json
 {
   "requestId": "...",
+  "activityPresentationId": "...",
   "activity": {
     "mode": "new",
     "continuationOf": "...",
@@ -216,19 +224,37 @@ Activity lifecycle changes require the exact version from authoritative status. 
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
 probe failure is retryable and leaves the Agent intact. Use explicit `fresh`
-only for a confirmed orphan; the original stays in thread history.
+only for a confirmed orphan; the original stays in thread history. App Server
+session identity and direct fork ancestry are retained with that history.
+
+Existing threads remain pinned to their creation backend. If the configured
+default differs, `continue` and `fork` keep the old backend. To start a new
+target-backend thread on the same Agent, send
+`agent: { mode: "existing", id, context: "fresh", handoffSummary }`. The summary
+is explicitly labeled as the only transferred context, its digest is audited,
+and it is not stored as a separate bridge request field. Normal retained model
+output can still contain text that Codex repeats. Omitting the summary fails with
+`BACKEND_HANDOFF_SUMMARY_REQUIRED` instead of implying transcript migration.
 
 ## 7. Activity card behavior
 
 `codex_task` owns automatic card presentation. When saved visibility is `always` or `background-only`, its descriptor points directly to the same Activity UI resource as `codex_activity`. Call `codex_task` directly—not through programmatic tool calling or an exec wrapper—so ChatGPT preserves that native UI. Do not call `codex_activity` afterward.
 
-`requestId` remains per logical Codex call and must be reused only for the same execution retry. Presentation correlation is absent from the public schema. A host can attach one response-level UUID as `codex/activityPresentationId` metadata to group several calls; otherwise the bridge uses each request ID as a stable per-call fallback. V4 replay excludes this presentation state, and it cannot select or bypass the saved visibility setting. The former caller-authored presentation argument has expired and is rejected.
+`requestId` remains per logical Codex call and must be reused only for the same execution retry. `activityPresentationId` is one UUID per assistant response: reuse it for every `codex_task` in that response, including calls to different Activities or Agents, and generate a new value for the next response. This explicit input is required because documented ChatGPT MCP metadata provides conversation correlation but not an assistant-response ID. A verified host may supply the same value as `codex/activityPresentationId` metadata. V4 replay excludes presentation state, and it cannot select or bypass the saved visibility setting.
 
-The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call carrying the same host presentation identifier may display it. With visibility `never`, the bridge removes the Task UI binding and ignores presentation IDs for display. `codex_activity` is reserved for an explicit user request to open or reopen the view.
+The Task result carries `bridgeActivity`. The mounted widget reads it internally: a true `shouldRenderActivityCard` starts one scope-version `codex_activity_snapshot` long poll, while duplicate, disabled, or foreground-only-in-`background-only` results collapse without displaying another card. The snapshot tool is app-private and establishes or renews the exact Activity/generation/presentation lease for that widget session. A foreground call does not consume a `background-only` presentation; a later background call carrying the same assistant-response presentation ID may display it. With visibility `never`, the bridge removes the Task UI binding and public presentation input. `codex_activity` is reserved for an explicit user request to open or reopen the view.
 
 The card is a single flat feed scoped to the current ChatGPT conversation. Current work and action-needed states are ordered first as Activity rows. Completed, idle, and ended Agents are collapsed into separate disclosure groups; the completed group reports both distinct Agent and completed Activity counts. When multiple projects are relevant, project labels remain visible across both current and collapsed history rows; full paths remain private. An Activity is not folded while verification, handoff, a job, an interaction, or an App Server background process is pending. Reusing a completed Agent for new work returns it to the current feed.
 
 The feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, each Agent's current or latest effective model/reasoning-effort selection, and necessary controls such as verification, retry, force-stop, background-process stop, approval, or input. Model labels match the Settings catalog display names and fall back to internal IDs only when necessary. A reported App Server model reroute is rendered as `selected → rerouted`; the effort remains the Job's admission-time effective effort. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
+
+Detailed Job status includes a selection-only `executionAudit`: requested,
+policy-effective, and evidence-backed actual model/effort, plus reroute reason
+when reported. It states when the protocol has not supplied independent runtime
+effort-override evidence. Prompt and private reasoning text are excluded. A
+context-window failure remains a tracked structured
+`CONTEXT_WINDOW_EXCEEDED` result with explicit recovery choices; retrying that
+same request ID returns the retained failure and does not start another turn.
 
 The card deliberately omits a KPI dashboard, card-grid Agent list, layout selector, Activity `<details>`, timelines, Agent/job/thread IDs, full working paths, backend/worker data, command output, and general steering. Detailed diagnostics remain available in `codex_status`.
 
@@ -268,12 +294,22 @@ In a new ChatGPT conversation:
     only their advertised decisions, including session approval when offered;
     confirm cancel/decline, automatic resolution, and expiry all remove the
     control without stopping the turn;
-16. restart between two App Server turns and confirm `thread/read` resumes the
-    exact thread; separately exercise busy, missing, and transient probe paths
-    and verify only missing/system-error becomes orphaned;
-17. inspect `codex_status` for the experimental policy, exact CLI, catalog
-    freshness, aggregate worker health, and orphaned count; verify no full path,
-    raw reasoning, MCP payload, or collaboration prompt appears.
+16. run two turns on the same App Server Agent with different allowed exact
+    model/effort selections; confirm each `turn/start` admission and Job
+    `executionAudit`, including reroute evidence if present;
+17. restart between those App Server turns and confirm `thread/read` resumes the
+    exact thread with the same session ID; fork once and verify direct ancestry;
+    separately exercise busy, missing, and transient probe paths and verify only
+    missing/system-error becomes orphaned;
+18. change the configured default backend, confirm the existing Agent still
+    continues on its pinned backend, then perform an explicit fresh handoff and
+    confirm the UI/result says summary-only continuity;
+19. trigger a context-window failure and confirm it remains a structured,
+    replay-safe error with no silent model/effort downgrade;
+20. inspect `codex_status` for the experimental policy, exact CLI, catalog
+    freshness, aggregate RSS/FD, startup/crash/config/MCP health, and orphaned
+    count; verify no worker identifier, full path, raw reasoning, MCP payload,
+    or collaboration prompt appears.
 
 In an existing pre-refresh conversation:
 

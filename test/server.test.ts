@@ -20,6 +20,7 @@ import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const PRESENTATION_A = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
 class FakeUpstream implements CodexUpstream {
   async listTools(): Promise<unknown> {
@@ -285,9 +286,9 @@ describe("http server", () => {
     expect(policy.stateStorage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 5,
+      schemaVersion: 6,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v5-project-aware-scope-agent-manager",
+      activityFoundation: "schema-v6-lineage-aware-scope-agent-manager",
       activityPersistent: true
     });
 
@@ -297,6 +298,7 @@ describe("http server", () => {
         arguments: {
           scopeId: SCOPE_A,
           requestId: REQUEST_A,
+          activityPresentationId: PRESENTATION_A,
           prompt: "slow",
           activity: {
             mode: "new",
@@ -340,6 +342,7 @@ describe("http server", () => {
       name: "codex_task",
       arguments: {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        activityPresentationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         prompt: "derive scope",
         activity: {
           mode: "new",
@@ -409,6 +412,7 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        activityPresentationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
         prompt: "persist Activity",
         agent: { mode: "new", name: "HTTP Persistent Agent" },
         executionMode: "foreground",
@@ -478,6 +482,7 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        activityPresentationId: "99999999-9999-4999-8999-999999999999",
         prompt: "must not attach to completed Activity",
         activity: { mode: "existing", id: activityId }
       }

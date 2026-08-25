@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -27,6 +29,7 @@ import type {
   CodexPendingInteraction,
   CodexProgress,
   CodexPublicEvent,
+  CodexThreadLineage,
   CodexThreadResumeProbe,
   CodexUpstream,
   ToolResult,
@@ -81,11 +84,20 @@ type ResolvedCodexAppServerProtocolOptions = {
 
 export type CodexAppServerDependencies = {
   versionProbe?: CodexCliVersionProbe;
+  workerMetricsProbe?: WorkerMetricsProbe;
 };
+
+export type WorkerProcessMetrics = {
+  rssKb?: number;
+  fdCount?: number;
+};
+
+export type WorkerMetricsProbe = (pid: number) => Promise<WorkerProcessMetrics>;
 
 type TurnContext = {
   threadId: string;
   turnId: string;
+  lineage: CodexThreadLineage;
   onProgress?: (progress: CodexProgress) => void;
   resolve: (result: ToolResult) => void;
   reject: (error: Error) => void;
@@ -106,6 +118,25 @@ type PendingInteraction = CodexPendingInteraction & {
   autoResolutionTimer?: NodeJS.Timeout;
 };
 
+type AppServerInitializationHealth = {
+  protocol: "ready" | "starting";
+  config: "ready" | "warning" | "starting";
+  configWarningCount: number;
+  mcpServers: {
+    observed: number;
+    starting: number;
+    ready: number;
+    failed: number;
+    cancelled: number;
+    unobserved: boolean;
+  };
+};
+
+type WorkerExitObservation = {
+  generation: number;
+  expected: boolean;
+};
+
 type AppWorker = {
   index: number;
   activeCalls: number;
@@ -113,6 +144,15 @@ type AppWorker = {
   connection?: AppServerConnection;
   startingConnection?: AppServerConnection;
   connecting?: Promise<AppServerConnection>;
+  spawnCount: number;
+  startupFailureCount: number;
+  crashCount: number;
+  startupSamples: number;
+  startupLatencyTotalMs: number;
+  lastStartupLatencyMs?: number;
+  lastStartupAt?: number;
+  maxStartupLatencyMs: number;
+  lastCrashAt?: number;
 };
 
 export class CodexAppServerUpstreamPool implements CodexUpstream {
@@ -121,6 +161,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly threadResumeEvidence = new Map<string, boolean>();
   private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
   private readonly versionProbe: CodexCliVersionProbe;
+  private readonly workerMetricsProbe: WorkerMetricsProbe;
   private compatibilityCheck?: Promise<string>;
   private compatibilityAbort?: AbortController;
   private closing = false;
@@ -136,15 +177,56 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
     this.protocolOptions = resolveProtocolOptions(protocolOptions);
     this.versionProbe = dependencies.versionProbe || probeCodexCliVersion;
+    this.workerMetricsProbe = dependencies.workerMetricsProbe || defaultWorkerMetricsProbe;
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
       index,
       activeCalls: 0,
-      generation: 0
+      generation: 0,
+      spawnCount: 0,
+      startupFailureCount: 0,
+      crashCount: 0,
+      startupSamples: 0,
+      startupLatencyTotalMs: 0,
+      maxStartupLatencyMs: 0
     }));
   }
 
   async listTools(): Promise<unknown> {
     const resumableEvidence = [...this.threadResumeEvidence.values()];
+    const liveWorkers = this.workers.filter(
+      (worker): worker is AppWorker & { connection: AppServerConnection } =>
+        Boolean(worker.connection && !worker.connection.exited)
+    );
+    const metricSamples = await Promise.all(
+      liveWorkers.map(async (worker) => {
+        const pid = worker.connection.identity?.pid;
+        if (!pid) return undefined;
+        try {
+          return await this.workerMetricsProbe(pid);
+        } catch {
+          return undefined;
+        }
+      })
+    );
+    const observedMetrics = metricSamples.filter(
+      (sample): sample is WorkerProcessMetrics => Boolean(sample)
+    );
+    const rssSamples = observedMetrics.flatMap((sample) =>
+      sample.rssKb === undefined ? [] : [sample.rssKb]
+    );
+    const fdSamples = observedMetrics.flatMap((sample) =>
+      sample.fdCount === undefined ? [] : [sample.fdCount]
+    );
+    const startupSamples = this.workers.reduce((total, worker) => total + worker.startupSamples, 0);
+    const startupLatencyTotalMs = this.workers.reduce(
+      (total, worker) => total + worker.startupLatencyTotalMs,
+      0
+    );
+    const initialization = aggregateInitializationHealth(liveWorkers.map((worker) =>
+      worker.connection.initializationHealth
+    ));
+    const totalSpawns = this.workers.reduce((total, worker) => total + worker.spawnCount, 0);
+    const totalCrashes = this.workers.reduce((total, worker) => total + worker.crashCount, 0);
     return {
       tools: [
         { name: "codex", description: "Start a Codex App Server thread and turn." },
@@ -159,10 +241,39 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       experimental: true,
       workerHealth: {
         configured: this.workers.length,
-        live: this.workers.filter((worker) => worker.connection && !worker.connection.exited).length,
+        live: liveWorkers.length,
         starting: this.workers.filter((worker) => Boolean(worker.connecting)).length,
         activeCalls: this.workers.reduce((total, worker) => total + worker.activeCalls, 0),
-        stickyThreads: this.threadWorkers.size
+        stickyThreads: this.threadWorkers.size,
+        resources: {
+          observedWorkers: observedMetrics.length,
+          unavailableWorkers: Math.max(0, liveWorkers.length - observedMetrics.length),
+          rssKb: metricAggregate(rssSamples),
+          fdCount: metricAggregate(fdSamples)
+        },
+        startup: {
+          spawnCount: totalSpawns,
+          failureCount: this.workers.reduce(
+            (total, worker) => total + worker.startupFailureCount,
+            0
+          ),
+          latencyMs: {
+            samples: startupSamples,
+            average: startupSamples > 0
+              ? Math.round(startupLatencyTotalMs / startupSamples)
+              : null,
+            latest: latestStartupLatency(this.workers),
+            max: Math.max(0, ...this.workers.map((worker) => worker.maxStartupLatencyMs)) || null
+          }
+        },
+        crashes: {
+          count: totalCrashes,
+          ratePerSpawn: totalSpawns > 0 ? totalCrashes / totalSpawns : 0,
+          lastObservedAt: latestWorkerValue(this.workers, "lastCrashAt")
+            ? new Date(latestWorkerValue(this.workers, "lastCrashAt") as number).toISOString()
+            : null
+        },
+        initialization
       },
       resumeEvidence: {
         available: resumableEvidence.filter(Boolean).length,
@@ -445,6 +556,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       if (worker.connection && !worker.connection.exited) return worker.connection;
       if (!worker.connecting) {
         const generation = ++worker.generation;
+        const startupStartedAt = Date.now();
+        worker.spawnCount += 1;
         const connection = AppServerConnection.spawn(
           this.codexCommand,
           `app-${worker.index}`,
@@ -452,7 +565,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           {
             ...this.protocolOptions,
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
-          }
+          },
+          (observation) => this.onWorkerExit(worker, observation)
         );
         worker.startingConnection = connection;
         worker.connecting = connection.initializeForAdmission().then(async (initialized) => {
@@ -460,8 +574,17 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
             await initialized.close();
             throw new Error("Codex App Server upstream closed during worker startup.");
           }
+          const startupLatencyMs = Math.max(0, Date.now() - startupStartedAt);
+          worker.startupSamples += 1;
+          worker.startupLatencyTotalMs += startupLatencyMs;
+          worker.lastStartupLatencyMs = startupLatencyMs;
+          worker.lastStartupAt = Date.now();
+          worker.maxStartupLatencyMs = Math.max(worker.maxStartupLatencyMs, startupLatencyMs);
           worker.connection = initialized;
           return initialized;
+        }).catch((error) => {
+          if (!this.closing) worker.startupFailureCount += 1;
+          throw error;
         });
       }
     }
@@ -507,6 +630,16 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     this.protocolOptions.onLateResponse?.(response);
   }
 
+  private onWorkerExit(worker: AppWorker, observation: WorkerExitObservation): void {
+    if (worker.generation !== observation.generation) return;
+    if (!observation.expected && !this.closing) {
+      worker.crashCount += 1;
+      worker.lastCrashAt = Date.now();
+    }
+    if (worker.connection?.exited) worker.connection = undefined;
+    this.forgetWorkerThreads(worker.index);
+  }
+
   private forgetWorkerThreads(workerIndex: number): void {
     for (const [threadId, index] of this.threadWorkers) {
       if (index === workerIndex) this.threadWorkers.delete(threadId);
@@ -519,14 +652,21 @@ class AppServerConnection {
   private readonly activeTurns = new Map<string, TurnContext>();
   private readonly threadTurns = new Map<string, string>();
   private readonly loadedThreads = new Set<string>();
+  private readonly threadLineage = new Map<string, CodexThreadLineage>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly terminalTurns = new Set<string>();
+  private readonly mcpStartupStates = new Map<string, "starting" | "ready" | "failed" | "cancelled">();
+  private initializedAt?: number;
+  private configWarningCount = 0;
+  private closeRequested = false;
+  private terminationRequested = false;
 
   private constructor(
     command: string,
     private readonly workerId: string,
     private readonly generation: number,
-    private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions
+    private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions,
+    private readonly onExitObserved: (observation: WorkerExitObservation) => void
   ) {
     this.rpc = new JsonRpcProcess({
       command,
@@ -552,9 +692,16 @@ class AppServerConnection {
     command: string,
     workerId: string,
     generation: number,
-    protocolOptions: ResolvedCodexAppServerProtocolOptions
+    protocolOptions: ResolvedCodexAppServerProtocolOptions,
+    onExitObserved: (observation: WorkerExitObservation) => void
   ): AppServerConnection {
-    return new AppServerConnection(command, workerId, generation, protocolOptions);
+    return new AppServerConnection(
+      command,
+      workerId,
+      generation,
+      protocolOptions,
+      onExitObserved
+    );
   }
 
   async initializeForAdmission(): Promise<AppServerConnection> {
@@ -578,6 +725,29 @@ class AppServerConnection {
 
   get exited(): boolean {
     return this.rpc.exited;
+  }
+
+  get identity(): JsonRpcProcessIdentity | undefined {
+    return this.rpc.identity;
+  }
+
+  get initializationHealth(): AppServerInitializationHealth {
+    const statuses = [...this.mcpStartupStates.values()];
+    return {
+      protocol: this.initializedAt ? "ready" : "starting",
+      config: this.initializedAt
+        ? this.configWarningCount > 0 ? "warning" : "ready"
+        : "starting",
+      configWarningCount: this.configWarningCount,
+      mcpServers: {
+        observed: statuses.length,
+        starting: statuses.filter((status) => status === "starting").length,
+        ready: statuses.filter((status) => status === "ready").length,
+        failed: statuses.filter((status) => status === "failed").length,
+        cancelled: statuses.filter((status) => status === "cancelled").length,
+        unobserved: statuses.length === 0
+      }
+    };
   }
 
   private reconcileLateProtocolState(response: CodexAppServerLateResponse): void {
@@ -620,8 +790,21 @@ class AppServerConnection {
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
+    const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
-    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+    this.threadLineage.set(threadId, lineage);
+    // Persist the durable thread identity before turn/start. If the worker
+    // exits between these two protocol steps, the bridge can still expose and
+    // resume the exact created thread instead of losing it.
+    onAssigned?.(this.workerAssignment(threadId));
+    return this.startTurn(
+      threadId,
+      requiredString(args.prompt, "prompt"),
+      args,
+      onProgress,
+      onAssigned,
+      lineage
+    );
   }
 
   async resumeThreadAndTurn(
@@ -630,8 +813,15 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
-    await this.ensureThreadLoaded(threadId);
-    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+    const lineage = await this.ensureThreadLoaded(threadId);
+    return this.startTurn(
+      threadId,
+      requiredString(args.prompt, "prompt"),
+      args,
+      onProgress,
+      onAssigned,
+      lineage
+    );
   }
 
   async forkThreadAndTurn(
@@ -650,8 +840,18 @@ class AppServerConnection {
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/fork thread.id");
+    const lineage = threadLineage(thread, sourceThreadId);
     this.loadedThreads.add(threadId);
-    return this.startTurn(threadId, requiredString(args.prompt, "prompt"), args, onProgress, onAssigned);
+    this.threadLineage.set(threadId, lineage);
+    onAssigned?.(this.workerAssignment(threadId));
+    return this.startTurn(
+      threadId,
+      requiredString(args.prompt, "prompt"),
+      args,
+      onProgress,
+      onAssigned,
+      lineage
+    );
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -748,10 +948,10 @@ class AppServerConnection {
       }
       const runtimeStatus = thread.status.type;
       if (runtimeStatus === "notLoaded" || runtimeStatus === "idle") {
-        return { state: "resumable", runtimeStatus, threadId };
+        return { state: "resumable", runtimeStatus, threadId, ...threadLineage(thread) };
       }
       if (runtimeStatus === "active") {
-        return { state: "busy", runtimeStatus, threadId, retryable: true };
+        return { state: "busy", runtimeStatus, threadId, retryable: true, ...threadLineage(thread) };
       }
       if (runtimeStatus === "systemError") {
         return { state: "orphaned", reason: "system-error", threadId, retryable: false };
@@ -768,9 +968,9 @@ class AppServerConnection {
     }
   }
 
-  private async ensureThreadLoaded(threadId: string): Promise<void> {
-    if (this.loadedThreads.has(threadId)) return;
-    await this.rpc.request(
+  private async ensureThreadLoaded(threadId: string): Promise<CodexThreadLineage> {
+    if (this.loadedThreads.has(threadId)) return this.threadLineage.get(threadId) || {};
+    const response = await this.rpc.request<Record<string, unknown>>(
       "thread/resume",
       { threadId },
       {
@@ -778,7 +978,14 @@ class AppServerConnection {
         lateResponseContext: { threadId }
       }
     );
+    const thread = isRecord(response.thread) ? response.thread : undefined;
+    if (!thread || thread.id !== threadId) {
+      throw new Error("Codex App Server resumed a different thread than requested.");
+    }
+    const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
+    this.threadLineage.set(threadId, lineage);
+    return lineage;
   }
 
   async listModels(): Promise<unknown> {
@@ -903,10 +1110,12 @@ class AppServerConnection {
         // One UI action automatically falls back to supervised process-group termination.
       }
     }
+    this.terminationRequested = true;
     return this.rpc.forceTerminate(graceMs);
   }
 
   async close(): Promise<void> {
+    this.closeRequested = true;
     for (const pending of this.pendingInteractions.values()) {
       if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
       pending.reject(new Error("Codex App Server closed before the interaction was answered."));
@@ -931,6 +1140,7 @@ class AppServerConnection {
     );
     validateInitializeResponse(result);
     await this.rpc.notify("initialized");
+    this.initializedAt = Date.now();
   }
 
   private async startTurn(
@@ -938,7 +1148,8 @@ class AppServerConnection {
     prompt: string,
     args: Record<string, unknown>,
     onProgress?: (progress: CodexProgress) => void,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
+    lineage: CodexThreadLineage = this.threadLineage.get(threadId) || {}
   ): Promise<ToolResult> {
     if (this.threadTurns.has(threadId)) throw new Error("A Codex App Server turn is already active for this thread.");
     const response = await this.rpc.request<Record<string, unknown>>(
@@ -966,6 +1177,7 @@ class AppServerConnection {
     const context: TurnContext = {
       threadId,
       turnId,
+      lineage,
       onProgress,
       resolve,
       reject,
@@ -977,18 +1189,7 @@ class AppServerConnection {
     };
     this.activeTurns.set(turnId, context);
     this.threadTurns.set(threadId, turnId);
-    const identity = this.rpc.identity;
-    const assignment: UpstreamWorkerAssignment = {
-      backendKind: "app-server",
-      workerId: this.workerId,
-      workerGeneration: this.generation,
-      ...(identity ? { workerPid: identity.pid } : {}),
-      ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
-        ? { processGroupId: identity.processGroupId }
-        : {}),
-      upstreamRequestId: turnId,
-      threadId
-    };
+    const assignment = this.workerAssignment(threadId, turnId);
     try {
       onAssigned?.(assignment);
     } catch (error) {
@@ -1002,6 +1203,7 @@ class AppServerConnection {
         // one direct containment attempt while preserving the originating
         // assignment-persistence error for the caller.
         try {
+          this.terminationRequested = true;
           await this.rpc.forceTerminate();
         } catch {
           // The retained TurnContext/thread lock still prevents overlapping work.
@@ -1015,13 +1217,51 @@ class AppServerConnection {
       phase: "started",
       createdAt: Date.now(),
       summary: "Codex turn started.",
-      details: { threadId, turnId }
+      details: {
+        threadId,
+        turnId,
+        selection: {
+          model: optionalString(args.model) || null,
+          reasoningEffort: modelReasoningEffort(args.config) || null,
+          serviceTier: optionalString(args.serviceTier) || null
+        },
+        evidence: "turn/start-accepted"
+      }
     });
     return done;
   }
 
+  private workerAssignment(
+    threadId: string,
+    upstreamRequestId?: string
+  ): UpstreamWorkerAssignment {
+    const identity = this.rpc.identity;
+    return {
+      backendKind: "app-server",
+      workerId: this.workerId,
+      workerGeneration: this.generation,
+      ...(identity ? { workerPid: identity.pid } : {}),
+      ...(identity?.processGroupId !== null && identity?.processGroupId !== undefined
+        ? { processGroupId: identity.processGroupId }
+        : {}),
+      ...(upstreamRequestId ? { upstreamRequestId } : {}),
+      threadId
+    };
+  }
+
   private onNotification(method: string, params: unknown): void {
     if (!isRecord(params)) return;
+    if (method === "configWarning") this.configWarningCount += 1;
+    if (method === "mcpServer/startupStatus/updated") {
+      const name = optionalString(params.name)?.slice(0, 200);
+      const status = params.status;
+      if (
+        name &&
+        (status === "starting" || status === "ready" || status === "failed" || status === "cancelled")
+      ) {
+        this.mcpStartupStates.set(name, status);
+      }
+    }
     if (method === "serverRequest/resolved") {
       this.resolvePendingServerRequest(params, "server-resolved");
       return;
@@ -1269,6 +1509,7 @@ class AppServerConnection {
     const errorMessage = isRecord(turn.error)
       ? optionalString(turn.error.message) || JSON.stringify(turn.error).slice(0, 1_000)
       : undefined;
+    const failure = status === "failed" ? classifyTurnFailure(turn.error, errorMessage) : undefined;
     context.resolve({
       ...(status === "failed" ? { isError: true } : {}),
       content: [
@@ -1281,7 +1522,9 @@ class AppServerConnection {
         threadId: context.threadId,
         turnId: context.turnId,
         turnStatus: status,
-        backendKind: "app-server"
+        backendKind: "app-server",
+        ...context.lineage,
+        ...(failure ? { error: failure } : {})
       }
     });
   }
@@ -1295,6 +1538,10 @@ class AppServerConnection {
     for (const context of this.activeTurns.values()) context.reject(error);
     this.activeTurns.clear();
     this.threadTurns.clear();
+    this.onExitObserved({
+      generation: this.generation,
+      expected: this.closeRequested || this.terminationRequested
+    });
   }
 
   private emit(context: TurnContext, publicEvent: CodexPublicEvent): void {
@@ -1314,6 +1561,107 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsServiceTierOverrideOnContinue: true,
   supportsFork: true
 };
+
+function metricAggregate(values: number[]): {
+  samples: number;
+  total: number | null;
+  average: number | null;
+  max: number | null;
+} {
+  if (values.length === 0) return { samples: 0, total: null, average: null, max: null };
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return {
+    samples: values.length,
+    total,
+    average: Math.round(total / values.length),
+    max: Math.max(...values)
+  };
+}
+
+function latestWorkerValue(
+  workers: AppWorker[],
+  key: "lastCrashAt"
+): number | null {
+  const values = workers.flatMap((worker) => worker[key] === undefined ? [] : [worker[key] as number]);
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function latestStartupLatency(workers: AppWorker[]): number | null {
+  const latest = workers
+    .filter((worker) => worker.lastStartupAt !== undefined && worker.lastStartupLatencyMs !== undefined)
+    .sort((left, right) => (right.lastStartupAt as number) - (left.lastStartupAt as number))[0];
+  return latest?.lastStartupLatencyMs ?? null;
+}
+
+function aggregateInitializationHealth(
+  workers: AppServerInitializationHealth[]
+): Record<string, unknown> {
+  return {
+    protocol: {
+      ready: workers.filter((worker) => worker.protocol === "ready").length,
+      starting: workers.filter((worker) => worker.protocol === "starting").length
+    },
+    config: {
+      ready: workers.filter((worker) => worker.config === "ready").length,
+      warning: workers.filter((worker) => worker.config === "warning").length,
+      starting: workers.filter((worker) => worker.config === "starting").length,
+      warningCount: workers.reduce((total, worker) => total + worker.configWarningCount, 0)
+    },
+    mcpServers: {
+      observed: workers.reduce((total, worker) => total + worker.mcpServers.observed, 0),
+      starting: workers.reduce((total, worker) => total + worker.mcpServers.starting, 0),
+      ready: workers.reduce((total, worker) => total + worker.mcpServers.ready, 0),
+      failed: workers.reduce((total, worker) => total + worker.mcpServers.failed, 0),
+      cancelled: workers.reduce((total, worker) => total + worker.mcpServers.cancelled, 0),
+      unobservedWorkers: workers.filter((worker) => worker.mcpServers.unobserved).length
+    }
+  };
+}
+
+async function defaultWorkerMetricsProbe(pid: number): Promise<WorkerProcessMetrics> {
+  const rss = readWorkerRssKb(pid);
+  const fds = readWorkerFdCount(pid);
+  const [rssResult, fdResult] = await Promise.allSettled([rss, fds]);
+  const metrics: WorkerProcessMetrics = {
+    ...(rssResult.status === "fulfilled" ? { rssKb: rssResult.value } : {}),
+    ...(fdResult.status === "fulfilled" ? { fdCount: fdResult.value } : {})
+  };
+  if (metrics.rssKb === undefined && metrics.fdCount === undefined) {
+    throw new Error("Worker process metrics are unavailable on this platform.");
+  }
+  return metrics;
+}
+
+async function readWorkerRssKb(pid: number): Promise<number> {
+  if (process.platform === "win32") throw new Error("RSS probing is unavailable on Windows.");
+  const output = await execFileText("ps", ["-o", "rss=", "-p", String(pid)]);
+  const value = Number.parseInt(output.trim(), 10);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid worker RSS sample.");
+  return value;
+}
+
+async function readWorkerFdCount(pid: number): Promise<number> {
+  if (process.platform === "linux") {
+    return (await readdir(`/proc/${pid}/fd`)).length;
+  }
+  if (process.platform === "win32") throw new Error("FD probing is unavailable on Windows.");
+  const output = await execFileText("lsof", ["-a", "-p", String(pid), "-Fn"]);
+  return output.split(/\r?\n/).filter((line) => /^f\d/.test(line)).length;
+}
+
+function execFileText(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      { encoding: "utf8", timeout: 1_000, maxBuffer: 1024 * 1024, windowsHide: true },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      }
+    );
+  });
+}
 
 function resolveProtocolOptions(
   options: CodexAppServerProtocolOptions
@@ -1402,6 +1750,78 @@ function requestArguments(
           ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
         }
       : {})
+  };
+}
+
+function threadLineage(
+  thread: Record<string, unknown> | undefined,
+  fallbackForkedFromThreadId?: string
+): CodexThreadLineage {
+  const sessionId = optionalString(thread?.sessionId)?.slice(0, 200);
+  const forkedFromThreadId = (
+    optionalString(thread?.forkedFromId) ||
+    // Accept the early fixture/preview spelling while the supported official
+    // protocol remains forkedFromId.
+    optionalString(thread?.forkedFromThreadId) ||
+    fallbackForkedFromThreadId
+  )?.slice(0, 200);
+  return {
+    ...(sessionId ? { sessionId } : {}),
+    ...(forkedFromThreadId ? { forkedFromThreadId } : {})
+  };
+}
+
+function classifyTurnFailure(
+  value: unknown,
+  fallbackMessage?: string
+): {
+  code: string;
+  message: string;
+  retryable: boolean;
+  upstreamKind: string;
+  nextActions: string[];
+} {
+  const error = isRecord(value) ? value : {};
+  const info = error.codexErrorInfo;
+  const upstreamKind = typeof info === "string"
+    ? info
+    : isRecord(info)
+      ? Object.keys(info)[0] || "other"
+      : "other";
+  const message = (
+    optionalString(error.message) ||
+    fallbackMessage ||
+    "Codex App Server reported a failed turn."
+  ).slice(0, 1_000);
+  if (upstreamKind === "contextWindowExceeded") {
+    return {
+      code: "CONTEXT_WINDOW_EXCEEDED",
+      message,
+      retryable: true,
+      upstreamKind,
+      nextActions: [
+        "Retry with a smaller task or less attached context.",
+        "Start context='fresh' and provide an explicit concise handoffSummary; prior transcript context is not copied.",
+        "If policy permits, explicitly select a model with a larger context window. The bridge will not downgrade or reroute silently."
+      ]
+    };
+  }
+  const transient = new Set([
+    "serverOverloaded",
+    "httpConnectionFailed",
+    "responseStreamConnectionFailed",
+    "responseStreamDisconnected",
+    "responseTooManyFailedAttempts",
+    "internalServerError"
+  ]).has(upstreamKind);
+  return {
+    code: transient ? "UPSTREAM_TEMPORARILY_UNAVAILABLE" : "UPSTREAM_TURN_FAILED",
+    message,
+    retryable: transient,
+    upstreamKind,
+    nextActions: transient
+      ? ["Retry the same idempotent request after upstream service recovery."]
+      : ["Inspect the public error metadata, correct the request or credentials, and retry with a new requestId."]
   };
 }
 

@@ -14,6 +14,7 @@ const activeTurns = new Map();
 const pendingServerRequests = new Map();
 const archivedThreads = new Set();
 const knownThreads = new Set();
+const threadLineages = new Map();
 const loadedThreads = new Set();
 const systemErrorThreads = new Set();
 const backgroundTerminals = new Map();
@@ -60,7 +61,16 @@ lines.on("line", (line) => {
     response(message.id, { userAgent: "fake", platformFamily: "unix", platformOs: "test" });
     return;
   }
-  if (message.method === "initialized") return;
+  if (message.method === "initialized") {
+    notification("mcpServer/startupStatus/updated", {
+      threadId: null,
+      name: "fixture-server",
+      status: "ready",
+      error: null,
+      failureReason: null
+    });
+    return;
+  }
   if (!initialized) {
     send({ id: message.id, error: { code: -32000, message: "Not initialized" } });
     return;
@@ -114,8 +124,9 @@ lines.on("line", (line) => {
     }
     const id = `fake-thread-${++threadSequence}`;
     knownThreads.add(id);
+    threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
     loadedThreads.add(id);
-    response(message.id, { thread: { id } });
+    response(message.id, { thread: { id, ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -125,7 +136,7 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    response(message.id, { thread: { id: threadId } });
+    response(message.id, { thread: { id: threadId, ...threadLineages.get(threadId) } });
     return;
   }
   if (message.method === "thread/read") {
@@ -145,6 +156,7 @@ lines.on("line", (line) => {
     response(message.id, {
       thread: {
         id: threadId,
+        ...threadLineages.get(threadId),
         status,
         turns: []
       }
@@ -154,8 +166,12 @@ lines.on("line", (line) => {
   if (message.method === "thread/fork") {
     const id = `fake-thread-${++threadSequence}`;
     knownThreads.add(id);
+    threadLineages.set(id, {
+      sessionId: threadLineages.get(message.params.threadId)?.sessionId || `fake-session-${threadSequence}`,
+      forkedFromId: message.params.threadId
+    });
     loadedThreads.add(id);
-    response(message.id, { thread: { id, forkedFromThreadId: message.params.threadId } });
+    response(message.id, { thread: { id, ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/archive") {
@@ -517,6 +533,14 @@ function beginTurn(context) {
     finishTurn(context, "completed", `SELECTION:${JSON.stringify(context.selection)}`);
     return;
   }
+  if (prompt.includes("context window exceeded")) {
+    finishTurn(context, "failed", "CONTEXT WINDOW EXCEEDED", {
+      message: "Fixture context window exceeded.",
+      codexErrorInfo: "contextWindowExceeded",
+      additionalDetails: null
+    });
+    return;
+  }
   finishTurn(context, "completed", "APP SERVER");
 }
 
@@ -674,7 +698,7 @@ function requestLocallyExpiredInput(context) {
   }, 75);
 }
 
-function finishTurn(context, status, text) {
+function finishTurn(context, status, text, error = null) {
   if (!activeTurns.delete(context.turnId)) return;
   if (context.prompt.includes("mark thread system error")) {
     systemErrorThreads.add(context.threadId);
@@ -691,7 +715,7 @@ function finishTurn(context, status, text) {
       items: [{ type: "agentMessage", id: "agent-1", text, phase: "final_answer", memoryCitation: null }],
       itemsView: "full",
       status,
-      error: null,
+      error,
       startedAt: 1,
       completedAt: 2,
       durationMs: 1

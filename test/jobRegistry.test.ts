@@ -118,7 +118,10 @@ describe("CodexJobRegistry persistence", () => {
       status: "failed",
       error: "Session not found for thread_id: stale-thread"
     });
-    expect(registry.get(job.jobId)?.result).toBeUndefined();
+    expect(registry.get(job.jobId)?.result).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "Session not found for thread_id: stale-thread" }]
+    });
   });
 
   it("repairs legacy completed jobs whose retained MCP result is an error", async () => {

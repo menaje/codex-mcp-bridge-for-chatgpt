@@ -274,6 +274,19 @@ type SessionDecision = {
     | "compatible-session-busy"
     | "no-compatible-session";
   threadId?: string;
+  handoff?: BackendHandoffAudit;
+};
+
+type BackendHandoffAudit = {
+  sourceBackend: CodexBackendKind;
+  targetBackend: CodexBackendKind;
+  sourceThreadId: string;
+  continuity: "explicit-summary-only";
+  summarySha256: string;
+};
+
+type BackendHandoff = BackendHandoffAudit & {
+  summary: string;
 };
 
 type CodexRouting = {
@@ -983,6 +996,7 @@ export class CodexJobRegistry {
   linkAgentThread(input: {
     agentId: string;
     threadId: string;
+    sessionId?: string;
     projectId?: string;
     projectLabel?: string;
     backendKind: string;
@@ -1273,7 +1287,8 @@ export class CodexJobRegistry {
     ) => Promise<ToolResult>,
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
-    rejectIfSelectionActive = false
+    rejectIfSelectionActive = false,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): CodexJob {
     this.pruneAndPersist();
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
@@ -1334,7 +1349,10 @@ export class CodexJobRegistry {
       .then(() =>
         run(
           (progress) => this.recordProgress(job, progress),
-          (assignment) => this.recordWorkerAssignment(job, assignment)
+          (assignment) => {
+            this.recordWorkerAssignment(job, assignment);
+            onAssigned?.(assignment);
+          }
         )
       )
       .then((result) => {
@@ -1363,7 +1381,8 @@ export class CodexJobRegistry {
     if (job.status !== "running" && job.status !== "termination-failed") return;
     const turnStatus = extractResultTurnStatus(result);
     if (turnStatus !== "interrupted" && result.isError) {
-      throw new Error(toolResultErrorMessage(result));
+      this.settleUpstreamErrorJob(job, result, onComplete);
+      return;
     }
     const retained = retainBoundedResult(
       result,
@@ -1391,6 +1410,50 @@ export class CodexJobRegistry {
       };
       if (this.stateStore) this.stateStore.transaction(finish);
       else finish();
+      this.notify(job.jobId);
+      this.pruneAndPersist();
+    } catch (error) {
+      undo?.();
+      throw error;
+    }
+  }
+
+  private settleUpstreamErrorJob(
+    job: CodexJob,
+    result: ToolResult,
+    onComplete?: JobCompletionCallback
+  ): void {
+    const retained = retainBoundedResult(
+      result,
+      this.maxResultBytes,
+      job.sessionDecision,
+      job.cwd,
+      this.allowedRoots
+    );
+    let undo: (() => void) | undefined;
+    const fail = () => {
+      // A failed turn can still have created or resumed a durable thread. Keep
+      // the same thread/session persistence callback used by successful turns
+      // so a structured upstream error never leaves that execution untracked.
+      undo = onComplete?.(result) || undefined;
+      job.threadId = job.sessionDecision.threadId;
+      job.status = "failed";
+      job.result = retained.result;
+      job.resultBytes = retained.originalBytes;
+      job.resultOmitted = retained.omitted;
+      job.pendingInteractions = [];
+      job.error = sanitizeTextForJob(
+        toolResultErrorMessage(result),
+        job.cwd,
+        this.allowedRoots
+      ).slice(0, 4_000);
+      job.updatedAt = Date.now();
+      job.version += 1;
+      this.persistJob(job);
+    };
+    try {
+      if (this.stateStore) this.stateStore.transaction(fail);
+      else fail();
       this.notify(job.jobId);
       this.pruneAndPersist();
     } catch (error) {
@@ -2477,7 +2540,8 @@ export function registerBridgeTools(
           transport: "local-stdio",
           supportedCodexCliVersion: SUPPORTED_CODEX_CLI_VERSION,
           resumeProbe: "thread/read",
-          interactionResolution: "serverRequest/resolved-with-local-expiry-guard"
+          interactionResolution: "serverRequest/resolved-with-local-expiry-guard",
+          backendHandoff: "fresh-thread-with-explicit-summary-only"
         },
         modelCatalogStatus: cachedCatalog
           ? {
@@ -2505,7 +2569,7 @@ export function registerBridgeTools(
           transactional: persistenceBackend === "sqlite",
           schemaVersion: jobs.persistenceSchemaVersion,
           bridgeInstanceId: jobs.bridgeInstanceId,
-          activityFoundation: "schema-v5-project-aware-scope-agent-manager",
+          activityFoundation: "schema-v6-lineage-aware-scope-agent-manager",
           activityPersistent: jobs.activityPersistent
         },
         jobPolicy: {
@@ -4019,7 +4083,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. Activity-card presentation correlation is supplied by host metadata when available and never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4031,7 +4095,8 @@ export function registerBridgeTools(
     async (args, { _meta }) => {
       try {
         const preferences = userSettings.current;
-        args = normalizeCodexTaskInput(args, _meta, preferences);
+        args = normalizeCodexTaskInput(args, _meta);
+        requireTaskActivityPresentation(args, preferences);
         const scope = scopeResolver.require(
           _meta as ToolCallMetadata,
           args.scopeId,
@@ -4087,6 +4152,12 @@ export function registerBridgeTools(
         validateTaskSelectionInput(args, preferences);
         const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
+        if (args.handoffSummary && agentResolution.contextMode !== "fresh") {
+          throw new BackendHandoffContractError(
+            "BACKEND_HANDOFF_SUMMARY_UNEXPECTED",
+            "handoffSummary is accepted only for an existing Agent with context='fresh'."
+          );
+        }
         const projectAdmission = resolveTaskProjectAdmission({
           args,
           jobs,
@@ -4102,6 +4173,12 @@ export function registerBridgeTools(
         }
 
         if (agentResolution.contextMode === "fresh") {
+          const backendHandoff = resolveBackendHandoff({
+            args,
+            resolution: agentResolution,
+            jobs,
+            targetBackend: config.defaultBackend
+          });
           const pinnedCwd = projectAdmission?.cwd ||
             pinnedCwdForExistingActivity(
               jobs,
@@ -4144,7 +4221,8 @@ export function registerBridgeTools(
             executionMode,
             effectiveSelection: decision.effectiveSelection,
             agentId: agentResolution.agent?.agentId,
-            contextMode: "fresh"
+            contextMode: "fresh",
+            backendHandoff
           });
           const replay = jobs.findRequest(
             routing.scopeId,
@@ -4172,6 +4250,7 @@ export function registerBridgeTools(
             contextMode: "fresh",
             agentRole: agentResolution.role,
             projectAdmission,
+            backendHandoff,
             resolved: { cwd, sandbox, decision },
             preflightDone: true
           });
@@ -4260,8 +4339,14 @@ export function registerBridgeTools(
           projectAdmission
         });
       } catch (error) {
+        if (error instanceof ActivityPresentationContractError) {
+          return activityPresentationContractErrorResult(error);
+        }
         if (error instanceof AgentThreadResumeError) {
           return agentThreadResumeErrorResult(error);
+        }
+        if (error instanceof BackendHandoffContractError) {
+          return backendHandoffContractErrorResult(error);
         }
         if (error instanceof ModelPolicyError) return modelPolicyErrorResult(error);
         if (
@@ -4291,7 +4376,7 @@ type CodexTaskActivityInput =
     };
 
 type CodexTaskAgentInput =
-  | { mode: "existing"; id: string; context?: AgentContextMode }
+  | { mode: "existing"; id: string; context?: AgentContextMode; handoffSummary?: string }
   | { mode: "new"; name?: string };
 
 type CodexTaskArgs = {
@@ -4313,6 +4398,7 @@ type CodexTaskArgs = {
   agentName?: string;
   agentRole?: string;
   contextMode?: AgentContextMode;
+  handoffSummary?: string;
   // Retained only to reconstruct persisted v2/v3 request hashes. These fields
   // are not accepted by the current runtime input schema.
   sessionMode?: SessionMode;
@@ -4326,8 +4412,7 @@ type CodexTaskArgs = {
 
 function normalizeCodexTaskInput(
   input: CodexTaskArgs,
-  metadata: unknown,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+  metadata: unknown
 ): CodexTaskArgs {
   const args = { ...input };
   if (args.activity?.mode === "existing") {
@@ -4343,6 +4428,7 @@ function normalizeCodexTaskInput(
   if (args.agent?.mode === "existing") {
     args.agentId = args.agent.id;
     args.contextMode = args.agent.context;
+    args.handoffSummary = args.agent.handoffSummary;
   } else if (args.agent?.mode === "new") {
     args.agentName = args.agent.name || defaultTaskAgentName(args.requestId);
     args.contextMode = "fresh";
@@ -4358,11 +4444,6 @@ function normalizeCodexTaskInput(
   }
   if (hostPresentationId) {
     args.activityPresentationId = hostPresentationId.toLowerCase();
-  } else if (preferences.activityCardVisibility !== "never") {
-    // The MCP handler currently has no standard assistant-response identifier.
-    // requestId is a stable per-call fallback until the host supplies the
-    // presentation correlation metadata above.
-    args.activityPresentationId = args.requestId;
   }
   return args;
 }
@@ -4395,6 +4476,108 @@ function resolveImplicitTaskAgent(
 
 function defaultTaskAgentName(requestId: string): string {
   return `Codex Agent ${requestId}`;
+}
+
+class ActivityPresentationContractError extends Error {
+  readonly code = "ACTIVITY_PRESENTATION_ID_REQUIRED";
+
+  constructor() {
+    super(
+      "ACTIVITY_PRESENTATION_ID_REQUIRED: Automatic Activity cards require one UUID " +
+      "activityPresentationId for the current ChatGPT assistant response. Refresh the tool " +
+      "descriptor, generate the UUID once, reuse it for every codex_task in this response, " +
+      "and retain it on exact retries so the response keeps one card grouping."
+    );
+    this.name = "ActivityPresentationContractError";
+  }
+}
+
+class BackendHandoffContractError extends Error {
+  constructor(
+    readonly code: "BACKEND_HANDOFF_SUMMARY_REQUIRED" | "BACKEND_HANDOFF_SUMMARY_UNEXPECTED",
+    message: string
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "BackendHandoffContractError";
+  }
+}
+
+function resolveBackendHandoff(input: {
+  args: CodexTaskArgs;
+  resolution: AgentTaskResolution;
+  jobs: CodexJobRegistry;
+  targetBackend: CodexBackendKind;
+}): BackendHandoff | undefined {
+  if (!input.resolution.agent) {
+    if (input.args.handoffSummary) {
+      throw new BackendHandoffContractError(
+        "BACKEND_HANDOFF_SUMMARY_UNEXPECTED",
+        "A new Agent has no prior backend thread to summarize."
+      );
+    }
+    return undefined;
+  }
+  const sourceThread = input.jobs
+    .listAgentThreads(input.resolution.agent.agentId)
+    .find((thread) => thread.threadId === input.resolution.agent?.currentThreadId);
+  if (!sourceThread || sourceThread.backendKind === input.targetBackend) {
+    if (input.args.handoffSummary) {
+      throw new BackendHandoffContractError(
+        "BACKEND_HANDOFF_SUMMARY_UNEXPECTED",
+        "handoffSummary is reserved for an explicit backend change; this fresh thread keeps the same backend."
+      );
+    }
+    return undefined;
+  }
+  const summary = input.args.handoffSummary?.trim();
+  if (!summary) {
+    throw new BackendHandoffContractError(
+      "BACKEND_HANDOFF_SUMMARY_REQUIRED",
+      `Agent ${input.resolution.agent.agentId} is pinned to ${sourceThread.backendKind}, while new threads use ${input.targetBackend}. ` +
+      "Retry with context='fresh' and an explicit handoffSummary. Only that summary is copied; the original transcript and backend state are not migrated."
+    );
+  }
+  return {
+    sourceBackend: sourceThread.backendKind as CodexBackendKind,
+    targetBackend: input.targetBackend,
+    sourceThreadId: sourceThread.threadId,
+    continuity: "explicit-summary-only",
+    summarySha256: createHash("sha256").update(summary).digest("hex"),
+    summary
+  };
+}
+
+function backendHandoffAudit(handoff: BackendHandoff): BackendHandoffAudit {
+  return {
+    sourceBackend: handoff.sourceBackend,
+    targetBackend: handoff.targetBackend,
+    sourceThreadId: handoff.sourceThreadId,
+    continuity: handoff.continuity,
+    summarySha256: handoff.summarySha256
+  };
+}
+
+function backendHandoffPrompt(handoff: BackendHandoff, prompt: string): string {
+  return [
+    "[Explicit backend handoff]",
+    `Source backend: ${handoff.sourceBackend}`,
+    `Target backend: ${handoff.targetBackend}`,
+    "Continuity: summary-only. No transcript, hidden context, approvals, or backend state was migrated.",
+    "Handoff summary:",
+    handoff.summary,
+    "",
+    "[New request]",
+    prompt
+  ].join("\n");
+}
+
+function requireTaskActivityPresentation(
+  args: CodexTaskArgs,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+): void {
+  if (preferences.activityCardVisibility !== "never" && !args.activityPresentationId) {
+    throw new ActivityPresentationContractError();
+  }
 }
 
 type AgentThreadResumeErrorCode =
@@ -4725,6 +4908,20 @@ async function requireAgentSession(
       probe || { state: "orphaned", reason: "missing", threadId, retryable: false }
     );
   }
+  if (
+    probe &&
+    (probe.sessionId !== undefined || probe.forkedFromThreadId !== undefined) &&
+    (probe.sessionId !== session.sessionId ||
+      probe.forkedFromThreadId !== session.forkedFromThreadId)
+  ) {
+    sessions.record({
+      ...session,
+      ...(probe.sessionId ? { sessionId: probe.sessionId } : {}),
+      ...(probe.forkedFromThreadId ? { forkedFromThreadId: probe.forkedFromThreadId } : {}),
+      updatedAt: Date.now()
+    });
+    return sessions.get(threadId) || session;
+  }
   return session;
 }
 
@@ -4811,6 +5008,74 @@ function resolveActivityForTask(
   });
 }
 
+function recordAdmittedThread(input: {
+  sessions: SessionRegistry;
+  jobs: CodexJobRegistry;
+  sessionDecision: SessionDecision;
+  agent: BridgeAgent;
+  threadId: string;
+  scopeId: string;
+  cwd: string;
+  projectAdmission?: TaskProjectAdmission;
+  sandbox: SandboxMode;
+  selection: ExecutionDecision["effectiveSelection"];
+  policyRevision: number;
+  backendKind: CodexBackendKind;
+  contextMode: AgentContextMode;
+  sessionId?: string;
+  forkedFromThreadId?: string;
+}): () => void {
+  const previousSession = input.sessions.get(input.threadId);
+  const previousDecisionThreadId = input.sessionDecision.threadId;
+  const restore = () => {
+    if (previousDecisionThreadId) input.sessionDecision.threadId = previousDecisionThreadId;
+    else delete input.sessionDecision.threadId;
+    input.sessions.restoreInMemory(input.threadId, previousSession);
+  };
+  try {
+    input.jobs.activityTransaction(() => {
+      input.sessionDecision.threadId = input.threadId;
+      const now = Date.now();
+      input.sessions.record({
+        threadId: input.threadId,
+        scopeId: input.scopeId,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.forkedFromThreadId ? { forkedFromThreadId: input.forkedFromThreadId } : {}),
+        cwd: input.cwd,
+        ...(input.projectAdmission
+          ? {
+              projectId: input.projectAdmission.projectId,
+              projectLabel: input.projectAdmission.projectLabel
+            }
+          : {}),
+        sandbox: input.sandbox,
+        selection: input.selection,
+        policyRevision: input.policyRevision,
+        backendKind: input.backendKind,
+        updatedAt: now,
+        createdAt: now,
+        lastUsedAt: now
+      });
+      input.jobs.linkAgentThread({
+        agentId: input.agent.agentId,
+        threadId: input.threadId,
+        sessionId: input.sessionId,
+        projectId: input.projectAdmission?.projectId,
+        projectLabel: input.projectAdmission?.projectLabel,
+        backendKind: input.backendKind,
+        cwd: input.cwd,
+        sandbox: input.sandbox,
+        contextMode: input.contextMode,
+        forkedFromThreadId: input.forkedFromThreadId
+      });
+    });
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return restore;
+}
+
 async function startNewSession(input: {
   args: CodexTaskArgs;
   routing: CodexRouting;
@@ -4829,6 +5094,7 @@ async function startNewSession(input: {
   contextMode: Extract<AgentContextMode, "fresh">;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
+  backendHandoff?: BackendHandoff;
   resolved?: { cwd: string; sandbox: SandboxMode; decision: ExecutionDecision };
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
@@ -4850,8 +5116,11 @@ async function startNewSession(input: {
     }));
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
+  const prompt = input.backendHandoff
+    ? backendHandoffPrompt(input.backendHandoff, input.args.prompt)
+    : input.args.prompt;
   const payload: Record<string, unknown> = {
-    prompt: input.args.prompt,
+    prompt,
     cwd,
     sandbox,
     "approval-policy": input.config.defaultApprovalPolicy
@@ -4860,7 +5129,8 @@ async function startNewSession(input: {
   const sessionDecision: SessionDecision = {
     requestedMode: input.requestedMode,
     action: "start",
-    reason: input.reason
+    reason: input.reason,
+    ...(input.backendHandoff ? { handoff: backendHandoffAudit(input.backendHandoff) } : {})
   };
   return runCodex({
     jobs: input.jobs,
@@ -4882,11 +5152,12 @@ async function startNewSession(input: {
     contextMode: input.contextMode,
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    sourceThreadId: input.backendHandoff?.sourceThreadId,
     run: (onProgress, onAssigned) => input.upstream.startThread
       ? input.upstream.startThread(
           {
             backendKind: input.config.defaultBackend,
-            prompt: input.args.prompt,
+            prompt,
             cwd,
             sandbox,
             approvalPolicy: input.config.defaultApprovalPolicy,
@@ -4896,44 +5167,50 @@ async function startNewSession(input: {
           onAssigned
         )
       : input.upstream.callTool("codex", payload, onProgress, onAssigned),
+    onAssigned: (assignment, agent) => {
+      if (!assignment.threadId) return;
+      // A cross-backend handoff becomes current only after turn/start accepts
+      // the summary-bearing turn. If the worker exits after thread/start but
+      // before that point, retain the source Agent as current and keep the new
+      // thread correlated only on the failed Job for explicit reconciliation.
+      if (input.backendHandoff && !assignment.upstreamRequestId) return;
+      recordAdmittedThread({
+        sessions: input.sessions,
+        jobs: input.jobs,
+        sessionDecision,
+        agent,
+        threadId: assignment.threadId,
+        scopeId: input.routing.scopeId,
+        cwd,
+        projectAdmission: input.projectAdmission,
+        sandbox,
+        selection: executionDecision.effectiveSelection,
+        policyRevision: executionDecision.policyRevision,
+        backendKind: assignment.backendKind,
+        contextMode: input.contextMode
+      });
+    },
     onComplete: (result, agent) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
-      const previous = input.sessions.get(threadId);
-      sessionDecision.threadId = threadId;
-      const now = Date.now();
-      input.sessions.record({
+      const lineage = extractResultThreadLineage(result);
+      return recordAdmittedThread({
+        sessions: input.sessions,
+        jobs: input.jobs,
+        sessionDecision,
+        agent,
         threadId,
         scopeId: input.routing.scopeId,
         cwd,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectLabel: input.projectAdmission.projectLabel
-            }
-          : {}),
+        projectAdmission: input.projectAdmission,
         sandbox,
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
-        updatedAt: now,
-        createdAt: now,
-        lastUsedAt: now
-      });
-      input.jobs.linkAgentThread({
-        agentId: agent.agentId,
-        threadId,
-        projectId: input.projectAdmission?.projectId,
-        projectLabel: input.projectAdmission?.projectLabel,
-        backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
-        cwd,
-        sandbox,
+        sessionId: lineage.sessionId,
+        forkedFromThreadId: lineage.forkedFromThreadId,
         contextMode: input.contextMode
       });
-      return () => {
-        delete sessionDecision.threadId;
-        input.sessions.restoreInMemory(threadId, previous);
-      };
     }
   });
 }
@@ -5067,13 +5344,15 @@ async function continueTrackedSession(input: {
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
-    onComplete: () => {
+    onComplete: (result) => {
       const previous = input.sessions.get(input.session.threadId);
+      const lineage = extractResultThreadLineage(result);
       const existingThread = input.jobs
         .listAgentThreads(input.agent.agentId)
         .find((thread) => thread.threadId === input.session.threadId);
       input.sessions.record({
         ...input.session,
+        ...lineage,
         ...(input.projectAdmission
           ? {
               projectId: input.projectAdmission.projectId,
@@ -5089,6 +5368,7 @@ async function continueTrackedSession(input: {
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId: input.session.threadId,
+        sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
         projectId: input.projectAdmission?.projectId,
         projectLabel: input.projectAdmission?.projectLabel,
         backendKind: input.session.backendKind,
@@ -5174,39 +5454,46 @@ async function forkTrackedSession(input: {
       onProgress,
       onAssigned
     ) as Promise<ToolResult>,
-    onComplete: (result) => {
-      const threadId = extractThreadId(result);
-      if (!threadId) return;
-      sessionDecision.threadId = threadId;
-      const now = Date.now();
-      input.sessions.record({
-        threadId,
+    onAssigned: (assignment) => {
+      if (!assignment.threadId) return;
+      recordAdmittedThread({
+        sessions: input.sessions,
+        jobs: input.jobs,
+        sessionDecision,
+        agent: input.agent,
+        threadId: assignment.threadId,
         scopeId: input.routing.scopeId,
         cwd: input.session.cwd,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectLabel: input.projectAdmission.projectLabel
-            }
-          : {}),
+        projectAdmission: input.projectAdmission,
         sandbox: input.session.sandbox,
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
-        updatedAt: now,
-        createdAt: now,
-        lastUsedAt: now
-      });
-      input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
-        threadId,
-        projectId: input.projectAdmission?.projectId,
-        projectLabel: input.projectAdmission?.projectLabel,
-        backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
         contextMode: "fork",
+        sessionId: input.session.sessionId,
         forkedFromThreadId: input.session.threadId
+      });
+    },
+    onComplete: (result) => {
+      const threadId = extractThreadId(result);
+      if (!threadId) return;
+      const lineage = extractResultThreadLineage(result, input.session.threadId);
+      return recordAdmittedThread({
+        sessions: input.sessions,
+        jobs: input.jobs,
+        sessionDecision,
+        agent: input.agent,
+        threadId,
+        scopeId: input.routing.scopeId,
+        cwd: input.session.cwd,
+        projectAdmission: input.projectAdmission,
+        sandbox: input.session.sandbox,
+        selection: input.executionDecision.effectiveSelection,
+        policyRevision: input.executionDecision.policyRevision,
+        backendKind: input.session.backendKind,
+        sessionId: lineage.sessionId,
+        contextMode: "fork",
+        forkedFromThreadId: lineage.forkedFromThreadId || input.session.threadId
       });
     }
   });
@@ -5238,6 +5525,7 @@ async function runCodex(input: {
     onProgress: (progress: Progress) => void,
     onAssigned: (assignment: UpstreamWorkerAssignment) => void
   ) => Promise<ToolResult>;
+  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent) => void;
   onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
 }): Promise<ToolResult> {
   if (!input.agent && !input.newAgentName) {
@@ -5301,7 +5589,10 @@ async function runCodex(input: {
         ? (result) => input.onComplete?.(result, agent)
         : undefined,
       input.preferences.maxConcurrentJobs,
-      input.rejectIfSelectionActive
+      input.rejectIfSelectionActive,
+      input.onAssigned
+        ? (assignment) => input.onAssigned?.(assignment, agent)
+        : undefined
     );
   });
   if (job.executionMode === "background") {
@@ -5309,6 +5600,9 @@ async function runCodex(input: {
   }
   await job.promise;
   if (job.status === "completed" && job.result) {
+    return forwardResult(job.result, job, input.preferences, input.jobs);
+  }
+  if (job.status === "failed" && job.result?.isError) {
     return forwardResult(job.result, job, input.preferences, input.jobs);
   }
   throw new Error(job.error || "Codex job failed.");
@@ -5320,7 +5614,12 @@ function resultForJob(
   preferences: BridgeUserSettings,
   jobs?: CodexJobRegistry
 ): ToolResult {
-  if (job.status === "completed" && job.result) return forwardResult(job.result, job, preferences, jobs);
+  if (
+    job.result &&
+    (job.status === "completed" || (job.status === "failed" && job.result.isError))
+  ) {
+    return forwardResult(job.result, job, preferences, jobs);
+  }
   return textResult(formatJobStatus(job, staleAfterMs, undefined, preferences, jobs, true));
 }
 
@@ -5407,6 +5706,8 @@ function formatJobStatus(
     workspaceLabel: job.projectLabel || path.basename(job.cwd),
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
+    executionAudit: formatExecutionAudit(job),
+    upstreamError: retainedStructuredError(job.result) || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
     activityPresentationId: job.activityPresentationId || null,
@@ -5554,6 +5855,8 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     workspaceLabel: job.projectLabel || path.basename(job.cwd),
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
+    executionAudit: formatExecutionAudit(job),
+    upstreamError: retainedStructuredError(job.result) || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
     activityPresentationId: job.activityPresentationId || null,
@@ -5598,10 +5901,76 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   };
 }
 
+function formatExecutionAudit(job: CodexJob): Record<string, unknown> | null {
+  const decision = job.executionDecision;
+  if (!decision) return null;
+  const acceptedTurn = [...job.publicEvents].reverse().find((event) =>
+    event.type === "turn" &&
+    event.phase === "started" &&
+    event.details?.evidence === "turn/start-accepted"
+  );
+  const reroute = [...job.publicEvents].reverse().find((event) =>
+    event.type === "model" &&
+    event.details?.kind === "rerouted" &&
+    typeof event.details.toModel === "string"
+  );
+  const reroutedModel = typeof reroute?.details?.toModel === "string"
+    ? reroute.details.toModel
+    : undefined;
+  const acceptedSelection = isRecord(acceptedTurn?.details?.selection)
+    ? acceptedTurn.details.selection
+    : undefined;
+  const acceptedModel = typeof acceptedSelection?.model === "string"
+    ? acceptedSelection.model
+    : decision.effectiveSelection.model;
+  const acceptedEffort = typeof acceptedSelection?.reasoningEffort === "string"
+    ? acceptedSelection.reasoningEffort
+    : decision.effectiveSelection.reasoningEffort;
+  const acceptedServiceTier = typeof acceptedSelection?.serviceTier === "string"
+    ? acceptedSelection.serviceTier
+    : decision.effectiveSelection.serviceTier;
+  return {
+    privacy: "selection-metadata-only; prompt and private reasoning excluded",
+    requested: decision.requestedSelection || null,
+    effective: decision.effectiveSelection,
+    actual: {
+      model: reroutedModel || acceptedModel,
+      reasoningEffort: acceptedEffort,
+      ...(acceptedServiceTier ? { serviceTier: acceptedServiceTier } : {})
+    },
+    evidence: {
+      model: reroutedModel
+        ? "model/rerouted"
+        : acceptedTurn
+          ? "turn/start-accepted"
+          : "bridge-dispatch",
+      reasoningEffort: acceptedTurn ? "turn/start-accepted" : "bridge-dispatch",
+      actualEffortRuntimeOverrideReported: false
+    },
+    ...(reroute
+      ? {
+          reroute: {
+            fromModel: typeof reroute.details?.fromModel === "string"
+              ? reroute.details.fromModel
+              : acceptedModel,
+            toModel: reroutedModel,
+            reason: typeof reroute.details?.reason === "string"
+              ? reroute.details.reason
+              : "unspecified",
+            eventId: reroute.eventId,
+            createdAt: new Date(reroute.createdAt).toISOString()
+          }
+        }
+      : { reroute: null })
+  };
+}
+
 function formatSessionSummary(session: TrackedCodexSession): Record<string, unknown> {
   const updatedAt = session.updatedAt ?? session.lastUsedAt;
   return {
     threadId: session.threadId,
+    sessionId: session.sessionId || null,
+    forkedFromThreadId: session.forkedFromThreadId || null,
     scopeId: session.scopeId,
     projectId: session.projectId || null,
     projectLabel: session.projectLabel || null,
@@ -5621,6 +5990,7 @@ function formatAgentThreadSummary(
   if (!thread) return null;
   return {
     threadId: thread.threadId,
+    sessionId: thread.sessionId || null,
     agentId: thread.agentId,
     scopeId: thread.scopeId,
     projectId: thread.projectId || null,
@@ -6607,6 +6977,9 @@ function codexTaskInputSchema(
       id: scopeIdSchema().describe("Exact bridge-managed Agent id."),
       context: z.enum(AGENT_CONTEXT_MODES).optional().describe(
         "Continue the current thread, fork it, or deliberately start fresh. Defaults to continue when resumable."
+      ),
+      handoffSummary: z.string().trim().min(1).max(4_000).optional().describe(
+        "Required only when context='fresh' moves an existing Agent from its pinned backend to the configured backend. This explicit bounded summary is the only context copied; the transcript and backend state are not migrated."
       )
     }),
     z.strictObject({
@@ -6620,6 +6993,9 @@ function codexTaskInputSchema(
   );
   const requestId = scopeIdSchema().describe(
     "Unique idempotency UUID for one logical Codex task. Reuse the exact value only when retrying an identical task. Never reuse it to group different tasks or multiple calls in one GPT response."
+  );
+  const activityPresentationId = scopeIdSchema().describe(
+    "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. Generate it once for the response, reuse it for every codex_task in that response even across different Activities or Agents, and generate a new value for the next response. Reuse it on exact retries. requestId deduplicates one Codex execution while activityPresentationId deduplicates one response card and is excluded from execution replay identity."
   );
   const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
   const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
@@ -6636,6 +7012,7 @@ function codexTaskInputSchema(
   };
   const publicCommon = {
     requestId,
+    ...(settings.activityCardVisibility === "never" ? {} : { activityPresentationId }),
     prompt,
     projectId: projectedProjectIdZod(config, settings),
     activity: activity.optional(),
@@ -6675,6 +7052,7 @@ function codexTaskInputSchema(
   const runtime = z.strictObject({
     ...runtimeCommon,
     projectId: z.string().trim().min(1).max(64).optional(),
+    activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
     selection: modelChoiceZod().optional()
   });
@@ -6871,6 +7249,7 @@ type TaskRequestHashV4Input = {
   agentId?: string;
   contextMode: AgentContextMode;
   sourceThreadId?: string;
+  backendHandoff?: BackendHandoff | BackendHandoffAudit;
 };
 
 /**
@@ -6897,6 +7276,15 @@ function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
         version: CURRENT_TASK_REQUEST_HASH_VERSION,
         scopeId: input.scopeId,
         prompt: input.args.prompt,
+        backendHandoff: input.backendHandoff
+          ? backendHandoffAuditForHash(input.backendHandoff, input.args.handoffSummary)
+          : input.args.handoffSummary
+            ? {
+                unadmittedSummarySha256: createHash("sha256")
+                  .update(input.args.handoffSummary.trim())
+                  .digest("hex")
+              }
+            : null,
         project: input.projectId
           ? { projectId: input.projectId, cwd: input.cwd }
           : null,
@@ -6981,8 +7369,34 @@ function resolveTaskReplayRoutingV4(
     ),
     agentId: args.agentId || job.agentId,
     contextMode,
-    sourceThreadId: contextMode === "fresh" ? undefined : job.sourceThreadId
+    sourceThreadId: contextMode === "fresh" ? undefined : job.sourceThreadId,
+    backendHandoff: replayBackendHandoff(args, job)
   });
+}
+
+function backendHandoffAuditForHash(
+  handoff: BackendHandoff | BackendHandoffAudit,
+  suppliedSummary?: string
+): BackendHandoffAudit {
+  const summarySha256 = suppliedSummary === undefined
+    ? handoff.summarySha256
+    : createHash("sha256").update(suppliedSummary.trim()).digest("hex");
+  return {
+    sourceBackend: handoff.sourceBackend,
+    targetBackend: handoff.targetBackend,
+    sourceThreadId: handoff.sourceThreadId,
+    continuity: handoff.continuity,
+    summarySha256
+  };
+}
+
+function replayBackendHandoff(
+  args: CodexTaskArgs,
+  job: CodexJob
+): BackendHandoffAudit | undefined {
+  const handoff = job.sessionDecision.handoff;
+  if (!handoff) return undefined;
+  return backendHandoffAuditForHash(handoff, args.handoffSummary);
 }
 
 function replayEffectiveSelection(
@@ -7119,6 +7533,8 @@ async function buildSettingsView(
       models: (catalog?.models || []) as CodexModelDescriptor[]
     },
     warnings: [
+      `Backend routing: ${config.defaultBackend} applies only to new or deliberately fresh Agent threads. ` +
+        "Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
       ...(userSettings.current.legacyPreferredModel
@@ -7941,6 +8357,7 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
   const requestedMode = value.requestedMode;
   const action = value.action;
   const reason = value.reason;
+  const handoff = readBackendHandoffAudit(value.handoff);
   if (
     (requestedMode !== "auto" && requestedMode !== "new" && requestedMode !== "continue") ||
     (action !== "start" && action !== "continue") ||
@@ -7952,7 +8369,8 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
       reason !== "recent-compatible" &&
       reason !== "compatible-session-busy" &&
       reason !== "no-compatible-session") ||
-    !isOptionalString(value.threadId)
+    !isOptionalString(value.threadId) ||
+    (value.handoff !== undefined && !handoff)
   ) {
     return undefined;
   }
@@ -7960,7 +8378,32 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
     requestedMode,
     action,
     reason,
-    threadId: value.threadId
+    threadId: value.threadId,
+    ...(handoff ? { handoff } : {})
+  };
+}
+
+function readBackendHandoffAudit(value: unknown): BackendHandoffAudit | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    (value.sourceBackend !== "mcp-server" && value.sourceBackend !== "app-server") ||
+    (value.targetBackend !== "mcp-server" && value.targetBackend !== "app-server") ||
+    value.sourceBackend === value.targetBackend ||
+    typeof value.sourceThreadId !== "string" ||
+    !value.sourceThreadId ||
+    value.sourceThreadId.length > 200 ||
+    value.continuity !== "explicit-summary-only" ||
+    typeof value.summarySha256 !== "string" ||
+    !/^[0-9a-f]{64}$/i.test(value.summarySha256)
+  ) {
+    return undefined;
+  }
+  return {
+    sourceBackend: value.sourceBackend,
+    targetBackend: value.targetBackend,
+    sourceThreadId: value.sourceThreadId,
+    continuity: "explicit-summary-only",
+    summarySha256: value.summarySha256.toLowerCase()
   };
 }
 
@@ -8075,6 +8518,25 @@ function extractResultBackendKind(result: ToolResult): CodexBackendKind | undefi
   if (!isRecord(result.structuredContent)) return undefined;
   const value = result.structuredContent.backendKind;
   return value === "mcp-server" || value === "app-server" ? value : undefined;
+}
+
+function extractResultThreadLineage(
+  result: ToolResult,
+  fallbackForkedFromThreadId?: string
+): { sessionId?: string; forkedFromThreadId?: string } {
+  if (!isRecord(result.structuredContent)) {
+    return fallbackForkedFromThreadId ? { forkedFromThreadId: fallbackForkedFromThreadId } : {};
+  }
+  const sessionId = typeof result.structuredContent.sessionId === "string"
+    ? result.structuredContent.sessionId.trim().slice(0, 200)
+    : "";
+  const forkedFromThreadId = typeof result.structuredContent.forkedFromThreadId === "string"
+    ? result.structuredContent.forkedFromThreadId.trim().slice(0, 200)
+    : fallbackForkedFromThreadId;
+  return {
+    ...(sessionId ? { sessionId } : {}),
+    ...(forkedFromThreadId ? { forkedFromThreadId } : {})
+  };
 }
 
 function extractResultTurnStatus(result: ToolResult): string | undefined {
@@ -8238,9 +8700,17 @@ function forwardResult(
             })
           : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
       },
-      executionDecision: job.executionDecision || null
+      executionDecision: job.executionDecision || null,
+      executionAudit: formatExecutionAudit(job)
     }
   };
+}
+
+function retainedStructuredError(result: ToolResult | undefined): Record<string, unknown> | undefined {
+  if (!result || !isRecord(result.structuredContent) || !isRecord(result.structuredContent.error)) {
+    return undefined;
+  }
+  return result.structuredContent.error;
 }
 
 function textResult(value: unknown): ToolResult {
@@ -8257,6 +8727,51 @@ function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
       message: error.message.replace(`${error.code}: `, ""),
       policyRevision: error.policyRevision,
       nextActions: error.nextActions
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function activityPresentationContractErrorResult(
+  error: ActivityPresentationContractError
+): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      retryable: true,
+      missingFields: ["activityPresentationId"],
+      nextActions: [
+        "Refresh the codex_task descriptor.",
+        "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
+        "For an exact logical-call retry, reuse both requestId and activityPresentationId."
+      ]
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent
+  };
+}
+
+function backendHandoffContractErrorResult(error: BackendHandoffContractError): ToolResult {
+  const structuredContent = {
+    error: {
+      code: error.code,
+      message: error.message.replace(`${error.code}: `, ""),
+      retryable: true,
+      contextContinuity: "not-migrated",
+      nextActions: error.code === "BACKEND_HANDOFF_SUMMARY_REQUIRED"
+        ? [
+            "Retry the existing Agent with context='fresh' and a concise explicit handoffSummary.",
+            "State clearly that only the summary is transferred; the original transcript, approvals, and backend state remain on the pinned Agent thread."
+          ]
+        : ["Remove handoffSummary unless this is an explicit existing-Agent backend change."]
     }
   };
   return {

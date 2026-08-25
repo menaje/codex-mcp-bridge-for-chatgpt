@@ -156,8 +156,10 @@ the network as the current macOS user.
   validation, TERM→KILL escalation, collateral confirmation, and terminal state
   only after exit evidence. `termination-failed` remains an active slot.
 - Automatic Activity render reservations are in-memory and keyed by the
-  host-derived conversation scope plus host-supplied response correlation, with
-  `requestId` used as a stable per-call fallback when the host supplies none;
+  host-derived conversation scope plus an explicit assistant-response
+  `activityPresentationId`. Documented ChatGPT MCP metadata does not expose an
+  assistant-response ID, so automatic UI fails closed when neither the current
+  public input nor verified host metadata supplies one;
   Activity id/generation remains a validity check,
   not the presentation boundary. Only the newest automatic presentation owns
   scope watch and completion handoff. Superseded cards stop normally and
@@ -256,6 +258,23 @@ identity.
   admission-time selection: model/effort changes return
   `THREAD_OVERRIDE_UNSUPPORTED`, while a changed Priority preference applies to
   newly started threads and the existing thread retains its pinned tier.
+- Each retained Job exposes a selection-only execution audit that separates the
+  requested, policy-effective, and evidence-backed actual model/effort. A
+  `model/rerouted` event supplies actual-model and reason evidence; when App
+  Server supplies no independent runtime effort-override field, the audit says
+  so instead of claiming stronger evidence. Prompt and private reasoning text
+  are excluded.
+- A deliberate MCP/App Server boundary crossing creates a new thread and
+  requires an explicit summary. The summary is sent transiently to the target
+  backend but only its SHA-256 digest, source/target backend, and source thread
+  are persisted as dedicated handoff fields. Like any prompt, the summary may
+  still be repeated in Codex output and therefore enter ordinary bounded result
+  retention. The bridge never labels transcript, approvals, hidden context, or
+  backend state as migrated.
+- `CONTEXT_WINDOW_EXCEEDED` and other structured turn failures are sanitized,
+  retained, and replayed for the exact request ID without issuing a duplicate
+  upstream call. Recovery advice is explicit; no model or effort downgrade is
+  automatic.
 - App Server control responses can arrive after the bridge has already returned
   a timeout. A bounded journal in the private SQLite metadata records only
   method/outcome, timing, worker generation, numeric error code, and validated
@@ -281,6 +300,10 @@ identity.
   reroutes/verifications/safety buffering, context compaction, MCP calls,
   collaboration, and token usage. It excludes raw reasoning, MCP arguments and
   results, collaboration prompts, and full local paths.
+- Worker health publishes only pool aggregates: observed RSS/FD samples,
+  startup latency/failures, crash count/rate, and protocol/config/MCP
+  initialization state. Worker PID, thread assignment, config contents, and MCP
+  payloads remain private.
 - Logical Agent archive/restore never invokes App Server thread archive/unarchive.
   This keeps bridge lifecycle management from cascading through an upstream fork
   graph and affecting another logical Agent.
@@ -294,7 +317,8 @@ identity.
 - The 30-job setting is a bridge admission limit. The MCP host, tunnel, Codex,
   account, and machine can impose lower practical limits.
 - Persisted Agent/session rows contain scope routing labels, Agent aliases and
-  immutable IDs, current/history thread ids, Activity assignment history, backend,
+  immutable IDs, current/history thread ids, App Server session ID/direct fork
+  ancestry, Activity assignment history, backend,
   local working-directory paths, and current exact execution selection/revision,
   but not prompts or results. Historical decisions remain on job rows. Pre-scope records are
   migrated into deterministic Legacy Agents or a quarantined legacy scope that

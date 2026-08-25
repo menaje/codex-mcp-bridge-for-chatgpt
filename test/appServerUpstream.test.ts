@@ -39,7 +39,9 @@ describe("CodexAppServerUpstreamPool", () => {
   });
 
   it("reports only aggregate App Server worker and resume health", async () => {
-    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
+      workerMetricsProbe: async () => ({ rssKb: 4_096, fdCount: 12 })
+    });
     try {
       await expect(pool.listTools()).resolves.toMatchObject({
         backendKind: "app-server",
@@ -55,7 +57,27 @@ describe("CodexAppServerUpstreamPool", () => {
       });
       await pool.listModels();
       await expect(pool.listTools()).resolves.toMatchObject({
-        workerHealth: { configured: 1, live: 1, activeCalls: 0 }
+        workerHealth: {
+          configured: 1,
+          live: 1,
+          activeCalls: 0,
+          resources: {
+            observedWorkers: 1,
+            rssKb: { samples: 1, total: 4_096, max: 4_096 },
+            fdCount: { samples: 1, total: 12, max: 12 }
+          },
+          startup: {
+            spawnCount: 1,
+            failureCount: 0,
+            latencyMs: { samples: 1, average: expect.any(Number) }
+          },
+          crashes: { count: 0, ratePerSpawn: 0 },
+          initialization: {
+            protocol: { ready: 1 },
+            config: { ready: 1, warning: 0 },
+            mcpServers: { observed: 1, ready: 1, failed: 0 }
+          }
+        }
       });
       expect(JSON.stringify(await pool.listTools())).not.toContain("fake-thread");
     } finally {
@@ -275,6 +297,111 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("fails closed with actionable structured recovery for context-window exhaustion", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const result = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "context window exceeded",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          turnStatus: "failed",
+          error: {
+            code: "CONTEXT_WINDOW_EXCEEDED",
+            retryable: true,
+            upstreamKind: "contextWindowExceeded",
+            nextActions: expect.arrayContaining([
+              expect.stringContaining("context='fresh'"),
+              expect.stringContaining("larger context window")
+            ])
+          }
+        }
+      });
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it("recovers a durable thread after worker crash, pool reassignment, terminal cleanup, and pool restart", async () => {
+    const fixture = protocolFixture("crash-resume");
+    const pool = new CodexAppServerUpstreamPool(fixture, 1, {}, {
+      workerMetricsProbe: async () => ({ rssKb: 8_192, fdCount: 24 })
+    });
+    let assignment: UpstreamWorkerAssignment | undefined;
+    try {
+      await expect(pool.startThread!({
+        backendKind: "app-server",
+        prompt: "crash worker",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }, undefined, (value) => {
+        assignment = value;
+      })).rejects.toThrow(/exited|closed/i);
+      expect(assignment).toMatchObject({
+        workerId: "app-0",
+        workerGeneration: 1,
+        threadId: "durable-crash-thread"
+      });
+      await expect(pool.listTools()).resolves.toMatchObject({
+        workerHealth: { crashes: { count: 1 } }
+      });
+
+      const resumed = await pool.continueThread!({
+        backendKind: "app-server",
+        threadId: "durable-crash-thread",
+        prompt: "resume on replacement worker",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      });
+      expect(resumed).toMatchObject({
+        content: [{ type: "text", text: "RESUMED AFTER CRASH" }],
+        structuredContent: {
+          threadId: "durable-crash-thread",
+          sessionId: "durable-crash-session",
+          turnStatus: "completed"
+        }
+      });
+      await expect(pool.listBackgroundTerminals("durable-crash-thread")).resolves.toHaveLength(1);
+      await expect(
+        pool.terminateBackgroundTerminal("durable-crash-thread", "durable-background-1")
+      ).resolves.toEqual({ terminated: true });
+      await expect(pool.listTools()).resolves.toMatchObject({
+        workerHealth: {
+          startup: { spawnCount: 2, failureCount: 0 },
+          crashes: { count: 1, ratePerSpawn: 0.5 },
+          resources: { rssKb: { max: 8_192 }, fdCount: { max: 24 } }
+        }
+      });
+    } finally {
+      await pool.close();
+    }
+
+    const restarted = new CodexAppServerUpstreamPool(fixture, 1);
+    try {
+      await expect(restarted.continueThread!({
+        backendKind: "app-server",
+        threadId: "durable-crash-thread",
+        prompt: "resume after bridge restart",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      })).resolves.toMatchObject({
+        content: [{ type: "text", text: "RESUMED AFTER CRASH" }],
+        structuredContent: {
+          threadId: "durable-crash-thread",
+          sessionId: "durable-crash-session"
+        }
+      });
+    } finally {
+      await restarted.close();
+    }
+  }, 15_000);
+
   it("forks, archives, restores, and resumes exact App Server threads", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
@@ -296,7 +423,13 @@ describe("CodexAppServerUpstreamPool", () => {
       const forkedThreadId = (forked.structuredContent as { threadId: string }).threadId;
       expect(sourceThreadId).toBe("fake-thread-1");
       expect(forkedThreadId).toBe("fake-thread-2");
-      expect(forked.structuredContent).toMatchObject({ backendKind: "app-server", turnStatus: "completed" });
+      expect(started.structuredContent).toMatchObject({ sessionId: "fake-session-1" });
+      expect(forked.structuredContent).toMatchObject({
+        backendKind: "app-server",
+        turnStatus: "completed",
+        sessionId: "fake-session-1",
+        forkedFromThreadId: sourceThreadId
+      });
 
       await expect(pool.archiveThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
       await expect(pool.restoreThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
@@ -332,7 +465,8 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(pool.probeThread(threadId)).resolves.toEqual({
         state: "resumable",
         runtimeStatus: "idle",
-        threadId
+        threadId,
+        sessionId: "fake-session-1"
       });
 
       await pool.archiveThread(threadId);
@@ -340,7 +474,8 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(pool.probeThread(threadId)).resolves.toEqual({
         state: "resumable",
         runtimeStatus: "notLoaded",
-        threadId
+        threadId,
+        sessionId: "fake-session-1"
       });
 
       let assignment: UpstreamWorkerAssignment | undefined;
@@ -350,12 +485,13 @@ describe("CodexAppServerUpstreamPool", () => {
         undefined,
         (value) => { assignment = value; }
       );
-      await eventually(() => Boolean(assignment));
+      await eventually(() => Boolean(assignment?.upstreamRequestId));
       await expect(pool.probeThread(threadId)).resolves.toEqual({
         state: "busy",
         runtimeStatus: "active",
         threadId,
-        retryable: true
+        retryable: true,
+        sessionId: "fake-session-1"
       });
       expect(pool.canResumeThread(threadId)).toBe(true);
       await pool.forceTerminateWorker(assignment!);
@@ -485,7 +621,7 @@ describe("CodexAppServerUpstreamPool", () => {
         undefined,
         (value) => {
           assignment = value;
-          throw assignmentFailure;
+          if (value.upstreamRequestId) throw assignmentFailure;
         }
       );
       const observedFailure = failedCall.then(
@@ -493,7 +629,7 @@ describe("CodexAppServerUpstreamPool", () => {
         (error: unknown) => error
       );
 
-      await eventually(() => Boolean(assignment));
+      await eventually(() => Boolean(assignment?.upstreamRequestId));
 
       expect(assignment).toMatchObject({
         threadId: "fake-thread-1",

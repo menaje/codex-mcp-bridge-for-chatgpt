@@ -157,6 +157,57 @@ class MultiTurnAppUpstream extends FakeUpstream {
   }
 }
 
+class CrashThenResumeBridgeUpstream extends FakeUpstream {
+  private crashed = false;
+
+  capabilities() {
+    return {
+      selectionScope: "turn" as const,
+      supportsModelOverrideOnContinue: true,
+      supportsEffortOverrideOnContinue: true,
+      supportsServiceTierOverrideOnContinue: true,
+      supportsFork: true
+    };
+  }
+
+  canResumeThread(threadId: string): boolean {
+    return threadId === "bridge-crash-thread";
+  }
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    _onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    const threadId = name === "codex-reply"
+      ? String(args.threadId)
+      : "bridge-crash-thread";
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: this.crashed ? "app-replacement-0" : "app-crashed-0",
+      workerGeneration: this.crashed ? 2 : 1,
+      upstreamRequestId: this.crashed ? "bridge-resume-turn" : "bridge-crash-turn",
+      threadId
+    });
+    if (!this.crashed) {
+      this.crashed = true;
+      throw new Error("App Server worker crashed after turn admission.");
+    }
+    return {
+      content: [{ type: "text", text: "resumed after worker crash" }],
+      structuredContent: {
+        threadId,
+        turnId: "bridge-resume-turn",
+        turnStatus: "completed",
+        backendKind: "app-server",
+        sessionId: "bridge-crash-session"
+      }
+    };
+  }
+}
+
 class ForkLifecycleUpstream extends FakeUpstream {
   public archivedThreads: string[] = [];
   public restoredThreads: string[] = [];
@@ -173,7 +224,16 @@ class ForkLifecycleUpstream extends FakeUpstream {
 
   async forkThread(input: CodexThreadForkRequest): Promise<ToolResult> {
     this.calls.push({ name: "codex-fork", args: { ...input } });
-    return fakeCodexResult("thread-forked");
+    return {
+      ...fakeCodexResult("thread-forked"),
+      structuredContent: {
+        threadId: "thread-forked",
+        content: "done",
+        backendKind: "app-server",
+        sessionId: "session-tree-1",
+        forkedFromThreadId: input.threadId
+      }
+    };
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -503,7 +563,7 @@ describe("bridge tools", () => {
       "openai/outputTemplate": ACTIVITY_CARD_URI
     });
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "prompt"])
+      required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
@@ -515,6 +575,7 @@ describe("bridge tools", () => {
     expect(byName.get("codex_cancel")?.inputSchema.properties).not.toHaveProperty("scopeId");
     expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
       activity: { oneOf: expect.any(Array) },
+      activityPresentationId: expect.any(Object),
       agent: { oneOf: expect.any(Array) },
       executionMode: { enum: ["foreground", "background"] },
       requestId: expect.any(Object),
@@ -522,7 +583,6 @@ describe("bridge tools", () => {
     });
     for (const hiddenTaskField of [
       "scopeId",
-      "activityPresentationId",
       "modelPolicyRevision",
       "activityId",
       "continuationOfActivityId",
@@ -1126,6 +1186,7 @@ describe("bridge tools", () => {
           "name": "codex_task",
           "properties": [
             "activity",
+            "activityPresentationId",
             "agent",
             "executionMode",
             "projectId",
@@ -1134,8 +1195,8 @@ describe("bridge tools", () => {
             "sandbox",
             "selection",
           ],
-          "propertyCount": 8,
-          "schemaBytes": 4934,
+          "propertyCount": 9,
+          "schemaBytes": 5835,
           "visibility": {
             "app": true,
             "model": true,
@@ -1148,7 +1209,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("rejects expired runtime tool fields and caller-authored presentation inputs at parsing", async () => {
+  it("rejects expired runtime fields and malformed presentation inputs at parsing", async () => {
     const root = temporaryRoot();
     const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), new FakeUpstream());
     const missing = await rawCallTool({
@@ -1181,7 +1242,28 @@ describe("bridge tools", () => {
     });
     expect(invalid.isError).toBe(true);
     expect(JSON.stringify(invalid)).toContain("activityPresentationId");
-    expect(JSON.stringify(invalid)).toContain("Unrecognized key");
+    expect(JSON.stringify(invalid)).toContain("Expected a UUID-formatted");
+
+    const missingPresentation = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000003",
+        prompt: "current contract without response correlation",
+        activity: { mode: "new" },
+        agent: { mode: "new" }
+      }
+    });
+    expect(missingPresentation).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "ACTIVITY_PRESENTATION_ID_REQUIRED",
+          retryable: true,
+          missingFields: ["activityPresentationId"]
+        }
+      }
+    });
 
     for (const retired of [
       {
@@ -1238,6 +1320,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "10101010-1010-4010-8010-101010101010",
+        activityPresentationId: "10101010-1010-4010-8010-101010101010",
         prompt: "review the design",
         executionMode: "foreground"
       }
@@ -1302,7 +1385,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("rejects mixed task routing contracts and lets host metadata own card correlation", async () => {
+  it("rejects mixed task routing contracts and accepts verified host card correlation", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
@@ -1318,7 +1401,7 @@ describe("bridge tools", () => {
       }
     });
     expect(mixed.isError).toBe(true);
-    expect(JSON.stringify(mixed)).toContain("Unrecognized keys");
+    expect(JSON.stringify(mixed)).toContain("Unrecognized key");
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
     expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
 
@@ -1327,6 +1410,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "41414141-4141-4141-8141-414141414141",
+        activityPresentationId: "41414141-4141-4141-8141-414141414141",
         prompt: "new Agent cannot fork",
         activity: { mode: "new" },
         agent: { mode: "new", context: "fork" }
@@ -3343,6 +3427,7 @@ describe("bridge tools", () => {
     expect(history.find((thread) => thread.threadId === "thread-forked")).toMatchObject({
       isCurrent: false,
       contextMode: "fork",
+      sessionId: "session-tree-1",
       projectId: "default",
       projectLabel: path.basename(root),
       forkedFromThreadId: "thread-1"
@@ -3359,6 +3444,134 @@ describe("bridge tools", () => {
       lifecycle: "idle",
       currentThreadId: "thread-2"
     });
+    await close();
+  });
+
+  it("keeps an MCP Agent pinned and requires an explicit summary-only handoff for a fresh App Server thread", async () => {
+    const root = realpathSync(temporaryRoot());
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry({ allowedRoots: [root] });
+    const jobs = new CodexJobRegistry({ allowedRoots: [root] });
+    const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Pinned MCP Agent" });
+    jobs.linkAgentThread({
+      agentId: agent.agentId,
+      threadId: "mcp-thread",
+      backendKind: "mcp-server",
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fresh"
+    });
+    sessions.record({
+      threadId: "mcp-thread",
+      scopeId: SCOPE_A,
+      backendKind: "mcp-server",
+      cwd: root,
+      sandbox: "read-only",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      policyRevision: 0,
+      updatedAt: 1,
+      createdAt: 1,
+      lastUsedAt: 1
+    });
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      sessions,
+      new FakeModelCatalog(),
+      undefined,
+      jobs
+    );
+
+    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((settings as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
+      .toEqual(expect.arrayContaining([
+        expect.stringContaining("Existing Agent threads remain pinned"),
+        expect.stringContaining("handoffSummary")
+      ]));
+
+    const continued = await runTask(client, {
+      prompt: "continue on the pinned backend",
+      activityTitle: "Pinned continuation",
+      agent: { mode: "existing", id: agent.agentId, context: "continue" }
+    });
+    expect(continued).toMatchObject({ structuredContent: { threadId: "mcp-thread" } });
+    expect(upstream.calls[0]).toMatchObject({
+      name: "codex-reply",
+      args: { threadId: "mcp-thread", prompt: "continue on the pinned backend" }
+    });
+
+    const missing = await runTask(client, {
+      prompt: "move to the configured backend",
+      activityTitle: "Backend handoff",
+      agent: { mode: "existing", id: agent.agentId, context: "fresh" }
+    });
+    expect(missing).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "BACKEND_HANDOFF_SUMMARY_REQUIRED",
+          contextContinuity: "not-migrated"
+        }
+      }
+    });
+    expect(upstream.calls).toHaveLength(1);
+
+    const summary = "Completed repository audit; continue with the two remaining implementation gaps.";
+    const handoffRequestId = "82828282-8282-4282-8282-828282828282";
+    const handoffArgs = {
+      requestId: handoffRequestId,
+      activityPresentationId: handoffRequestId,
+      prompt: "implement the remaining gaps",
+      activityTitle: "Backend handoff",
+      agent: {
+        mode: "existing",
+        id: agent.agentId,
+        context: "fresh",
+        handoffSummary: summary
+      }
+    };
+    const handedOff = await runTask(client, handoffArgs);
+    expect(handedOff).toMatchObject({
+      structuredContent: {
+        threadId: "thread-1",
+        bridgeSession: {
+          handoff: {
+            sourceBackend: "mcp-server",
+            targetBackend: "app-server",
+            sourceThreadId: "mcp-thread",
+            continuity: "explicit-summary-only",
+            summarySha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+          }
+        }
+      }
+    });
+    expect(upstream.calls[1]).toMatchObject({ name: "codex" });
+    expect(String(upstream.calls[1]?.args.prompt)).toContain("No transcript, hidden context");
+    expect(String(upstream.calls[1]?.args.prompt)).toContain(summary);
+    expect(JSON.stringify(handedOff)).not.toContain(summary);
+    const exactRetry = await runTask(client, handoffArgs);
+    expect(exactRetry).toMatchObject({ structuredContent: { threadId: "thread-1" } });
+    const changedSummary = await runTask(client, {
+      ...handoffArgs,
+      agent: { ...handoffArgs.agent, handoffSummary: `${summary} changed` }
+    });
+    expect(changedSummary.isError).toBe(true);
+    expect(JSON.stringify(changedSummary)).toContain("already used for a different Codex task");
+    expect(upstream.calls).toHaveLength(2);
+    expect(jobs.listAgentThreads(agent.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "mcp-thread",
+        backendKind: "mcp-server",
+        isCurrent: false
+      }),
+      expect.objectContaining({
+        threadId: "thread-1",
+        backendKind: "app-server",
+        contextMode: "fresh",
+        isCurrent: true
+      })
+    ]);
     await close();
   });
 
@@ -4461,7 +4674,7 @@ describe("bridge tools", () => {
       arguments: { threadId: "app-thread-1" }
     }));
     expect(turnDetail).toMatchObject({
-      session: null,
+      session: { threadId: "app-thread-1", backendKind: "app-server" },
       turns: [expect.objectContaining({ jobId: first.jobId, turnId: "app-turn-1", status: "running" })]
     });
 
@@ -4621,6 +4834,196 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("records requested, effective, accepted, and rerouted execution metadata without prompt text", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "PRIVATE_AUDIT_PROMPT_MUST_NOT_PERSIST",
+        sessionMode: "new",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    }));
+    upstream.progressNext({
+      progress: 1,
+      message: "turn started",
+      event: {
+        eventId: "turn:audit-turn",
+        type: "turn",
+        phase: "started",
+        createdAt: 100,
+        summary: "Codex turn started.",
+        details: {
+          evidence: "turn/start-accepted",
+          selection: {
+            model: "gpt-5.6-terra",
+            reasoningEffort: "high",
+            serviceTier: null
+          }
+        }
+      }
+    });
+    upstream.progressNext({
+      progress: 2,
+      message: "model rerouted",
+      event: {
+        eventId: "reroute:audit-turn",
+        type: "model",
+        phase: "updated",
+        createdAt: 110,
+        summary: "Model rerouted.",
+        details: {
+          kind: "rerouted",
+          fromModel: "gpt-5.6-terra",
+          toModel: "gpt-5.6-sol",
+          reason: "fixture-policy"
+        }
+      }
+    });
+    const status = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { jobId: running.jobId }
+    }));
+    expect(status.executionAudit).toMatchObject({
+      requested: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      effective: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      actual: { model: "gpt-5.6-sol", reasoningEffort: "high" },
+      evidence: {
+        model: "model/rerouted",
+        reasoningEffort: "turn/start-accepted",
+        actualEffortRuntimeOverrideReported: false
+      },
+      reroute: {
+        fromModel: "gpt-5.6-terra",
+        toModel: "gpt-5.6-sol",
+        reason: "fixture-policy"
+      }
+    });
+    expect(JSON.stringify(status.executionAudit)).not.toContain("PRIVATE_AUDIT_PROMPT");
+    upstream.resolveNext(fakeCodexResult("audit-thread"));
+    await waitForJobStatus(client, running.jobId, "completed");
+    await close();
+  });
+
+  it("retains structured context-window recovery metadata across background status and exact replay", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const sessions = new SessionRegistry();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      sessions
+    );
+    const requestId = "81818181-8181-4181-8181-818181818181";
+    const args = {
+      requestId,
+      activityPresentationId: requestId,
+      prompt: "exhaust context",
+      agent: { mode: "new", name: "Context Recovery" }
+    };
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: args
+    }));
+    upstream.resolveNext({
+      isError: true,
+      content: [{ type: "text", text: "Context window exceeded." }],
+      structuredContent: {
+        threadId: "context-thread",
+        turnId: "context-turn",
+        turnStatus: "failed",
+        backendKind: "app-server",
+        error: {
+          code: "CONTEXT_WINDOW_EXCEEDED",
+          message: "Context window exceeded.",
+          retryable: true,
+          upstreamKind: "contextWindowExceeded",
+          nextActions: ["Start fresh with an explicit handoff summary."]
+        }
+      }
+    });
+    const failed = await waitForJobStatus(client, running.jobId, "failed");
+    expect(failed).toMatchObject({
+      status: "failed",
+      threadId: "context-thread",
+      upstreamError: {
+        code: "CONTEXT_WINDOW_EXCEEDED",
+        retryable: true,
+        upstreamKind: "contextWindowExceeded"
+      }
+    });
+    expect(sessions.get("context-thread")).toMatchObject({
+      threadId: "context-thread",
+      backendKind: "app-server"
+    });
+    expect(jobs.listAgents(SCOPE_A)[0]).toMatchObject({
+      currentThreadId: "context-thread",
+      lifecycle: "idle"
+    });
+    const replay = await client.callTool({ name: "codex_task", arguments: args });
+    expect(replay).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "CONTEXT_WINDOW_EXCEEDED", retryable: true },
+        executionAudit: expect.any(Object)
+      }
+    });
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("keeps an admitted App Server thread resumable through a worker crash and replacement", async () => {
+    const root = temporaryRoot();
+    const upstream = new CrashThenResumeBridgeUpstream();
+    const sessions = new SessionRegistry();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream,
+      sessions
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "admit then crash",
+        activity: { mode: "new", title: "Worker crash recovery" },
+        agent: { mode: "new", name: "Crash Recovery" },
+        executionMode: "background"
+      }
+    }));
+    const failed = await waitForJobStatus(client, first.jobId, "failed");
+    expect(failed).toMatchObject({
+      threadId: "bridge-crash-thread",
+      error: expect.stringContaining("worker crashed")
+    });
+    expect(sessions.get("bridge-crash-thread")).toMatchObject({
+      threadId: "bridge-crash-thread",
+      backendKind: "app-server"
+    });
+    expect(jobs.getAgent(first.agentId)).toMatchObject({
+      currentThreadId: "bridge-crash-thread",
+      lifecycle: "idle"
+    });
+
+    const resumed = await runTask(client, {
+      prompt: "resume on replacement worker",
+      activity: { mode: "existing", id: first.activityId },
+      agent: { mode: "existing", id: first.agentId, context: "continue" }
+    });
+    expect(resumed).toMatchObject({
+      structuredContent: {
+        threadId: "bridge-crash-thread",
+        bridgeActivity: { agentId: first.agentId }
+      }
+    });
+    expect(sessions.get("bridge-crash-thread")).toMatchObject({
+      sessionId: "bridge-crash-session"
+    });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply"]);
+    await close();
+  });
+
   it("rejects an MCP policy change until the caller explicitly starts a new thread", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -4720,6 +5123,18 @@ describe("bridge tools", () => {
           policyRevision: 1,
           effectiveSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
           appliedAt: "turn-start"
+        },
+        executionAudit: {
+          effective: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          actual: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          evidence: { model: "bridge-dispatch", reasoningEffort: "bridge-dispatch" }
+        }
+      });
+    expect((started as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        executionAudit: {
+          effective: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          actual: { model: "gpt-5.6-sol", reasoningEffort: "max" }
         }
       });
     expect(sessions.get("thread-1")).toMatchObject({
@@ -4908,6 +5323,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         requestId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        activityPresentationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
         prompt: "missing scope"
       }
     });
@@ -4919,6 +5335,7 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "abababab-abab-4aba-8aba-abababababab",
+        activityPresentationId: "abababab-abab-4aba-8aba-abababababab",
         prompt: "compatibility scope",
         activity: { mode: "new", title: "Compatibility scope task" },
         agent: { mode: "new", name: "Compatibility Agent" }
@@ -5124,12 +5541,16 @@ describe("bridge tools", () => {
     }));
     expect(changedPresentation.jobId).toBe(first.jobId);
     expect(changedPresentation.activityId).toBe(first.activityId);
-    const omittedPresentation = parseToolJson(await rawCallTool({
+    const omittedPresentation = await rawCallTool({
       name: "codex_task",
       arguments: { ...arguments_ }
-    }));
-    expect(omittedPresentation.jobId).toBe(first.jobId);
-    expect(omittedPresentation.activityId).toBe(first.activityId);
+    });
+    expect(omittedPresentation).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "ACTIVITY_PRESENTATION_ID_REQUIRED" }
+      }
+    });
 
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
@@ -5241,6 +5662,7 @@ describe("bridge tools", () => {
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "34343434-3434-4434-8434-343434343434",
+      activityPresentationId: "34343434-3434-4434-8434-343434343434",
       prompt: "normalize admitted defaults",
       activity: { mode: "new" as const, title: "Normalized defaults" },
       agent: { mode: "new" as const }
@@ -5319,6 +5741,7 @@ describe("bridge tools", () => {
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       prompt: "same raw request with an omitted mode",
       activity: {
         mode: "new" as const,
@@ -7781,8 +8204,8 @@ async function connectTestClient(
         const requestId = typeof currentArguments.requestId === "string"
           ? currentArguments.requestId
           : nextRequestId();
-        const activityPresentationId = typeof arguments_.activityPresentationId === "string"
-          ? arguments_.activityPresentationId
+        const activityPresentationId = typeof currentArguments.activityPresentationId === "string"
+          ? currentArguments.activityPresentationId
           : requestId;
         return rawCallTool(
           {
@@ -7790,11 +8213,8 @@ async function connectTestClient(
             arguments: {
               scopeId: SCOPE_A,
               requestId,
+              activityPresentationId,
               ...currentArguments
-            },
-            _meta: {
-              "codex/activityPresentationId": activityPresentationId,
-              ...request._meta
             }
           },
           ...(rest as [])
@@ -7895,7 +8315,6 @@ function currentTaskTestArguments(input: Record<string, unknown>): Record<string
   }
 
   for (const key of [
-    "activityPresentationId",
     "activityId",
     "continuationOfActivityId",
     "activityTitle",

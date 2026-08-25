@@ -222,13 +222,26 @@ and background terminals; install the exact manifest-pinned CLI; run
 `npm run app-server:compat:check`; and verify a restart continuation plus two
 turns with different allowed model/effort selections. `codex_status` exposes
 the experimental policy, pinned CLI version, cached catalog freshness,
-aggregate worker health, and orphaned-Agent count without publishing local
-paths or raw protocol payloads.
+aggregate worker RSS/FD, startup latency/failures, crash rate, protocol/config/MCP
+initialization health, and orphaned-Agent count without publishing worker IDs,
+local paths, or raw protocol payloads. Job detail records requested, effective,
+and evidence-backed actual selection plus any model reroute reason. The audit
+explicitly identifies when App Server has not reported a runtime effort
+override and never includes prompt or private reasoning text.
 
 The backend setting affects only newly created threads. Existing MCP and App
 Server threads remain pinned to their original backend. Rollback therefore
 means restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and restarting;
 it does not convert or discard already created App Server threads.
+
+Continuing or forking an existing Agent preserves that pinned backend. A
+deliberate cross-backend replacement uses the same Agent with `context: "fresh"`
+and a required `handoffSummary`. The bridge starts a new target-backend thread,
+sends only that explicit summary before the new request, and records its digest
+and source/target audit—not a separate copy of the summary input. As with any
+prompt, retained Codex output can still contain text that Codex repeats. No
+transcript, hidden context, approval, or backend state is represented as
+migrated.
 
 Before an App Server continuation, the bridge probes exact persisted state with
 `thread/read`. `notLoaded` and `idle` are resumable, `active` returns retryable
@@ -239,20 +252,24 @@ bounded path-safe view of reason, working-folder label, network context,
 permission scope, amendments, and available decisions. The bridge consumes
 `serverRequest/resolved` and applies an `autoResolutionMs` expiry guard so stale
 controls do not remain in Activity state; session approval appears only when it
-is an available decision.
+is an available decision. App Server `sessionId` and direct fork ancestry are
+persisted with thread history and refreshed from exact `thread/read` evidence.
+`CONTEXT_WINDOW_EXCEEDED` is retained as a retryable structured failure with
+smaller-task, explicit fresh-summary, and larger-context-model recovery choices;
+the bridge never silently downgrades the selection.
 
 ## Agent, Activity, and context routing
 
 In ChatGPT, omit `scopeId`; the bridge derives an opaque UUID from anonymous host conversation metadata. Compatibility MCP hosts without that metadata must generate and reuse an explicit UUID. Scope IDs are routing labels, not authentication credentials.
 
-Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an exact retry. The public contract intentionally has no caller scope, local path, arbitrary thread, presentation ID, model-policy revision, or legacy flat routing fields.
+Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an exact retry. When automatic Activity UI is enabled, it also requires one UUID `activityPresentationId` for the current assistant response. Reuse the presentation ID across every Codex call in that response, then generate a new one for the next response. The public contract intentionally has no caller scope, local path, arbitrary thread, model-policy revision, or legacy flat routing fields.
 
 Routing fields are:
 
 - pass one projected `projectId` for a new Activity/fresh context, or omit it only when a default/sole project is available;
 - use `activity: { mode: "existing", id }` for another turn in one exact open Activity;
 - use `activity: { mode: "new", continuationOf?, title?, policy? }` to create a new or linked Activity; `policy` may contain `kind`, `handoff`, and `completion`;
-- use `agent: { mode: "existing", id, context? }` to continue, fork, or deliberately replace one exact Agent context;
+- use `agent: { mode: "existing", id, context?, handoffSummary? }` to continue, fork, or deliberately replace one exact Agent context; `handoffSummary` is required only for an explicit fresh cross-backend replacement;
 - use `agent: { mode: "new", name? }` to create a fresh Agent;
 - omit `activity` and `agent` for a new Activity and Agent with neutral server defaults.
 
@@ -261,6 +278,7 @@ For example:
 ```json
 {
   "requestId": "...",
+  "activityPresentationId": "...",
   "projectId": "bridge",
   "activity": {
     "mode": "new",
@@ -283,6 +301,13 @@ One Agent/thread admits only one active turn. Different Agents/threads can run i
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
+For a configured-backend change, an existing Agent's `continue` and `fork`
+still use the original backend. A cross-backend `fresh` request fails with
+`BACKEND_HANDOFF_SUMMARY_REQUIRED` until it contains an explicit summary. The
+result labels continuity as `explicit-summary-only`; changing that summary on
+an exact retry is a request-identity conflict, so it cannot create an
+untracked duplicate execution.
+
 When a turn becomes terminal, its Agent returns to `idle`, releases the active Activity assignment, and remains reusable. `codex_agent` accepts one idempotent scope-local `operation`:
 
 - `rename`: changes the alias only;
@@ -298,9 +323,9 @@ Active/waiting Agents and Agents with a remaining background process cannot be a
 
 ## Activity card lifecycle
 
-`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current automatic presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding is removed. In `background-only`, a foreground result is suppressed without consuming the presentation, so a later background call carrying the same host presentation identifier may display the card. `codex_activity` remains available only for an explicit user-requested open or reopen.
+`codex_task` is directly bound to the same Activity UI resource whenever the saved visibility is `always` or `background-only`. Its result tells the widget whether the current automatic presentation should display; the widget then attaches its own bounded app-private `codex_activity_snapshot` watch. GPT must call `codex_task` directly and must not make a follow-up `codex_activity` call. With `never`, the Task UI binding and public presentation input are removed. In `background-only`, a foreground result is suppressed without consuming the presentation, so a later background call carrying the same assistant-response presentation ID may display the card. `codex_activity` remains available only for an explicit user-requested open or reopen.
 
-`requestId` is model-authored execution identity; Activity presentation correlation is not. A host may provide a response-level UUID through `codex/activityPresentationId` metadata so several calls share one automatic card reservation. When no such metadata exists, the bridge uses `requestId` as a stable per-call presentation fallback. The former caller-authored presentation argument has expired. In every case v4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
+`requestId` and `activityPresentationId` have deliberately different scopes. GPT creates one `requestId` for each logical Codex call and reuses it only for the same execution retry. Because ChatGPT's documented MCP metadata includes a conversation ID but no assistant-response ID, GPT also creates one `activityPresentationId` for the current assistant response and reuses it across every `codex_task` call in that response. A verified host may supply the same value through `codex/activityPresentationId` metadata. V4 replay identity excludes presentation state, so presentation changes cannot start another Codex execution, and the saved visibility policy remains authoritative.
 
 The card is one lightweight flat feed for the current ChatGPT conversation. Open work and anything needing user/GPT action stay visible as Activity rows, with the Activity title, named Agent participants, separate roles, kind, timing, each participant's current or latest effective model/reasoning-effort selection, and only the action needed now. Models use the same catalog display names as Settings and fall back to their internal IDs only when no display name is available. If App Server reports a model reroute, the card shows the admitted model and rerouted model as `selected → rerouted`; the effort remains the admission-time effective effort. It has no KPI dashboard, card-grid Agent list, or layout selector.
 
@@ -340,7 +365,7 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist an
 
 ## Persistence and recovery
 
-SQLite schema v5 stores conversation scopes, first-class project admission identity, Agents, current/history threads, Activity-Agent assignments, Activities, jobs, bounded events/results, settings, bridge generations, scope versions, idempotent Agent mutations, and completion outbox rows. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, or paths.
+SQLite schema v6 stores conversation scopes, first-class project admission identity, Agents, current/history threads with App Server session/fork lineage, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, settings, bridge generations, scope versions, idempotent Agent mutations, and completion outbox rows. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, or paths.
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 

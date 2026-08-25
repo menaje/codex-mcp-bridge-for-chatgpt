@@ -30,6 +30,7 @@ export type BridgeAgent = {
 /** One immutable entry in an Agent's backend-thread history. */
 export type BridgeAgentThread = {
   threadId: string;
+  sessionId?: string;
   agentId: string;
   scopeId: string;
   projectId?: string;
