@@ -102,6 +102,7 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.currentExecution"]).toBe("현재 실행");
     expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
+    expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
     expect(UI_TRANSLATIONS.ko["settings.allowedScope.catalog"]).toBe(
       "사용 가능한 모든 모델·에포트"
     );
@@ -267,8 +268,18 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("renderHistoryRow(item,kind,showWorkspace)");
     expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
     expect(ACTIVITY_CARD_HTML).toContain("summary.push(...(item.workspaceLabels||[]))");
-    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(identity,row.agents||[],true)");
+    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(identity,agents,agents.length>1)");
     expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(content,[item],false)");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"]'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      '["completed","waiting-gpt","verification"].includes(state))return"completed"'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      'row.displayState==="waiting-gpt")parts.push(t["waiting.orchestrator"]'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('parts.push(t["activity.gptVerificationNeeded"])');
     expect(ACTIVITY_CARD_HTML).toContain("execution.modelDisplayName||execution.model");
     expect(ACTIVITY_CARD_HTML).toContain(
       "execution.reroutedModelDisplayName||execution.reroutedModel"

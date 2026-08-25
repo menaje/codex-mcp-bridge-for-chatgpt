@@ -6,8 +6,8 @@
   "retainPrevious": 1,
   "resources": {
     "settings": {
-      "digest": "5fd94685e0708f71bdc678bc88e6f0216a477449c8442afabb396648c359d264",
-      "uri": "ui://codex-mcp-bridge/settings/5fd94685e070.html",
+      "digest": "0cef3dd8da8bca378b0c2b37b315aa132a0ce64fc07674584d1c64962cf512c9",
+      "uri": "ui://codex-mcp-bridge/settings/0cef3dd8da8b.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -35,8 +35,8 @@
       },
       "previous": [
         {
-          "digest": "ee7d1ab2163eba701352a52d559e41198e4fb9f1af9f38bb2f45d49014a90279",
-          "uri": "ui://codex-mcp-bridge/settings/ee7d1ab2163e.html",
+          "digest": "5fd94685e0708f71bdc678bc88e6f0216a477449c8442afabb396648c359d264",
+          "uri": "ui://codex-mcp-bridge/settings/5fd94685e070.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -59,15 +59,15 @@
                 "resource_domains": []
               },
               "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-              "codex/uiContractGeneration": 4
+              "codex/uiContractGeneration": 5
             }
           }
         }
       ]
     },
     "activity": {
-      "digest": "9d4ce5aced85deee04b1aae805cc1a4ac22004d1b9f56e8a6fa951a5190d38ff",
-      "uri": "ui://codex-mcp-bridge/activity/9d4ce5aced85.html",
+      "digest": "617e8b7beea0b58634a521997818f61ddf8ecdba50026b66db604517fa8954d1",
+      "uri": "ui://codex-mcp-bridge/activity/617e8b7beea0.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -95,8 +95,8 @@
       },
       "previous": [
         {
-          "digest": "e517d94cb3fd7f2d4d27990dbd067aab72277f9158568af4aa28666b1c0eef68",
-          "uri": "ui://codex-mcp-bridge/activity/e517d94cb3fd.html",
+          "digest": "9d4ce5aced85deee04b1aae805cc1a4ac22004d1b9f56e8a6fa951a5190d38ff",
+          "uri": "ui://codex-mcp-bridge/activity/9d4ce5aced85.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",
