@@ -14,11 +14,9 @@ import { createBridgeMcpServer } from "../src/server.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
 import {
   ACTIVITY_CARD_CONTRACT_GENERATION,
-  ACTIVITY_CARD_URI,
-  RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION
+  ACTIVITY_CARD_URI
 } from "../src/activityCard.js";
 import {
-  RETAINED_SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_URI
 } from "../src/settingsCard.js";
@@ -697,6 +695,7 @@ describe("bridge tools", () => {
       properties: {
         afterVersion: { minimum: 0 },
         waitMs: { maximum: 60000 },
+        widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") },
         card: expect.any(Object)
       }
     });
@@ -906,9 +905,10 @@ describe("bridge tools", () => {
             "limit",
             "scopeId",
             "waitMs",
+            "widgetInstanceId",
           ],
-          "propertyCount": 5,
-          "schemaBytes": 1141,
+          "propertyCount": 6,
+          "schemaBytes": 1413,
           "visibility": {
             "app": true,
             "model": false,
@@ -927,9 +927,10 @@ describe("bridge tools", () => {
             "action",
             "card",
             "outboxIds",
+            "widgetInstanceId",
           ],
-          "propertyCount": 3,
-          "schemaBytes": 954,
+          "propertyCount": 4,
+          "schemaBytes": 1226,
           "visibility": {
             "app": true,
             "model": false,
@@ -995,9 +996,10 @@ describe("bridge tools", () => {
             "processId",
             "requestId",
             "scopeId",
+            "widgetInstanceId",
           ],
-          "propertyCount": 6,
-          "schemaBytes": 1586,
+          "propertyCount": 7,
+          "schemaBytes": 1858,
           "visibility": {
             "app": true,
             "model": false,
@@ -1041,9 +1043,10 @@ describe("bridge tools", () => {
             "requestId",
             "response",
             "scopeId",
+            "widgetInstanceId",
           ],
-          "propertyCount": 7,
-          "schemaBytes": 1868,
+          "propertyCount": 8,
+          "schemaBytes": 2140,
           "visibility": {
             "app": true,
             "model": false,
@@ -1065,9 +1068,10 @@ describe("bridge tools", () => {
             "prompt",
             "requestId",
             "scopeId",
+            "widgetInstanceId",
           ],
-          "propertyCount": 6,
-          "schemaBytes": 1385,
+          "propertyCount": 7,
+          "schemaBytes": 1657,
           "visibility": {
             "app": true,
             "model": false,
@@ -1517,7 +1521,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions).toHaveLength(2);
       expect(revisions[0].uri).toBe(currentUri);
-      for (const [index, revision] of revisions.entries()) {
+      for (const revision of revisions) {
         expect(listedUris).toContain(revision.uri);
         const resource = await client.readResource({ uri: revision.uri });
         expect(resource.contents[0]).toMatchObject({
@@ -1541,13 +1545,10 @@ describe("bridge tools", () => {
         }
         expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
           .toMatchObject({
-            "codex/uiContractGeneration": name === "activity" && index > 0
-              ? RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION
-              : name === "activity"
+            "codex/uiContractGeneration": revision.contractGeneration ||
+              (name === "activity"
                 ? ACTIVITY_CARD_CONTRACT_GENERATION
-                : index > 0
-                  ? RETAINED_SETTINGS_CARD_CONTRACT_GENERATION
-                  : SETTINGS_CARD_CONTRACT_GENERATION
+                : SETTINGS_CARD_CONTRACT_GENERATION)
           });
       }
     }
@@ -3869,7 +3870,7 @@ describe("bridge tools", () => {
       .structuredContent?.bridgeActivity?.activityId as string;
     expect(agentId).toEqual(expect.any(String));
 
-    const widgetSessionId = "background-process-card";
+    const widgetSessionId = "71717171-7171-4171-8171-717171717171";
     const card = await client.callTool({
       name: "codex_activity",
       arguments: { activityId },
@@ -3945,8 +3946,7 @@ describe("bridge tools", () => {
 
     await client.callTool({
       name: "codex_activity_snapshot",
-      arguments: { card: terminateArguments.card },
-      _meta: { "openai/widgetSessionId": widgetSessionId }
+      arguments: { card: terminateArguments.card, widgetInstanceId: widgetSessionId }
     });
 
     const staleAgent = await client.callTool({

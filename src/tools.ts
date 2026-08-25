@@ -317,6 +317,10 @@ const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("explicit") })
 ]);
 
+const widgetInstanceIdSchema = scopeIdSchema().describe(
+  "UUID generated once by this mounted Activity iframe. It is correlation-only; app visibility and exact card/version checks remain authoritative."
+);
+
 const activityCardProofInputSchema = z.strictObject({
   activityId: scopeIdSchema(),
   generation: z.number().int().min(1),
@@ -333,6 +337,17 @@ const automaticActivityCardProofInputSchema = z.strictObject({
 });
 
 type ActivityCardProofInput = z.infer<typeof activityCardProofInputSchema>;
+
+function mountedWidgetInstanceId(
+  args: { widgetInstanceId?: string },
+  meta: unknown
+): string | undefined {
+  // MCP Apps does not normatively forward a host-side widget session id on
+  // app-initiated tools/call requests. Current cards therefore provide their
+  // own per-iframe correlation id; the host metadata fallback keeps retained
+  // OpenAI-compatible cards working where that metadata is available.
+  return args.widgetInstanceId || metadataString(meta, "openai/widgetSessionId");
+}
 
 function presentationFromActivityCardProof(
   card: ActivityCardProofInput
@@ -2710,6 +2725,7 @@ export function registerBridgeTools(
         "App-only localized Activity-feed snapshot and bounded scope-version watch. The exact mounted card proof establishes or renews a widget-session lease; superseded automatic presentations stop normally.",
       inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional(),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
         card: activityCardProofInputSchema,
         afterVersion: z.number().int().min(0).optional(),
         waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
@@ -2737,7 +2753,7 @@ export function registerBridgeTools(
       if (args.waitMs !== undefined && args.afterVersion === undefined) {
         throw new Error("waitMs requires afterVersion from a previous Activity snapshot.");
       }
-      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
       if (!widgetSessionId) {
         throw new Error("CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.");
       }
@@ -2790,11 +2806,13 @@ export function registerBridgeTools(
 
   const codexActivityHandoffRuntimeInput = z.strictObject({
     scopeId: scopeIdSchema().optional(),
+    widgetInstanceId: widgetInstanceIdSchema.optional(),
     action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
     outboxIds: z.array(z.number().int().positive()).min(1).max(20),
     card: automaticActivityCardProofInputSchema
   });
   const codexActivityHandoffInput = z.strictObject({
+    widgetInstanceId: widgetInstanceIdSchema.optional(),
     action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
     outboxIds: z.array(z.number().int().positive()).min(1).max(20),
     card: automaticActivityCardProofInputSchema
@@ -2828,7 +2846,7 @@ export function registerBridgeTools(
         args.scopeId,
         "Codex Activity handoff"
       );
-      const leaseOwner = metadataString(_meta, "openai/widgetSessionId");
+      const leaseOwner = mountedWidgetInstanceId(args, _meta);
       if (!leaseOwner) throw new Error("Completion handoff requires a mounted widget session id.");
       const presentation = presentationFromActivityCardProof(args.card);
       jobs.requireActivityCardLease(
@@ -3121,6 +3139,7 @@ export function registerBridgeTools(
       inputSchema: {
         scopeId: scopeIdSchema().optional()
           .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
         requestId: scopeIdSchema().describe("Unique UUID for this exact process termination and its retries."),
         agentId: scopeIdSchema().describe("Exact Agent that owns the current App Server thread."),
         expectedAgentVersion: z.number().int().min(1),
@@ -3146,7 +3165,7 @@ export function registerBridgeTools(
         args.scopeId,
         "Codex background process termination"
       );
-      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
       if (!widgetSessionId) {
         throw new Error("CARD_LEASE_REQUIRED: Background process termination requires a mounted Activity card.");
       }
@@ -3244,6 +3263,7 @@ export function registerBridgeTools(
         "App-only one-shot response to one exact pending App Server interaction selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, interaction identity, and optimistic Job version. Answers are transient and are never persisted.",
       inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional(),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
         requestId: scopeIdSchema().describe("Unique UUID for this exact response and its retries."),
         jobId: z.string().trim().min(1).max(200),
         expectedJobVersion: z.number().int().min(1),
@@ -3280,7 +3300,7 @@ export function registerBridgeTools(
         args.scopeId,
         "Codex interaction response"
       );
-      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
       if (!widgetSessionId) {
         throw new Error("CARD_LEASE_REQUIRED: Interaction responses require a mounted Activity card.");
       }
@@ -3385,6 +3405,7 @@ export function registerBridgeTools(
         "App-only additional guidance for one exact active App Server turn selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, and optimistic Job version immediately before sending the prompt.",
       inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional(),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
         requestId: scopeIdSchema().describe("Unique UUID for this exact steering request and its retries."),
         jobId: z.string().trim().min(1).max(200),
         expectedJobVersion: z.number().int().min(1),
@@ -3410,7 +3431,7 @@ export function registerBridgeTools(
         args.scopeId,
         "Codex Job steering"
       );
-      const widgetSessionId = metadataString(_meta, "openai/widgetSessionId");
+      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
       if (!widgetSessionId) {
         throw new Error("CARD_LEASE_REQUIRED: Job steering requires a mounted Activity card.");
       }

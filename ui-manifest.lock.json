@@ -66,8 +66,8 @@
       ]
     },
     "activity": {
-      "digest": "bdc1b6148bc3db3ff48c80005f27c4f2aef55c59a53f5f7fe5d92e4debebaed8",
-      "uri": "ui://codex-mcp-bridge/activity/bdc1b6148bc3.html",
+      "digest": "9d4ce5aced85deee04b1aae805cc1a4ac22004d1b9f56e8a6fa951a5190d38ff",
+      "uri": "ui://codex-mcp-bridge/activity/9d4ce5aced85.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -90,13 +90,13 @@
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 4
+          "codex/uiContractGeneration": 5
         }
       },
       "previous": [
         {
-          "digest": "0012c27272a00a5bb7ff93b1de7942f35ea7f622d1282d1d8f8a05a5e565bc2c",
-          "uri": "ui://codex-mcp-bridge/activity/0012c27272a0.html",
+          "digest": "e517d94cb3fd7f2d4d27990dbd067aab72277f9158568af4aa28666b1c0eef68",
+          "uri": "ui://codex-mcp-bridge/activity/e517d94cb3fd.html",
           "metadata": {
             "descriptor": {
               "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -119,7 +119,7 @@
                 "resource_domains": []
               },
               "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-              "codex/uiContractGeneration": 4
+              "codex/uiContractGeneration": 5
             }
           }
         }
