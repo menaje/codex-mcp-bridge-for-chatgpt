@@ -491,6 +491,11 @@ describe("bridge tools", () => {
       "codex_update_settings"
     ]);
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
+    for (const tool of tools.tools) {
+      expect(tool.outputSchema, `${tool.name} must declare structuredContent`).toMatchObject({
+        type: "object"
+      });
+    }
     expect(byName.get("codex_status")?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
@@ -552,15 +557,50 @@ describe("bridge tools", () => {
       idempotentHint: false
     });
     expect(byName.get("codex_task")?._meta).toMatchObject({
-      ui: { resourceUri: ACTIVITY_CARD_URI },
+      ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": ACTIVITY_CARD_URI,
       "openai/widgetAccessible": true,
       "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
     });
     expect(byName.get("codex_activity")?._meta).toMatchObject({
-      ui: { resourceUri: ACTIVITY_CARD_URI },
+      ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": ACTIVITY_CARD_URI
     });
+    expect(byName.get("codex_task")?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        bridgeSession: expect.any(Object),
+        bridgeActivity: expect.objectContaining({
+          properties: expect.objectContaining({
+            shouldRenderActivityCard: { type: "boolean" },
+            renderReason: {
+              type: "string",
+              enum: expect.arrayContaining(["render-retry", "render-latest"])
+            }
+          })
+        })
+      }
+    });
+    for (const activityViewTool of ["codex_activity", "codex_activity_snapshot"]) {
+      expect(byName.get(activityViewTool)?.outputSchema).toMatchObject({
+        type: "object",
+        required: expect.arrayContaining(["scopeVersion", "watcherPolicy", "feed"]),
+        properties: {
+          mountedPresentation: expect.any(Object),
+          watcherPolicy: expect.any(Object),
+          feed: expect.any(Object)
+        }
+      });
+    }
+    for (const cardOriginTool of [
+      "codex_activity_handoff",
+      "codex_background_process_terminate",
+      "codex_cancel",
+      "codex_interaction_respond",
+      "codex_job_steer"
+    ]) {
+      expect(byName.get(cardOriginTool)?.outputSchema).toMatchObject({ type: "object" });
+    }
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
@@ -924,7 +964,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 6,
-          "schemaBytes": 1413,
+          "schemaBytes": 1527,
           "visibility": {
             "app": true,
             "model": false,
@@ -946,7 +986,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 4,
-          "schemaBytes": 1226,
+          "schemaBytes": 1340,
           "visibility": {
             "app": true,
             "model": false,
@@ -1015,7 +1055,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 7,
-          "schemaBytes": 1858,
+          "schemaBytes": 1972,
           "visibility": {
             "app": true,
             "model": false,
@@ -1062,7 +1102,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 7,
-          "schemaBytes": 1706,
+          "schemaBytes": 1820,
           "visibility": {
             "app": true,
             "model": false,
@@ -1088,7 +1128,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 8,
-          "schemaBytes": 2140,
+          "schemaBytes": 2254,
           "visibility": {
             "app": true,
             "model": false,
@@ -1113,7 +1153,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 7,
-          "schemaBytes": 1657,
+          "schemaBytes": 1771,
           "visibility": {
             "app": true,
             "model": false,
@@ -1574,7 +1614,11 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/5f348837faba.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/536d28d41856.html",
             "ui://codex-mcp-bridge/activity/4a8f190de901.html",
+            "ui://codex-mcp-bridge/activity/030f9817fd9e.html",
+            "ui://codex-mcp-bridge/activity/c06844041247.html",
+            "ui://codex-mcp-bridge/activity/ec8bc991267d.html",
             "ui://codex-mcp-bridge/activity/24b062eaa337.html"
           ]);
       expect(revisions[0].uri).toBe(currentUri);
@@ -3007,8 +3051,8 @@ describe("bridge tools", () => {
     }));
     expect(groupedBackgroundDuplicate.bridgeActivity).toMatchObject({
       activityPresentationId: groupedPresentation,
-      shouldRenderActivityCard: false,
-      renderReason: "render-reserved"
+      shouldRenderActivityCard: true,
+      renderReason: "render-latest"
     });
 
     await client.callTool({
@@ -5369,8 +5413,8 @@ describe("bridge tools", () => {
         jobId: startedStructured.bridgeActivity.jobId,
         agentId: startedStructured.bridgeActivity.agentId,
         cardGeneration: 1,
-        shouldRenderActivityCard: false,
-        renderReason: "render-reserved"
+        shouldRenderActivityCard: true,
+        renderReason: "render-retry"
       },
       bridgeSession: startedStructured.bridgeSession,
     });
@@ -5650,8 +5694,8 @@ describe("bridge tools", () => {
     });
     expect(retry.bridgeActivity).toMatchObject({
       activityPresentationId: requestId,
-      shouldRenderActivityCard: false,
-      renderReason: "render-reserved"
+      shouldRenderActivityCard: true,
+      renderReason: "render-retry"
     });
     expect(upstream.calls).toHaveLength(1);
 
@@ -5702,8 +5746,8 @@ describe("bridge tools", () => {
         activityId: first.activityId,
         jobId: first.jobId,
         executionMode: "background",
-        shouldRenderActivityCard: false,
-        renderReason: "render-reserved"
+        shouldRenderActivityCard: true,
+        renderReason: "render-retry"
       }
     });
     expect(upstream.calls).toHaveLength(1);
@@ -6440,7 +6484,11 @@ describe("bridge tools", () => {
     const automaticCard = {
       activityId: first.activityId,
       generation: 1,
-      presentation: { kind: "automatic" as const, activityPresentationId }
+      presentation: {
+        kind: "automatic" as const,
+        activityPresentationId,
+        reservationOwnerId: first.jobId
+      }
     };
     const mounted = await rawCallTool({
       name: "codex_activity_snapshot",
@@ -6452,7 +6500,11 @@ describe("bridge tools", () => {
     });
     expect((mounted as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
       mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
-      mountedPresentation: { kind: "automatic", activityPresentationId },
+      mountedPresentation: {
+        kind: "automatic",
+        activityPresentationId,
+        reservationOwnerId: first.jobId
+      },
       watcherPolicy: { live: true, ownsCompletionHandoff: true }
     });
     const retainedGenerationSnapshot = await rawCallTool({
@@ -6484,8 +6536,8 @@ describe("bridge tools", () => {
     expect(parallel.bridgeActivity).toMatchObject({
       activityId: first.activityId,
       cardGeneration: 1,
-      shouldRenderActivityCard: false,
-      renderReason: "active-lease"
+      shouldRenderActivityCard: true,
+      renderReason: "render-latest"
     });
 
     const differentActivity = parseToolJson(await client.callTool({
@@ -6501,8 +6553,8 @@ describe("bridge tools", () => {
     expect(differentActivity.activityId).not.toBe(first.activityId);
     expect(differentActivity.bridgeActivity).toMatchObject({
       activityPresentationId,
-      shouldRenderActivityCard: false,
-      renderReason: "active-lease"
+      shouldRenderActivityCard: true,
+      renderReason: "render-latest"
     });
 
     const explicit = await rawCallTool({
@@ -6548,6 +6600,22 @@ describe("bridge tools", () => {
       activityPresentationId: nextPresentationId,
       shouldRenderActivityCard: true,
       renderReason: "new-presentation"
+    });
+    await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: nextResponse.activityId,
+          generation: nextResponse.bridgeActivity.cardGeneration,
+          presentation: {
+            kind: "automatic",
+            activityPresentationId: nextPresentationId,
+            reservationOwnerId: nextResponse.jobId
+          }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "next-presentation-card" }
     });
     const stoppedOldPresentation = await rawCallTool({
       name: "codex_activity_snapshot",
@@ -6684,6 +6752,13 @@ describe("bridge tools", () => {
       undefined,
       { activityPresentationId: supersedingPresentationId }
     );
+    jobs.touchActivityCardLease(
+      SCOPE_A,
+      started.activityId,
+      card.generation,
+      "superseding-widget",
+      { kind: "automatic", activityPresentationId: supersedingPresentationId }
+    );
     const stale = await rawCallTool({
       name: "codex_activity_job_cancel",
       arguments: {
@@ -6782,7 +6857,10 @@ describe("bridge tools", () => {
     expect((peerSnapshot as { structuredContent?: Record<string, any> })
       .structuredContent?.watcherPolicy).toMatchObject({
         presentationKind: "automatic",
-        ownsCompletionHandoff: true
+        live: false,
+        stopped: true,
+        stopReason: "presentation-duplicate",
+        ownsCompletionHandoff: false
       });
     const retainedPresentationArgs = {
       presentationKind: "automatic" as const,
@@ -6805,11 +6883,11 @@ describe("bridge tools", () => {
       arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-one" }
     }));
-    const second = parseToolJson(await rawCallTool({
+    const second = await rawCallTool({
       name: "codex_activity_handoff",
       arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-two" }
-    }));
+    });
     expect(first).toMatchObject({
       claimed: true,
       origin: "activity-handoff",
@@ -6820,7 +6898,8 @@ describe("bridge tools", () => {
         expect.objectContaining({ outboxId: outboxIds[1] })
       ])
     });
-    expect(second).toMatchObject({ claimed: false, handoffDepth: 0, events: [] });
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("CARD_LEASE_REQUIRED");
     const retainedGenerationClaim = await rawCallTool({
       name: "codex_activity_handoff",
       arguments: {
@@ -6854,13 +6933,13 @@ describe("bridge tools", () => {
     const reclaimed = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
       arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
-      _meta: { "openai/widgetSessionId": "widget-two" }
+      _meta: { "openai/widgetSessionId": "widget-one" }
     }));
     expect(reclaimed.events).toHaveLength(2);
     await rawCallTool({
       name: "codex_activity_handoff",
       arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds, card },
-      _meta: { "openai/widgetSessionId": "widget-two" }
+      _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const after = await rawCallTool({
       name: "codex_activity_snapshot",

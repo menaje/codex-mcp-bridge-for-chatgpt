@@ -173,14 +173,23 @@ the network as the current macOS user.
   host-derived conversation scope plus an explicit assistant-response
   `activityPresentationId`. Documented ChatGPT MCP metadata does not expose an
   assistant-response ID, so automatic UI fails closed when neither the current
-  public input nor verified host metadata supplies one;
-  Activity id/generation remains a validity check,
-  not the presentation boundary. Only the newest automatic presentation owns
-  scope watch and completion handoff. Superseded cards stop normally and
-  release admission; at most three explicit user-opened cards may watch beside
-  the automatic owner, without claiming automatic handoff. Widget instance
-  leases use `openai/widgetSessionId` and are released by abort/unmount/TTL or
-  process restart.
+  public input nor verified host metadata supplies one. An unconfirmed mount
+  reservation is short-lived: an exact logical-call retry stays eligible and
+  each later sibling becomes the newest candidate. Its iframe must match its
+  invocation `requestId` to the delivered result `requestId`, which selects the
+  last-call shell when the host hydrates multiple same-response widgets with one
+  last result. Server-side admission also verifies the candidate job owner,
+  confirms one widget, and collapses the rest. A previously confirmed card is
+  retained until the replacement mounts, and the candidate expires if no snapshot
+  lease confirms it. Activity id/generation remains a validity check, not the
+  presentation boundary. Only the newest confirmed mounted automatic
+  presentation owns scope watch and completion handoff. A racing duplicate
+  widget for that presentation is collapsed, while superseded cards stop
+  normally and release admission; at most three explicit user-opened cards may
+  watch beside the automatic owner, without claiming automatic handoff. Widget
+  instance leases use app-generated per-iframe UUIDs with
+  `openai/widgetSessionId` as a compatibility fallback and are released by
+  abort/unmount/TTL or process restart.
 - HTTP/SSE detach, MCP `notifications/cancelled`, read-only status/snapshot wait
   abort, presentation supersession, and widget unmount are observation
   lifecycle only. They can release bounded waits/leases and append a bounded

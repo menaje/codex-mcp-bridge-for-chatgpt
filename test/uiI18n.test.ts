@@ -324,11 +324,25 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed=visible?"false":"true"');
     expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed==="true")return 1');
     expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
+    expect(ACTIVITY_CARD_HTML).toContain("rememberToolInput");
+    expect(ACTIVITY_CARD_HTML).toContain("taskInputRequestId!==outputRequestId");
+    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeSession.requestId");
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
     expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
+    expect(ACTIVITY_CARD_HTML).toContain("AUTOMATIC_BOOTSTRAP_REASONS.has(presentation.renderReason)");
+    expect(ACTIVITY_CARD_HTML).toContain('"render-reserved","render-confirmed","active-lease"');
+    expect(ACTIVITY_CARD_HTML).toContain('"render-retry","render-latest"');
+    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId+\"\\u0000\"");
+    expect(ACTIVITY_CARD_HTML).toContain("if(taskBootstrapKey===key)return true");
+    expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(false);void reload().catch(showError)");
     expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
     expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
+    expect(ACTIVITY_CARD_HTML).toContain("reservationOwnerId");
     expect(ACTIVITY_CARD_HTML).toContain("next.watcherPolicy.live===false");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'next.watcherPolicy.stopReason==="presentation-duplicate"'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain("snapshot=null;setCardVisible(false);return");
     expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");

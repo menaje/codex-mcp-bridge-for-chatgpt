@@ -160,6 +160,137 @@ export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
 export const DEFAULT_CODEX_STATUS_WAIT_MS = 55_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
 
+const ACTIVITY_CARD_RENDER_REASONS = [
+  "explicit",
+  "visibility-disabled",
+  "presentation-unavailable",
+  "active-lease",
+  "render-reserved",
+  "render-retry",
+  "render-latest",
+  "render-confirmed",
+  "new-presentation"
+] as const;
+
+type ActivityCardRenderReason = (typeof ACTIVITY_CARD_RENDER_REASONS)[number];
+type ActivityCardLeaseStopReason = "presentation-superseded" | "presentation-duplicate";
+
+const openStructuredObjectOutputSchema = z.object({}).passthrough();
+
+const activityCardTrackingOutputSchema = z.object({
+  statusTool: z.literal("codex_status"),
+  automaticRenderTool: z.literal("codex_task"),
+  explicitRenderTool: z.literal("codex_activity"),
+  followUpRenderRequired: z.boolean(),
+  renderToolAvailable: z.boolean(),
+  explicitRenderAllowed: z.boolean(),
+  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
+  activityId: z.string(),
+  cardGeneration: z.number().int().min(1),
+  presentationKind: z.enum(["automatic", "explicit"]),
+  activityPresentationId: z.string().optional(),
+  shouldRenderActivityCard: z.boolean(),
+  renderReason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
+  renderTiming: z.enum(["immediate", "after-result-or-existing-mounted-card"])
+}).passthrough();
+
+const codexTaskOutputSchema = z.object({
+  bridgeSession: z.object({
+    scopeId: z.string(),
+    requestId: z.string(),
+    projectId: z.string().nullable(),
+    projectLabel: z.string().nullable(),
+    activityPresentationId: z.string().nullable()
+  }).passthrough().optional(),
+  bridgeActivity: activityCardTrackingOutputSchema.extend({
+    jobId: z.string(),
+    agentId: z.string().nullable(),
+    projectId: z.string().nullable(),
+    projectLabel: z.string().nullable(),
+    executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
+  }).passthrough().optional(),
+  error: openStructuredObjectOutputSchema.optional()
+}).passthrough();
+
+const activityViewOutputSchema = z.object({
+  scopeVersion: z.number().int().min(0),
+  generatedAt: z.string(),
+  aggregates: z.object({
+    running: z.number().int().min(0),
+    needsAttention: z.number().int().min(0),
+    readyForVerification: z.number().int().min(0),
+    failed: z.number().int().min(0),
+    idle: z.number().int().min(0),
+    archived: z.number().int().min(0)
+  }),
+  agents: z.array(openStructuredObjectOutputSchema),
+  archivedAgents: z.array(openStructuredObjectOutputSchema),
+  unassignedJobs: z.array(openStructuredObjectOutputSchema),
+  activities: z.array(openStructuredObjectOutputSchema),
+  pendingHandoffs: z.array(openStructuredObjectOutputSchema),
+  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES),
+  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
+  mountedActivity: z.object({
+    activityId: z.string(),
+    cardGeneration: z.number().int().min(1)
+  }).nullable(),
+  mountedPresentation: z.object({
+    kind: z.enum(["automatic", "explicit"]),
+    activityPresentationId: z.string().optional(),
+    reservationOwnerId: z.string().optional()
+  }),
+  uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
+  watcherPolicy: z.object({
+    mode: z.literal("scope-version-long-poll"),
+    maxWaitMs: z.number().int().positive(),
+    suggestedWaitMs: z.number().int().positive(),
+    separateFromJobLimit: z.boolean(),
+    presentationKind: z.enum(["automatic", "explicit"]),
+    activityPresentationId: z.string().optional(),
+    reservationOwnerId: z.string().optional(),
+    live: z.boolean(),
+    stopped: z.boolean(),
+    stopReason: z.enum(["presentation-superseded", "presentation-duplicate"]).optional(),
+    ownsCompletionHandoff: z.boolean(),
+    maxAutomaticPerScope: z.number().int().positive(),
+    maxExplicitPerScope: z.number().int().positive()
+  }),
+  feed: z.object({
+    showWorkspaceLabels: z.boolean(),
+    activeCount: z.number().int().min(0),
+    active: z.array(openStructuredObjectOutputSchema),
+    completed: z.object({
+      agentCount: z.number().int().min(0),
+      activityCount: z.number().int().min(0),
+      rows: z.array(openStructuredObjectOutputSchema),
+      hasMore: z.boolean()
+    }),
+    idle: z.object({
+      agentCount: z.number().int().min(0),
+      rows: z.array(openStructuredObjectOutputSchema),
+      hasMore: z.boolean()
+    }),
+    ended: z.object({
+      agentCount: z.number().int().min(0),
+      rows: z.array(openStructuredObjectOutputSchema),
+      hasMore: z.boolean()
+    }),
+    pagination: z.object({
+      limit: z.number().int().positive(),
+      hasMore: z.boolean()
+    })
+  }),
+  presentation: activityCardTrackingOutputSchema.optional(),
+  wait: z.object({
+    scopeVersion: z.number().int().min(0),
+    changed: z.boolean(),
+    timedOut: z.boolean(),
+    waitedMs: z.number().int().min(0),
+    stopped: z.boolean(),
+    stopReason: z.enum(["presentation-superseded", "presentation-duplicate"]).optional()
+  }).optional()
+}).passthrough();
+
 const bridgeUserSettingsOutputSchema = z.object({
   schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
   revision: z.number().int().min(0),
@@ -311,13 +442,14 @@ type TaskProjectAdmission = {
 };
 
 type ActivityCardPresentationContext =
-  | { kind: "automatic"; activityPresentationId: string }
+  | { kind: "automatic"; activityPresentationId: string; reservationOwnerId?: string }
   | { kind: "explicit" };
 
 const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema()
+    activityPresentationId: scopeIdSchema(),
+    reservationOwnerId: scopeIdSchema().optional()
   }),
   z.strictObject({ kind: z.literal("explicit") })
 ]);
@@ -337,7 +469,8 @@ const automaticActivityCardProofInputSchema = z.strictObject({
   generation: z.number().int().min(1),
   presentation: z.strictObject({
     kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema()
+    activityPresentationId: scopeIdSchema(),
+    reservationOwnerId: scopeIdSchema().optional()
   })
 });
 
@@ -360,7 +493,10 @@ function presentationFromActivityCardProof(
   return card.presentation.kind === "automatic"
     ? {
         kind: "automatic",
-        activityPresentationId: card.presentation.activityPresentationId
+        activityPresentationId: card.presentation.activityPresentationId,
+        ...(card.presentation.reservationOwnerId
+          ? { reservationOwnerId: card.presentation.reservationOwnerId }
+          : {})
       }
     : { kind: "explicit" };
 }
@@ -371,7 +507,20 @@ type ActivityScopeWatchResult = {
   timedOut: boolean;
   waitedMs: number;
   stopped: boolean;
-  stopReason?: "presentation-superseded";
+  stopReason?: ActivityCardLeaseStopReason;
+};
+
+type ActivityCardLeaseTouchResult = {
+  stopped: boolean;
+  stopReason?: ActivityCardLeaseStopReason;
+};
+
+type ActivityCardReservation = {
+  ownerId: string;
+  sequence: number;
+  state: "reserved" | "confirmed";
+  expiresAt: number;
+  widgetSessionId?: string;
 };
 
 type CodexJob = {
@@ -477,6 +626,7 @@ export type CodexJobRegistryOptions = {
   maxConcurrentJobs?: number;
   ttlMs?: number;
   activityPresentationTtlMs?: number;
+  activityMountReservationTtlMs?: number;
   maxJobs?: number;
   maxResultBytes?: number;
   staleAfterMs?: number;
@@ -499,16 +649,20 @@ export class CodexJobRegistry {
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
   private readonly watcherLeases = new Set<string>();
   private readonly activityCardLeases = new Map<string, number>();
-  private readonly activityCardReservations = new Map<string, number>();
+  private readonly activityCardReservations = new Map<string, ActivityCardReservation>();
   private readonly latestAutomaticPresentationByScope = new Map<
     string,
-    { activityPresentationId: string; expiresAt: number }
+    { activityPresentationId: string; reservationOwnerId: string; sequence: number; expiresAt: number }
   >();
   private readonly activityCardLeaseTtlMs = 75_000;
-  // A response correlation must outlive render/network jitter and exact retries.
-  // It is intentionally in-memory: a bridge restart retains the existing safe
-  // fallback in which mounted cards re-establish ownership.
-  private readonly activityCardReservationTtlMs: number;
+  // A short unconfirmed reservation elects the newest sibling result while
+  // allowing bounded recovery when the host never mounts that candidate.
+  private readonly activityCardMountReservationTtlMs: number;
+  // A confirmed presentation outlives widget suspension and exact retries.
+  // Both states are intentionally in-memory: after a bridge restart, retained
+  // cards safely re-establish ownership from their exact card proof.
+  private readonly activityCardPresentationTtlMs: number;
+  private activityCardPresentationSequence = 0;
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;
@@ -558,8 +712,10 @@ export class CodexJobRegistry {
     this.maxJobs = options.maxJobs ?? 100;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
-    this.activityCardReservationTtlMs =
+    this.activityCardPresentationTtlMs =
       options.activityPresentationTtlMs ?? 6 * 60 * 60 * 1000;
+    this.activityCardMountReservationTtlMs =
+      options.activityMountReservationTtlMs ?? 15_000;
     this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
@@ -600,6 +756,7 @@ export class CodexJobRegistry {
       reserve?: boolean;
       activityPresentationId?: string;
       presentationKind?: "automatic" | "explicit";
+      reservationOwnerId?: string;
     } = {}
   ) {
     this.pruneActivityCardLeases();
@@ -612,14 +769,44 @@ export class CodexJobRegistry {
       (visibility === "background-only" && executionMode === "background");
     const presentationKind = options.presentationKind || "automatic";
     const activityPresentationId = options.activityPresentationId;
+    const reservationOwnerId = options.reservationOwnerId || activityId;
+    const reservationKey = activityPresentationId
+      ? this.activityPresentationKey(scopeId, activityPresentationId)
+      : undefined;
+    let reservation = reservationKey
+      ? this.activityCardReservations.get(reservationKey)
+      : undefined;
+    const hasActiveLease = activityPresentationId
+      ? this.hasActiveAutomaticPresentationLease(scopeId, activityPresentationId)
+      : false;
+    const latestPresentation = this.latestAutomaticPresentationByScope.get(scopeId);
+    let newestSibling = false;
+    if (
+      visible &&
+      presentationKind === "automatic" &&
+      reservationKey &&
+      (
+        (reservation && reservation.ownerId !== reservationOwnerId) ||
+        (
+          !reservation &&
+          hasActiveLease &&
+          latestPresentation?.activityPresentationId === activityPresentationId &&
+          latestPresentation?.reservationOwnerId !== reservationOwnerId
+        )
+      ) &&
+      options.reserve !== false
+    ) {
+      reservation = {
+        ownerId: reservationOwnerId,
+        sequence: ++this.activityCardPresentationSequence,
+        state: "reserved",
+        expiresAt: Date.now() + this.activityCardMountReservationTtlMs
+      };
+      this.activityCardReservations.set(reservationKey, reservation);
+      newestSibling = true;
+    }
     let shouldRenderActivityCard = false;
-    let renderReason:
-      | "explicit"
-      | "visibility-disabled"
-      | "presentation-unavailable"
-      | "active-lease"
-      | "render-reserved"
-      | "new-presentation";
+    let renderReason: ActivityCardRenderReason;
     if (presentationKind === "explicit") {
       shouldRenderActivityCard = true;
       renderReason = "explicit";
@@ -627,23 +814,31 @@ export class CodexJobRegistry {
       renderReason = "visibility-disabled";
     } else if (!activityPresentationId) {
       renderReason = "presentation-unavailable";
-    } else if ([...this.activityCardLeases.keys()].some((key) =>
-      key.startsWith(`${scopeId}\0automatic\0${activityPresentationId}\0`)
-    )) {
+    } else if (newestSibling) {
+      shouldRenderActivityCard = true;
+      renderReason = "render-latest";
+    } else if (hasActiveLease) {
       renderReason = "active-lease";
-    } else if (
-      (this.activityCardReservations.get(this.activityPresentationKey(scopeId, activityPresentationId)) || 0) > Date.now()
-    ) {
+    } else if (reservation?.state === "confirmed") {
+      renderReason = "render-confirmed";
+    } else if (reservation?.ownerId === reservationOwnerId) {
+      shouldRenderActivityCard = true;
+      renderReason = "render-retry";
+      if (options.reserve !== false) {
+        reservation.expiresAt = Date.now() + this.activityCardMountReservationTtlMs;
+      }
+    } else if (reservation) {
       renderReason = "render-reserved";
     } else {
       shouldRenderActivityCard = true;
       renderReason = "new-presentation";
-      if (options.reserve !== false) {
-        this.activateAutomaticPresentation(scopeId, activityPresentationId);
-        this.activityCardReservations.set(
-          this.activityPresentationKey(scopeId, activityPresentationId),
-          Date.now() + this.activityCardReservationTtlMs
-        );
+      if (options.reserve !== false && reservationKey) {
+        this.activityCardReservations.set(reservationKey, {
+          ownerId: reservationOwnerId,
+          sequence: ++this.activityCardPresentationSequence,
+          state: "reserved",
+          expiresAt: Date.now() + this.activityCardMountReservationTtlMs
+        });
       }
     }
     return {
@@ -670,30 +865,105 @@ export class CodexJobRegistry {
     cardGeneration: number,
     widgetSessionId: string,
     presentation: ActivityCardPresentationContext
-  ): { stopped: boolean; stopReason?: "presentation-superseded" } {
+  ): ActivityCardLeaseTouchResult {
     const activity = this.getActivity(activityId);
     if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
       throw new Error("The mounted Activity card generation is no longer valid in this scope.");
     }
     this.pruneActivityCardLeases();
-    if (this.isPresentationSuperseded(scopeId, presentation)) {
-      this.releaseActivityCardLease(scopeId, activityId, cardGeneration, widgetSessionId, presentation);
-      return { stopped: true, stopReason: "presentation-superseded" };
-    }
     if (presentation.kind === "automatic") {
       const now = Date.now();
-      if (!this.latestAutomaticPresentationByScope.has(scopeId)) {
-        this.latestAutomaticPresentationByScope.set(scopeId, {
-          activityPresentationId: presentation.activityPresentationId,
-          expiresAt: now + this.activityCardReservationTtlMs
-        });
-      } else {
-        const latest = this.latestAutomaticPresentationByScope.get(scopeId) as {
-          activityPresentationId: string;
-          expiresAt: number;
-        };
-        latest.expiresAt = now + this.activityCardReservationTtlMs;
+      const reservationKey = this.activityPresentationKey(
+        scopeId,
+        presentation.activityPresentationId
+      );
+      let reservation = this.activityCardReservations.get(reservationKey);
+      const latest = this.latestAutomaticPresentationByScope.get(scopeId);
+      const leaseKey = this.activityCardLeaseKey(
+        scopeId,
+        activityId,
+        cardGeneration,
+        widgetSessionId,
+        presentation
+      );
+      const hasExistingWidgetLease = (this.activityCardLeases.get(leaseKey) || 0) > now;
+      if (
+        latest &&
+        latest.activityPresentationId !== presentation.activityPresentationId &&
+        (!reservation || reservation.sequence < latest.sequence)
+      ) {
+        this.releaseActivityCardLease(
+          scopeId,
+          activityId,
+          cardGeneration,
+          widgetSessionId,
+          presentation
+        );
+        return { stopped: true, stopReason: "presentation-superseded" };
       }
+
+      const ownerMismatch = Boolean(
+        reservation &&
+        presentation.reservationOwnerId &&
+        reservation.ownerId !== presentation.reservationOwnerId
+      );
+      if (ownerMismatch && !hasExistingWidgetLease) {
+        return { stopped: true, stopReason: "presentation-superseded" };
+      }
+
+      // A previously mounted card remains live while a newer sibling is only
+      // reserved. The newer result takes ownership only after its matching
+      // iframe establishes a lease, so a failed mount cannot blank the feed.
+      if (!ownerMismatch) {
+        if (
+          reservation?.state === "confirmed" &&
+          this.hasActiveAutomaticPresentationLease(
+            scopeId,
+            presentation.activityPresentationId,
+            widgetSessionId
+          )
+        ) {
+          return { stopped: true, stopReason: "presentation-duplicate" };
+        }
+
+        if (!reservation) {
+          const retainedSequence =
+            latest?.activityPresentationId === presentation.activityPresentationId &&
+            latest.reservationOwnerId === presentation.reservationOwnerId
+              ? latest.sequence
+              : undefined;
+          reservation = {
+            ownerId: presentation.reservationOwnerId || `widget:${widgetSessionId}`,
+            sequence: retainedSequence ?? ++this.activityCardPresentationSequence,
+            state: "confirmed",
+            expiresAt: now + this.activityCardPresentationTtlMs,
+            widgetSessionId
+          };
+          this.activityCardReservations.set(reservationKey, reservation);
+        } else {
+          reservation.state = "confirmed";
+          reservation.expiresAt = now + this.activityCardPresentationTtlMs;
+          reservation.widgetSessionId = widgetSessionId;
+        }
+
+        if (
+          !latest ||
+          latest.activityPresentationId !== presentation.activityPresentationId ||
+          latest.sequence !== reservation.sequence
+        ) {
+          this.activateAutomaticPresentation(
+            scopeId,
+            presentation.activityPresentationId,
+            reservation.ownerId,
+            reservation.sequence
+          );
+        } else {
+          latest.expiresAt = now + this.activityCardPresentationTtlMs;
+        }
+      }
+    } else if (this.isPresentationSuperseded(scopeId, presentation)) {
+      this.releaseActivityCardLease(scopeId, activityId, cardGeneration, widgetSessionId, presentation);
+      return { stopped: true, stopReason: "presentation-superseded" };
     }
     this.activityCardLeases.set(
       this.activityCardLeaseKey(
@@ -761,7 +1031,12 @@ export class CodexJobRegistry {
     return {
       presentationKind: presentation.kind,
       ...(presentation.kind === "automatic"
-        ? { activityPresentationId: presentation.activityPresentationId }
+        ? {
+            activityPresentationId: presentation.activityPresentationId,
+            ...(presentation.reservationOwnerId
+              ? { reservationOwnerId: presentation.reservationOwnerId }
+              : {})
+          }
         : {}),
       live: !stopped,
       stopped,
@@ -797,6 +1072,20 @@ export class CodexJobRegistry {
     return `${scopeId}\0${presentation.kind}\0${activityId}\0${cardGeneration}\0${widgetSessionId}`;
   }
 
+  private hasActiveAutomaticPresentationLease(
+    scopeId: string,
+    activityPresentationId: string,
+    excludingWidgetSessionId?: string
+  ): boolean {
+    const prefix = `${scopeId}\0automatic\0${activityPresentationId}\0`;
+    const excludedKey = excludingWidgetSessionId
+      ? `${prefix}${excludingWidgetSessionId}`
+      : undefined;
+    return [...this.activityCardLeases.keys()].some((key) =>
+      key.startsWith(prefix) && key !== excludedKey
+    );
+  }
+
   private isPresentationSuperseded(
     scopeId: string,
     presentation: ActivityCardPresentationContext
@@ -804,22 +1093,42 @@ export class CodexJobRegistry {
     this.pruneActivityCardLeases();
     const latest = this.latestAutomaticPresentationByScope.get(scopeId);
     if (presentation.kind === "explicit") return false;
-    return Boolean(latest && latest.activityPresentationId !== presentation.activityPresentationId);
+    if (!latest) {
+      return false;
+    }
+    if (latest.activityPresentationId === presentation.activityPresentationId) {
+      return Boolean(
+        presentation.reservationOwnerId &&
+        latest.reservationOwnerId !== presentation.reservationOwnerId
+      );
+    }
+    const reservation = this.activityCardReservations.get(
+      this.activityPresentationKey(scopeId, presentation.activityPresentationId)
+    );
+    return !reservation || reservation.sequence < latest.sequence;
   }
 
-  private activateAutomaticPresentation(scopeId: string, activityPresentationId: string): void {
+  private activateAutomaticPresentation(
+    scopeId: string,
+    activityPresentationId: string,
+    reservationOwnerId: string,
+    sequence: number
+  ): void {
     const now = Date.now();
     const previous = this.latestAutomaticPresentationByScope.get(scopeId);
     this.latestAutomaticPresentationByScope.set(scopeId, {
       activityPresentationId,
-      expiresAt: now + this.activityCardReservationTtlMs
+      reservationOwnerId,
+      sequence,
+      expiresAt: now + this.activityCardPresentationTtlMs
     });
-    if (previous && previous.activityPresentationId === activityPresentationId) return;
+    if (
+      previous &&
+      previous.activityPresentationId === activityPresentationId &&
+      previous.sequence === sequence
+    ) return;
     for (const key of [...this.activityCardLeases.keys()]) {
-      if (
-        key.startsWith(`${scopeId}\0automatic\0`) &&
-        !key.startsWith(`${scopeId}\0automatic\0${activityPresentationId}\0`)
-      ) {
+      if (key.startsWith(`${scopeId}\0automatic\0`)) {
         this.activityCardLeases.delete(key);
       }
     }
@@ -834,8 +1143,8 @@ export class CodexJobRegistry {
     for (const [key, expiresAt] of this.activityCardLeases) {
       if (expiresAt <= now) this.activityCardLeases.delete(key);
     }
-    for (const [key, expiresAt] of this.activityCardReservations) {
-      if (expiresAt <= now) this.activityCardReservations.delete(key);
+    for (const [key, reservation] of this.activityCardReservations) {
+      if (reservation.expiresAt <= now) this.activityCardReservations.delete(key);
     }
     for (const [scopeId, latest] of this.latestAutomaticPresentationByScope) {
       if (latest.expiresAt <= now) this.latestAutomaticPresentationByScope.delete(scopeId);
@@ -2593,6 +2902,7 @@ export function registerBridgeTools(
       description:
         "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3020,6 +3330,7 @@ export function registerBridgeTools(
       description:
         "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic response presentation and must not be followed by codex_activity. Explicit cards use up to three separate scope watcher slots and never compete for automatic completion handoff; this tool never changes execution, visibility, or lifecycle policy.",
       inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
+      outputSchema: activityViewOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3083,6 +3394,7 @@ export function registerBridgeTools(
         waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
         limit: z.number().int().min(1).max(100).optional()
       }),
+      outputSchema: activityViewOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3131,7 +3443,7 @@ export function registerBridgeTools(
           reasonCode: "presentation-superseded"
         });
       };
-      if (lease.stopped) recordPresentationSuperseded();
+      if (lease.stopReason === "presentation-superseded") recordPresentationSuperseded();
       const onAbort = () => {
         jobs.releaseActivityCardLease(
           scope.scopeId,
@@ -3149,8 +3461,19 @@ export function registerBridgeTools(
           reasonCode: "host-aborted-activity-watch"
         });
       };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      const wait = args.afterVersion !== undefined
+      if (!lease.stopped) {
+        signal?.addEventListener("abort", onAbort, { once: true });
+      }
+      const wait: ActivityScopeWatchResult | undefined = lease.stopped
+        ? {
+            scopeVersion: jobs.getScopeVersion(scope.scopeId),
+            changed: false,
+            timedOut: false,
+            waitedMs: 0,
+            stopped: true,
+            stopReason: lease.stopReason
+          }
+        : args.afterVersion !== undefined
         ? await jobs.waitForScopeVersion(
             scope.scopeId,
             args.afterVersion,
@@ -3161,7 +3484,7 @@ export function registerBridgeTools(
           )
         : undefined;
       signal?.removeEventListener("abort", onAbort);
-      if (wait?.stopped) recordPresentationSuperseded();
+      if (wait?.stopReason === "presentation-superseded") recordPresentationSuperseded();
       return activityViewResult(
         await buildActivityView(
           jobs,
@@ -3173,7 +3496,8 @@ export function registerBridgeTools(
           args.limit || 30,
           args.card.activityId,
           wait,
-          presentation
+          presentation,
+          lease
         ),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
       );
@@ -3203,6 +3527,7 @@ export function registerBridgeTools(
         codexActivityHandoffRuntimeInput,
         codexActivityHandoffInput
       ),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3312,6 +3637,7 @@ export function registerBridgeTools(
       description:
         "Apply one idempotent scope-local operation to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. ChatGPT scope is host-derived. Recovery detach and destructive background-process control use separate restricted tools.",
       inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3450,6 +3776,7 @@ export function registerBridgeTools(
         expectedAgentVersion: z.number().int().min(1)
           .describe("Authoritative Agent version observed immediately before recovery detach.")
       },
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3529,6 +3856,7 @@ export function registerBridgeTools(
         processId: z.string().trim().min(1).max(200),
         card: activityCardProofInputSchema
       },
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3615,6 +3943,7 @@ export function registerBridgeTools(
       description:
         "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
       inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3703,6 +4032,7 @@ export function registerBridgeTools(
           .max(HARD_MAX_CONCURRENT_JOBS)
           .optional()
       }),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3825,6 +4155,7 @@ export function registerBridgeTools(
         ]),
         card: activityCardProofInputSchema
       }),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3956,6 +4287,7 @@ export function registerBridgeTools(
         prompt: z.string().trim().min(1).max(config.maxPromptChars),
         card: activityCardProofInputSchema
       }),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4137,6 +4469,7 @@ export function registerBridgeTools(
         codexActivityUpdateRuntimeInput,
         codexActivityUpdatePublicInput
       ),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -4229,6 +4562,7 @@ export function registerBridgeTools(
         codexActivityCancelRuntimeInput,
         codexActivityCancelPublicInput
       ),
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4408,6 +4742,7 @@ export function registerBridgeTools(
           .optional()
           .describe("Force an immediate catalog refresh. Omit to use the short-lived cache when available.")
       },
+      outputSchema: openStructuredObjectOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -4719,6 +5054,7 @@ export function registerBridgeTools(
         taskPolicyAtRegistration,
         taskCatalogAtRegistration
       ),
+      outputSchema: codexTaskOutputSchema,
       annotations: codexToolAnnotations(config, taskPolicyAtRegistration),
       _meta: codexTaskActivityCardMetadata(taskPolicyAtRegistration)
     },
@@ -6349,7 +6685,8 @@ function formatJobStatus(
       preferences,
       {
         reserve: reserveActivityCard,
-        activityPresentationId: job.activityPresentationId
+        activityPresentationId: job.activityPresentationId,
+        reservationOwnerId: job.jobId
       }
     )
     : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId);
@@ -6448,7 +6785,9 @@ function formatJobStatus(
           ? "No MCP progress event has been observed within the configured window. Process liveness is unknown; inspect actual work evidence, wait, or explicitly cancel the job."
           : activityTracking.shouldRenderActivityCard
             ? "Codex is running in the background. The Activity card is attached to this codex_task result and its mounted watcher tracks progress without a GPT follow-up call."
-            : activityTracking.renderReason === "active-lease" || activityTracking.renderReason === "render-reserved"
+            : activityTracking.renderReason === "active-lease" ||
+                activityTracking.renderReason === "render-reserved" ||
+                activityTracking.renderReason === "render-confirmed"
               ? "Codex is running in the background. This result will not create a duplicate Activity card because one is already mounted or reserved."
               : "Codex is running in the background. Automatic card display is disabled for this turn; use one bounded codex_status wait when authoritative follow-up is needed."
     };
@@ -6833,7 +7172,8 @@ async function buildLegacyActivityView(
   limit: number,
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
-  presentation: ActivityCardPresentationContext = { kind: "explicit" }
+  presentation: ActivityCardPresentationContext = { kind: "explicit" },
+  lease?: ActivityCardLeaseTouchResult
 ) {
   const now = Date.now();
   const allAgents = jobs.listAgents(scopeId, true, 1_000, 0);
@@ -6990,7 +7330,16 @@ async function buildLegacyActivityView(
     idle: agentRows.filter((row) => row.displayState === "idle").length,
     archived: archivedAgentTotal
   };
-  const presentationPolicy = jobs.activityPresentationWatcherPolicy(scopeId, presentation);
+  const basePresentationPolicy = jobs.activityPresentationWatcherPolicy(scopeId, presentation);
+  const presentationPolicy = lease?.stopped
+    ? {
+        ...basePresentationPolicy,
+        live: false,
+        stopped: true,
+        stopReason: lease.stopReason,
+        ownsCompletionHandoff: false
+      }
+    : basePresentationPolicy;
   const pendingHandoffs =
     preferences.completionHandoff !== "auto-handoff" ||
     !presentationPolicy.ownsCompletionHandoff
@@ -7039,7 +7388,12 @@ async function buildLegacyActivityView(
       mountedPresentation: {
         kind: presentation.kind,
         ...(presentation.kind === "automatic"
-          ? { activityPresentationId: presentation.activityPresentationId }
+          ? {
+              activityPresentationId: presentation.activityPresentationId,
+              ...(presentation.reservationOwnerId
+                ? { reservationOwnerId: presentation.reservationOwnerId }
+                : {})
+            }
           : {})
       },
       uiLocalePreference: preferences.uiLocalePreference,
@@ -7114,7 +7468,8 @@ async function buildActivityView(
   limit: number,
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
-  presentation: ActivityCardPresentationContext = { kind: "explicit" }
+  presentation: ActivityCardPresentationContext = { kind: "explicit" },
+  lease?: ActivityCardLeaseTouchResult
 ) {
   const legacy = await buildLegacyActivityView(
     jobs,
@@ -7126,7 +7481,8 @@ async function buildActivityView(
     limit,
     selectedActivityId,
     wait,
-    presentation
+    presentation,
+    lease
   );
   const now = Date.now();
   const allActivities = jobs.listActivities(scopeId, 1_000, 0);
@@ -9435,7 +9791,7 @@ function sanitizeTextForJob(value: string, cwd: string, allowedRoots: string[]):
 
 function activityCardToolMetadata(): Record<string, unknown> {
   return {
-    ui: { resourceUri: ACTIVITY_CARD_URI },
+    ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
     "openai/outputTemplate": ACTIVITY_CARD_URI,
     "openai/widgetAccessible": true,
     "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
@@ -9502,7 +9858,8 @@ function forwardResult(
         ...(registry
           ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {
               reserve: true,
-              activityPresentationId: job.activityPresentationId
+              activityPresentationId: job.activityPresentationId,
+              reservationOwnerId: job.jobId
             })
           : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
       },

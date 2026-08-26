@@ -475,18 +475,19 @@ describe("CodexJobRegistry persistence", () => {
     await Promise.all(watches);
   });
 
-  it("suppresses automatic cards by response presentation while retaining Activity-generation validity", async () => {
+  it("confirms automatic presentation ownership only after a mounted card lease", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
     try {
-      const registry = new CodexJobRegistry();
+      const registry = new CodexJobRegistry({ activityMountReservationTtlMs: 1_000 });
       const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Card generation" });
       const preferences = { activityCardVisibility: "always" as const };
       const firstPresentation = "10101010-1010-4010-8010-101010101010";
       const secondPresentation = "20202020-2020-4020-8020-202020202020";
 
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-one"
       }))
         .toMatchObject({
           activityId: activity.activityId,
@@ -496,43 +497,111 @@ describe("CodexJobRegistry persistence", () => {
           activityPresentationId: firstPresentation
         });
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-two"
       }))
-        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
-
-      await vi.advanceTimersByTimeAsync(75_001);
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-one"
       }))
-        .toMatchObject({ shouldRenderActivityCard: false, renderReason: "render-reserved" });
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
 
-      registry.touchActivityCardLease(
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-two"
+      }))
+        .toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
+
+      expect(registry.touchActivityCardLease(
         SCOPE_A,
         activity.activityId,
         1,
         "widget-one",
-        { kind: "automatic", activityPresentationId: firstPresentation }
-      );
+        {
+          kind: "automatic",
+          activityPresentationId: firstPresentation,
+          reservationOwnerId: "job-two"
+        }
+      )).toEqual({ stopped: false });
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-two"
       }))
         .toMatchObject({ shouldRenderActivityCard: false, renderReason: "active-lease" });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        1,
+        "widget-duplicate",
+        {
+          kind: "automatic",
+          activityPresentationId: firstPresentation,
+          reservationOwnerId: "job-two"
+        }
+      )).toEqual({ stopped: true, stopReason: "presentation-duplicate" });
+      registry.releaseActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        1,
+        "widget-one",
+        {
+          kind: "automatic",
+          activityPresentationId: firstPresentation,
+          reservationOwnerId: "job-two"
+        }
+      );
+      expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-two"
+      })).toMatchObject({
+        shouldRenderActivityCard: false,
+        renderReason: "render-confirmed"
+      });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        1,
+        "widget-remounted",
+        {
+          kind: "automatic",
+          activityPresentationId: firstPresentation,
+          reservationOwnerId: "job-two"
+        }
+      )).toEqual({ stopped: false });
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
         presentationKind: "explicit"
       }))
         .toMatchObject({ shouldRenderActivityCard: true, renderReason: "explicit" });
 
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId: secondPresentation
+        activityPresentationId: secondPresentation,
+        reservationOwnerId: "job-three"
       })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
       expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
         kind: "automatic",
         activityPresentationId: firstPresentation
-      })).toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
+      })).toMatchObject({ live: true, stopped: false });
       expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
         kind: "automatic",
         activityPresentationId: secondPresentation
       })).toMatchObject({ live: true, stopped: false, ownsCompletionHandoff: true });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        1,
+        "widget-two",
+        {
+          kind: "automatic",
+          activityPresentationId: secondPresentation,
+          reservationOwnerId: "job-three"
+        }
+      )).toEqual({ stopped: false });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, {
+        kind: "automatic",
+        activityPresentationId: firstPresentation
+      })).toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
 
       const root = temporaryRoot();
       const databaseFile = path.join(root, "state.sqlite");
@@ -540,16 +609,139 @@ describe("CodexJobRegistry persistence", () => {
       const beforeRestart = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root] });
       const persistentActivity = beforeRestart.createActivity({ scopeId: SCOPE_A, title: "Restart lease" });
       beforeRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-before-restart"
       });
       firstStore.close();
 
       const secondStore = new BridgeStateStore({ file: databaseFile });
       const afterRestart = new CodexJobRegistry({ stateStore: secondStore, allowedRoots: [root] });
       expect(afterRestart.activityCardRenderHint(persistentActivity.activityId, "background", preferences, {
-        activityPresentationId: firstPresentation
+        activityPresentationId: firstPresentation,
+        reservationOwnerId: "job-after-restart"
       })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "new-presentation" });
       secondStore.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a late mount from an older unconfirmed presentation reservation", () => {
+    const registry = new CodexJobRegistry();
+    const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Late card mount" });
+    const preferences = { activityCardVisibility: "always" as const };
+    const olderPresentation = "21212121-2121-4121-8121-212121212121";
+    const newerPresentation = "23232323-2323-4323-8323-232323232323";
+
+    registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
+      activityPresentationId: olderPresentation,
+      reservationOwnerId: "older-job"
+    });
+    registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
+      activityPresentationId: newerPresentation,
+      reservationOwnerId: "newer-job"
+    });
+
+    expect(registry.touchActivityCardLease(
+      SCOPE_A,
+      activity.activityId,
+      activity.cardGeneration,
+      "newer-widget",
+      { kind: "automatic", activityPresentationId: newerPresentation }
+    )).toEqual({ stopped: false });
+    expect(registry.touchActivityCardLease(
+      SCOPE_A,
+      activity.activityId,
+      activity.cardGeneration,
+      "late-older-widget",
+      { kind: "automatic", activityPresentationId: olderPresentation }
+    )).toEqual({ stopped: true, stopReason: "presentation-superseded" });
+  });
+
+  it("lets only the newest mounted sibling own one response presentation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T01:00:00.000Z"));
+    try {
+      const registry = new CodexJobRegistry({ activityMountReservationTtlMs: 1_000 });
+      const activity = registry.createActivity({ scopeId: SCOPE_A, title: "Latest sibling card" });
+      const preferences = { activityCardVisibility: "always" as const };
+      const presentationId = "25252525-2525-4525-8525-252525252525";
+      const firstPresentation = {
+        kind: "automatic" as const,
+        activityPresentationId: presentationId,
+        reservationOwnerId: "job-first"
+      };
+      const lastPresentation = {
+        kind: "automatic" as const,
+        activityPresentationId: presentationId,
+        reservationOwnerId: "job-last"
+      };
+
+      registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
+        activityPresentationId: presentationId,
+        reservationOwnerId: "job-first"
+      });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        "widget-first",
+        firstPresentation
+      )).toEqual({ stopped: false });
+
+      expect(registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
+        activityPresentationId: presentationId,
+        reservationOwnerId: "job-last"
+      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
+        .toMatchObject({ live: true, stopped: false });
+
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
+        .toMatchObject({ live: true, stopped: false });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        "widget-first",
+        firstPresentation
+      )).toEqual({ stopped: false });
+
+      expect(registry.activityCardRenderHint(activity.activityId, "foreground", preferences, {
+        activityPresentationId: presentationId,
+        reservationOwnerId: "job-last"
+      })).toMatchObject({ shouldRenderActivityCard: true, renderReason: "render-latest" });
+      const previousWatch = registry.waitForScopeVersion(
+        SCOPE_A,
+        registry.getScopeVersion(SCOPE_A),
+        10_000,
+        "widget-first",
+        undefined,
+        firstPresentation
+      );
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        "widget-last",
+        lastPresentation
+      )).toEqual({ stopped: false });
+      await expect(previousWatch).resolves.toMatchObject({
+        stopped: true,
+        timedOut: false,
+        stopReason: "presentation-superseded"
+      });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, firstPresentation))
+        .toMatchObject({ live: false, stopped: true, stopReason: "presentation-superseded" });
+      expect(registry.activityPresentationWatcherPolicy(SCOPE_A, lastPresentation))
+        .toMatchObject({ live: true, stopped: false, ownsCompletionHandoff: true });
+      expect(registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        "widget-first",
+        firstPresentation
+      )).toEqual({ stopped: true, stopReason: "presentation-superseded" });
     } finally {
       vi.useRealTimers();
     }
@@ -566,12 +758,22 @@ describe("CodexJobRegistry persistence", () => {
     for (let index = 1; index <= 10; index += 1) {
       const activityPresentationId = `24242424-2424-4424-8424-${index.toString(16).padStart(12, "0")}`;
       expect(registry.activityCardRenderHint(activity.activityId, "background", preferences, {
-        activityPresentationId
+        activityPresentationId,
+        reservationOwnerId: `job-${index}`
       })).toMatchObject({
         shouldRenderActivityCard: true,
         renderReason: "new-presentation",
         activityPresentationId
       });
+
+      const presentation = { kind: "automatic" as const, activityPresentationId };
+      registry.touchActivityCardLease(
+        SCOPE_A,
+        activity.activityId,
+        activity.cardGeneration,
+        `automatic-widget-${index}`,
+        presentation
+      );
 
       if (previousWatch) {
         await expect(previousWatch).resolves.toMatchObject({
@@ -585,14 +787,6 @@ describe("CodexJobRegistry persistence", () => {
         })).toMatchObject({ live: false, ownsCompletionHandoff: false });
       }
 
-      const presentation = { kind: "automatic" as const, activityPresentationId };
-      registry.touchActivityCardLease(
-        SCOPE_A,
-        activity.activityId,
-        activity.cardGeneration,
-        `automatic-widget-${index}`,
-        presentation
-      );
       const controller = new AbortController();
       previousWatch = registry.waitForScopeVersion(
         SCOPE_A,
