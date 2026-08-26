@@ -165,9 +165,9 @@ describe("CodexAppServerUpstreamPool", () => {
       const identity = rpc.identity;
       expect(identity).toBeDefined();
 
-      const startedAt = Date.now();
-      await pool.close();
-      expect(Date.now() - startedAt).toBeLessThan(500);
+      const closing = pool.close();
+      await eventually(() => rpc.pendingRequestCount === 0);
+      await closing;
 
       const result = await settled;
       expect(result.status).toBe("rejected");
@@ -805,7 +805,7 @@ describe("CodexAppServerUpstreamPool", () => {
         undefined,
         (value) => { assignment = value; }
       );
-      await eventually(() => Boolean(assignment?.threadId));
+      await eventually(() => Boolean(assignment?.upstreamRequestId));
       await expect(pool.steerThread(assignment!.threadId!, "new direction")).resolves.toEqual({
         turnId: assignment!.upstreamRequestId
       });

@@ -374,6 +374,12 @@ describe("http server", () => {
       ]);
       expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
       expect(stateStore.listCancellationIntents({ jobId: running.jobId })).toHaveLength(0);
+      expect(stateStore.listCancellationOperations(SCOPE_A)).toHaveLength(0);
+      const eventTypes = stateStore.listJobEvents(running.jobId)
+        .map((event) => event.eventType);
+      expect(eventTypes).not.toContain("cancellation-intent-recorded");
+      expect(eventTypes).not.toContain("job-terminating");
+      expect(eventTypes).not.toContain("job-cancelled");
 
       upstream.resolveNext();
       await eventually(() => (stateStore.listJobs()[0] as Record<string, any>)?.status === "completed");
@@ -385,6 +391,8 @@ describe("http server", () => {
         })
       ]);
       expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
+      expect(stateStore.listCancellationIntents({ jobId: running.jobId })).toHaveLength(0);
+      expect(stateStore.listCancellationOperations(SCOPE_A)).toHaveLength(0);
     } finally {
       await client.close().catch(() => undefined);
       await stopLastServer();
@@ -444,9 +452,17 @@ describe("http server", () => {
       ]);
       expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
       expect(stateStore.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+      expect(stateStore.listCancellationOperations(SCOPE_A)).toHaveLength(0);
 
       upstream.resolveNext();
       await eventually(() => (stateStore.listJobs()[0] as Record<string, any>)?.status === "completed");
+      expect(stateStore.listJobs()[0]).toMatchObject({
+        jobId: started.jobId,
+        status: "completed",
+        terminalOrigin: "normal-completion"
+      });
+      expect(stateStore.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+      expect(stateStore.listCancellationOperations(SCOPE_A)).toHaveLength(0);
     } finally {
       await client.close().catch(() => undefined);
       await stopLastServer();

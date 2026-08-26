@@ -4406,7 +4406,7 @@ describe("bridge tools", () => {
       settled = true;
       return result;
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect.poll(() => upstream.calls.length).toBe(1);
     expect(settled).toBe(false);
     expect(upstream.calls).toHaveLength(1);
 
@@ -6280,6 +6280,113 @@ describe("bridge tools", () => {
       reroutedModelDisplayName: "GPT-5.6 Terra",
       isCurrent: false
     });
+    await close();
+  });
+
+  it("treats an aborted Activity-card watch as lease cleanup and lets its job complete", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "finish after the Activity-card watcher detaches",
+        executionMode: "background"
+      }
+    }));
+    await expect.poll(() => upstream.calls.length).toBe(1);
+    const running = jobs.get(started.jobId)!;
+    expect(running).toMatchObject({ status: "running" });
+
+    const widgetInstanceId = "widget-watch-abort";
+    const card = {
+      activityId: started.activityId,
+      generation: started.bridgeActivity.cardGeneration,
+      presentation: {
+        kind: "automatic" as const,
+        activityPresentationId: started.bridgeActivity.activityPresentationId
+      }
+    };
+    const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    const scopeVersion = (mounted as { structuredContent?: Record<string, any> })
+      .structuredContent?.scopeVersion as number;
+    const watchState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+    };
+    const controller = new AbortController();
+    const watch = rawCallTool(
+      {
+        name: "codex_activity_snapshot",
+        arguments: {
+          scopeId: SCOPE_A,
+          card,
+          afterVersion: scopeVersion,
+          waitMs: 60_000
+        },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      },
+      undefined,
+      { signal: controller.signal }
+    );
+    await expect.poll(() => watchState.activeWatchers).toBe(1);
+    expect(watchState.watcherLeases.size).toBe(1);
+    expect(watchState.activityCardLeases.size).toBe(1);
+
+    controller.abort();
+    await expect(watch).rejects.toThrow(/cancel|abort/i);
+    await expect.poll(() => watchState.activeWatchers).toBe(0);
+    expect(watchState.watcherLeases.size).toBe(0);
+    expect(watchState.activityCardLeases.size).toBe(0);
+    expect(() => jobs.requireActivityCardLease(
+      SCOPE_A,
+      card.activityId,
+      card.generation,
+      widgetInstanceId,
+      card.presentation
+    )).toThrow(/CARD_LEASE_REQUIRED/);
+    await expect.poll(() =>
+      jobs.listTransportObservations("activity-watch-aborted").length
+    ).toBeGreaterThan(0);
+    expect(jobs.listTransportObservations("activity-watch-aborted")).toEqual([
+      expect.objectContaining({
+        kind: "activity-watch-aborted",
+        scopeId: SCOPE_A,
+        activityId: started.activityId,
+        toolName: "codex_activity_snapshot",
+        reasonCode: "host-aborted-activity-watch"
+      })
+    ]);
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "running",
+      version: running.version
+    });
+    expect(jobs.get(started.jobId)?.cancelRequestedAt).toBeUndefined();
+    expect(jobs.get(started.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+    const eventTypes = jobs.listJobEvents(started.jobId).map((event) => event.eventType);
+    expect(eventTypes).not.toContain("cancellation-intent-recorded");
+    expect(eventTypes).not.toContain("job-terminating");
+    expect(eventTypes).not.toContain("job-cancelled");
+    expect(upstream.aborts).toBe(0);
+
+    upstream.resolveNext(fakeCodexResult("watch-abort-thread"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "completed",
+      terminalOrigin: "normal-completion"
+    });
+    expect(jobs.get(started.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+    expect(upstream.aborts).toBe(0);
     await close();
   });
 

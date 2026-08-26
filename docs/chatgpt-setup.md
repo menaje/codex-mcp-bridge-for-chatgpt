@@ -289,6 +289,39 @@ Only the newest automatic presentation owns the scope live watch and completion 
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. The card's private `codex_activity_job_cancel` is a distinct destructive surface, and `codex_activity_cancel` force-stops every active job in one exact-version Activity. Every path durably records its cancellation operation and intent before interruption; terminal state is recorded only after exit evidence. Activity cancellation records a parent intent, enters `Activity-terminating`, records linked child intents, cancels the children, and only then writes `Activity-cancelled`. None rolls back filesystem changes. HTTP abort, SSE disconnect, MCP cancellation notifications, wait/snapshot abort, presentation supersession, and widget unmount are transport or presentation observations only and never cancel a Job.
 
+### Cancellation provenance and escalation
+
+Cancellation source, transport observation, and terminal origin are deliberately
+different taxonomies. A cancellation source identifies authority for an
+intentional destructive action: `model-tool`, `widget-control`,
+`activity-cascade`, `operator`, or the fail-closed internal
+`assignment-containment` path. The original issue acceptance criteria listed
+`host-abort`, `restart`, and `unknown` as possible source categories so that no
+incident would remain unattributed. The implemented boundary is stricter:
+
+- a host/MCP/HTTP abort is a bounded transport observation and has no
+  cancellation authority;
+- a bridge restart is a Job terminal origin, not a cancellation request;
+- `unknown` is not valid for new state. Only migrated pre-provenance cancelled
+  rows use the explicit `legacy-unattributed-cancellation` terminal origin.
+
+This separation prevents detach, timeout, restart, or missing historical data
+from being mistaken for user cancellation. An explicit cancellation operation
+must instead retain its caller/control provenance, including the public or
+app-private tool, bounded action and reason, request correlation, caller and
+target presentation where applicable, and sanitized widget-proof presence.
+
+If no durable cancellation operation or intent exists and App Server
+independently reports an interrupted/aborted turn, collect a minimal sanitized
+reproduction and escalate it for upstream App Server investigation. Include the
+bridge build and supported Codex CLI version, timestamps, terminal origin, and
+bounded opaque Job/thread/turn and worker-generation correlation needed to
+reproduce the sequence. Exclude prompts, answers, authorization data, raw host
+metadata, local paths, and raw widget identifiers. If a durable explicit
+cancellation operation does exist, attribute the interruption to the recorded
+caller/host/control surface rather than to App Server; an adjacent transport
+abort observation does not override that provenance.
+
 App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. Every supported Activity resource calls this dedicated tool; the former Agent-operation shortcut has expired.
 
 ## 8. Smoke checklist after Plugin Refresh
