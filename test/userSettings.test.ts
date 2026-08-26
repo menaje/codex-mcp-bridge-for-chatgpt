@@ -32,7 +32,7 @@ describe("user settings store", () => {
       projects: [],
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
-      showBridgeThreadsInCodexApp: true,
+      showBridgeThreadsInCodexApp: false,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
@@ -44,7 +44,7 @@ describe("user settings store", () => {
         accessStrategy: "always-full",
         uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
-        showBridgeThreadsInCodexApp: false,
+        showBridgeThreadsInCodexApp: true,
         activityCardVisibility: "background-only",
         completionHandoff: "auto-handoff"
       },
@@ -56,7 +56,7 @@ describe("user settings store", () => {
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
-      showBridgeThreadsInCodexApp: false,
+      showBridgeThreadsInCodexApp: true,
       activityCardVisibility: "background-only",
       completionHandoff: "auto-handoff"
     });
@@ -67,7 +67,7 @@ describe("user settings store", () => {
         schemaVersion: 2,
         revision: 1,
         accessStrategy: "always-full",
-        showBridgeThreadsInCodexApp: false
+        showBridgeThreadsInCodexApp: true
       }
     });
 
@@ -77,14 +77,14 @@ describe("user settings store", () => {
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
-      showBridgeThreadsInCodexApp: false,
+      showBridgeThreadsInCodexApp: true,
       activityCardVisibility: "background-only",
       completionHandoff: "auto-handoff"
     });
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
   });
 
-  it("migrates a missing Codex-app visibility preference to the visible default", () => {
+  it("migrates a missing Codex-app visibility preference to the hidden default", () => {
     const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
     const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
     const original = new UserSettingsStore(config, { stateFile });
@@ -100,10 +100,10 @@ describe("user settings store", () => {
     expect(migrated.current).toMatchObject({
       revision: 2,
       updatedAt: "2026-08-21T02:03:04.000Z",
-      showBridgeThreadsInCodexApp: true
+      showBridgeThreadsInCodexApp: false
     });
     expect(JSON.parse(readFileSync(stateFile, "utf8")).settings)
-      .toMatchObject({ revision: 2, showBridgeThreadsInCodexApp: true });
+      .toMatchObject({ revision: 2, showBridgeThreadsInCodexApp: false });
 
     const invalid = JSON.parse(readFileSync(stateFile, "utf8"));
     invalid.settings.showBridgeThreadsInCodexApp = "no";
@@ -145,7 +145,7 @@ describe("user settings store", () => {
       revision: 3,
       accessStrategy: "adaptive",
       uiLocalePreference: "auto",
-      showBridgeThreadsInCodexApp: true,
+      showBridgeThreadsInCodexApp: false,
       projects: projectsBeforeReset
     });
     expect(reset).not.toHaveProperty("defaultProjectId");

@@ -121,7 +121,7 @@ export class UserSettingsStore {
       projects: legacyBootstrapRegistry.projects,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
-      showBridgeThreadsInCodexApp: true,
+      showBridgeThreadsInCodexApp: false,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
@@ -683,7 +683,7 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Loaded
       maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
       showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
         ? value.showBridgeThreadsInCodexApp
-        : true,
+        : false,
       activityCardVisibility:
         value.activityCardVisibility === "always" ||
         value.activityCardVisibility === "background-only" ||

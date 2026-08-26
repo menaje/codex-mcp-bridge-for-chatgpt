@@ -1610,6 +1610,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/8aee714e2cbc.html",
             "ui://codex-mcp-bridge/settings/4632bf12f0b0.html",
             "ui://codex-mcp-bridge/settings/806437315544.html",
             "ui://codex-mcp-bridge/settings/5f348837faba.html",
@@ -2830,7 +2831,7 @@ describe("bridge tools", () => {
           kind: "patch",
           settings: {
             uiLocalePreference: "ko",
-            showBridgeThreadsInCodexApp: false,
+            showBridgeThreadsInCodexApp: true,
             activityCard: { visibility: "background-only", completionHandoff: "auto-handoff" }
           }
         }
@@ -2840,7 +2841,7 @@ describe("bridge tools", () => {
       .toMatchObject({
         revision: 1,
         uiLocalePreference: "ko",
-        showBridgeThreadsInCodexApp: false,
+        showBridgeThreadsInCodexApp: true,
         activityCardVisibility: "background-only",
         completionHandoff: "auto-handoff"
       });
@@ -2874,7 +2875,7 @@ describe("bridge tools", () => {
       .toMatchObject({
         revision: 2,
         uiLocalePreference: "auto",
-        showBridgeThreadsInCodexApp: true,
+        showBridgeThreadsInCodexApp: false,
         activityCardVisibility: "always",
         completionHandoff: "off"
       });

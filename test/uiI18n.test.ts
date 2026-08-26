@@ -210,6 +210,9 @@ describe("human-facing UI localization", () => {
       "showBridgeThreadsInCodexApp:elements.codexAppThreads.checked"
     );
     expect(SETTINGS_CARD_HTML).toContain(
+      "elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true"
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
       'view.capabilities.defaultBackend==="app-server"'
     );
     expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
