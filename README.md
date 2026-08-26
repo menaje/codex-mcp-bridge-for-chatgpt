@@ -21,7 +21,7 @@ ChatGPT
        -> codex mcp-server (stable default)
        -> codex app-server (richer thread and process controls)
   -> settings-managed named project folders
-       -> first project becomes the default automatically
+       -> exact project required for every new Activity/fresh context
 ```
 
 The bridge presents local Codex as durable, conversation-scoped Agents and user-goal Activities:
@@ -193,7 +193,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - access strategy: `read-only`, `adaptive`, or operator-enabled `always-full`;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- named projects with stable normalized IDs, Unicode labels, canonical folders anywhere on the PC, and a default project;
+- named projects with stable normalized IDs, Unicode labels, and canonical folders anywhere on the PC;
 - UI language;
 - active-job limit;
 - Activity-card visibility: `always` makes all Codex work eligible for automatic
@@ -211,11 +211,11 @@ The Activity card has one conversation-scoped flat-feed layout. Older saved
 layout preferences are safely discarded; there is no layout selector or active
 layout setting.
 
-The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the card allocates a stable normalized routing ID automatically and keeps it hidden. The folders may be unrelated and live anywhere on the PC. Adding or editing a project resolves its folder with `realpath`, rejects files and duplicate canonical paths, and preserves identity across name/folder edits. The first project becomes the default automatically. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until it is fixed or removed. A legacy `defaultCwd` is deterministically migrated to the `default` project.
+The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the card allocates a stable normalized routing ID automatically and keeps it hidden. The folders may be unrelated and live anywhere on the PC. Adding or editing a project resolves its folder with `realpath`, rejects files and duplicate canonical paths, and preserves identity across name/folder edits. No project is a default: every new Activity or fresh Agent context must select one exact registered project. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until it is fixed or removed. Legacy `defaultCwd` data is deterministically migrated to a registered `default` project, while the retired default selection fields are removed.
 
-The generation-5 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, recovery metadata, and the default project. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 4 is retained for in-flight compatibility.
+The generation-7 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 6 is retired because its mutation contract still contained default-project selection; compatible generation-7 content revisions remain retainable.
 
-`codex_task` projects the currently selectable project IDs and labels, never their paths. A new Activity/fresh context may choose `projectId`; omission uses the configured default or sole project. With no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Existing Activities and continued/forked Agent threads retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder selects where Codex starts; filesystem reach remains governed by the saved access/sandbox policy.
+`codex_task` projects the currently selectable project IDs and labels, never their paths. Every new Activity or fresh Agent context requires an exact `projectId`, even when only one project is registered. Omission fails with `PROJECT_REQUIRED`; with no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Existing Activities and continued/forked Agent threads may omit `projectId` and retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder selects where Codex starts; filesystem reach remains governed by the saved access/sandbox policy.
 
 Access strategy and project selection are separate:
 
@@ -301,7 +301,7 @@ Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an 
 
 Routing fields are:
 
-- pass one projected `projectId` for a new Activity/fresh context, or omit it only when a default/sole project is available;
+- pass one projected `projectId` for every new Activity/fresh context; omit it only for an existing Activity/thread continue or fork that inherits its pinned project;
 - use `activity: { mode: "existing", id }` for another turn in one exact open Activity;
 - use `activity: { mode: "new", continuationOf?, title?, policy? }` to create a new or linked Activity; `policy` may contain `kind`, `handoff`, and `completion`;
 - use `agent: { mode: "existing", id, context?, handoffSummary? }` to continue, fork, or deliberately replace one exact Agent context; `handoffSummary` is required only for an explicit fresh cross-backend replacement;

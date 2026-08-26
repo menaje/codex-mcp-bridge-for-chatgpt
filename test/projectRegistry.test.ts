@@ -4,7 +4,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MAX_REGISTERED_PROJECTS,
-  PROJECT_DEFAULT_NOT_FOUND,
   PROJECT_CWD_INVALID,
   PROJECT_DUPLICATE_ID,
   PROJECT_DUPLICATE_PATH,
@@ -51,13 +50,12 @@ describe("project registry", () => {
 
     const registry = new ProjectRegistry(
       [{ id: "Bridge Core", label: "브리지 코어", cwd: alias }],
-      [root],
-      { defaultProjectId: "BRIDGE_core" }
+      [root]
     );
     expect(registry.projects).toEqual([
       { id: "bridge-core", label: "브리지 코어", cwd: project }
     ]);
-    expect(registry.defaultProjectId).toBe("bridge-core");
+    expect(registry.resolve("BRIDGE_core")).toMatchObject({ id: "bridge-core" });
     expect(() => new ProjectRegistry(
       [{ id: "outside", label: "Outside", cwd: outside }],
       [root]
@@ -96,10 +94,10 @@ describe("project registry", () => {
     const registry = new ProjectRegistry([
       { id: "first", label: "First", cwd: first },
       { id: "second", label: "Second", cwd: second }
-    ], [], { defaultProjectId: "second" });
+    ], []);
 
     expect(registry.projects.map(({ cwd }) => cwd)).toEqual([first, second]);
-    expect(registry.resolve()).toMatchObject({ id: "second", cwd: second });
+    expect(registry.resolve("second")).toMatchObject({ id: "second", cwd: second });
   });
 
   it("rejects IDs and canonical paths that collide after normalization", () => {
@@ -133,7 +131,7 @@ describe("project registry", () => {
     )).toThrow(PROJECT_LIMIT_EXCEEDED);
   });
 
-  it("resolves explicit, configured-default, and sole-project selections", () => {
+  it("requires an explicit selection even when exactly one project is registered", () => {
     const root = temporaryDirectory("project-root-");
     const first = path.join(root, "first");
     const second = path.join(root, "second");
@@ -144,20 +142,16 @@ describe("project registry", () => {
       { id: "second", label: "Second", cwd: second }
     ];
 
-    expect(new ProjectRegistry(projects, [root], {
-      defaultProjectId: "second"
-    }).resolve()).toMatchObject({ id: "second", cwd: second });
+    expect(new ProjectRegistry(projects, [root]).resolve("second"))
+      .toMatchObject({ id: "second", cwd: second });
     const sole = new ProjectRegistry([projects[0]!], [root]);
-    expect(sole.defaultProjectId).toBe("first");
-    expect(sole.resolve()).toMatchObject({ id: "first" });
+    expect(() => sole.resolve()).toThrow(PROJECT_REQUIRED);
+    expect(sole.resolve("first")).toMatchObject({ id: "first" });
     expect(() => new ProjectRegistry([], []).resolve()).toThrow(PROJECT_SETUP_REQUIRED);
     expect(() => new ProjectRegistry(projects, [root]).resolve()).toThrow(PROJECT_REQUIRED);
     expect(() => new ProjectRegistry(projects, [root]).resolve("unknown")).toThrow(
       PROJECT_NOT_FOUND
     );
-    expect(() => new ProjectRegistry(projects, [root], {
-      defaultProjectId: "unknown"
-    })).toThrow(PROJECT_DEFAULT_NOT_FOUND);
   });
 
   it("retains unavailable metadata for recovery while excluding it from admission", () => {
@@ -167,7 +161,6 @@ describe("project registry", () => {
       { id: "ready", label: "Ready", cwd: allowed },
       { id: "archive", label: "보관됨", cwd: unavailable }
     ], [allowed], {
-      defaultProjectId: "ready",
       retainUnavailable: true
     });
 
@@ -178,7 +171,7 @@ describe("project registry", () => {
     expect(registry.selectableProjects.map(({ id }) => id)).toEqual(["ready"]);
     expect(registry.unavailableProjectIds).toEqual(["archive"]);
     expect(() => registry.resolve("archive")).toThrow(PROJECT_UNAVAILABLE);
-    expect(registry.resolve()).toMatchObject({ id: "ready" });
+    expect(registry.resolve("ready")).toMatchObject({ id: "ready" });
   });
 
   it("creates a deterministic compatibility target without exposing a full path as identity", () => {

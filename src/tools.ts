@@ -34,7 +34,6 @@ import {
   enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
-  requireAllowedCwd,
   resolveAllowedCwd
 } from "./config.js";
 import type {
@@ -174,8 +173,6 @@ const bridgeUserSettingsOutputSchema = z.object({
     label: z.string(),
     cwd: z.string()
   })),
-  defaultProjectId: z.string().nullable(),
-  defaultCwd: z.string().nullable(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
@@ -183,7 +180,7 @@ const bridgeUserSettingsOutputSchema = z.object({
 });
 
 const publicBridgeUserSettingsOutputSchema = bridgeUserSettingsOutputSchema
-  .omit({ projects: true, defaultCwd: true })
+  .omit({ projects: true })
   .extend({
     projects: z.array(z.object({
       id: z.string(),
@@ -2884,7 +2881,6 @@ export function registerBridgeTools(
           projectLabel: project.label,
           available
         })),
-        defaultProjectId: preferences.defaultProjectId,
         defaultSandbox: userSettings.resolveSandbox(),
         accessStrategy: preferences.accessStrategy,
         allowWorkspaceWrite: config.allowWorkspaceWrite,
@@ -4527,7 +4523,6 @@ export function registerBridgeTools(
     accessStrategy: settingsAccessStrategyInput.optional(),
     modelPolicy: modelPolicyZod().optional(),
     usePriorityServiceTier: z.boolean().optional(),
-    defaultProjectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH).nullable().optional(),
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     activityCard: activityCardSettingsPatchInput.optional(),
@@ -4563,7 +4558,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations. Reset restores general preferences only and preserves every project entry, its order, and the default project.",
+        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations. Reset restores general preferences only and preserves every project entry and its order.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -4592,7 +4587,6 @@ export function registerBridgeTools(
           "accessStrategy",
           "modelPolicy",
           "usePriorityServiceTier",
-          "defaultProjectId",
           "uiLocalePreference",
           "maxConcurrentJobs",
           "activityCard",
@@ -4605,7 +4599,6 @@ export function registerBridgeTools(
           "accessStrategy",
           "modelPolicy",
           "usePriorityServiceTier",
-          "defaultProjectId",
           "uiLocalePreference",
           "maxConcurrentJobs"
         ] as const) {
@@ -4720,7 +4713,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. A new Activity or fresh context selects only a currently exposed projectId; omission is valid only with an explicit default or a sole project. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activities inherit their pinned project, and continue/fork retains the Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select an exact currently exposed projectId, even when only one project is available; there is no first, sole, or saved-default fallback. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activity continue/fork calls may omit projectId and retain the Activity or Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -4758,6 +4751,19 @@ export function registerBridgeTools(
         removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
         resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (
+          args.projectId === undefined &&
+          (
+            args.activityId === undefined ||
+            args.contextMode === "fresh" ||
+            (args.contextMode === undefined && existingV4Request?.contextMode === "fresh")
+          )
+        ) {
+          // An idempotent retry must retain the same explicit project input as
+          // the original new/fresh admission; persisted routing is not a
+          // substitute for a required caller selection.
+          void userSettings.resolveProject();
+        }
         if (existingV4Request?.requestHashVersion === CURRENT_TASK_REQUEST_HASH_VERSION) {
           const replayRouting = resolveTaskReplayRoutingV4(
             args,
@@ -4806,6 +4812,14 @@ export function registerBridgeTools(
         validateTaskSelectionInput(args, preferences);
         const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
+        if (
+          args.projectId === undefined &&
+          (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
+        ) {
+          // Distinguish an empty registry (setup required) from an omitted
+          // selection (project required), without ever choosing a fallback.
+          void userSettings.resolveProject();
+        }
         if (args.handoffSummary && agentResolution.contextMode !== "fresh") {
           throw new BackendHandoffContractError(
             "BACKEND_HANDOFF_SUMMARY_UNEXPECTED",
@@ -4833,12 +4847,12 @@ export function registerBridgeTools(
             jobs,
             targetBackend: config.defaultBackend
           });
-          const pinnedCwd = projectAdmission?.cwd ||
-            pinnedCwdForExistingActivity(
-              jobs,
-              activityRequest.activityId || activityRequest.continuationOfActivityId
-            ) ||
-            resolveTaskCwd(config, preferences);
+          if (!projectAdmission) {
+            throw new Error(
+              "PROJECT_REQUIRED: Select an exact registered project for a fresh Agent context."
+            );
+          }
+          const pinnedCwd = projectAdmission.cwd;
           let cwd: string;
           try {
             cwd = resolveAllowedCwd(pinnedCwd, config.allowedRoots);
@@ -5382,6 +5396,12 @@ function resolveTaskProjectAdmission(input: {
   activityRequest: ActivityTaskRequest;
   agentResolution: AgentTaskResolution;
 }): TaskProjectAdmission | undefined {
+  const requiresExplicitProject =
+    input.activityRequest.activityId === undefined ||
+    input.agentResolution.contextMode === "fresh";
+  const selectedProject = requiresExplicitProject
+    ? input.userSettings.resolveProject(input.args.projectId)
+    : undefined;
   const usesExistingThread =
     Boolean(input.agentResolution.agent) &&
     (input.agentResolution.contextMode === "continue" || input.agentResolution.contextMode === "fork");
@@ -5424,6 +5444,7 @@ function resolveTaskProjectAdmission(input: {
   if (activityAdmission) {
     const admission = taskProjectFromActivity(activityAdmission);
     assertRequestedProjectMatches(input.args.projectId, admission);
+    assertSelectedProjectMatchesAdmission(selectedProject, admission);
     if (
       threadContext &&
       (threadContext.cwd !== admission.cwd ||
@@ -5466,6 +5487,7 @@ function resolveTaskProjectAdmission(input: {
         cwd: threadContext.cwd
       };
       assertRequestedProjectMatches(input.args.projectId, admission);
+      assertSelectedProjectMatchesAdmission(selectedProject, admission);
       return admission;
     }
     return resolveLegacyPinnedProject(
@@ -5475,7 +5497,9 @@ function resolveTaskProjectAdmission(input: {
     );
   }
 
-  return taskProjectFromTarget(input.userSettings.resolveProject(input.args.projectId));
+  return taskProjectFromTarget(
+    selectedProject || input.userSettings.resolveProject(input.args.projectId)
+  );
 }
 
 function resolveLegacyPinnedProject(
@@ -5508,6 +5532,18 @@ function assertRequestedProjectMatches(
   ) {
     throw new Error(
       `${PROJECT_CONTEXT_CONFLICT}: The requested project conflicts with the pinned Activity or Agent thread.`
+    );
+  }
+}
+
+function assertSelectedProjectMatchesAdmission(
+  selected: ProjectTarget | undefined,
+  admission: TaskProjectAdmission
+): void {
+  if (!selected) return;
+  if (selected.id !== admission.projectId || selected.cwd !== admission.cwd) {
+    throw new Error(
+      `${PROJECT_CONTEXT_CONFLICT}: The selected project no longer matches the pinned Activity or Agent thread.`
     );
   }
 }
@@ -5579,18 +5615,6 @@ async function requireAgentSession(
     return sessions.get(threadId) || session;
   }
   return session;
-}
-
-function pinnedCwdForExistingActivity(
-  jobs: CodexJobRegistry,
-  activityId: string | undefined
-): string | undefined {
-  if (!activityId) return undefined;
-  const values = [...new Set(jobs.listForActivity(activityId).map((job) => job.cwd))];
-  if (values.length > 1) {
-    throw new Error("ACTIVITY_CWD_AMBIGUOUS: This migrated Activity contains multiple pinned working folders; select an exact existing Agent.");
-  }
-  return values[0];
 }
 
 function validateActivityTaskRequest(
@@ -5751,25 +5775,11 @@ async function startNewSession(input: {
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
   backendHandoff?: BackendHandoff;
-  resolved?: { cwd: string; sandbox: SandboxMode; decision: ExecutionDecision };
+  resolved: { cwd: string; sandbox: SandboxMode; decision: ExecutionDecision };
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
 }): Promise<ToolResult> {
-  const cwd = input.resolved?.cwd || resolveTaskCwd(input.config, input.preferences);
-  const sandbox =
-    input.resolved?.sandbox || resolveTaskSandbox(input.config, input.preferences, input.args.sandbox);
-  const executionDecision =
-    input.resolved?.decision ||
-    (await resolveExecutionDecision({
-      config: input.config,
-      upstream: input.upstream,
-      modelCatalog: input.modelCatalog,
-      preferences: input.preferences,
-      backendKind: input.config.defaultBackend,
-      operation: "start",
-      requestedSelection: input.args.selection,
-      requestedPolicyRevision: undefined
-    }));
+  const { cwd, sandbox, decision: executionDecision } = input.resolved;
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
   const prompt = input.backendHandoff
@@ -7795,6 +7805,47 @@ function codexTaskInputSchema(
     ...adaptiveSandbox,
     ...publicModel
   });
+  const projectedJsonSchema = jsonSchemaBody(projected);
+  projectedJsonSchema.allOf = [
+    {
+      if: {
+        anyOf: [
+          { not: { required: ["activity"] } },
+          {
+            required: ["activity"],
+            properties: {
+              activity: {
+                required: ["mode"],
+                properties: { mode: { const: "new" } }
+              }
+            }
+          },
+          {
+            required: ["agent"],
+            properties: {
+              agent: {
+                required: ["mode"],
+                properties: { mode: { const: "new" } }
+              }
+            }
+          },
+          {
+            required: ["agent"],
+            properties: {
+              agent: {
+                required: ["mode", "context"],
+                properties: {
+                  mode: { const: "existing" },
+                  context: { const: "fresh" }
+                }
+              }
+            }
+          }
+        ]
+      },
+      then: { required: ["projectId"] }
+    }
+  ];
   // Runtime parsing stays broader only where current policy/catalog/project
   // state is the execution authority and can change between tool listings.
   const runtime = z.strictObject({
@@ -7804,7 +7855,7 @@ function codexTaskInputSchema(
     sandbox: sandboxSchema(config).optional(),
     selection: modelChoiceZod().optional()
   });
-  return withJsonSchemaProjection(runtime, projected) as z.ZodType<CodexTaskArgs>;
+  return withJsonSchemaProjection(runtime, projectedJsonSchema) as z.ZodType<CodexTaskArgs>;
 }
 
 function projectedProjectIdZod(
@@ -7812,7 +7863,6 @@ function projectedProjectIdZod(
   settings: BridgeUserSettings
 ): z.ZodType<string | undefined> {
   const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
-    defaultProjectId: settings.defaultProjectId,
     retainUnavailable: true
   }).selectableProjects;
   const projected = selectable.length === 0
@@ -7830,7 +7880,7 @@ function projectedProjectIdZod(
   return withJsonSchemaProjection(z.string(), projected)
     .optional()
     .describe(
-      "Stable ID of a Settings-registered project. Use it for a new Activity or fresh context; existing Activity/thread contexts retain their pinned project. If no project choice is exposed, call codex_settings so the user can register one. Never provide or infer a local path."
+      "Stable ID of a Settings-registered project. It is mandatory for every new Activity and fresh Agent context. Omit it only when an existing Activity/thread continues or forks its pinned project. If no project choice is exposed, call codex_settings so the user can register one. Never provide or infer a local path."
     );
 }
 
@@ -7839,7 +7889,6 @@ function projectProjectionFingerprint(
   settings: BridgeUserSettings
 ): string {
   const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
-    defaultProjectId: settings.defaultProjectId,
     retainUnavailable: true
   }).selectableProjects.map(({ id, label }) => ({ id, label }));
   // Hash only GPT-facing identity data. Canonical folders and unavailable
@@ -8389,24 +8438,6 @@ function publicUserSettings(
     ...settings,
     projects: settings.projects.map(({ id, label }) => ({ id, label }))
   });
-}
-
-function resolveTaskCwd(
-  config: BridgeConfig,
-  preferences: BridgeUserSettings
-): string {
-  if (!preferences.defaultCwd) {
-    throw new Error(
-      `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting a new Activity or fresh Agent context.`
-    );
-  }
-  try {
-    return requireAllowedCwd(preferences.defaultCwd, config.allowedRoots);
-  } catch {
-    throw new Error(
-      "PROJECT_UNAVAILABLE: The saved default project folder is unavailable. Update it in Codex settings before starting new work."
-    );
-  }
 }
 
 function resolveTaskSandbox(

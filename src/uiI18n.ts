@@ -73,8 +73,6 @@ const ENGLISH = {
   "settings.selectionRequired": "Choose an exact model and reasoning effort.",
   "settings.explicitRequired": "Select at least one allowed exact selection.",
   "settings.modelEffortRequired": "Choose at least one reasoning effort for {model}.",
-  "settings.cwd": "Default working folder",
-  "settings.cwdHint": "Only allowed working roots can be saved:",
   "settings.projects": "Projects",
   "settings.projectsHint": "Register the folders where Codex may start work. You can add multiple unrelated locations on this PC; internal routing IDs are managed automatically.",
   "settings.allowedRoots": "Bridge-allowed roots",
@@ -84,9 +82,6 @@ const ENGLISH = {
   "settings.noProjects": "Register a project first. Codex needs a folder where it can start work, and you may add multiple folders from different locations on this PC.",
   "settings.projectLabel": "Project name",
   "settings.projectCwd": "Absolute folder",
-  "settings.defaultProject": "Default project",
-  "settings.defaultProjectHint": "The first project becomes the default automatically. With multiple projects, GPT may select another registered project when appropriate.",
-  "settings.defaultProjectNone": "No default project",
   "settings.projectAvailable": "Available",
   "settings.projectUnavailable": "Needs recovery",
   "settings.projectNew": "New",
@@ -94,7 +89,6 @@ const ENGLISH = {
   "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project name.",
   "settings.projectInvalidCwd": "Enter an existing absolute folder path.",
   "settings.projectDuplicatePath": "Each project must use a different canonical folder.",
-  "settings.projectDefaultMissing": "Choose a default that still exists in the project list, or choose no default.",
   "settings.projectUnavailableSave": "Fix or remove every project that needs recovery before saving.",
   "settings.projectLimit": "At most 100 projects can be registered.",
   "settings.projectError": "Review the Projects section and correct the highlighted values.",
@@ -114,7 +108,7 @@ const ENGLISH = {
   "settings.save": "Save settings",
   "settings.refreshModels": "Retry model lookup",
   "settings.reset": "Restore general defaults",
-  "settings.resetHint": "Restores access, model, interface, concurrency, and Activity settings. Projects, their order, and the default project are kept.",
+  "settings.resetHint": "Restores access, model, interface, concurrency, and Activity settings. Projects and their order are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.refreshing": "Retrying model lookup…",
@@ -217,36 +211,36 @@ const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationB
     "settings.language": "인터페이스 언어", "settings.language.auto": "자동", "settings.languageHint": "자동은 호스트 앱의 언어를 따릅니다.",
     "common.loading": "불러오는 중…", "common.refresh": "새로고침", "common.cancel": "취소", "common.confirm": "확인", "common.error": "요청에 실패했습니다.",
     "settings.title": "Codex Bridge 설정", "settings.scope": "이 브리지 연결을 사용하는 모든 대화에 공유됩니다.", "settings.access": "접근 전략", "settings.access.readOnly": "항상 읽기 전용", "settings.access.adaptive": "GPT가 작업별 판단", "settings.access.full": "항상 전체 접근", "settings.access.readOnlyHint": "모든 새 작업을 읽기 전용으로 고정합니다.", "settings.access.adaptiveHint": "GPT가 허용된 범위 안에서 읽기 전용·작업공간 쓰기·전체 접근을 판단합니다.", "settings.access.fullHint": "모든 새 작업을 danger-full-access로 고정합니다.", "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다.",
-    "settings.modelPolicy": "실행 모델 정책", "settings.modelPolicy.fixed": "고정", "settings.modelPolicy.automatic": "자동 선택", "settings.allowDelegation": "Ultra 추론과 하위 에이전트 위임 허용", "settings.model": "모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "활성 백엔드 카탈로그의 정확한 식별자입니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "추론 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.serviceTier": "서비스 티어", "settings.serviceTier.default": "백엔드 기본 티어", "settings.fixedNotice": "저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.", "settings.allowedScope": "허용 범위", "settings.allowedScope.catalog": "카탈로그에 보이는 전체 selection", "settings.allowedScope.explicit": "명시적 exact selection", "settings.allowedExactSelections": "허용할 정확한 모델 / 추론 에포트 / 서비스 티어 조합", "settings.preferredSelection": "선호 selection", "settings.preferred.none": "검증된 백엔드 기본값", "settings.automaticNotice": "GPT는 허용 범위의 정확한 model과 reasoningEffort 조합만 전달할 수 있습니다. 표시 이름을 별칭으로 저장하지 않으며, 카탈로그 전체 모드는 새 selection을 자동 반영합니다.", "settings.selectionRequired": "정확한 모델과 추론 에포트를 선택하세요.", "settings.explicitRequired": "허용할 exact selection을 하나 이상 선택하세요.", "settings.cwd": "기본 작업 폴더", "settings.cwdHint": "허용된 작업 루트만 저장할 수 있습니다:", "settings.concurrency": "최대 동시 작업 수", "settings.cardVisibility": "Activity 카드", "settings.cardVisibility.always": "항상 표시", "settings.cardVisibility.background": "백그라운드 작업만 표시", "settings.cardVisibility.never": "자동으로 표시하지 않음", "settings.handoff": "완료 인계", "settings.handoff.off": "사용 안 함", "settings.handoff.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.handoffRequiresCard": "GPT 자동 인계에는 표시되는 Activity 카드가 필요합니다.", "settings.conflict": "다른 곳에서 설정이 변경되었습니다. 최신 값을 불러왔으니 확인한 뒤 다시 저장하세요.", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "기본 설정으로 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "기본 설정으로 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 브리지 보안 정책은 여기서 변경할 수 없습니다.", "settings.appServerExperimental": "MCP Server 백엔드가 안정 기본값입니다. App Server는 experimental이며 production 지원 대상이 아닙니다. App Server를 활성화했다면 개인·개발 환경에서만 사용하고, 장애를 모니터링하며 문제가 생기면 백엔드 설정을 MCP Server로 되돌린 뒤 브리지를 재시작하세요.",
+    "settings.modelPolicy": "실행 모델 정책", "settings.modelPolicy.fixed": "고정", "settings.modelPolicy.automatic": "자동 선택", "settings.allowDelegation": "Ultra 추론과 하위 에이전트 위임 허용", "settings.model": "모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "활성 백엔드 카탈로그의 정확한 식별자입니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "추론 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.serviceTier": "서비스 티어", "settings.serviceTier.default": "백엔드 기본 티어", "settings.fixedNotice": "저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.", "settings.allowedScope": "허용 범위", "settings.allowedScope.catalog": "카탈로그에 보이는 전체 selection", "settings.allowedScope.explicit": "명시적 exact selection", "settings.allowedExactSelections": "허용할 정확한 모델 / 추론 에포트 / 서비스 티어 조합", "settings.preferredSelection": "선호 selection", "settings.preferred.none": "검증된 백엔드 기본값", "settings.automaticNotice": "GPT는 허용 범위의 정확한 model과 reasoningEffort 조합만 전달할 수 있습니다. 표시 이름을 별칭으로 저장하지 않으며, 카탈로그 전체 모드는 새 selection을 자동 반영합니다.", "settings.selectionRequired": "정확한 모델과 추론 에포트를 선택하세요.", "settings.explicitRequired": "허용할 exact selection을 하나 이상 선택하세요.", "settings.concurrency": "최대 동시 작업 수", "settings.cardVisibility": "Activity 카드", "settings.cardVisibility.always": "항상 표시", "settings.cardVisibility.background": "백그라운드 작업만 표시", "settings.cardVisibility.never": "자동으로 표시하지 않음", "settings.handoff": "완료 인계", "settings.handoff.off": "사용 안 함", "settings.handoff.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.handoffRequiresCard": "GPT 자동 인계에는 표시되는 Activity 카드가 필요합니다.", "settings.conflict": "다른 곳에서 설정이 변경되었습니다. 최신 값을 불러왔으니 확인한 뒤 다시 저장하세요.", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "기본 설정으로 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "기본 설정으로 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 브리지 보안 정책은 여기서 변경할 수 없습니다.", "settings.appServerExperimental": "MCP Server 백엔드가 안정 기본값입니다. App Server는 experimental이며 production 지원 대상이 아닙니다. App Server를 활성화했다면 개인·개발 환경에서만 사용하고, 장애를 모니터링하며 문제가 생기면 백엔드 설정을 MCP Server로 되돌린 뒤 브리지를 재시작하세요.",
     "activity.title": "Codex 활동", "activity.running": "진행 중", "activity.attention": "확인 필요", "activity.verification": "검증 대기", "activity.failed": "실패", "activity.empty": "이 대화에는 아직 Activity가 없습니다.", "activity.forceStop": "강제 종료…", "activity.forceConfirmTitle": "Codex를 강제 종료할까요?", "activity.forceConfirm": "추적 중인 정확한 worker process group에 TERM을 보내고 필요하면 KILL로 자동 승격합니다. 같은 worker의 작업이 함께 중단될 수 있고 파일 변경은 되돌리지 않습니다.", "activity.forceStopping": "강제 종료 중…", "activity.forceStopped": "worker 종료를 확인했습니다.", "activity.viewDetails": "상세 보기", "activity.hideDetails": "상세 닫기", "activity.updated": "업데이트", "activity.noSignal": "최근 진행 신호가 없습니다. 프로세스 생존 여부는 알 수 없습니다.", "activity.terminating": "worker 프로세스 종료를 확인 중…", "activity.terminationFailed": "worker 종료를 확인하지 못했습니다.", "activity.unread": "읽지 않은 완료", "activity.manualRefresh": "실시간 갱신을 멈췄습니다. 직접 새로고침하세요.", "activity.partialChanges": "강제 종료는 디스크에 이미 기록된 변경을 되돌리지 않습니다.", "activity.jobs": "작업", "activity.threads": "스레드", "activity.events": "최근 활동", "activity.noEvents": "아직 공개된 진행 이벤트가 없습니다.", "activity.approval": "Codex가 승인을 요청했습니다", "activity.approve": "승인", "activity.approveSession": "세션 동안 승인", "activity.decline": "거부", "activity.answer": "답변 보내기", "activity.steer": "진행 중인 turn에 지시 추가", "activity.steerPlaceholder": "이 Codex turn에 추가할 지시…", "activity.orphaned": "브리지가 재시작되어 기존 실행을 더 이상 추적할 수 없습니다.", "activity.workerLost": "추적하던 worker 프로세스가 종료되었습니다.", "activity.inputRequired": "입력 필요"
   },
   ja: {
     "settings.language": "インターフェース言語", "settings.language.auto": "自動", "settings.languageHint": "自動ではホストアプリの言語に従います。",
-    "common.loading": "読み込み中…", "common.refresh": "更新", "common.cancel": "キャンセル", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "このブリッジ接続を使うすべての会話で共有されます。", "settings.access": "アクセス方式", "settings.model": "既定モデル", "settings.effort": "既定エフォート", "settings.cwd": "既定の作業フォルダー", "settings.concurrency": "最大同時ジョブ数", "settings.save": "設定を保存", "settings.refreshModels": "モデル一覧を更新", "settings.reset": "既定の設定に戻す", "activity.title": "Codex アクティビティ", "activity.running": "実行中", "activity.attention": "要確認", "activity.verification": "検証待ち", "activity.failed": "失敗", "activity.empty": "この会話にはまだアクティビティがありません。", "activity.forceStop": "強制終了…", "activity.forceConfirmTitle": "Codex を強制終了しますか？", "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。", "activity.forceStopping": "強制終了中…", "activity.viewDetails": "詳細を表示", "activity.hideDetails": "詳細を閉じる"
+    "common.loading": "読み込み中…", "common.refresh": "更新", "common.cancel": "キャンセル", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "このブリッジ接続を使うすべての会話で共有されます。", "settings.access": "アクセス方式", "settings.model": "既定モデル", "settings.effort": "既定エフォート", "settings.concurrency": "最大同時ジョブ数", "settings.save": "設定を保存", "settings.refreshModels": "モデル一覧を更新", "settings.reset": "既定の設定に戻す", "activity.title": "Codex アクティビティ", "activity.running": "実行中", "activity.attention": "要確認", "activity.verification": "検証待ち", "activity.failed": "失敗", "activity.empty": "この会話にはまだアクティビティがありません。", "activity.forceStop": "強制終了…", "activity.forceConfirmTitle": "Codex を強制終了しますか？", "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。", "activity.forceStopping": "強制終了中…", "activity.viewDetails": "詳細を表示", "activity.hideDetails": "詳細を閉じる"
   },
   "zh-Hans": {
     "settings.language": "界面语言", "settings.language.auto": "自动", "settings.languageHint": "自动模式跟随宿主应用的语言。",
-    "common.loading": "正在加载…", "common.refresh": "刷新", "common.cancel": "取消", "common.confirm": "确认", "settings.title": "Codex Bridge 设置", "settings.scope": "由使用此桥接连接的所有对话共享。", "settings.access": "访问策略", "settings.model": "默认模型", "settings.effort": "默认推理强度", "settings.cwd": "默认工作文件夹", "settings.concurrency": "最大并发任务数", "settings.save": "保存设置", "settings.refreshModels": "刷新模型列表", "settings.reset": "恢复默认设置", "activity.title": "Codex 活动", "activity.running": "运行中", "activity.attention": "需要处理", "activity.verification": "等待验证", "activity.failed": "失败", "activity.empty": "此对话中还没有活动。", "activity.forceStop": "强制停止…", "activity.forceConfirmTitle": "强制停止 Codex？", "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。", "activity.forceStopping": "正在强制停止…", "activity.viewDetails": "查看详情", "activity.hideDetails": "收起详情"
+    "common.loading": "正在加载…", "common.refresh": "刷新", "common.cancel": "取消", "common.confirm": "确认", "settings.title": "Codex Bridge 设置", "settings.scope": "由使用此桥接连接的所有对话共享。", "settings.access": "访问策略", "settings.model": "默认模型", "settings.effort": "默认推理强度", "settings.concurrency": "最大并发任务数", "settings.save": "保存设置", "settings.refreshModels": "刷新模型列表", "settings.reset": "恢复默认设置", "activity.title": "Codex 活动", "activity.running": "运行中", "activity.attention": "需要处理", "activity.verification": "等待验证", "activity.failed": "失败", "activity.empty": "此对话中还没有活动。", "activity.forceStop": "强制停止…", "activity.forceConfirmTitle": "强制停止 Codex？", "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。", "activity.forceStopping": "正在强制停止…", "activity.viewDetails": "查看详情", "activity.hideDetails": "收起详情"
   },
   "zh-Hant": {
     "settings.language": "介面語言", "settings.language.auto": "自動", "settings.languageHint": "自動模式會跟隨主控應用程式的語言。",
-    "common.loading": "載入中…", "common.refresh": "重新整理", "common.cancel": "取消", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "由使用此橋接連線的所有對話共用。", "settings.access": "存取策略", "settings.model": "預設模型", "settings.effort": "預設推理強度", "settings.cwd": "預設工作資料夾", "settings.concurrency": "最大並行工作數", "settings.save": "儲存設定", "settings.refreshModels": "重新整理模型清單", "settings.reset": "還原預設設定", "activity.title": "Codex 活動", "activity.running": "執行中", "activity.attention": "需要處理", "activity.verification": "等待驗證", "activity.failed": "失敗", "activity.empty": "此對話中尚無活動。", "activity.forceStop": "強制停止…", "activity.forceConfirmTitle": "強制停止 Codex？", "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。", "activity.forceStopping": "正在強制停止…", "activity.viewDetails": "檢視詳細資料", "activity.hideDetails": "隱藏詳細資料"
+    "common.loading": "載入中…", "common.refresh": "重新整理", "common.cancel": "取消", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "由使用此橋接連線的所有對話共用。", "settings.access": "存取策略", "settings.model": "預設模型", "settings.effort": "預設推理強度", "settings.concurrency": "最大並行工作數", "settings.save": "儲存設定", "settings.refreshModels": "重新整理模型清單", "settings.reset": "還原預設設定", "activity.title": "Codex 活動", "activity.running": "執行中", "activity.attention": "需要處理", "activity.verification": "等待驗證", "activity.failed": "失敗", "activity.empty": "此對話中尚無活動。", "activity.forceStop": "強制停止…", "activity.forceConfirmTitle": "強制停止 Codex？", "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。", "activity.forceStopping": "正在強制停止…", "activity.viewDetails": "檢視詳細資料", "activity.hideDetails": "隱藏詳細資料"
   },
   es: {
     "settings.language": "Idioma de la interfaz", "settings.language.auto": "Automático", "settings.languageHint": "El modo automático sigue el idioma de la aplicación anfitriona.",
-    "common.loading": "Cargando…", "common.refresh": "Actualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configuración de Codex Bridge", "settings.scope": "Compartida por todas las conversaciones que usan este puente.", "settings.access": "Estrategia de acceso", "settings.model": "Modelo predeterminado", "settings.effort": "Esfuerzo predeterminado", "settings.cwd": "Carpeta de trabajo predeterminada", "settings.concurrency": "Máximo de trabajos simultáneos", "settings.save": "Guardar configuración", "settings.refreshModels": "Actualizar modelos", "settings.reset": "Restaurar configuración predeterminada", "activity.title": "Actividades de Codex", "activity.running": "En curso", "activity.attention": "Requiere atención", "activity.verification": "Listo para verificar", "activity.failed": "Falló", "activity.empty": "Aún no hay actividades en esta conversación.", "activity.forceStop": "Forzar detención…", "activity.forceConfirmTitle": "¿Forzar la detención de Codex?", "activity.forceStopping": "Deteniendo…", "activity.viewDetails": "Ver detalles", "activity.hideDetails": "Ocultar detalles"
+    "common.loading": "Cargando…", "common.refresh": "Actualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configuración de Codex Bridge", "settings.scope": "Compartida por todas las conversaciones que usan este puente.", "settings.access": "Estrategia de acceso", "settings.model": "Modelo predeterminado", "settings.effort": "Esfuerzo predeterminado", "settings.concurrency": "Máximo de trabajos simultáneos", "settings.save": "Guardar configuración", "settings.refreshModels": "Actualizar modelos", "settings.reset": "Restaurar configuración predeterminada", "activity.title": "Actividades de Codex", "activity.running": "En curso", "activity.attention": "Requiere atención", "activity.verification": "Listo para verificar", "activity.failed": "Falló", "activity.empty": "Aún no hay actividades en esta conversación.", "activity.forceStop": "Forzar detención…", "activity.forceConfirmTitle": "¿Forzar la detención de Codex?", "activity.forceStopping": "Deteniendo…", "activity.viewDetails": "Ver detalles", "activity.hideDetails": "Ocultar detalles"
   },
   fr: {
     "settings.language": "Langue de l’interface", "settings.language.auto": "Automatique", "settings.languageHint": "Le mode automatique suit la langue de l’application hôte.",
-    "common.loading": "Chargement…", "common.refresh": "Actualiser", "common.cancel": "Annuler", "common.confirm": "Confirmer", "settings.title": "Paramètres de Codex Bridge", "settings.scope": "Partagés par toutes les conversations utilisant ce pont.", "settings.access": "Stratégie d’accès", "settings.model": "Modèle par défaut", "settings.effort": "Effort par défaut", "settings.cwd": "Dossier de travail par défaut", "settings.concurrency": "Nombre maximal de tâches simultanées", "settings.save": "Enregistrer", "settings.refreshModels": "Actualiser les modèles", "settings.reset": "Rétablir les paramètres par défaut", "activity.title": "Activités Codex", "activity.running": "En cours", "activity.attention": "Attention requise", "activity.verification": "Prêt à vérifier", "activity.failed": "Échec", "activity.empty": "Aucune activité dans cette conversation.", "activity.forceStop": "Forcer l’arrêt…", "activity.forceConfirmTitle": "Forcer l’arrêt de Codex ?", "activity.forceStopping": "Arrêt forcé…", "activity.viewDetails": "Voir les détails", "activity.hideDetails": "Masquer les détails"
+    "common.loading": "Chargement…", "common.refresh": "Actualiser", "common.cancel": "Annuler", "common.confirm": "Confirmer", "settings.title": "Paramètres de Codex Bridge", "settings.scope": "Partagés par toutes les conversations utilisant ce pont.", "settings.access": "Stratégie d’accès", "settings.model": "Modèle par défaut", "settings.effort": "Effort par défaut", "settings.concurrency": "Nombre maximal de tâches simultanées", "settings.save": "Enregistrer", "settings.refreshModels": "Actualiser les modèles", "settings.reset": "Rétablir les paramètres par défaut", "activity.title": "Activités Codex", "activity.running": "En cours", "activity.attention": "Attention requise", "activity.verification": "Prêt à vérifier", "activity.failed": "Échec", "activity.empty": "Aucune activité dans cette conversation.", "activity.forceStop": "Forcer l’arrêt…", "activity.forceConfirmTitle": "Forcer l’arrêt de Codex ?", "activity.forceStopping": "Arrêt forcé…", "activity.viewDetails": "Voir les détails", "activity.hideDetails": "Masquer les détails"
   },
   de: {
     "settings.language": "Oberflächensprache", "settings.language.auto": "Automatisch", "settings.languageHint": "Automatisch folgt der Sprache der Host-Anwendung.",
-    "common.loading": "Wird geladen…", "common.refresh": "Aktualisieren", "common.cancel": "Abbrechen", "common.confirm": "Bestätigen", "settings.title": "Codex-Bridge-Einstellungen", "settings.scope": "Für alle Unterhaltungen mit dieser Bridge-Verbindung gemeinsam.", "settings.access": "Zugriffsstrategie", "settings.model": "Standardmodell", "settings.effort": "Standardaufwand", "settings.cwd": "Standard-Arbeitsordner", "settings.concurrency": "Maximale parallele Jobs", "settings.save": "Einstellungen speichern", "settings.refreshModels": "Modellliste aktualisieren", "settings.reset": "Standardeinstellungen wiederherstellen", "activity.title": "Codex-Aktivitäten", "activity.running": "Läuft", "activity.attention": "Aufmerksamkeit erforderlich", "activity.verification": "Bereit zur Prüfung", "activity.failed": "Fehlgeschlagen", "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.", "activity.forceStop": "Stopp erzwingen…", "activity.forceConfirmTitle": "Codex zwangsweise stoppen?", "activity.forceStopping": "Stopp wird erzwungen…", "activity.viewDetails": "Details anzeigen", "activity.hideDetails": "Details ausblenden"
+    "common.loading": "Wird geladen…", "common.refresh": "Aktualisieren", "common.cancel": "Abbrechen", "common.confirm": "Bestätigen", "settings.title": "Codex-Bridge-Einstellungen", "settings.scope": "Für alle Unterhaltungen mit dieser Bridge-Verbindung gemeinsam.", "settings.access": "Zugriffsstrategie", "settings.model": "Standardmodell", "settings.effort": "Standardaufwand", "settings.concurrency": "Maximale parallele Jobs", "settings.save": "Einstellungen speichern", "settings.refreshModels": "Modellliste aktualisieren", "settings.reset": "Standardeinstellungen wiederherstellen", "activity.title": "Codex-Aktivitäten", "activity.running": "Läuft", "activity.attention": "Aufmerksamkeit erforderlich", "activity.verification": "Bereit zur Prüfung", "activity.failed": "Fehlgeschlagen", "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.", "activity.forceStop": "Stopp erzwingen…", "activity.forceConfirmTitle": "Codex zwangsweise stoppen?", "activity.forceStopping": "Stopp wird erzwungen…", "activity.viewDetails": "Details anzeigen", "activity.hideDetails": "Details ausblenden"
   },
   pt: {
     "settings.language": "Idioma da interface", "settings.language.auto": "Automático", "settings.languageHint": "O modo automático segue o idioma do aplicativo host.",
-    "common.loading": "Carregando…", "common.refresh": "Atualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configurações do Codex Bridge", "settings.scope": "Compartilhadas por todas as conversas que usam esta ponte.", "settings.access": "Estratégia de acesso", "settings.model": "Modelo padrão", "settings.effort": "Esforço padrão", "settings.cwd": "Pasta de trabalho padrão", "settings.concurrency": "Máximo de trabalhos simultâneos", "settings.save": "Salvar configurações", "settings.refreshModels": "Atualizar modelos", "settings.reset": "Restaurar configurações padrão", "activity.title": "Atividades do Codex", "activity.running": "Em execução", "activity.attention": "Requer atenção", "activity.verification": "Pronto para verificar", "activity.failed": "Falhou", "activity.empty": "Ainda não há atividades nesta conversa.", "activity.forceStop": "Forçar parada…", "activity.forceConfirmTitle": "Forçar a parada do Codex?", "activity.forceStopping": "Forçando parada…", "activity.viewDetails": "Ver detalhes", "activity.hideDetails": "Ocultar detalhes"
+    "common.loading": "Carregando…", "common.refresh": "Atualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configurações do Codex Bridge", "settings.scope": "Compartilhadas por todas as conversas que usam esta ponte.", "settings.access": "Estratégia de acesso", "settings.model": "Modelo padrão", "settings.effort": "Esforço padrão", "settings.concurrency": "Máximo de trabalhos simultâneos", "settings.save": "Salvar configurações", "settings.refreshModels": "Atualizar modelos", "settings.reset": "Restaurar configurações padrão", "activity.title": "Atividades do Codex", "activity.running": "Em execução", "activity.attention": "Requer atenção", "activity.verification": "Pronto para verificar", "activity.failed": "Falhou", "activity.empty": "Ainda não há atividades nesta conversa.", "activity.forceStop": "Forçar parada…", "activity.forceConfirmTitle": "Forçar a parada do Codex?", "activity.forceStopping": "Forçando parada…", "activity.viewDetails": "Ver detalhes", "activity.hideDetails": "Ocultar detalhes"
   }
 };
 
@@ -297,7 +291,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "保存済み",
     "settings.effortDefault": "モデルの既定エフォート",
     "settings.effortHint": "選択したモデルが対応する値だけを表示します。",
-    "settings.cwdHint": "許可されたルートだけを保存できます:",
 
 
     "settings.cardVisibility": "Activity カード",
@@ -354,7 +347,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "当前已保存",
     "settings.effortDefault": "模型默认推理强度",
     "settings.effortHint": "仅显示所选模型支持的值。",
-    "settings.cwdHint": "只能保存允许的根目录：",
 
 
     "settings.cardVisibility": "Activity 卡片",
@@ -411,7 +403,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "目前已儲存",
     "settings.effortDefault": "模型預設推理強度",
     "settings.effortHint": "只顯示所選模型支援的值。",
-    "settings.cwdHint": "只能儲存允許的根目錄：",
 
 
     "settings.cardVisibility": "Activity 卡片",
@@ -468,7 +459,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "guardado actualmente",
     "settings.effortDefault": "Esfuerzo predeterminado del modelo",
     "settings.effortHint": "Solo se muestran valores compatibles con el modelo seleccionado.",
-    "settings.cwdHint": "Solo pueden guardarse raíces permitidas:",
 
 
     "settings.cardVisibility": "Tarjeta de Activity",
@@ -526,7 +516,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "actuellement enregistré",
     "settings.effortDefault": "Effort par défaut du modèle",
     "settings.effortHint": "Seules les valeurs prises en charge par le modèle sélectionné sont affichées.",
-    "settings.cwdHint": "Seules les racines autorisées peuvent être enregistrées :",
 
 
     "settings.cardVisibility": "Carte Activity",
@@ -584,7 +573,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "derzeit gespeichert",
     "settings.effortDefault": "Standardaufwand des Modells",
     "settings.effortHint": "Es werden nur vom gewählten Modell unterstützte Werte angezeigt.",
-    "settings.cwdHint": "Nur zulässige Wurzeln können gespeichert werden:",
 
 
     "settings.cardVisibility": "Activity-Karte",
@@ -642,7 +630,6 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.savedModel": "salvo atualmente",
     "settings.effortDefault": "Esforço padrão do modelo",
     "settings.effortHint": "Somente valores compatíveis com o modelo selecionado são exibidos.",
-    "settings.cwdHint": "Somente raízes permitidas podem ser salvas:",
 
 
     "settings.cardVisibility": "Cartão de Activity",
@@ -1156,9 +1143,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.noProjects": "먼저 프로젝트를 등록하세요. Codex가 작업을 시작할 폴더가 필요합니다. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있습니다.",
     "settings.projectLabel": "프로젝트 이름",
     "settings.projectCwd": "절대 폴더 경로",
-    "settings.defaultProject": "기본 프로젝트",
-    "settings.defaultProjectHint": "첫 프로젝트는 자동으로 기본 프로젝트가 됩니다. 여러 개라면 상황에 맞는 다른 등록 프로젝트를 GPT가 선택할 수 있습니다.",
-    "settings.defaultProjectNone": "기본 프로젝트 없음",
     "settings.projectAvailable": "사용 가능",
     "settings.projectUnavailable": "복구 필요",
     "settings.projectNew": "새 항목",
@@ -1166,12 +1150,11 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "프로젝트 이름을 출력 가능한 Unicode 1~120자로 입력하세요.",
     "settings.projectInvalidCwd": "현재 존재하는 절대 폴더 경로를 입력하세요.",
     "settings.projectDuplicatePath": "각 프로젝트는 서로 다른 canonical 폴더를 사용해야 합니다.",
-    "settings.projectDefaultMissing": "프로젝트 목록에 남아 있는 기본값을 선택하거나 기본값 없음을 선택하세요.",
     "settings.projectUnavailableSave": "저장하기 전에 복구가 필요한 모든 프로젝트를 수정하거나 제거하세요.",
     "settings.projectLimit": "프로젝트는 최대 100개까지 등록할 수 있습니다.",
     "settings.projectError": "프로젝트 섹션의 강조된 값을 확인하고 수정하세요.",
     "settings.reset": "일반 설정 기본값 복원",
-    "settings.resetHint": "접근, 모델, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트·순서·기본 프로젝트는 유지됩니다.",
+    "settings.resetHint": "접근, 모델, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트와 순서는 유지됩니다.",
     "settings.resetDone": "일반 설정을 기본값으로 복원했습니다. 프로젝트는 유지되었습니다."
   },
   ja: {
@@ -1180,12 +1163,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "ブリッジで許可されたルート",
     "settings.allowedRootsHint": "プロジェクトの実体パスは、このセキュリティ上限のいずれかに含まれる必要があります。登録しても範囲は広がりません。",
     "settings.addProject": "プロジェクトを追加",
-    "settings.noProjects": "登録済みプロジェクトはありません。互換用の既定値がない場合は、新しい作業の前に追加してください。",
+    "settings.noProjects": "登録済みプロジェクトはありません。新しい作業を始める前に追加してください。",
     "settings.projectLabel": "プロジェクト名",
     "settings.projectCwd": "絶対フォルダー",
-    "settings.defaultProject": "任意の既定プロジェクト",
-    "settings.defaultProjectHint": "複数プロジェクト用の互換既定値です。プロジェクト対応ルーティングの有効化後、未指定なら明示的な選択が必要です。",
-    "settings.defaultProjectNone": "既定プロジェクトなし",
     "settings.projectAvailable": "利用可能",
     "settings.projectUnavailable": "復旧が必要",
     "settings.projectNew": "新規",
@@ -1193,7 +1173,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "表示名を印刷可能な Unicode 1～120 文字で入力してください。",
     "settings.projectInvalidCwd": "許可されたルート内に存在する絶対フォルダーを入力してください。",
     "settings.projectDuplicatePath": "各プロジェクトには異なる正規フォルダーが必要です。",
-    "settings.projectDefaultMissing": "一覧に残っている既定値を選ぶか、既定なしを選択してください。",
     "settings.projectUnavailableSave": "保存する前に、復旧が必要なプロジェクトをすべて修正または削除してください。",
     "settings.projectLimit": "登録できるプロジェクトは最大 100 件です。",
     "settings.projectError": "プロジェクト欄の強調表示された値を確認して修正してください。"
@@ -1204,12 +1183,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "桥接允许的根目录",
     "settings.allowedRootsHint": "项目的真实路径必须位于这些安全上限之一。注册项目不会扩大范围。",
     "settings.addProject": "添加项目",
-    "settings.noProjects": "尚未注册项目。如果没有兼容默认值，请在开始新工作前添加一个。",
+    "settings.noProjects": "尚未注册项目。请在开始新工作前添加一个。",
     "settings.projectLabel": "项目名称",
     "settings.projectCwd": "绝对文件夹",
-    "settings.defaultProject": "可选默认项目",
-    "settings.defaultProjectHint": "多个项目时使用的兼容默认值。启用项目感知路由后，留空将要求明确选择项目。",
-    "settings.defaultProjectNone": "无默认项目",
     "settings.projectAvailable": "可用",
     "settings.projectUnavailable": "需要恢复",
     "settings.projectNew": "新建",
@@ -1217,7 +1193,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "请输入 1–120 个可打印 Unicode 字符作为项目名称。",
     "settings.projectInvalidCwd": "请输入桥接允许根目录内现有文件夹的绝对路径。",
     "settings.projectDuplicatePath": "每个项目必须使用不同的规范文件夹。",
-    "settings.projectDefaultMissing": "请选择列表中仍存在的默认项目，或选择无默认项目。",
     "settings.projectUnavailableSave": "保存前请修复或移除所有需要恢复的项目。",
     "settings.projectLimit": "最多可注册 100 个项目。",
     "settings.projectError": "请检查并修正“项目”部分中突出显示的值。"
@@ -1228,12 +1203,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "橋接允許的根目錄",
     "settings.allowedRootsHint": "專案的實際路徑必須位於這些安全上限之一。登錄專案不會擴大範圍。",
     "settings.addProject": "新增專案",
-    "settings.noProjects": "尚未登錄專案。如果沒有相容預設值，請在開始新工作前新增一個。",
+    "settings.noProjects": "尚未登錄專案。請在開始新工作前新增一個。",
     "settings.projectLabel": "專案名稱",
     "settings.projectCwd": "絕對資料夾",
-    "settings.defaultProject": "選用預設專案",
-    "settings.defaultProjectHint": "多個專案時使用的相容預設值。啟用專案感知路由後，留空將需要明確選擇專案。",
-    "settings.defaultProjectNone": "無預設專案",
     "settings.projectAvailable": "可用",
     "settings.projectUnavailable": "需要復原",
     "settings.projectNew": "新增",
@@ -1241,7 +1213,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "請輸入 1–120 個可列印 Unicode 字元作為專案名稱。",
     "settings.projectInvalidCwd": "請輸入橋接允許根目錄內現有資料夾的絕對路徑。",
     "settings.projectDuplicatePath": "每個專案必須使用不同的正規資料夾。",
-    "settings.projectDefaultMissing": "請選擇清單中仍存在的預設專案，或選擇無預設專案。",
     "settings.projectUnavailableSave": "儲存前請修正或移除所有需要復原的專案。",
     "settings.projectLimit": "最多可登錄 100 個專案。",
     "settings.projectError": "請檢查並修正「專案」區段中突顯的值。"
@@ -1252,12 +1223,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "Raíces permitidas por el puente",
     "settings.allowedRootsHint": "La ruta real de cada proyecto debe estar dentro de uno de estos límites de seguridad. Registrar un proyecto no los amplía.",
     "settings.addProject": "Añadir proyecto",
-    "settings.noProjects": "No hay proyectos registrados. Añade uno antes de iniciar trabajo nuevo si no existe un valor predeterminado compatible.",
+    "settings.noProjects": "No hay proyectos registrados. Añade uno antes de iniciar trabajo nuevo.",
     "settings.projectLabel": "Nombre del proyecto",
     "settings.projectCwd": "Carpeta absoluta",
-    "settings.defaultProject": "Proyecto predeterminado opcional",
-    "settings.defaultProjectHint": "Valor compatible para varios proyectos. Cuando se active el enrutamiento por proyecto, dejarlo vacío exigirá una selección explícita.",
-    "settings.defaultProjectNone": "Sin proyecto predeterminado",
     "settings.projectAvailable": "Disponible",
     "settings.projectUnavailable": "Necesita recuperación",
     "settings.projectNew": "Nuevo",
@@ -1265,7 +1233,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "Introduce de 1 a 120 caracteres Unicode imprimibles para el nombre.",
     "settings.projectInvalidCwd": "Introduce una carpeta absoluta existente dentro de una raíz permitida.",
     "settings.projectDuplicatePath": "Cada proyecto debe usar una carpeta canónica distinta.",
-    "settings.projectDefaultMissing": "Elige un proyecto que siga en la lista o selecciona ninguno.",
     "settings.projectUnavailableSave": "Corrige o elimina todos los proyectos que necesitan recuperación antes de guardar.",
     "settings.projectLimit": "Se pueden registrar como máximo 100 proyectos.",
     "settings.projectError": "Revisa la sección Proyectos y corrige los valores resaltados."
@@ -1276,12 +1243,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "Racines autorisées par le pont",
     "settings.allowedRootsHint": "Le chemin réel de chaque projet doit rester dans l’une de ces limites de sécurité. Enregistrer un projet ne les élargit pas.",
     "settings.addProject": "Ajouter un projet",
-    "settings.noProjects": "Aucun projet enregistré. Ajoutez-en un avant un nouveau travail si aucune valeur compatible n’est disponible.",
+    "settings.noProjects": "Aucun projet enregistré. Ajoutez-en un avant de commencer un nouveau travail.",
     "settings.projectLabel": "Nom du projet",
     "settings.projectCwd": "Dossier absolu",
-    "settings.defaultProject": "Projet par défaut facultatif",
-    "settings.defaultProjectHint": "Valeur compatible pour plusieurs projets. Une fois le routage par projet activé, l’absence de valeur imposera un choix explicite.",
-    "settings.defaultProjectNone": "Aucun projet par défaut",
     "settings.projectAvailable": "Disponible",
     "settings.projectUnavailable": "Récupération requise",
     "settings.projectNew": "Nouveau",
@@ -1289,7 +1253,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "Saisissez 1 à 120 caractères Unicode imprimables pour le libellé.",
     "settings.projectInvalidCwd": "Saisissez un dossier absolu existant dans une racine autorisée.",
     "settings.projectDuplicatePath": "Chaque projet doit utiliser un dossier canonique différent.",
-    "settings.projectDefaultMissing": "Choisissez un projet encore présent dans la liste, ou aucun projet par défaut.",
     "settings.projectUnavailableSave": "Corrigez ou supprimez tous les projets à récupérer avant l’enregistrement.",
     "settings.projectLimit": "Au maximum 100 projets peuvent être enregistrés.",
     "settings.projectError": "Vérifiez la section Projets et corrigez les valeurs surlignées."
@@ -1300,12 +1263,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "Von der Bridge erlaubte Stammordner",
     "settings.allowedRootsHint": "Der reale Projektpfad muss innerhalb einer dieser Sicherheitsgrenzen liegen. Ein Projekt erweitert sie nicht.",
     "settings.addProject": "Projekt hinzufügen",
-    "settings.noProjects": "Keine Projekte registriert. Fügen Sie vor neuer Arbeit eines hinzu, wenn kein kompatibler Standard vorhanden ist.",
+    "settings.noProjects": "Keine Projekte registriert. Fügen Sie vor neuer Arbeit eines hinzu.",
     "settings.projectLabel": "Projektname",
     "settings.projectCwd": "Absoluter Ordner",
-    "settings.defaultProject": "Optionales Standardprojekt",
-    "settings.defaultProjectHint": "Kompatibler Standard bei mehreren Projekten. Nach Aktivierung des projektbezogenen Routings erfordert keine Auswahl ein explizites Projekt.",
-    "settings.defaultProjectNone": "Kein Standardprojekt",
     "settings.projectAvailable": "Verfügbar",
     "settings.projectUnavailable": "Wiederherstellung nötig",
     "settings.projectNew": "Neu",
@@ -1313,7 +1273,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "Geben Sie 1–120 druckbare Unicode-Zeichen als Anzeigename ein.",
     "settings.projectInvalidCwd": "Geben Sie einen vorhandenen absoluten Ordner innerhalb eines erlaubten Stammordners ein.",
     "settings.projectDuplicatePath": "Jedes Projekt muss einen anderen kanonischen Ordner verwenden.",
-    "settings.projectDefaultMissing": "Wählen Sie ein noch vorhandenes Projekt oder kein Standardprojekt.",
     "settings.projectUnavailableSave": "Korrigieren oder entfernen Sie vor dem Speichern alle wiederherzustellenden Projekte.",
     "settings.projectLimit": "Es können höchstens 100 Projekte registriert werden.",
     "settings.projectError": "Prüfen Sie den Bereich Projekte und korrigieren Sie die hervorgehobenen Werte."
@@ -1324,12 +1283,9 @@ const ISSUE22_OVERRIDES: Record<
     "settings.allowedRoots": "Raízes permitidas pela ponte",
     "settings.allowedRootsHint": "O caminho real de cada projeto deve ficar dentro de um destes limites de segurança. Registrar um projeto não os amplia.",
     "settings.addProject": "Adicionar projeto",
-    "settings.noProjects": "Nenhum projeto registrado. Adicione um antes de iniciar novo trabalho se não houver um padrão compatível.",
+    "settings.noProjects": "Nenhum projeto registrado. Adicione um antes de iniciar um novo trabalho.",
     "settings.projectLabel": "Nome do projeto",
     "settings.projectCwd": "Pasta absoluta",
-    "settings.defaultProject": "Projeto padrão opcional",
-    "settings.defaultProjectHint": "Padrão compatível para vários projetos. Quando o roteamento por projeto for ativado, deixar vazio exigirá uma seleção explícita.",
-    "settings.defaultProjectNone": "Sem projeto padrão",
     "settings.projectAvailable": "Disponível",
     "settings.projectUnavailable": "Precisa de recuperação",
     "settings.projectNew": "Novo",
@@ -1337,7 +1293,6 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectInvalidLabel": "Digite de 1 a 120 caracteres Unicode imprimíveis para o rótulo.",
     "settings.projectInvalidCwd": "Digite uma pasta absoluta existente dentro de uma raiz permitida.",
     "settings.projectDuplicatePath": "Cada projeto deve usar uma pasta canônica diferente.",
-    "settings.projectDefaultMissing": "Escolha um projeto que permaneça na lista ou nenhum projeto padrão.",
     "settings.projectUnavailableSave": "Corrija ou remova todos os projetos que precisam de recuperação antes de salvar.",
     "settings.projectLimit": "No máximo 100 projetos podem ser registrados.",
     "settings.projectError": "Revise a seção Projetos e corrija os valores destacados."
@@ -1356,11 +1311,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "Codex が作業を開始するフォルダーを登録します。この PC 上の異なる場所を複数追加でき、内部 ID は自動管理されます。",
     "settings.addFirstProject": "最初のプロジェクトを登録",
     "settings.noProjects": "まずプロジェクトを登録してください。Codex が作業を開始するフォルダーが必要です。この PC 上の異なる場所を複数追加できます。",
-    "settings.defaultProject": "既定のプロジェクト",
-    "settings.defaultProjectHint": "最初のプロジェクトは自動的に既定になります。複数ある場合、GPT は状況に合う別の登録済みプロジェクトを選択できます。",
     "settings.projectInvalidCwd": "存在する絶対フォルダーパスを入力してください。",
     "settings.reset": "一般設定を既定値に戻す",
-    "settings.resetHint": "アクセス、モデル、表示、同時実行数、Activity の設定だけを戻します。プロジェクト、順序、既定のプロジェクトは保持されます。",
+    "settings.resetHint": "アクセス、モデル、表示、同時実行数、Activity の設定だけを戻します。プロジェクトと順序は保持されます。",
     "settings.resetDone": "一般設定を既定値に戻しました。プロジェクトは保持されています。"
   },
   "zh-Hans": {
@@ -1368,11 +1321,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "注册 Codex 开始工作的文件夹。可添加此电脑上多个互不相关的位置；内部 ID 会自动管理。",
     "settings.addFirstProject": "注册第一个项目",
     "settings.noProjects": "请先注册项目。Codex 需要一个开始工作的文件夹；你可以添加此电脑上不同位置的多个文件夹。",
-    "settings.defaultProject": "默认项目",
-    "settings.defaultProjectHint": "第一个项目会自动成为默认项目。存在多个项目时，GPT 可按情况选择其他已注册项目。",
     "settings.projectInvalidCwd": "请输入现有文件夹的绝对路径。",
     "settings.reset": "恢复常规设置默认值",
-    "settings.resetHint": "仅恢复访问、模型、界面、并发数和 Activity 设置。项目、顺序和默认项目会保留。",
+    "settings.resetHint": "仅恢复访问、模型、界面、并发数和 Activity 设置。项目和顺序会保留。",
     "settings.resetDone": "已恢复常规设置默认值。项目已保留。"
   },
   "zh-Hant": {
@@ -1380,11 +1331,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "登錄 Codex 開始工作的資料夾。可加入此電腦上多個互不相關的位置；內部 ID 會自動管理。",
     "settings.addFirstProject": "登錄第一個專案",
     "settings.noProjects": "請先登錄專案。Codex 需要一個開始工作的資料夾；你可以加入此電腦上不同位置的多個資料夾。",
-    "settings.defaultProject": "預設專案",
-    "settings.defaultProjectHint": "第一個專案會自動成為預設專案。有多個專案時，GPT 可依情況選擇其他已登錄專案。",
     "settings.projectInvalidCwd": "請輸入現有資料夾的絕對路徑。",
     "settings.reset": "還原一般設定預設值",
-    "settings.resetHint": "只還原存取、模型、介面、並行數與 Activity 設定。專案、順序與預設專案會保留。",
+    "settings.resetHint": "只還原存取、模型、介面、並行數與 Activity 設定。專案與順序會保留。",
     "settings.resetDone": "已還原一般設定預設值。專案已保留。"
   },
   es: {
@@ -1392,11 +1341,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "Registra las carpetas donde Codex puede empezar a trabajar. Puedes añadir varias ubicaciones independientes de este PC; los ID internos se gestionan automáticamente.",
     "settings.addFirstProject": "Registrar primer proyecto",
     "settings.noProjects": "Registra primero un proyecto. Codex necesita una carpeta donde empezar a trabajar; puedes añadir varias carpetas de distintas ubicaciones de este PC.",
-    "settings.defaultProject": "Proyecto predeterminado",
-    "settings.defaultProjectHint": "El primer proyecto se convierte automáticamente en el predeterminado. Si hay varios, GPT puede elegir otro proyecto registrado cuando corresponda.",
     "settings.projectInvalidCwd": "Introduce la ruta absoluta de una carpeta existente.",
     "settings.reset": "Restaurar valores generales",
-    "settings.resetHint": "Restaura solo acceso, modelo, interfaz, concurrencia y Activity. Se conservan los proyectos, su orden y el proyecto predeterminado.",
+    "settings.resetHint": "Restaura solo acceso, modelo, interfaz, concurrencia y Activity. Se conservan los proyectos y su orden.",
     "settings.resetDone": "Se restauraron los valores generales. Los proyectos se conservaron."
   },
   fr: {
@@ -1404,11 +1351,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "Enregistrez les dossiers où Codex peut commencer à travailler. Vous pouvez ajouter plusieurs emplacements indépendants sur ce PC ; les ID internes sont gérés automatiquement.",
     "settings.addFirstProject": "Enregistrer le premier projet",
     "settings.noProjects": "Enregistrez d’abord un projet. Codex a besoin d’un dossier où commencer ; vous pouvez ajouter plusieurs dossiers situés à différents endroits sur ce PC.",
-    "settings.defaultProject": "Projet par défaut",
-    "settings.defaultProjectHint": "Le premier projet devient automatiquement le projet par défaut. S’il y en a plusieurs, GPT peut choisir un autre projet enregistré selon le contexte.",
     "settings.projectInvalidCwd": "Saisissez le chemin absolu d’un dossier existant.",
     "settings.reset": "Rétablir les valeurs générales",
-    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, l’interface, la simultanéité et Activity. Les projets, leur ordre et le projet par défaut sont conservés.",
+    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, l’interface, la simultanéité et Activity. Les projets et leur ordre sont conservés.",
     "settings.resetDone": "Les valeurs générales ont été rétablies. Les projets ont été conservés."
   },
   de: {
@@ -1416,11 +1361,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "Registrieren Sie die Ordner, in denen Codex die Arbeit beginnen darf. Sie können mehrere unabhängige Orte auf diesem PC hinzufügen; interne IDs werden automatisch verwaltet.",
     "settings.addFirstProject": "Erstes Projekt registrieren",
     "settings.noProjects": "Registrieren Sie zuerst ein Projekt. Codex benötigt einen Startordner; Sie können mehrere Ordner an verschiedenen Orten dieses PCs hinzufügen.",
-    "settings.defaultProject": "Standardprojekt",
-    "settings.defaultProjectHint": "Das erste Projekt wird automatisch zum Standardprojekt. Bei mehreren Projekten kann GPT passend ein anderes registriertes Projekt wählen.",
     "settings.projectInvalidCwd": "Geben Sie den absoluten Pfad eines vorhandenen Ordners ein.",
     "settings.reset": "Allgemeine Standardwerte wiederherstellen",
-    "settings.resetHint": "Setzt nur Zugriff, Modell, Oberfläche, Parallelität und Activity zurück. Projekte, Reihenfolge und Standardprojekt bleiben erhalten.",
+    "settings.resetHint": "Setzt nur Zugriff, Modell, Oberfläche, Parallelität und Activity zurück. Projekte und Reihenfolge bleiben erhalten.",
     "settings.resetDone": "Allgemeine Standardwerte wurden wiederhergestellt. Projekte wurden beibehalten."
   },
   pt: {
@@ -1428,11 +1371,9 @@ const ISSUE26_OVERRIDES: Record<
     "settings.projectsHint": "Registre as pastas onde o Codex pode começar a trabalhar. Você pode adicionar vários locais independentes deste PC; os IDs internos são gerenciados automaticamente.",
     "settings.addFirstProject": "Registrar primeiro projeto",
     "settings.noProjects": "Registre primeiro um projeto. O Codex precisa de uma pasta onde começar; você pode adicionar várias pastas de locais diferentes deste PC.",
-    "settings.defaultProject": "Projeto padrão",
-    "settings.defaultProjectHint": "O primeiro projeto vira o padrão automaticamente. Com vários projetos, o GPT pode escolher outro projeto registrado quando apropriado.",
     "settings.projectInvalidCwd": "Digite o caminho absoluto de uma pasta existente.",
     "settings.reset": "Restaurar padrões gerais",
-    "settings.resetHint": "Restaura apenas acesso, modelo, interface, concorrência e Activity. Projetos, ordem e projeto padrão são mantidos.",
+    "settings.resetHint": "Restaura apenas acesso, modelo, interface, concorrência e Activity. Projetos e ordem são mantidos.",
     "settings.resetDone": "Os padrões gerais foram restaurados. Os projetos foram mantidos."
   }
 };

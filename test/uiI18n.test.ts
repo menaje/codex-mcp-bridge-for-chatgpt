@@ -28,9 +28,6 @@ const PROJECT_TRANSLATION_KEYS = [
   "settings.noProjects",
   "settings.projectLabel",
   "settings.projectCwd",
-  "settings.defaultProject",
-  "settings.defaultProjectHint",
-  "settings.defaultProjectNone",
   "settings.projectAvailable",
   "settings.projectUnavailable",
   "settings.projectNew",
@@ -38,7 +35,6 @@ const PROJECT_TRANSLATION_KEYS = [
   "settings.projectInvalidLabel",
   "settings.projectInvalidCwd",
   "settings.projectDuplicatePath",
-  "settings.projectDefaultMissing",
   "settings.projectUnavailableSave",
   "settings.projectLimit",
   "settings.projectError"
@@ -96,7 +92,7 @@ describe("human-facing UI localization", () => {
     ).join("\n");
     expect(settingsText).not.toMatch(/\boperator\b|운영자|管理者|管理员|管理員|operador|opérateur|Betreiber/i);
     expect(UI_TRANSLATIONS.ko["settings.reset"]).toBe("일반 설정 기본값 복원");
-    expect(UI_TRANSLATIONS.ko["settings.resetHint"]).toContain("프로젝트·순서·기본 프로젝트는 유지");
+    expect(UI_TRANSLATIONS.ko["settings.resetHint"]).toContain("프로젝트와 순서는 유지");
     expect(UI_TRANSLATIONS.ko["settings.fullWarning"]).toBe(
       "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 프로젝트 폴더는 작업 시작 위치를 정할 뿐 OS 격리가 아닙니다."
     );
@@ -200,7 +196,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
     expect(SETTINGS_CARD_HTML).toContain('id="project-list"');
     expect(SETTINGS_CARD_HTML).toContain('id="add-project" type="button"');
-    expect(SETTINGS_CARD_HTML).toContain('id="default-project"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="default-project"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-root-list"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-roots"');
     expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.resetHint"');
@@ -208,6 +204,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('className="project-id-input"');
     expect(SETTINGS_CARD_HTML).not.toContain('projectField("settings.projectId"');
     expect(serialized).not.toContain('settings.projectId');
+    expect(serialized).not.toContain('settings.defaultProject');
+    expect(serialized).not.toContain('settings.cwd');
     expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
     expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
@@ -249,7 +247,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('selection.model+"]"');
     expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
     expect(SETTINGS_CARD_HTML).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
-    expect(SETTINGS_CARD_HTML).toContain("defaultProjectId:projectSettings.defaultProjectId");
+    expect(SETTINGS_CARD_HTML).not.toContain("defaultProjectId");
     expect(SETTINGS_CARD_HTML).toContain('operation:{kind:"patch",settings}');
     expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
     expect(SETTINGS_CARD_HTML).toContain("allocateProjectId(record.label,record.cwd,reservedIds)");

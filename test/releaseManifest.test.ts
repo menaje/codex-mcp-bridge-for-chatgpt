@@ -117,7 +117,7 @@ describe("release manifest", () => {
             content: {
               prefersBorder: true,
               csp: { connectDomains: [] },
-              "codex/uiContractGeneration": 5
+              "codex/uiContractGeneration": 7
             }
           }
         },
@@ -190,13 +190,13 @@ describe("release manifest", () => {
     const retiredSettingsUri = history.resources.settings.uri;
     const retiredActivityUri = history.resources.activity.uri;
 
-    rendered = renderedRevision("settings-v4", "activity-v5", 4, 5);
+    rendered = renderedRevision("settings-v5", "activity-v5", 5, 5);
     history = deriveUiResourceManifest(legacyPolicy, rendered, history);
     for (let revision = 1; revision <= 6; revision += 1) {
       rendered = renderedRevision(
-        `settings-v5-${revision}`,
+        `settings-v6-${revision}`,
         `activity-v7-${revision}`,
-        5,
+        6,
         7
       );
       history = deriveUiResourceManifest(legacyPolicy, rendered, history);
@@ -205,13 +205,17 @@ describe("release manifest", () => {
     expect(history.resources.settings.previous.length).toBeGreaterThan(5);
     expect(history.resources.activity.previous.length).toBeGreaterThan(5);
 
+    const retiredSettingsGeneration6Uri = history.resources.settings.uri;
+    rendered = renderedRevision("settings-v7", "activity-v7-current", 7, 7);
     const reconciled = deriveUiResourceManifest(manifest, rendered, history);
     expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredSettingsUri);
+    expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
+      .not.toContain(retiredSettingsGeneration6Uri);
     expect(reconciled.resources.activity.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredActivityUri);
     expect(reconciled.resources.settings.previous.every((entry: any) =>
-      entry.metadata.content["codex/uiContractGeneration"] >= 5
+      entry.metadata.content["codex/uiContractGeneration"] >= 7
     )).toBe(true);
     expect(reconciled.resources.activity.previous.every((entry: any) =>
       entry.metadata.content["codex/uiContractGeneration"] >= 7
