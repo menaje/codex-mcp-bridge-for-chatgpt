@@ -11,6 +11,10 @@ import type { ApprovalPolicy, CodexBackendKind, SandboxMode } from "./config.js"
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
+  assertWorkerTerminationCorrelation,
+  type WorkerTerminationCorrelation
+} from "./cancellation.js";
+import {
   JsonRpcProcess,
   type JsonRpcProcessIdentity,
   type JsonRpcTerminationResult
@@ -211,6 +215,7 @@ export type CodexUpstream = {
   ): Promise<ToolResult>;
   forceTerminateWorker?(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs?: number
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
@@ -236,6 +241,7 @@ export type CodexMcpClient = {
 
 export type CodexMcpTransport = {
   readonly identity?: JsonRpcProcessIdentity;
+  readonly exited?: boolean;
   forceTerminate?(graceMs?: number): Promise<JsonRpcTerminationResult>;
   close(): Promise<void>;
 };
@@ -317,8 +323,10 @@ export class CodexStdioUpstream implements CodexUpstream {
 
   async forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs = 1_500
   ): Promise<JsonRpcTerminationResult> {
+    assertWorkerTerminationCorrelation(correlation);
     if (assignment.workerId !== this.workerId) {
       throw new Error(`Worker identity mismatch: expected ${this.workerId}, received ${assignment.workerId}.`);
     }
@@ -380,7 +388,11 @@ export class CodexStdioUpstream implements CodexUpstream {
     try {
       return await operation(connection.client, connection);
     } catch (error) {
+      const workerLost = connection.transport.exited === true && !this.closing;
       this.retire(connection);
+      if (workerLost) {
+        throw new Error("CODEX_WORKER_LOST: The Codex MCP worker exited during an active call.");
+      }
       throw error;
     } finally {
       connection.activeCalls -= 1;
@@ -555,11 +567,13 @@ export class CodexUpstreamPool implements CodexUpstream {
 
   async forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs?: number
   ): Promise<JsonRpcTerminationResult> {
+    assertWorkerTerminationCorrelation(correlation);
     const worker = this.workers.find((candidate) => `mcp-${candidate.index}` === assignment.workerId);
     if (!worker) throw new Error("The selected Codex worker is not part of this bridge pool.");
-    const result = await worker.upstream.forceTerminateWorker(assignment, graceMs);
+    const result = await worker.upstream.forceTerminateWorker(assignment, correlation, graceMs);
     if (result.exited) this.forgetWorkerThreads(worker.index);
     return result;
   }
@@ -676,6 +690,10 @@ class ProcessMcpClient implements CodexMcpClient {
 
 class ProcessMcpTransport implements CodexMcpTransport {
   constructor(private readonly rpc: JsonRpcProcess) {}
+
+  get exited(): boolean {
+    return this.rpc.exited;
+  }
 
   get identity(): JsonRpcProcessIdentity | undefined {
     return this.rpc.identity;

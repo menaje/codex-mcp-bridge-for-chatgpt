@@ -23,6 +23,7 @@ describe("CodexJobRegistry persistence", () => {
 
     expect(loaded).toMatchObject({
       status: "completed",
+      terminalOrigin: "normal-completion",
       activityPresentationId: REQUEST_A,
       executionDecision: {
         policyRevision: 3,
@@ -32,7 +33,7 @@ describe("CodexJobRegistry persistence", () => {
       },
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
@@ -58,7 +59,7 @@ describe("CodexJobRegistry persistence", () => {
       requestHashVersion: 3
     });
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
-      version: 9,
+      version: 10,
       jobs: [expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })]
     });
   });
@@ -99,6 +100,8 @@ describe("CodexJobRegistry persistence", () => {
 
     expect(loaded).toMatchObject({
       status: "interrupted",
+      terminalOrigin: "bridge-restart",
+      trackingState: "orphaned",
       version: 2,
       error: "The bridge restarted before this Codex job reached a terminal state."
     });
@@ -116,12 +119,59 @@ describe("CodexJobRegistry persistence", () => {
     await job.promise;
     expect(registry.get(job.jobId)).toMatchObject({
       status: "failed",
+      terminalOrigin: "upstream-failure",
       error: "Session not found for thread_id: stale-thread"
     });
     expect(registry.get(job.jobId)?.result).toMatchObject({
       isError: true,
       content: [{ type: "text", text: "Session not found for thread_id: stale-thread" }]
     });
+  });
+
+  it("keeps spontaneous App Server interruption and worker loss distinct from cancellation", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const interrupted = registry.start(
+      { ...jobInput(root), backendKind: "app-server" },
+      async () => ({
+        content: [{ type: "text", text: "interrupted upstream" }],
+        structuredContent: {
+          threadId: "spontaneous-thread",
+          turnId: "spontaneous-turn",
+          turnStatus: "interrupted",
+          backendKind: "app-server"
+        }
+      })
+    );
+    await interrupted.promise;
+    expect(registry.get(interrupted.jobId)).toMatchObject({
+      status: "interrupted",
+      terminalOrigin: "app-server-interrupted"
+    });
+    expect(registry.get(interrupted.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(registry.listCancellationIntents({ jobId: interrupted.jobId })).toHaveLength(0);
+
+    const workerLost = registry.start(
+      {
+        ...jobInput(root),
+        backendKind: "app-server",
+        requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        requestHash: "d".repeat(64)
+      },
+      async () => {
+        throw new Error(
+          "CODEX_WORKER_LOST: The Codex App Server worker exited during an active turn."
+        );
+      }
+    );
+    await workerLost.promise;
+    expect(registry.get(workerLost.jobId)).toMatchObject({
+      status: "interrupted",
+      terminalOrigin: "worker-loss",
+      trackingState: "worker-lost"
+    });
+    expect(registry.get(workerLost.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(registry.listCancellationIntents({ jobId: workerLost.jobId })).toHaveLength(0);
   });
 
   it("repairs legacy completed jobs whose retained MCP result is an error", async () => {
@@ -178,7 +228,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
   });
 
   it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
@@ -200,7 +250,30 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
     expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
     expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 9 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
+  });
+
+  it("labels pre-provenance cancelled rows only through the legacy import path", async () => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "private", "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start(jobInput(root), async () => result("legacy-cancelled-thread"));
+    await job.promise;
+
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    state.version = 9;
+    state.jobs[0].status = "cancelled";
+    delete state.jobs[0].terminalOrigin;
+    delete state.jobs[0].cancellationIntentId;
+    writeFileSync(stateFile, JSON.stringify(state));
+
+    const restored = persistentRegistry(root, stateFile);
+    expect(restored.get(job.jobId)).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "legacy-unattributed-cancellation"
+    });
+    expect(restored.get(job.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
   });
 
   it("keeps only the newest legacy record for a duplicated scope request", async () => {
@@ -632,7 +705,14 @@ describe("CodexJobRegistry persistence", () => {
     });
 
     await Promise.resolve();
-    await registry.cancel(job.jobId);
+    await registry.cancel(
+      job.jobId,
+      durableCancelIntent(
+        registry,
+        job.jobId,
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      )
+    );
     await job.promise;
     expect(registry.get(job.jobId)).toMatchObject({
       status: "completed",
@@ -662,9 +742,48 @@ describe("CodexJobRegistry persistence", () => {
     });
 
     await Promise.resolve();
-    await expect(registry.cancel(job.jobId)).resolves.toMatchObject({ status: "termination-failed" });
+    await expect(registry.cancel(
+      job.jobId,
+      durableCancelIntent(
+        registry,
+        job.jobId,
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      )
+    )).resolves.toMatchObject({ status: "termination-failed" });
     expect(registry.runningCount()).toBe(1);
     expect(registry.get(job.jobId)?.error).toContain("still alive");
+  });
+
+  it("rejects an internal single-job cancellation before side effects when provenance is absent", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const forceTerminateWorker = vi.fn(async () => undefined);
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      forceTerminateWorker
+    });
+    const job = registry.start(jobInput(root), async (_progress, assigned) => {
+      assigned({
+        backendKind: "mcp-server",
+        workerId: "worker-without-intent",
+        workerGeneration: 9,
+        workerPid: 900,
+        processGroupId: 900
+      });
+      return new Promise<ToolResult>(() => undefined);
+    });
+    await Promise.resolve();
+
+    await expect(
+      (registry.cancel as unknown as (jobId: string, intent: undefined) => Promise<unknown>)(
+        job.jobId,
+        undefined
+      )
+    ).rejects.toThrow(/CANCELLATION_PROVENANCE_REQUIRED/);
+    expect(forceTerminateWorker).not.toHaveBeenCalled();
+    expect(registry.get(job.jobId)).toMatchObject({ status: "running" });
   });
 
   it("keeps a no-progress job tracked beyond three hours and accepts its late result", async () => {
@@ -738,6 +857,36 @@ describe("CodexJobRegistry persistence", () => {
     expect(readFileSync(stateFile, "utf8")).not.toContain("supersecret");
   });
 });
+
+function durableCancelIntent(
+  registry: CodexJobRegistry,
+  jobId: string,
+  requestId: string
+) {
+  const job = registry.get(jobId);
+  if (!job) throw new Error("test job is missing");
+  return registry.beginCancellationOperation({
+    scopeId: job.scopeId,
+    requestId,
+    actionHash: "a".repeat(64),
+    source: "operator",
+    toolName: "job-registry-test",
+    actionName: "cancel-job",
+    target: {
+      kind: "job",
+      jobId: job.jobId,
+      activityId: job.activityId,
+      ...(job.agentId ? { agentId: job.agentId } : {}),
+      ...(job.threadId ? { threadId: job.threadId } : {}),
+      ...(job.upstreamRequestId ? { turnId: job.upstreamRequestId } : {}),
+      ...(job.activityPresentationId
+        ? { presentationId: job.activityPresentationId }
+        : {})
+    },
+    expectedVersion: job.version,
+    reasonCode: "test-cancel"
+  }).intent;
+}
 
 function persistentRegistry(root: string, stateFile: string): CodexJobRegistry {
   return new CodexJobRegistry({

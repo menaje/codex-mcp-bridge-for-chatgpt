@@ -5,7 +5,7 @@
   "hashLength": 12,
   "minimumContractGeneration": {
     "settings": 5,
-    "activity": 6
+    "activity": 7
   },
   "resources": {
     "settings": {
@@ -156,8 +156,8 @@
       ]
     },
     "activity": {
-      "digest": "3d76de4080c2d6bab2f8ae1cab41c79491b391c9d65ac7992cb4c2ec7647f3a1",
-      "uri": "ui://codex-mcp-bridge/activity/3d76de4080c2.html",
+      "digest": "24b062eaa3373b8dd46bfe09a3210e5c8e2e676c23dc669d88f10806547137c1",
+      "uri": "ui://codex-mcp-bridge/activity/24b062eaa337.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -180,7 +180,7 @@
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 6
+          "codex/uiContractGeneration": 7
         }
       },
       "previous": []

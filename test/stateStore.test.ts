@@ -109,7 +109,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(6);
+    expect(restored.schemaVersion).toBe(7);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe("bridge");
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
@@ -192,6 +192,112 @@ describe("BridgeStateStore", () => {
     })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
     expect(store.getActivityProjectAdmission(ambiguousActivity)).toBeUndefined();
     store.close();
+  });
+
+  it("persists first-class cancellation provenance before permitting a cancelled job", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const activityId = "dededede-dede-4ede-8ede-dededededede";
+    const requestId = "efefefef-efef-4fef-8fef-efefefefefef";
+    const callerPresentationId = "abababab-abab-4aba-8aba-abababababab";
+    const targetPresentationId = "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc";
+    const activeJob = {
+      ...job("durable-cancel-job", "durable-job-request"),
+      activityId,
+      status: "running",
+      updatedAt: 2,
+      activityPresentationId: targetPresentationId
+    };
+    store.createActivity({ activityId, scopeId: SCOPE_A, now: 1 });
+    store.upsertJob(activeJob);
+
+    expect(() => store.upsertJob({
+      ...activeJob,
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      updatedAt: 3
+    })).toThrow(/CANCELLATION_PROVENANCE_REQUIRED/);
+    expect(() => store.upsertJob({
+      ...activeJob,
+      status: "cancelled",
+      terminalOrigin: "legacy-unattributed-cancellation",
+      updatedAt: 3
+    })).toThrow(/CANCELLATION_PROVENANCE_REQUIRED/);
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({ status: "running" })
+    ]);
+    expect(store.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
+
+    const { operation, intent } = store.beginCancellationOperation({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash: "f".repeat(64),
+      source: "widget-control",
+      toolName: "codex_activity_job_cancel",
+      actionName: "cancel-card-job",
+      target: {
+        kind: "job",
+        jobId: activeJob.jobId,
+        activityId,
+        presentationId: targetPresentationId
+      },
+      expectedVersion: 1,
+      callerPresentation: {
+        kind: "automatic",
+        activityPresentationId: callerPresentationId
+      },
+      widgetProof: {
+        instanceDigest: "1".repeat(64),
+        cardGeneration: 7
+      },
+      callerRequestDigest: "2".repeat(64),
+      reasonCode: "widget-force-stop",
+      now: 4
+    });
+    expect(operation.rootIntentId).toBe(intent.intentId);
+    expect(operation.bridgeInstanceId).toBe(store.bridgeInstanceId);
+    store.setCancellationIntentStatus(intent.intentId, "dispatched", 5);
+    store.upsertJob({
+      ...activeJob,
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      cancellationIntentId: intent.intentId,
+      updatedAt: 6
+    });
+    store.setCancellationIntentStatus(intent.intentId, "succeeded", 7);
+    store.completeCancellationOperation(SCOPE_A, requestId, { status: "cancelled" }, "completed", 8);
+    store.close();
+
+    const restored = new BridgeStateStore({ file });
+    expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
+      status: "completed",
+      source: "widget-control",
+      bridgeInstanceId: expect.any(String),
+      targetJobId: activeJob.jobId,
+      targetPresentationId,
+      result: { status: "cancelled" }
+    });
+    expect(restored.getCancellationIntent(intent.intentId)).toMatchObject({
+      requestId,
+      status: "succeeded",
+      callerPresentation: {
+        kind: "automatic",
+        activityPresentationId: callerPresentationId
+      },
+      targetPresentationId,
+      widgetInstancePresent: true,
+      widgetInstanceDigest: "1".repeat(64),
+      cardGeneration: 7,
+      callerRequestDigest: "2".repeat(64)
+    });
+    expect(restored.listJobs()).toEqual([
+      expect.objectContaining({
+        status: "cancelled",
+        terminalOrigin: "explicit-cancellation",
+        cancellationIntentId: intent.intentId
+      })
+    ]);
+    restored.close();
   });
 
   it("imports each legacy JSON registry once into the shared database", async () => {

@@ -124,6 +124,15 @@ import {
   resolvePreferredUiLocale
 } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import {
+  JOB_TERMINAL_ORIGINS,
+  cancellationTerminationCorrelation,
+  type BeginCancellationOperationInput,
+  type CancellationIntentRecord,
+  type CancellationOperationRecord,
+  type CreateCancellationIntentInput,
+  type JobTerminalOrigin
+} from "./cancellation.js";
 
 type CodexJobStatus =
   | "running"
@@ -138,10 +147,9 @@ type SessionMode = "auto" | "new" | "continue";
 type CodexJobWaitMode = "change" | "terminal";
 
 type ForceTerminateOptions = {
-  expectedVersion?: number;
   acknowledgeAffectedJobIds?: string[];
-  /** Internal list of jobs the caller explicitly intended to stop. */
-  requestedTargetJobIds?: string[];
+  /** Durable intents for every job the caller explicitly intended to stop. */
+  requestedTargetIntents?: CancellationIntentRecord[];
 };
 
 type JobCompletionCallback = (result: ToolResult) => void | (() => void);
@@ -412,6 +420,8 @@ type CodexJob = {
   publicEvents: CodexPublicEvent[];
   pendingInteractions: CodexPendingInteraction[];
   cancelRequestedAt?: number;
+  cancellationIntentId?: string;
+  terminalOrigin?: JobTerminalOrigin;
   terminationEscalated?: boolean;
   error?: string;
   promise: Promise<void>;
@@ -420,7 +430,7 @@ type CodexJob = {
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
 type PersistedCodexJobState = {
-  version: 9;
+  version: 10;
   jobs: PersistedCodexJob[];
 };
 
@@ -448,6 +458,8 @@ type CodexJobStartInput = Omit<
   | "publicEvents"
   | "pendingInteractions"
   | "cancelRequestedAt"
+  | "cancellationIntentId"
+  | "terminalOrigin"
   | "terminationEscalated"
   | "version"
   | "status"
@@ -517,7 +529,14 @@ export class CodexJobRegistry {
   private readonly activeAutomaticWatchersByScope = new Map<string, number>();
   private readonly activeExplicitWatchersByScope = new Map<string, number>();
   private upstream?: CodexUpstream;
-  private readonly terminations = new Map<string, Promise<CodexJob>>();
+  private readonly terminations = new Map<
+    string,
+    { intentId: string; promise: Promise<CodexJob> }
+  >();
+  private readonly cancellationOperationsInFlight = new Map<
+    string,
+    { actionHash: string; promise: Promise<unknown> }
+  >();
   private readonly interactionResponses = new Map<
     string,
     { responseHash: string; promise: Promise<CodexJob> }
@@ -1061,6 +1080,145 @@ export class CodexJobRegistry {
     this.activityStore.recordAgentMutation(scopeId, requestId, actionHash, result);
   }
 
+  getCancellationOperation(
+    scopeId: string,
+    requestId: string
+  ): CancellationOperationRecord | undefined {
+    return this.activityStore.getCancellationOperation(scopeId, requestId);
+  }
+
+  async runCancellationMutation(
+    scopeId: string,
+    requestId: string,
+    actionHash: string,
+    operation: () => Promise<unknown>
+  ): Promise<unknown> {
+    const key = `${scopeId}\0${requestId}`;
+    const active = this.cancellationOperationsInFlight.get(key);
+    if (active) {
+      if (active.actionHash !== actionHash) {
+        throw new Error(
+          "CANCELLATION_REQUEST_CONFLICT: requestId is already executing a different cancellation payload in this scope."
+        );
+      }
+      return active.promise;
+    }
+    const replay = this.getCancellationOperation(scopeId, requestId);
+    if (replay) {
+      if (replay.actionHash !== actionHash) {
+        throw new Error(
+          "CANCELLATION_REQUEST_CONFLICT: requestId was already used for a different cancellation payload in this scope."
+        );
+      }
+      if (replay.status === "completed") return replay.result;
+      if (replay.status === "failed") {
+        throw new Error(cancellationFailureMessage(replay.result));
+      }
+      throw new Error(
+        "CANCELLATION_OPERATION_INCOMPLETE: A durable intent exists without a recorded outcome; inspect authoritative status before using a new requestId."
+      );
+    }
+    const promise = Promise.resolve()
+      .then(operation)
+      .catch((error) => {
+        const durable = this.getCancellationOperation(scopeId, requestId);
+        if (durable?.status === "recorded") {
+          for (const intent of this.listCancellationIntents({ scopeId, requestId })) {
+            if (intent.status === "recorded" || intent.status === "dispatched") {
+              this.setCancellationIntentStatus(intent.intentId, "failed");
+            }
+          }
+          this.completeCancellationOperation(
+            scopeId,
+            requestId,
+            {
+              ok: false,
+              code: "CANCELLATION_FAILED",
+              message: boundedCancellationFailureMessage(error)
+            },
+            "failed"
+          );
+        }
+        throw error;
+      });
+    this.cancellationOperationsInFlight.set(key, { actionHash, promise });
+    try {
+      return await promise;
+    } finally {
+      if (this.cancellationOperationsInFlight.get(key)?.promise === promise) {
+        this.cancellationOperationsInFlight.delete(key);
+      }
+    }
+  }
+
+  beginCancellationOperation(input: BeginCancellationOperationInput): {
+    operation: CancellationOperationRecord;
+    intent: CancellationIntentRecord;
+  } {
+    const result = this.activityStore.beginCancellationOperation(input);
+    this.notifyScope(result.operation.scopeId);
+    return result;
+  }
+
+  createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    const intent = this.activityStore.createCancellationIntent(input);
+    this.notifyScope(intent.scopeId);
+    return intent;
+  }
+
+  getCancellationIntent(intentId: string): CancellationIntentRecord | undefined {
+    return this.activityStore.getCancellationIntent(intentId);
+  }
+
+  setCancellationIntentStatus(
+    intentId: string,
+    status: "dispatched" | "succeeded" | "failed" | "no-op"
+  ): CancellationIntentRecord {
+    const intent = this.activityStore.setCancellationIntentStatus(intentId, status);
+    this.notifyScope(intent.scopeId);
+    return intent;
+  }
+
+  completeCancellationOperation(
+    scopeId: string,
+    requestId: string,
+    result: unknown,
+    status: "completed" | "failed" = "completed"
+  ): CancellationOperationRecord {
+    return this.activityStore.completeCancellationOperation(
+      scopeId,
+      requestId,
+      result,
+      status
+    );
+  }
+
+  listCancellationIntents(options: {
+    scopeId?: string;
+    requestId?: string;
+    jobId?: string;
+    activityId?: string;
+  } = {}): CancellationIntentRecord[] {
+    return this.activityStore.listCancellationIntents(options);
+  }
+
+  recordTransportObservation(input: Parameters<BridgeStateStore["recordTransportObservation"]>[0]) {
+    try {
+      return this.activityStore.recordTransportObservation(input);
+    } catch (error) {
+      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+        console.error("Could not persist transport observation:", error);
+      }
+      return undefined;
+    }
+  }
+
+  listTransportObservations(
+    kind?: Parameters<BridgeStateStore["listTransportObservations"]>[0]
+  ) {
+    return this.activityStore.listTransportObservations(kind);
+  }
+
   getScopeVersion(scopeId: string): number {
     return this.activityStore.getScopeVersion(scopeId);
   }
@@ -1412,6 +1570,10 @@ export class CodexJobRegistry {
         undo = onComplete?.(result) || undefined;
         job.threadId = job.sessionDecision.threadId;
         job.status = turnStatus === "interrupted" ? "interrupted" : "completed";
+        job.terminalOrigin = turnStatus === "interrupted"
+          ? "app-server-interrupted"
+          : "normal-completion";
+        job.cancellationIntentId = undefined;
         job.result = retained.result;
         job.resultBytes = retained.originalBytes;
         job.resultOmitted = retained.omitted;
@@ -1453,6 +1615,8 @@ export class CodexJobRegistry {
       undo = onComplete?.(result) || undefined;
       job.threadId = job.sessionDecision.threadId;
       job.status = "failed";
+      job.terminalOrigin = "upstream-failure";
+      job.cancellationIntentId = undefined;
       job.result = retained.result;
       job.resultBytes = retained.originalBytes;
       job.resultOmitted = retained.omitted;
@@ -1479,7 +1643,12 @@ export class CodexJobRegistry {
 
   private settleRejectedJob(job: CodexJob, error: unknown): void {
     if (job.status !== "running" && job.status !== "termination-failed") return;
-    job.status = "failed";
+    const workerLost =
+      error instanceof Error && error.message.startsWith("CODEX_WORKER_LOST:");
+    job.status = workerLost ? "interrupted" : "failed";
+    job.terminalOrigin = workerLost ? "worker-loss" : "upstream-failure";
+    if (workerLost) job.trackingState = "worker-lost";
+    job.cancellationIntentId = undefined;
     job.result = undefined;
     job.resultBytes = undefined;
     job.resultOmitted = undefined;
@@ -1523,15 +1692,50 @@ export class CodexJobRegistry {
 
   async cancel(
     jobId: string,
+    intent: CancellationIntentRecord,
     options: ForceTerminateOptions = {}
   ): Promise<CodexJob> {
+    this.assertCancellationIntentForJob(jobId, intent);
     const existingTermination = this.terminations.get(jobId);
-    if (existingTermination) return existingTermination;
-    const operation = this.forceTerminateJob(jobId, options).finally(() => {
-      this.terminations.delete(jobId);
+    if (existingTermination) {
+      if (existingTermination.intentId !== intent.intentId) {
+        throw new Error(
+          "JOB_TERMINATION_IN_PROGRESS: This job is already terminating under another durable cancellation intent."
+        );
+      }
+      return existingTermination.promise;
+    }
+    const operation = this.forceTerminateJob(jobId, intent, options).finally(() => {
+      if (this.terminations.get(jobId)?.promise === operation) {
+        this.terminations.delete(jobId);
+      }
     });
-    this.terminations.set(jobId, operation);
+    this.terminations.set(jobId, { intentId: intent.intentId, promise: operation });
     return operation;
+  }
+
+  private assertCancellationIntentForJob(
+    jobId: string,
+    supplied: CancellationIntentRecord
+  ): CancellationIntentRecord {
+    if (!supplied || typeof supplied.intentId !== "string") {
+      throw new Error(
+        "CANCELLATION_PROVENANCE_REQUIRED: jobs.cancel requires an exact durable job cancellation intent."
+      );
+    }
+    const intent = this.getCancellationIntent(supplied.intentId);
+    if (
+      !intent ||
+      intent.intentId !== supplied.intentId ||
+      intent.targetKind !== "job" ||
+      intent.targetJobId !== jobId ||
+      (intent.status !== "recorded" && intent.status !== "dispatched")
+    ) {
+      throw new Error(
+        "CANCELLATION_PROVENANCE_REQUIRED: jobs.cancel requires an exact durable job cancellation intent."
+      );
+    }
+    return intent;
   }
 
   async respondToInteraction(
@@ -1619,12 +1823,18 @@ export class CodexJobRegistry {
     return job;
   }
 
-  async wait(jobId: string, waitFor: CodexJobWaitMode, waitMs: number): Promise<CodexJobWaitResult> {
+  async wait(
+    jobId: string,
+    waitFor: CodexJobWaitMode,
+    waitMs: number,
+    signal?: AbortSignal
+  ): Promise<CodexJobWaitResult> {
     if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > MAX_CODEX_STATUS_WAIT_MS) {
       throw new Error(`waitMs must be an integer between 1 and ${MAX_CODEX_STATUS_WAIT_MS}.`);
     }
     const initial = this.get(jobId);
     if (!initial) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+    if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
     const startedAt = Date.now();
     const initialVersion = initial.version;
     let current = initial;
@@ -1636,7 +1846,7 @@ export class CodexJobRegistry {
         const remaining = deadline - Date.now();
         if (remaining <= 0) break;
         const observedVersion = current.version;
-        const didChange = await this.waitForVersion(jobId, observedVersion, remaining);
+        const didChange = await this.waitForVersion(jobId, observedVersion, remaining, signal);
         changed ||= didChange;
         current = this.get(jobId) || current;
         if (waitFor === "change" && current.version !== initialVersion) break;
@@ -1728,46 +1938,109 @@ export class CodexJobRegistry {
 
   private async forceTerminateJob(
     jobId: string,
+    suppliedIntent: CancellationIntentRecord,
     options: ForceTerminateOptions
   ): Promise<CodexJob> {
+    const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
     if (!target) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
-    if (isTerminalActivityJobStatus(target.status)) return target;
-    if (options.expectedVersion !== undefined && options.expectedVersion !== target.version) {
+    if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
+      throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
+    }
+    if (primaryIntent.expectedVersion !== target.version) {
       throw new Error(
-        `Codex job version changed from ${options.expectedVersion} to ${target.version}. Refresh status before force-stopping it.`
+        `Codex job version changed from ${primaryIntent.expectedVersion} to ${target.version}. Refresh status before force-stopping it.`
       );
+    }
+    if (isTerminalActivityJobStatus(target.status)) {
+      this.setCancellationIntentStatus(primaryIntent.intentId, "no-op");
+      return target;
     }
     if (!target.workerId || target.workerGeneration === undefined || !this.upstream?.forceTerminateWorker) {
       target.status = "termination-failed";
       target.cancelRequestedAt ||= Date.now();
+      target.cancellationIntentId = primaryIntent.intentId;
       target.error = "The bridge cannot identify a supervised worker process for this Codex job.";
       this.recordChange(target);
+      this.setCancellationIntentStatus(primaryIntent.intentId, "failed");
       return target;
     }
     const possibleAffected = this.jobsForWorker(target);
     const affectedIds = possibleAffected.map((job) => job.jobId).sort();
-    const requestedTargetIds = new Set(
-      (options.requestedTargetJobIds?.length ? options.requestedTargetJobIds : [target.jobId])
-        .filter((requestedJobId) => affectedIds.includes(requestedJobId))
-    );
-    requestedTargetIds.add(target.jobId);
+    const requestedIntentByJobId = new Map<string, CancellationIntentRecord>();
+    for (const supplied of [primaryIntent, ...(options.requestedTargetIntents || [])]) {
+      if (!supplied.targetJobId || requestedIntentByJobId.has(supplied.targetJobId)) continue;
+      const intent = this.assertCancellationIntentForJob(supplied.targetJobId, supplied);
+      const job = this.get(supplied.targetJobId);
+      if (
+        !job ||
+        !affectedIds.includes(job.jobId) ||
+        intent.scopeId !== primaryIntent.scopeId ||
+        intent.requestId !== primaryIntent.requestId ||
+        intent.cascadeId !== primaryIntent.cascadeId ||
+        intent.expectedVersion !== job.version
+      ) {
+        throw new Error("Requested cancellation target intent no longer matches this worker impact set.");
+      }
+      requestedIntentByJobId.set(job.jobId, intent);
+    }
+    requestedIntentByJobId.set(target.jobId, primaryIntent);
     const acknowledged = [...(options.acknowledgeAffectedJobIds || [])].sort();
     if (affectedIds.length > 1 && JSON.stringify(acknowledged) !== JSON.stringify(affectedIds)) {
       throw new Error(
         `Force-stop will also interrupt jobs sharing this worker generation. Retry with acknowledgeAffectedJobIds=${JSON.stringify(affectedIds)} after showing one collateral/partial-change confirmation.`
       );
     }
+    const impactIntentByJobId = new Map(requestedIntentByJobId);
+    for (const job of possibleAffected) {
+      if (impactIntentByJobId.has(job.jobId)) continue;
+      const containment = this.createCancellationIntent({
+        scopeId: primaryIntent.scopeId,
+        requestId: primaryIntent.requestId,
+        parentIntentId: primaryIntent.intentId,
+        cascadeId: primaryIntent.cascadeId,
+        source: "assignment-containment",
+        toolName: primaryIntent.toolName,
+        actionName: "interrupt-shared-worker",
+        target: cancellationTargetForJob(job),
+        expectedVersion: job.version,
+        callerPresentation: primaryIntent.callerPresentation,
+        ...(primaryIntent.widgetInstanceDigest && primaryIntent.cardGeneration
+          ? {
+              widgetProof: {
+                instanceDigest: primaryIntent.widgetInstanceDigest,
+                cardGeneration: primaryIntent.cardGeneration
+              }
+            }
+          : {}),
+        callerRequestDigest: primaryIntent.callerRequestDigest,
+        reasonCode: "shared-worker-containment"
+      });
+      impactIntentByJobId.set(job.jobId, containment);
+    }
     const now = Date.now();
     const initiallyTerminating = target.backendKind === "app-server" ? [target] : possibleAffected;
     this.activityTransaction(() => {
       for (const job of initiallyTerminating) {
+        const intent = impactIntentByJobId.get(job.jobId);
+        if (!intent) {
+          throw new Error(
+            "CANCELLATION_PROVENANCE_REQUIRED: A terminating job has no durable impact intent."
+          );
+        }
         job.status = "terminating";
         job.cancelRequestedAt ||= now;
+        job.cancellationIntentId = intent.intentId;
+        job.terminalOrigin = undefined;
         job.error = target.backendKind === "app-server"
           ? "Force-stop is interrupting the exact Codex App Server turn; process-group termination is the automatic fallback."
           : "Force-stop is terminating the exact Codex worker process group.";
         this.recordChange(job);
+      }
+      for (const intent of impactIntentByJobId.values()) {
+        if (intent.status === "recorded") {
+          this.setCancellationIntentStatus(intent.intentId, "dispatched");
+        }
       }
     });
     const assignment: UpstreamWorkerAssignment = {
@@ -1779,14 +2052,27 @@ export class CodexJobRegistry {
       ...(target.upstreamRequestId ? { upstreamRequestId: target.upstreamRequestId } : {})
     };
     try {
-      const result = await this.upstream.forceTerminateWorker(assignment);
+      const result = await this.upstream.forceTerminateWorker(
+        assignment,
+        cancellationTerminationCorrelation(primaryIntent)
+      );
       if (!result.exited) throw new Error("The Codex turn or worker process group remained active after force-stop.");
       const actuallyAffected = result.mode === "turn-interrupt" ? [target] : possibleAffected;
       this.activityTransaction(() => {
         for (const job of actuallyAffected) {
+          const intent = impactIntentByJobId.get(job.jobId);
+          if (!intent) {
+            throw new Error(
+              "CANCELLATION_PROVENANCE_REQUIRED: Worker impact has no durable cancellation correlation."
+            );
+          }
           this.deferredSettlements.delete(job.jobId);
-          const explicitlyRequested = requestedTargetIds.has(job.jobId);
+          const explicitlyRequested = requestedIntentByJobId.has(job.jobId);
           job.status = explicitlyRequested ? "cancelled" : "interrupted";
+          job.terminalOrigin = explicitlyRequested
+            ? "explicit-cancellation"
+            : "assignment-containment";
+          job.cancellationIntentId = intent.intentId;
           job.terminationEscalated = result.escalated;
           job.pendingInteractions = [];
           job.trackingState = result.workerExited ? "worker-lost" : "connected";
@@ -1797,6 +2083,16 @@ export class CodexJobRegistry {
                 : "The Codex worker was force-stopped. Partial filesystem changes may remain."
               : `The Codex job was interrupted because it shared worker ${target.workerId} generation ${target.workerGeneration} with force-stopped job ${target.jobId}.`;
           this.recordChange(job);
+          this.setCancellationIntentStatus(intent.intentId, "succeeded");
+        }
+        const actuallyAffectedIds = new Set(actuallyAffected.map((job) => job.jobId));
+        for (const [affectedJobId, intent] of impactIntentByJobId) {
+          if (
+            !actuallyAffectedIds.has(affectedJobId) &&
+            intent.source === "assignment-containment"
+          ) {
+            this.setCancellationIntentStatus(intent.intentId, "no-op");
+          }
         }
       });
     } catch (error) {
@@ -1805,6 +2101,12 @@ export class CodexJobRegistry {
           job.status = "termination-failed";
           job.error = `Could not confirm Codex worker termination: ${error instanceof Error ? error.message : String(error)}`;
           this.recordChange(job);
+        }
+        for (const intent of impactIntentByJobId.values()) {
+          const current = this.getCancellationIntent(intent.intentId);
+          if (current?.status === "recorded" || current?.status === "dispatched") {
+            this.setCancellationIntentStatus(intent.intentId, "failed");
+          }
         }
       });
       for (const job of initiallyTerminating) this.flushDeferredSettlement(job);
@@ -1826,23 +2128,33 @@ export class CodexJobRegistry {
     }
   }
 
-  private waitForVersion(jobId: string, version: number, waitMs: number): Promise<boolean> {
-    return new Promise((resolve) => {
+  private waitForVersion(
+    jobId: string,
+    version: number,
+    waitMs: number,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    return new Promise((resolve, reject) => {
       let settled = false;
       const listeners = this.waiters.get(jobId) || new Set<() => void>();
       this.waiters.set(jobId, listeners);
-      const finish = (changed: boolean) => {
+      const finish = (changed: boolean, error?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         listeners.delete(onChange);
         if (listeners.size === 0) this.waiters.delete(jobId);
-        resolve(changed);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve(changed);
       };
       const onChange = () => finish((this.jobs.get(jobId)?.version || version) !== version);
+      const onAbort = () => finish(false, new Error("The status wait was cancelled by the host."));
       const timer = setTimeout(() => finish(false), waitMs);
       listeners.add(onChange);
+      signal?.addEventListener("abort", onAbort, { once: true });
       if ((this.jobs.get(jobId)?.version || version) !== version) finish(true);
+      else if (signal?.aborted) onAbort();
     });
   }
 
@@ -1875,7 +2187,7 @@ export class CodexJobRegistry {
   private load(): void {
     if (this.stateStore) {
       const stored = this.stateStore.listJobs();
-      const changed = this.loadJobs(stored, 9);
+      const changed = this.loadJobs(stored, 10);
       if (changed || this.jobs.size !== stored.length) {
         this.stateStore.replaceJobs(this.persistedJobs());
       }
@@ -1897,21 +2209,21 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9 && parsed.version !== 10) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
 
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
     const changed = this.loadJobs(parsed.jobs, stateVersion);
-    if (changed || stateVersion !== 9) this.persist();
-    else this.activityStore.replaceJobs(this.persistedJobs());
+    if (changed || stateVersion !== 10) this.persist(true);
+    else this.activityStore.importLegacyJobs(this.persistedJobs());
   }
 
-  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9): boolean {
+  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): boolean {
     const now = Date.now();
-    let changed = stateVersion !== 9;
+    let changed = stateVersion !== 10;
     const valid = values
       .map((job) => readPersistedJob(job, stateVersion))
       .filter((job): job is PersistedCodexJob => Boolean(job))
@@ -1938,6 +2250,7 @@ export class CodexJobRegistry {
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (isActiveActivityJobStatus(job.status)) {
         job.status = "interrupted";
+        job.terminalOrigin = "bridge-restart";
         job.trackingState = "orphaned";
         job.pendingInteractions = [];
         job.error = "The bridge restarted before this Codex job reached a terminal state.";
@@ -1946,6 +2259,7 @@ export class CodexJobRegistry {
         changed = true;
       } else if (job.status === "completed" && job.result?.isError) {
         job.status = "failed";
+        job.terminalOrigin = "upstream-failure";
         job.error = toolResultErrorMessage(job.result);
         job.result = undefined;
         job.resultBytes = undefined;
@@ -1974,12 +2288,12 @@ export class CodexJobRegistry {
     }
     if (
       !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9 && parsed.version !== 10) ||
       !Array.isArray(parsed.jobs)
     ) {
       throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
     }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
     const existing = new Set(this.jobs.keys());
     const candidates = parsed.jobs.filter((value) => {
       const id = isRecord(value) && typeof value.jobId === "string" ? value.jobId : undefined;
@@ -1987,12 +2301,12 @@ export class CodexJobRegistry {
     });
     this.stateStore.transaction(() => {
       this.loadJobs(candidates, stateVersion);
-      this.stateStore?.replaceJobs(this.persistedJobs());
+      this.stateStore?.importLegacyJobs(this.persistedJobs());
       this.stateStore?.setMeta(marker, new Date().toISOString());
     });
   }
 
-  private persist(): void {
+  private persist(allowLegacyUnattributedCancellation = false): void {
     if (this.stateStore) {
       this.stateStore.replaceJobs(this.persistedJobs());
       this.lastPersistedAt = Date.now();
@@ -2005,7 +2319,7 @@ export class CodexJobRegistry {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const temporary = `${this.stateFile}.${process.pid}.tmp`;
       const state: PersistedCodexJobState = {
-        version: 9,
+        version: 10,
         jobs: persisted
       };
       writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
@@ -2015,7 +2329,11 @@ export class CodexJobRegistry {
       renameSync(temporary, this.stateFile);
       chmodSync(this.stateFile, 0o600);
     }
-    this.activityStore.replaceJobs(persisted);
+    if (allowLegacyUnattributedCancellation) {
+      this.activityStore.importLegacyJobs(persisted);
+    } else {
+      this.activityStore.replaceJobs(persisted);
+    }
     this.lastPersistedAt = Date.now();
     this.persistenceWarningShown = false;
   }
@@ -2216,6 +2534,17 @@ export function registerBridgeTools(
       if (mutationInFlight.get(key)?.promise === promise) mutationInFlight.delete(key);
     }
   };
+  const runCancellationMutation = async (
+    scopeId: string,
+    requestId: string,
+    actionHash: string,
+    operation: () => Promise<unknown>
+  ): Promise<unknown> => jobs.runCancellationMutation(
+    scopeId,
+    requestId,
+    actionHash,
+    operation
+  );
 
   const codexStatusQueryInput = z.discriminatedUnion("kind", [
     z.strictObject({
@@ -2274,7 +2603,8 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, { _meta, signal }) => {
+    async (args, extra) => {
+      const { _meta, signal } = extra;
       const query = args.query;
       const jobQuery = query?.kind === "job" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
@@ -2307,9 +2637,34 @@ export function registerBridgeTools(
         if (!args.includeAllScopes && initial.scopeId !== scopeId) {
           throw new Error("The requested Codex job belongs to another conversation scope.");
         }
-        const wait = jobQuery.waitFor
-          ? await jobs.wait(jobQuery.id, jobQuery.waitFor, jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS)
-          : undefined;
+        let wait: CodexJobWaitResult | undefined;
+        if (jobQuery.waitFor) {
+          let observedAbort = false;
+          const onAbort = () => {
+            if (observedAbort) return;
+            observedAbort = true;
+            jobs.recordTransportObservation({
+              kind: "status-wait-aborted",
+              scopeId: initial.scopeId,
+              jobId: initial.jobId,
+              activityId: initial.activityId,
+              toolName: "codex_status",
+              callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+              reasonCode: "host-aborted-read-wait"
+            });
+          };
+          signal?.addEventListener("abort", onAbort, { once: true });
+          try {
+            wait = await jobs.wait(
+              jobQuery.id,
+              jobQuery.waitFor,
+              jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
+              signal
+            );
+          } finally {
+            signal?.removeEventListener("abort", onAbort);
+          }
+        }
         const job = wait?.job || initial;
         return textResult(formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs));
       }
@@ -2584,7 +2939,7 @@ export function registerBridgeTools(
           transactional: persistenceBackend === "sqlite",
           schemaVersion: jobs.persistenceSchemaVersion,
           bridgeInstanceId: jobs.bridgeInstanceId,
-          activityFoundation: "schema-v6-lineage-aware-scope-agent-manager",
+          activityFoundation: "schema-v7-cancellation-provenance-scope-agent-manager",
           activityPersistent: jobs.activityPersistent
         },
         jobPolicy: {
@@ -2677,7 +3032,8 @@ export function registerBridgeTools(
       },
       _meta: activityCardToolMetadata()
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const { _meta } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
@@ -2744,7 +3100,8 @@ export function registerBridgeTools(
         "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
       }
     },
-    async (args, { _meta, signal }) => {
+    async (args, extra) => {
+      const { _meta, signal } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
@@ -2758,24 +3115,45 @@ export function registerBridgeTools(
         throw new Error("CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.");
       }
       const presentation = presentationFromActivityCardProof(args.card);
-      jobs.touchActivityCardLease(
+      const lease = jobs.touchActivityCardLease(
         scope.scopeId,
         args.card.activityId,
         args.card.generation,
         widgetSessionId,
         presentation
       );
-      signal?.addEventListener(
-        "abort",
-        () => jobs.releaseActivityCardLease(
+      let presentationObservationRecorded = false;
+      const recordPresentationSuperseded = () => {
+        if (presentationObservationRecorded) return;
+        presentationObservationRecorded = true;
+        jobs.recordTransportObservation({
+          kind: "presentation-superseded",
+          scopeId: scope.scopeId,
+          activityId: args.card.activityId,
+          toolName: "codex_activity_snapshot",
+          callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+          reasonCode: "presentation-superseded"
+        });
+      };
+      if (lease.stopped) recordPresentationSuperseded();
+      const onAbort = () => {
+        jobs.releaseActivityCardLease(
           scope.scopeId,
           args.card.activityId,
           args.card.generation,
           widgetSessionId,
           presentation
-        ),
-        { once: true }
-      );
+        );
+        jobs.recordTransportObservation({
+          kind: "activity-watch-aborted",
+          scopeId: scope.scopeId,
+          activityId: args.card.activityId,
+          toolName: "codex_activity_snapshot",
+          callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+          reasonCode: "host-aborted-activity-watch"
+        });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       const wait = args.afterVersion !== undefined
         ? await jobs.waitForScopeVersion(
             scope.scopeId,
@@ -2786,6 +3164,8 @@ export function registerBridgeTools(
             presentation
           )
         : undefined;
+      signal?.removeEventListener("abort", onAbort);
+      if (wait?.stopped) recordPresentationSuperseded();
       return activityViewResult(
         await buildActivityView(
           jobs,
@@ -2979,7 +3359,14 @@ export function registerBridgeTools(
           code: "AGENT_BUSY",
           agent: formatAgentSummary(agent, jobs),
           forceStop: agent.currentJobId
-            ? { tool: "codex_cancel", arguments: { jobId: agent.currentJobId } }
+            ? {
+                tool: "codex_cancel",
+                arguments: {
+                  requestId: randomUUID(),
+                  jobId: agent.currentJobId,
+                  expectedVersion: jobs.get(agent.currentJobId)?.version
+                }
+              }
             : null,
           warning: "Force-stop interrupts execution but does not roll back filesystem changes."
         };
@@ -3210,8 +3597,11 @@ export function registerBridgeTools(
     scopeId: scopeIdSchema()
       .optional()
       .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+    requestId: scopeIdSchema()
+      .describe("Unique UUID for this logical job cancellation and its exact retries."),
     jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
-    expectedVersion: z.number().int().min(1).optional(),
+    expectedVersion: z.number().int().min(1)
+      .describe("Authoritative job version observed immediately before cancellation."),
     acknowledgeAffectedJobIds: z
       .array(z.string().trim().min(1).max(200))
       .max(HARD_MAX_CONCURRENT_JOBS)
@@ -3227,7 +3617,7 @@ export function registerBridgeTools(
     {
       title: "Force-stop Codex Job",
       description:
-        "Force-stop one active Codex job in the current ChatGPT conversation scope by terminating its exact supervised worker process group (TERM, then KILL after a short grace period). The target becomes cancelled only after process exit is confirmed. Jobs sharing that worker generation are interrupted, and partial filesystem changes may remain.",
+        "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
       inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
       annotations: {
         readOnlyHint: false,
@@ -3236,22 +3626,180 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const { _meta } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
         "Codex job cancellation"
       );
-      const existing = jobs.get(args.jobId);
-      if (!existing) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
-      if (existing.scopeId !== scope.scopeId) {
-        throw new Error("The requested Codex job belongs to another conversation scope.");
+      const actionHash = createHash("sha256")
+        .update(JSON.stringify({
+          action: "cancel-job",
+          jobId: args.jobId,
+          expectedVersion: args.expectedVersion,
+          acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
+        }))
+        .digest("hex");
+      const result = await runCancellationMutation(
+        scope.scopeId,
+        args.requestId,
+        actionHash,
+        async () => {
+          const existing = jobs.get(args.jobId);
+          if (!existing) {
+            throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+          }
+          if (existing.scopeId !== scope.scopeId) {
+            throw new Error("The requested Codex job belongs to another conversation scope.");
+          }
+          if (existing.version !== args.expectedVersion) {
+            throw new Error(
+              `Codex job version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative status before retrying cancellation.`
+            );
+          }
+          const { intent } = jobs.beginCancellationOperation({
+            scopeId: scope.scopeId,
+            requestId: args.requestId,
+            actionHash,
+            source: "model-tool",
+            toolName: "codex_cancel",
+            actionName: "cancel-job",
+            target: cancellationTargetForJob(existing),
+            expectedVersion: args.expectedVersion,
+            callerPresentation: callerPresentationFromMetadata(_meta),
+            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            reasonCode: "public-job-cancel"
+          });
+          const cancelled = await jobs.cancel(args.jobId, intent, {
+            acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
+          });
+          const formatted = formatJobStatus(
+            cancelled,
+            jobs.staleThresholdMs,
+            undefined,
+            userSettings.current,
+            jobs
+          );
+          jobs.completeCancellationOperation(scope.scopeId, args.requestId, formatted);
+          return formatted;
+        }
+      );
+      return textResult(result);
+    }
+  );
+
+  server.registerTool(
+    "codex_activity_job_cancel",
+    {
+      title: "Force-stop Activity Card Job",
+      description:
+        "App-private destructive control for one exact job shown by a live, current Activity card. The bridge validates the widget instance, exact card generation and presentation lease, exact job version, and idempotency request before recording durable provenance and dispatching cancellation.",
+      inputSchema: z.strictObject({
+        scopeId: scopeIdSchema().optional(),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
+        requestId: scopeIdSchema().describe("Unique UUID for this exact card cancellation and its retries."),
+        jobId: z.string().trim().min(1).max(200),
+        expectedJobVersion: z.number().int().min(1),
+        card: activityCardProofInputSchema,
+        acknowledgeAffectedJobIds: z
+          .array(z.string().trim().min(1).max(200))
+          .max(HARD_MAX_CONCURRENT_JOBS)
+          .optional()
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
       }
-      const cancelled = await jobs.cancel(args.jobId, {
-        expectedVersion: args.expectedVersion,
-        acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
-      });
-      return textResult(formatJobStatus(cancelled, jobs.staleThresholdMs, undefined, userSettings.current, jobs));
+    },
+    async (args, extra) => {
+      const { _meta } = extra;
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Activity card job cancellation"
+      );
+      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
+      if (!widgetSessionId) {
+        throw new Error("CARD_LEASE_REQUIRED: Job cancellation requires a mounted Activity card.");
+      }
+      const presentation = presentationFromActivityCardProof(args.card);
+      jobs.requireActivityCardLease(
+        scope.scopeId,
+        args.card.activityId,
+        args.card.generation,
+        widgetSessionId,
+        presentation
+      );
+      const widgetInstanceDigest = correlationDigest("activity-widget", widgetSessionId) as string;
+      const actionHash = createHash("sha256")
+        .update(JSON.stringify({
+          action: "cancel-card-job",
+          jobId: args.jobId,
+          expectedJobVersion: args.expectedJobVersion,
+          card: args.card,
+          widgetInstanceDigest,
+          acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
+        }))
+        .digest("hex");
+      const result = await runCancellationMutation(
+        scope.scopeId,
+        args.requestId,
+        actionHash,
+        async () => {
+          const job = jobs.get(args.jobId);
+          if (
+            !job ||
+            job.scopeId !== scope.scopeId ||
+            job.activityId !== args.card.activityId
+          ) {
+            throw new Error("The requested Codex job is unavailable in this card's exact Activity scope.");
+          }
+          if (job.version !== args.expectedJobVersion) {
+            throw new Error(
+              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying cancellation.`
+            );
+          }
+          const { intent } = jobs.beginCancellationOperation({
+            scopeId: scope.scopeId,
+            requestId: args.requestId,
+            actionHash,
+            source: "widget-control",
+            toolName: "codex_activity_job_cancel",
+            actionName: "cancel-card-job",
+            target: cancellationTargetForJob(job),
+            expectedVersion: args.expectedJobVersion,
+            callerPresentation: presentation,
+            widgetProof: {
+              instanceDigest: widgetInstanceDigest,
+              cardGeneration: args.card.generation
+            },
+            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            reasonCode: "widget-force-stop"
+          });
+          const cancelled = await jobs.cancel(job.jobId, intent, {
+            acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
+          });
+          const formatted = formatJobStatus(
+            cancelled,
+            jobs.staleThresholdMs,
+            undefined,
+            userSettings.current,
+            jobs
+          );
+          jobs.completeCancellationOperation(scope.scopeId, args.requestId, formatted);
+          return formatted;
+        }
+      );
+      return textResult(result);
     }
   );
 
@@ -3692,7 +4240,8 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      const { _meta } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
@@ -3707,7 +4256,7 @@ export function registerBridgeTools(
           acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
         }))
         .digest("hex");
-      const result = await runIdempotentMutation(
+      const result = await runCancellationMutation(
         scope.scopeId,
         args.requestId,
         actionHash,
@@ -3738,7 +4287,45 @@ export function registerBridgeTools(
               );
             }
           }
-          if (activeJobs.length > 0) jobs.beginActivityTermination(args.activityId, args.reason);
+          const callerPresentation = callerPresentationFromMetadata(_meta);
+          const { intent: parentIntent } = jobs.beginCancellationOperation({
+            scopeId: scope.scopeId,
+            requestId: args.requestId,
+            actionHash,
+            source: "model-tool",
+            toolName: "codex_activity_cancel",
+            actionName: "cancel-activity",
+            target: {
+              kind: "activity",
+              activityId: existing.activityId
+            },
+            expectedVersion: args.expectedVersion,
+            callerPresentation,
+            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            reasonCode: "activity-cancel"
+          });
+          jobs.setCancellationIntentStatus(parentIntent.intentId, "dispatched");
+          if (activeJobs.length > 0) {
+            jobs.beginActivityTermination(args.activityId, args.reason);
+          }
+          const childIntentByJobId = new Map<string, CancellationIntentRecord>();
+          for (const job of activeJobs) {
+            const intent = jobs.createCancellationIntent({
+              scopeId: scope.scopeId,
+              requestId: args.requestId,
+              parentIntentId: parentIntent.intentId,
+              cascadeId: parentIntent.cascadeId,
+              source: "activity-cascade",
+              toolName: "codex_activity_cancel",
+              actionName: "cancel-child-job",
+              target: cancellationTargetForJob(job),
+              expectedVersion: job.version,
+              callerPresentation,
+              callerRequestDigest: parentIntent.callerRequestDigest,
+              reasonCode: "activity-child-cancel"
+            });
+            childIntentByJobId.set(job.jobId, intent);
+          }
           const cancellationTargets: string[] = [];
           const groupedMcpWorkers = new Set<string>();
           for (const job of activeJobs) {
@@ -3754,11 +4341,29 @@ export function registerBridgeTools(
           }
           for (const targetJobId of cancellationTargets) {
             const target = jobs.get(targetJobId);
-            if (!target || isTerminalActivityJobStatus(target.status)) continue;
+            const targetIntent = childIntentByJobId.get(targetJobId);
+            if (!targetIntent) {
+              throw new Error(
+                "CANCELLATION_PROVENANCE_REQUIRED: Activity child cancellation has no durable intent."
+              );
+            }
+            if (!target) {
+              throw new Error("An Activity child job disappeared during cancellation.");
+            }
+            if (isTerminalActivityJobStatus(target.status)) {
+              const currentIntent = jobs.getCancellationIntent(targetIntent.intentId);
+              if (currentIntent?.status === "recorded" || currentIntent?.status === "dispatched") {
+                jobs.setCancellationIntentStatus(targetIntent.intentId, "no-op");
+              }
+              continue;
+            }
             const currentImpact = jobs.terminationImpact(target.jobId);
-            await jobs.cancel(target.jobId, {
+            const requestedTargetIntents = currentImpact.affectedJobIds
+              .map((jobId) => childIntentByJobId.get(jobId))
+              .filter((intent): intent is CancellationIntentRecord => Boolean(intent));
+            await jobs.cancel(target.jobId, targetIntent, {
               acknowledgeAffectedJobIds: currentImpact.affectedJobIds,
-              requestedTargetJobIds: [...activityJobIds]
+              requestedTargetIntents
             });
           }
           const stillActive = jobs
@@ -3767,7 +4372,12 @@ export function registerBridgeTools(
           const activity = stillActive
             ? (jobs.getActivity(args.activityId) as BridgeActivity)
             : jobs.cancelActivity(args.activityId, args.reason);
-          return {
+          jobs.setCancellationIntentStatus(
+            parentIntent.intentId,
+            stillActive ? "failed" : "succeeded"
+          );
+          const cancellationResult = {
+            ok: !stillActive,
             action: "cancel",
             activity: formatActivitySummary(activity),
             cancelledJobIds: activeJobs.map((job) => job.jobId),
@@ -3778,6 +4388,12 @@ export function registerBridgeTools(
             policySource: "explicit-tool-input",
             codexOutputCanMutatePolicy: false
           };
+          jobs.completeCancellationOperation(
+            scope.scopeId,
+            args.requestId,
+            cancellationResult
+          );
+          return cancellationResult;
         }
       );
       return textResult(result);
@@ -4113,8 +4729,10 @@ export function registerBridgeTools(
       annotations: codexToolAnnotations(config, taskPolicyAtRegistration),
       _meta: codexTaskActivityCardMetadata(taskPolicyAtRegistration)
     },
-    async (args, { _meta }) => {
+    async (args, extra) => {
+      let removeTaskAbortObserver: (() => void) | undefined;
       try {
+        const { _meta, signal } = extra;
         const preferences = userSettings.current;
         args = normalizeCodexTaskInput(args, _meta);
         requireTaskActivityPresentation(args, preferences);
@@ -4123,6 +4741,21 @@ export function registerBridgeTools(
           args.scopeId,
           "Codex task execution"
         );
+        const onAbort = () => {
+          const running = jobs.peekRequest(scope.scopeId, args.requestId);
+          if (!running || running.executionMode !== "foreground") return;
+          jobs.recordTransportObservation({
+            kind: "mcp-handler-aborted",
+            scopeId: scope.scopeId,
+            jobId: running.jobId,
+            activityId: running.activityId,
+            toolName: "codex_task",
+            callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
+            reasonCode: "foreground-call-detached"
+          });
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
         resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingV4Request?.requestHashVersion === CURRENT_TASK_REQUEST_HASH_VERSION) {
@@ -4377,6 +5010,8 @@ export function registerBridgeTools(
           return projectSetupRequiredResult(error.message);
         }
         throw error;
+      } finally {
+        removeTaskAbortObserver?.();
       }
     }
   );
@@ -5753,6 +6388,8 @@ function formatJobStatus(
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
     cancelRequestedAt: job.cancelRequestedAt ? new Date(job.cancelRequestedAt).toISOString() : null,
+    terminalOrigin: job.terminalOrigin || null,
+    cancellation: formatCancellationAudit(job, registry),
     worker: job.workerId
       ? {
           workerId: job.workerId,
@@ -5886,12 +6523,59 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     updatedAt: new Date(job.updatedAt).toISOString(),
     version: job.version,
     terminal: isTerminalActivityJobStatus(job.status),
+    terminalOrigin: job.terminalOrigin || null,
+    cancellationIntentId: job.cancellationIntentId || null,
     ...formatJobActivity(job, staleAfterMs),
     resultBytes: job.resultBytes,
     resultOmitted: job.resultOmitted || false,
     ...(job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
       ? { error: job.error }
       : {})
+  };
+}
+
+function formatCancellationAudit(
+  job: CodexJob,
+  registry?: CodexJobRegistry
+): Record<string, unknown> | null {
+  if (!job.cancellationIntentId) return null;
+  const intent = registry?.getCancellationIntent(job.cancellationIntentId);
+  if (!intent) {
+    return {
+      intentId: job.cancellationIntentId,
+      durableDetailsAvailable: false
+    };
+  }
+  return {
+    intentId: intent.intentId,
+    logicalRequestId: intent.requestId,
+    source: intent.source,
+    tool: intent.toolName,
+    action: intent.actionName,
+    reasonCode: intent.reasonCode,
+    status: intent.status,
+    expectedVersion: intent.expectedVersion,
+    parentIntentId: intent.parentIntentId || null,
+    cascadeId: intent.cascadeId,
+    callerPresentation: intent.callerPresentation || null,
+    target: {
+      kind: intent.targetKind,
+      jobId: intent.targetJobId || null,
+      activityId: intent.targetActivityId,
+      agentId: intent.targetAgentId || null,
+      threadId: intent.targetThreadId || null,
+      turnId: intent.targetTurnId || null,
+      presentationId: intent.targetPresentationId || null
+    },
+    widgetProof: intent.widgetInstancePresent
+      ? { present: true, cardGeneration: intent.cardGeneration || null }
+      : { present: false },
+    callerRequestDigest: intent.callerRequestDigest || null,
+    bridgeInstanceId: intent.bridgeInstanceId,
+    createdAt: new Date(intent.createdAt).toISOString(),
+    dispatchedAt: intent.dispatchedAt ? new Date(intent.dispatchedAt).toISOString() : null,
+    completedAt: intent.completedAt ? new Date(intent.completedAt).toISOString() : null,
+    durableDetailsAvailable: true
   };
 }
 
@@ -6847,10 +7531,53 @@ function appServerTurnId(job: CodexJob): string | undefined {
   return job.backendKind === "app-server" ? job.upstreamRequestId : undefined;
 }
 
+function cancellationTargetForJob(job: CodexJob): BeginCancellationOperationInput["target"] {
+  return {
+    kind: "job",
+    jobId: job.jobId,
+    activityId: job.activityId,
+    ...(job.agentId ? { agentId: job.agentId } : {}),
+    ...(job.threadId ? { threadId: job.threadId } : {}),
+    ...(appServerTurnId(job) ? { turnId: appServerTurnId(job) } : {}),
+    ...(job.activityPresentationId ? { presentationId: job.activityPresentationId } : {})
+  };
+}
+
 function metadataString(meta: unknown, key: string): string | undefined {
   if (!isRecord(meta)) return undefined;
   const value = meta[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function callerPresentationFromMetadata(meta: unknown): ActivityCardPresentationContext | undefined {
+  const presentationId = metadataString(meta, "codex/activityPresentationId");
+  if (!presentationId) return undefined;
+  if (!SCOPE_ID_PATTERN.test(presentationId.toLowerCase())) {
+    throw new Error("Host Activity presentation metadata must be UUID-formatted.");
+  }
+  return {
+    kind: "automatic",
+    activityPresentationId: presentationId.toLowerCase()
+  };
+}
+
+function correlationDigest(domain: string, value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized = String(value).trim();
+  if (!normalized) return undefined;
+  return createHash("sha256").update(domain).update("\0").update(normalized).digest("hex");
+}
+
+function boundedCancellationFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n\t]+/g, " ").slice(0, 500) || "Cancellation failed.";
+}
+
+function cancellationFailureMessage(result: unknown): string {
+  if (isRecord(result) && typeof result.message === "string" && result.message) {
+    return result.message;
+  }
+  return "CANCELLATION_FAILED: The durable cancellation operation previously failed.";
 }
 
 function formatJobActivity(
@@ -8211,7 +8938,7 @@ function readTrackingState(
 
 function readPersistedJob(
   value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
 ): PersistedCodexJob | undefined {
   if (!isRecord(value)) return undefined;
   const jobId = typeof value.jobId === "string" && value.jobId ? value.jobId : undefined;
@@ -8245,6 +8972,29 @@ function readPersistedJob(
     typeof value.backendKind === "string" && value.backendKind ? value.backendKind : "mcp-server";
   const trackingState = readTrackingState(value.trackingState) ||
     (isTerminalActivityJobStatus(String(status)) ? "liveness-unknown" : "orphaned");
+  const cancellationIntentId = typeof value.cancellationIntentId === "string" &&
+    SCOPE_ID_PATTERN.test(value.cancellationIntentId)
+      ? value.cancellationIntentId.toLowerCase()
+      : undefined;
+  const explicitTerminalOrigin = JOB_TERMINAL_ORIGINS.includes(
+    value.terminalOrigin as JobTerminalOrigin
+  )
+    ? value.terminalOrigin as JobTerminalOrigin
+    : undefined;
+  const terminalOrigin: JobTerminalOrigin | undefined = explicitTerminalOrigin ||
+    (status === "completed"
+      ? "normal-completion"
+      : status === "failed"
+        ? "upstream-failure"
+        : status === "interrupted"
+          ? trackingState === "orphaned"
+            ? "bridge-restart"
+            : trackingState === "worker-lost"
+              ? "worker-loss"
+              : "app-server-interrupted"
+          : status === "cancelled"
+            ? "legacy-unattributed-cancellation"
+            : undefined);
   const publicEvents = Array.isArray(value.publicEvents)
     ? value.publicEvents.map(sanitizePublicEvent).filter((event): event is CodexPublicEvent => Boolean(event)).slice(-200)
     : [];
@@ -8307,6 +9057,8 @@ function readPersistedJob(
     !isOptionalFiniteNumber(value.resultBytes) ||
     !isOptionalBoolean(value.resultOmitted) ||
     !isOptionalFiniteNumber(value.cancelRequestedAt) ||
+    (value.cancellationIntentId !== undefined && !cancellationIntentId) ||
+    (value.terminalOrigin !== undefined && !explicitTerminalOrigin) ||
     !isOptionalString(value.error) ||
     !isOptionalString(value.threadId) ||
     !isOptionalString(value.bridgeInstanceId) ||
@@ -8368,6 +9120,8 @@ function readPersistedJob(
     publicEvents,
     pendingInteractions,
     cancelRequestedAt: value.cancelRequestedAt,
+    cancellationIntentId,
+    terminalOrigin,
     terminationEscalated: value.terminationEscalated,
     error: value.error
   };

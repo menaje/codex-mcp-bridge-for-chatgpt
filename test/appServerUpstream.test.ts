@@ -494,7 +494,13 @@ describe("CodexAppServerUpstreamPool", () => {
         sessionId: "fake-session-1"
       });
       expect(pool.canResumeThread(threadId)).toBe(true);
-      await pool.forceTerminateWorker(assignment!);
+      await pool.forceTerminateWorker(assignment!, {
+        kind: "cancellation-intent",
+        intentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        source: "operator",
+        reasonCode: "test-interrupt"
+      });
       await active;
 
       const corrupt = await pool.callTool("codex", task("mark thread system error"));
@@ -833,7 +839,16 @@ describe("CodexAppServerUpstreamPool", () => {
         (value) => { assignment = value; }
       );
       await eventually(() => Boolean(assignment?.upstreamRequestId));
-      await expect(pool.forceTerminateWorker(assignment!, 100)).resolves.toMatchObject({
+      await expect(
+        pool.forceTerminateWorker(assignment!, undefined as never)
+      ).rejects.toThrow(/TERMINATION_PROVENANCE_REQUIRED/);
+      await expect(pool.forceTerminateWorker(assignment!, {
+        kind: "cancellation-intent",
+        intentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        source: "operator",
+        reasonCode: "test-interrupt"
+      }, 100)).resolves.toMatchObject({
         exited: true,
         escalated: false,
         mode: "turn-interrupt",

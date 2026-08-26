@@ -128,7 +128,7 @@ describe("release manifest", () => {
             content: {
               prefersBorder: true,
               csp: { connectDomains: [] },
-              "codex/uiContractGeneration": 6
+              "codex/uiContractGeneration": 7
             }
           }
         }
@@ -195,9 +195,9 @@ describe("release manifest", () => {
     for (let revision = 1; revision <= 6; revision += 1) {
       rendered = renderedRevision(
         `settings-v5-${revision}`,
-        `activity-v6-${revision}`,
+        `activity-v7-${revision}`,
         5,
-        6
+        7
       );
       history = deriveUiResourceManifest(legacyPolicy, rendered, history);
     }
@@ -214,7 +214,7 @@ describe("release manifest", () => {
       entry.metadata.content["codex/uiContractGeneration"] >= 5
     )).toBe(true);
     expect(reconciled.resources.activity.previous.every((entry: any) =>
-      entry.metadata.content["codex/uiContractGeneration"] >= 6
+      entry.metadata.content["codex/uiContractGeneration"] >= 7
     )).toBe(true);
 
     const missingGeneration = structuredClone(rendered);

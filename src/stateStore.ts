@@ -41,9 +41,25 @@ import {
   normalizeProjectId,
   normalizeProjectLabel
 } from "./projectRegistry.js";
+import {
+  CANCELLATION_SOURCES,
+  JOB_TERMINAL_ORIGINS,
+  type BeginCancellationOperationInput,
+  type CancellationIntentRecord,
+  type CancellationIntentStatus,
+  type CancellationOperationRecord,
+  type CancellationOperationStatus,
+  type CancellationPresentation,
+  type CancellationSource,
+  type CancellationTarget,
+  type CreateCancellationIntentInput,
+  type JobTerminalOrigin
+} from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "6";
+const CURRENT_SCHEMA_VERSION = "7";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
+const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
 type SessionRowInput = {
   threadId: string;
@@ -76,6 +92,8 @@ type JobRowInput = {
   projectLabel?: string;
   cwd?: string;
   sessionDecision?: { threadId?: string };
+  terminalOrigin?: JobTerminalOrigin;
+  cancellationIntentId?: string;
 };
 
 type JsonRow = { payload: string };
@@ -252,6 +270,30 @@ export type BridgeInstanceRecord = {
   processId: number;
 };
 
+export const TRANSPORT_OBSERVATION_KINDS = [
+  "http-request-aborted",
+  "http-response-detached",
+  "mcp-handler-aborted",
+  "status-wait-aborted",
+  "activity-watch-aborted",
+  "presentation-superseded"
+] as const;
+
+export type TransportObservationKind = (typeof TRANSPORT_OBSERVATION_KINDS)[number];
+
+export type TransportObservationRecord = {
+  observationId: number;
+  kind: TransportObservationKind;
+  scopeId?: string;
+  jobId?: string;
+  activityId?: string;
+  toolName?: string;
+  callerRequestDigest?: string;
+  bridgeInstanceId: string;
+  reasonCode: string;
+  createdAt: number;
+};
+
 export type BridgeStateStoreOptions = {
   file: string;
 };
@@ -291,6 +333,7 @@ export class BridgeStateStore {
       existingVersion !== "3" &&
       existingVersion !== "4" &&
       existingVersion !== "5" &&
+      existingVersion !== "6" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -305,6 +348,7 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "3") this.migrateV3ToV4();
       if (this.getMeta("schema_version") === "4") this.migrateV4ToV5();
       if (this.getMeta("schema_version") === "5") this.migrateV5ToV6();
+      if (this.getMeta("schema_version") === "6") this.migrateV6ToV7();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -479,12 +523,26 @@ export class BridgeStateStore {
   }
 
   replaceJobs(jobs: JobRowInput[]): void {
+    this.replaceJobsInternal(jobs, false);
+  }
+
+  /** Migration-only import for terminal rows created before durable cancellation intents existed. */
+  importLegacyJobs(jobs: JobRowInput[]): void {
+    this.replaceJobsInternal(jobs, true);
+  }
+
+  private replaceJobsInternal(
+    jobs: JobRowInput[],
+    allowLegacyUnattributedCancellation: boolean
+  ): void {
     this.transaction(() => {
       const retainedIds = new Set(jobs.map((job) => job.jobId));
       const existing = this.database
         .prepare("SELECT job_id FROM jobs WHERE archived_at IS NULL")
         .all() as Array<{ job_id: string }>;
-      for (const job of jobs) this.upsertJobInternal(job);
+      for (const job of jobs) {
+        this.upsertJobInternal(job, allowLegacyUnattributedCancellation);
+      }
       for (const row of existing) {
         if (!retainedIds.has(row.job_id)) this.deleteJob(row.job_id);
       }
@@ -1076,6 +1134,310 @@ export class BridgeStateStore {
         VALUES (?, ?, ?, ?, ?)
       `)
       .run(scopeId, requestId, actionHash, JSON.stringify(result), now);
+  }
+
+  getCancellationOperation(
+    scopeId: string,
+    requestId: string
+  ): CancellationOperationRecord | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM cancellation_operations WHERE scope_id = ? AND request_id = ?"
+      )
+      .get(scopeId, requestId) as Record<string, unknown> | undefined;
+    return row ? readCancellationOperationRow(row) : undefined;
+  }
+
+  listCancellationOperations(scopeId?: string): CancellationOperationRecord[] {
+    const rows = scopeId
+      ? this.database
+          .prepare(
+            "SELECT * FROM cancellation_operations WHERE scope_id = ? ORDER BY created_at ASC"
+          )
+          .all(scopeId)
+      : this.database
+          .prepare("SELECT * FROM cancellation_operations ORDER BY created_at ASC")
+          .all();
+    return (rows as Array<Record<string, unknown>>).map(readCancellationOperationRow);
+  }
+
+  beginCancellationOperation(input: BeginCancellationOperationInput): {
+    operation: CancellationOperationRecord;
+    intent: CancellationIntentRecord;
+  } {
+    const normalized = normalizeCancellationOperationInput(input);
+    return this.transaction(() => {
+      const existing = this.getCancellationOperation(normalized.scopeId, normalized.requestId);
+      if (existing) {
+        if (existing.actionHash !== normalized.actionHash) {
+          throw new Error(
+            "CANCELLATION_REQUEST_CONFLICT: requestId was already used for a different cancellation payload in this scope."
+          );
+        }
+        throw new Error(
+          "CANCELLATION_REQUEST_EXISTS: The cancellation operation was already durably recorded."
+        );
+      }
+      this.ensureScope(normalized.scopeId, normalized.now);
+      this.assertCancellationTarget(normalized.scopeId, normalized.target);
+      const intentId = randomUUID();
+      this.database
+        .prepare(`
+          INSERT INTO cancellation_operations(
+            scope_id, request_id, root_intent_id, action_hash, source, tool_name,
+            action_name, target_kind, target_job_id, target_activity_id,
+            target_agent_id, target_thread_id, target_turn_id, target_presentation_id,
+            expected_version, caller_presentation_kind, caller_presentation_id,
+            widget_instance_present, widget_instance_digest, card_generation,
+            caller_request_digest, bridge_instance_id, reason_code, status,
+            result, created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recorded', NULL, ?, NULL)
+        `)
+        .run(
+          normalized.scopeId,
+          normalized.requestId,
+          intentId,
+          normalized.actionHash,
+          normalized.source,
+          normalized.toolName,
+          normalized.actionName,
+          normalized.target.kind,
+          normalized.target.jobId || null,
+          normalized.target.activityId,
+          normalized.target.agentId || null,
+          normalized.target.threadId || null,
+          normalized.target.turnId || null,
+          normalized.target.presentationId || null,
+          normalized.expectedVersion,
+          normalized.callerPresentation?.kind || null,
+          normalized.callerPresentation?.activityPresentationId || null,
+          normalized.widgetProof ? 1 : 0,
+          normalized.widgetProof?.instanceDigest || null,
+          normalized.widgetProof?.cardGeneration || null,
+          normalized.callerRequestDigest || null,
+          this.currentInstanceId,
+          normalized.reasonCode,
+          normalized.now
+        );
+      this.insertCancellationIntent({
+        intentId,
+        scopeId: normalized.scopeId,
+        requestId: normalized.requestId,
+        cascadeId: intentId,
+        source: normalized.source,
+        toolName: normalized.toolName,
+        actionName: normalized.actionName,
+        target: normalized.target,
+        expectedVersion: normalized.expectedVersion,
+        callerPresentation: normalized.callerPresentation,
+        widgetProof: normalized.widgetProof,
+        callerRequestDigest: normalized.callerRequestDigest,
+        reasonCode: normalized.reasonCode,
+        now: normalized.now
+      });
+      const intent = this.requireCancellationIntent(intentId);
+      this.recordCancellationIntentEvent(intent, "cancellation-intent-recorded", normalized.now);
+      return {
+        operation: this.getCancellationOperation(
+          normalized.scopeId,
+          normalized.requestId
+        ) as CancellationOperationRecord,
+        intent
+      };
+    });
+  }
+
+  createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    const normalized = normalizeCancellationIntentInput(input);
+    return this.transaction(() => {
+      const operation = this.getCancellationOperation(normalized.scopeId, normalized.requestId);
+      if (!operation) {
+        throw new Error(
+          "CANCELLATION_PROVENANCE_REQUIRED: Child cancellation intent requires a durable parent operation."
+        );
+      }
+      if (operation.status !== "recorded") {
+        throw new Error("A completed cancellation operation cannot accept another child intent.");
+      }
+      const parent = this.requireCancellationIntent(normalized.parentIntentId);
+      if (
+        parent.scopeId !== normalized.scopeId ||
+        parent.requestId !== normalized.requestId ||
+        parent.cascadeId !== normalized.cascadeId
+      ) {
+        throw new Error("Cancellation parent/cascade correlation does not match the durable operation.");
+      }
+      this.assertCancellationTarget(normalized.scopeId, normalized.target);
+      const intentId = randomUUID();
+      this.insertCancellationIntent({ ...normalized, intentId });
+      const intent = this.requireCancellationIntent(intentId);
+      this.recordCancellationIntentEvent(intent, "cancellation-intent-recorded", normalized.now);
+      return intent;
+    });
+  }
+
+  getCancellationIntent(intentId: string): CancellationIntentRecord | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM cancellation_intents WHERE intent_id = ?")
+      .get(intentId) as Record<string, unknown> | undefined;
+    return row ? readCancellationIntentRow(row) : undefined;
+  }
+
+  listCancellationIntents(options: {
+    scopeId?: string;
+    requestId?: string;
+    jobId?: string;
+    activityId?: string;
+  } = {}): CancellationIntentRecord[] {
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (options.scopeId) {
+      clauses.push("scope_id = ?");
+      values.push(options.scopeId);
+    }
+    if (options.requestId) {
+      clauses.push("request_id = ?");
+      values.push(options.requestId);
+    }
+    if (options.jobId) {
+      clauses.push("target_job_id = ?");
+      values.push(options.jobId);
+    }
+    if (options.activityId) {
+      clauses.push("target_activity_id = ?");
+      values.push(options.activityId);
+    }
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM cancellation_intents${where} ORDER BY created_at ASC, rowid ASC`)
+      .all(...values) as Array<Record<string, unknown>>;
+    return rows.map(readCancellationIntentRow);
+  }
+
+  setCancellationIntentStatus(
+    intentId: string,
+    status: Exclude<CancellationIntentStatus, "recorded">,
+    now = Date.now()
+  ): CancellationIntentRecord {
+    return this.transaction(() => {
+      const current = this.requireCancellationIntent(intentId);
+      if (current.status === status) return current;
+      const terminal = current.status === "succeeded" ||
+        current.status === "failed" ||
+        current.status === "no-op";
+      if (
+        terminal ||
+        (current.status === "recorded" && status === "succeeded")
+      ) {
+        throw new Error(
+          `Invalid cancellation intent status transition: ${current.status} -> ${status}.`
+        );
+      }
+      this.database
+        .prepare(`
+          UPDATE cancellation_intents
+             SET status = ?,
+                 dispatched_at = CASE WHEN ? = 'dispatched' THEN COALESCE(dispatched_at, ?) ELSE dispatched_at END,
+                 completed_at = CASE WHEN ? IN ('succeeded','failed','no-op') THEN COALESCE(completed_at, ?) ELSE completed_at END
+           WHERE intent_id = ?
+        `)
+        .run(status, status, now, status, now, intentId);
+      const updated = this.requireCancellationIntent(intentId);
+      this.recordCancellationIntentEvent(updated, `cancellation-intent-${status}`, now);
+      return updated;
+    });
+  }
+
+  completeCancellationOperation(
+    scopeId: string,
+    requestId: string,
+    result: unknown,
+    status: Exclude<CancellationOperationStatus, "recorded"> = "completed",
+    now = Date.now()
+  ): CancellationOperationRecord {
+    return this.transaction(() => {
+      const operation = this.getCancellationOperation(scopeId, requestId);
+      if (!operation) throw new Error("Unknown durable cancellation operation.");
+      if (operation.status !== "recorded") {
+        if (operation.status === status) return operation;
+        throw new Error("A cancellation operation already has a terminal outcome.");
+      }
+      this.database
+        .prepare(`
+          UPDATE cancellation_operations
+             SET status = ?, result = ?, completed_at = ?
+           WHERE scope_id = ? AND request_id = ? AND status = 'recorded'
+        `)
+        .run(status, JSON.stringify(result), now, scopeId, requestId);
+      return this.getCancellationOperation(scopeId, requestId) as CancellationOperationRecord;
+    });
+  }
+
+  recordTransportObservation(input: {
+    kind: TransportObservationKind;
+    scopeId?: string;
+    jobId?: string;
+    activityId?: string;
+    toolName?: string;
+    callerRequestDigest?: string;
+    reasonCode: string;
+    now?: number;
+  }): TransportObservationRecord {
+    if (!TRANSPORT_OBSERVATION_KINDS.includes(input.kind)) {
+      throw new Error("Unsupported transport observation kind.");
+    }
+    const now = input.now ?? Date.now();
+    const reasonCode = normalizeReasonCode(input.reasonCode);
+    const toolName = input.toolName
+      ? normalizeRequiredString(input.toolName, "transport observation tool", 100)
+      : undefined;
+    const callerRequestDigest = normalizeOptionalDigest(input.callerRequestDigest);
+    const scopeId = input.scopeId ? normalizeUuid(input.scopeId, "observation scopeId") : undefined;
+    return this.transaction(() => {
+      const result = this.database
+        .prepare(`
+          INSERT INTO transport_observations(
+            kind, scope_id, job_id, activity_id, tool_name, caller_request_digest,
+            bridge_instance_id, reason_code, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          input.kind,
+          scopeId || null,
+          normalizeOptionalString(input.jobId) || null,
+          normalizeOptionalString(input.activityId) || null,
+          toolName || null,
+          callerRequestDigest || null,
+          this.currentInstanceId,
+          reasonCode,
+          now
+        );
+      this.database
+        .prepare(`
+          DELETE FROM transport_observations
+           WHERE observation_id NOT IN (
+             SELECT observation_id FROM transport_observations
+              ORDER BY observation_id DESC LIMIT ?
+           )
+        `)
+        .run(TRANSPORT_OBSERVATION_LIMIT);
+      const row = this.database
+        .prepare("SELECT * FROM transport_observations WHERE observation_id = ?")
+        .get(Number(result.lastInsertRowid)) as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Transport observation was not durably recorded.");
+      return readTransportObservationRow(row);
+    });
+  }
+
+  listTransportObservations(kind?: TransportObservationKind): TransportObservationRecord[] {
+    const rows = kind
+      ? this.database
+          .prepare("SELECT * FROM transport_observations WHERE kind = ? ORDER BY observation_id ASC")
+          .all(kind)
+      : this.database
+          .prepare("SELECT * FROM transport_observations ORDER BY observation_id ASC")
+          .all();
+    return (rows as Array<Record<string, unknown>>).map(readTransportObservationRow);
   }
 
   setActivityPolicy(
@@ -2218,8 +2580,123 @@ export class BridgeStateStore {
         ALTER TABLE agent_threads ADD COLUMN session_id TEXT;
       `);
       const now = Date.now();
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "6");
       this.setMeta("schema_v6_migrated_at", new Date(now).toISOString());
+    });
+  }
+
+  private migrateV6ToV7(): void {
+    this.transaction(() => {
+      this.database.exec(`
+        CREATE TABLE cancellation_operations (
+          scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+          request_id TEXT NOT NULL,
+          root_intent_id TEXT NOT NULL UNIQUE,
+          action_hash TEXT NOT NULL,
+          source TEXT NOT NULL CHECK(source IN (
+            'model-tool','widget-control','activity-cascade','operator',
+            'assignment-containment'
+          )),
+          tool_name TEXT NOT NULL,
+          action_name TEXT NOT NULL,
+          target_kind TEXT NOT NULL CHECK(target_kind IN ('job','activity')),
+          target_job_id TEXT,
+          target_activity_id TEXT NOT NULL REFERENCES activities(activity_id) ON DELETE RESTRICT,
+          target_agent_id TEXT,
+          target_thread_id TEXT,
+          target_turn_id TEXT,
+          target_presentation_id TEXT,
+          expected_version INTEGER NOT NULL CHECK(expected_version >= 1),
+          caller_presentation_kind TEXT CHECK(caller_presentation_kind IN ('automatic','explicit')),
+          caller_presentation_id TEXT,
+          widget_instance_present INTEGER NOT NULL CHECK(widget_instance_present IN (0,1)),
+          widget_instance_digest TEXT,
+          card_generation INTEGER CHECK(card_generation >= 1),
+          caller_request_digest TEXT,
+          bridge_instance_id TEXT NOT NULL REFERENCES bridge_instances(instance_id) ON DELETE RESTRICT,
+          reason_code TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('recorded','completed','failed')),
+          result TEXT,
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          PRIMARY KEY(scope_id, request_id),
+          CHECK((target_kind = 'job') = (target_job_id IS NOT NULL)),
+          CHECK((widget_instance_present = 1) = (widget_instance_digest IS NOT NULL)),
+          CHECK((caller_presentation_kind = 'automatic') = (caller_presentation_id IS NOT NULL))
+        ) STRICT;
+        CREATE INDEX cancellation_operations_target_job
+          ON cancellation_operations(target_job_id, created_at ASC);
+        CREATE INDEX cancellation_operations_target_activity
+          ON cancellation_operations(target_activity_id, created_at ASC);
+
+        CREATE TABLE cancellation_intents (
+          intent_id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          parent_intent_id TEXT REFERENCES cancellation_intents(intent_id) ON DELETE RESTRICT,
+          cascade_id TEXT NOT NULL,
+          source TEXT NOT NULL CHECK(source IN (
+            'model-tool','widget-control','activity-cascade','operator',
+            'assignment-containment'
+          )),
+          tool_name TEXT NOT NULL,
+          action_name TEXT NOT NULL,
+          target_kind TEXT NOT NULL CHECK(target_kind IN ('job','activity')),
+          target_job_id TEXT,
+          target_activity_id TEXT NOT NULL REFERENCES activities(activity_id) ON DELETE RESTRICT,
+          target_agent_id TEXT,
+          target_thread_id TEXT,
+          target_turn_id TEXT,
+          target_presentation_id TEXT,
+          expected_version INTEGER NOT NULL CHECK(expected_version >= 1),
+          caller_presentation_kind TEXT CHECK(caller_presentation_kind IN ('automatic','explicit')),
+          caller_presentation_id TEXT,
+          widget_instance_present INTEGER NOT NULL CHECK(widget_instance_present IN (0,1)),
+          widget_instance_digest TEXT,
+          card_generation INTEGER CHECK(card_generation >= 1),
+          caller_request_digest TEXT,
+          bridge_instance_id TEXT NOT NULL REFERENCES bridge_instances(instance_id) ON DELETE RESTRICT,
+          reason_code TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('recorded','dispatched','succeeded','failed','no-op')),
+          created_at INTEGER NOT NULL,
+          dispatched_at INTEGER,
+          completed_at INTEGER,
+          FOREIGN KEY(scope_id, request_id)
+            REFERENCES cancellation_operations(scope_id, request_id) ON DELETE RESTRICT,
+          CHECK((target_kind = 'job') = (target_job_id IS NOT NULL)),
+          CHECK((widget_instance_present = 1) = (widget_instance_digest IS NOT NULL)),
+          CHECK((caller_presentation_kind = 'automatic') = (caller_presentation_id IS NOT NULL))
+        ) STRICT;
+        CREATE INDEX cancellation_intents_operation
+          ON cancellation_intents(scope_id, request_id, created_at ASC);
+        CREATE INDEX cancellation_intents_target_job
+          ON cancellation_intents(target_job_id, created_at ASC);
+        CREATE INDEX cancellation_intents_target_activity
+          ON cancellation_intents(target_activity_id, created_at ASC);
+        CREATE INDEX cancellation_intents_cascade
+          ON cancellation_intents(cascade_id, created_at ASC);
+
+        CREATE TABLE transport_observations (
+          observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL CHECK(kind IN (
+            'http-request-aborted','http-response-detached','mcp-handler-aborted',
+            'status-wait-aborted','activity-watch-aborted','presentation-superseded'
+          )),
+          scope_id TEXT,
+          job_id TEXT,
+          activity_id TEXT,
+          tool_name TEXT,
+          caller_request_digest TEXT,
+          bridge_instance_id TEXT NOT NULL REFERENCES bridge_instances(instance_id) ON DELETE RESTRICT,
+          reason_code TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX transport_observations_recent
+          ON transport_observations(created_at DESC, observation_id DESC);
+      `);
+      const now = Date.now();
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v7_migrated_at", new Date(now).toISOString());
     });
   }
 
@@ -2262,7 +2739,10 @@ export class BridgeStateStore {
     });
   }
 
-  private upsertJobInternal(job: JobRowInput): void {
+  private upsertJobInternal(
+    job: JobRowInput,
+    allowLegacyUnattributedCancellation = false
+  ): void {
     if (!valueIsOneOf(ACTIVITY_JOB_STATUSES, job.status)) {
       throw new Error(`Invalid Codex job status for Activity storage: ${job.status}.`);
     }
@@ -2279,6 +2759,81 @@ export class BridgeStateStore {
           FROM jobs WHERE job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
+    const terminalOrigin = job.terminalOrigin;
+    if (terminalOrigin && !JOB_TERMINAL_ORIGINS.includes(terminalOrigin)) {
+      throw new Error("Invalid Codex job terminal origin.");
+    }
+    const cancellationIntentId = job.cancellationIntentId
+      ? normalizeUuid(job.cancellationIntentId, "job cancellationIntentId")
+      : undefined;
+    if (cancellationIntentId) {
+      const intent = this.getCancellationIntent(cancellationIntentId);
+      if (
+        !intent ||
+        intent.targetKind !== "job" ||
+        intent.targetJobId !== job.jobId ||
+        intent.scopeId !== job.scopeId
+      ) {
+        throw new Error(
+          "CANCELLATION_PROVENANCE_REQUIRED: Job cancellation correlation does not match a durable target intent."
+        );
+      }
+    }
+    if (
+      job.status === "cancelled" &&
+      previous?.status !== "cancelled" &&
+      !cancellationIntentId &&
+      !(allowLegacyUnattributedCancellation &&
+        terminalOrigin === "legacy-unattributed-cancellation")
+    ) {
+      throw new Error(
+        "CANCELLATION_PROVENANCE_REQUIRED: A job cannot transition to cancelled without a durable cancellation intent."
+      );
+    }
+    if (terminalOrigin === "explicit-cancellation" && !cancellationIntentId) {
+      throw new Error(
+        "CANCELLATION_PROVENANCE_REQUIRED: Explicit cancellation terminal origin requires a durable intent."
+      );
+    }
+    const expectedStatusByOrigin: Partial<Record<JobTerminalOrigin, string>> = {
+      "normal-completion": "completed",
+      "upstream-failure": "failed",
+      "app-server-interrupted": "interrupted",
+      "explicit-cancellation": "cancelled",
+      "assignment-containment": "interrupted",
+      "bridge-restart": "interrupted",
+      "worker-loss": "interrupted"
+    };
+    if (
+      terminalOrigin &&
+      expectedStatusByOrigin[terminalOrigin] &&
+      job.status !== expectedStatusByOrigin[terminalOrigin]
+    ) {
+      throw new Error(
+        `Invalid job terminal-origin matrix: ${terminalOrigin} cannot produce ${job.status}.`
+      );
+    }
+    if (
+      terminalOrigin === "app-server-interrupted" &&
+      cancellationIntentId
+    ) {
+      throw new Error(
+        "A spontaneous App Server interruption cannot claim a cancellation intent."
+      );
+    }
+    if (
+      job.status === "cancelled" &&
+      previous?.status !== "cancelled" &&
+      terminalOrigin !== "explicit-cancellation" &&
+      !(allowLegacyUnattributedCancellation &&
+        terminalOrigin === "legacy-unattributed-cancellation")
+    ) {
+      throw new Error(
+        "A new cancelled terminal state requires explicit-cancellation origin."
+      );
+    }
+    job.terminalOrigin = terminalOrigin;
+    job.cancellationIntentId = cancellationIntentId;
     if (previous && previous.scope_id !== scopeId) {
       throw new Error("A persisted Codex job cannot move to another conversation scope.");
     }
@@ -2510,7 +3065,9 @@ export class BridgeStateStore {
         terminalVersion: terminalVersion || null,
         backendKind,
         agentId: agentId || null,
-        contextMode: contextMode || null
+        contextMode: contextMode || null,
+        terminalOrigin: terminalOrigin || null,
+        cancellationIntentId: cancellationIntentId || null
       }
     });
     this.reconcileActivity(activityId, scopeVersion, job.updatedAt);
@@ -2886,6 +3443,157 @@ export class BridgeStateStore {
       );
   }
 
+  private assertCancellationTarget(scopeId: string, target: CancellationTarget): void {
+    const activity = this.getActivity(target.activityId);
+    if (!activity || activity.scopeId !== scopeId) {
+      throw new Error("Cancellation target Activity is missing or belongs to another scope.");
+    }
+    if (target.kind === "activity") {
+      if (target.jobId) throw new Error("An Activity cancellation target cannot include a job id.");
+      return;
+    }
+    if (!target.jobId) throw new Error("A job cancellation target requires a job id.");
+    const row = this.database
+      .prepare(`
+        SELECT scope_id, activity_id, agent_id, thread_id, upstream_request_id
+          FROM jobs WHERE job_id = ? AND archived_at IS NULL
+      `)
+      .get(target.jobId) as
+      | {
+          scope_id: string;
+          activity_id: string;
+          agent_id: string | null;
+          thread_id: string | null;
+          upstream_request_id: string | null;
+        }
+      | undefined;
+    if (!row || row.scope_id !== scopeId || row.activity_id !== target.activityId) {
+      throw new Error("Cancellation target job is missing or does not match its Activity scope.");
+    }
+    if (target.agentId && row.agent_id !== target.agentId) {
+      throw new Error("Cancellation target Agent no longer matches the job.");
+    }
+    if (target.threadId && row.thread_id !== target.threadId) {
+      throw new Error("Cancellation target thread no longer matches the job.");
+    }
+    if (target.turnId && row.upstream_request_id !== target.turnId) {
+      throw new Error("Cancellation target turn no longer matches the job.");
+    }
+  }
+
+  private insertCancellationIntent(input: {
+    intentId: string;
+    scopeId: string;
+    requestId: string;
+    parentIntentId?: string;
+    cascadeId: string;
+    source: CancellationSource;
+    toolName: string;
+    actionName: string;
+    target: CancellationTarget;
+    expectedVersion: number;
+    callerPresentation?: CancellationPresentation;
+    widgetProof?: { instanceDigest: string; cardGeneration: number };
+    callerRequestDigest?: string;
+    reasonCode: string;
+    now: number;
+  }): void {
+    this.database
+      .prepare(`
+        INSERT INTO cancellation_intents(
+          intent_id, scope_id, request_id, parent_intent_id, cascade_id, source,
+          tool_name, action_name, target_kind, target_job_id, target_activity_id,
+          target_agent_id, target_thread_id, target_turn_id, target_presentation_id,
+          expected_version, caller_presentation_kind, caller_presentation_id,
+          widget_instance_present, widget_instance_digest, card_generation,
+          caller_request_digest, bridge_instance_id, reason_code, status,
+          created_at, dispatched_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recorded', ?, NULL, NULL)
+      `)
+      .run(
+        input.intentId,
+        input.scopeId,
+        input.requestId,
+        input.parentIntentId || null,
+        input.cascadeId,
+        input.source,
+        input.toolName,
+        input.actionName,
+        input.target.kind,
+        input.target.jobId || null,
+        input.target.activityId,
+        input.target.agentId || null,
+        input.target.threadId || null,
+        input.target.turnId || null,
+        input.target.presentationId || null,
+        input.expectedVersion,
+        input.callerPresentation?.kind || null,
+        input.callerPresentation?.activityPresentationId || null,
+        input.widgetProof ? 1 : 0,
+        input.widgetProof?.instanceDigest || null,
+        input.widgetProof?.cardGeneration || null,
+        input.callerRequestDigest || null,
+        this.currentInstanceId,
+        input.reasonCode,
+        input.now
+      );
+  }
+
+  private requireCancellationIntent(intentId: string): CancellationIntentRecord {
+    const intent = this.getCancellationIntent(intentId);
+    if (!intent) throw new Error("Unknown durable cancellation intent.");
+    return intent;
+  }
+
+  private recordCancellationIntentEvent(
+    intent: CancellationIntentRecord,
+    eventType: string,
+    now: number
+  ): void {
+    const scopeVersion = this.nextScopeVersion(intent.scopeId, now);
+    const payload = {
+      cancellationIntentId: intent.intentId,
+      cancellationRequestId: intent.requestId,
+      source: intent.source,
+      tool: intent.toolName,
+      action: intent.actionName,
+      reasonCode: intent.reasonCode,
+      expectedVersion: intent.expectedVersion,
+      parentIntentId: intent.parentIntentId || null,
+      cascadeId: intent.cascadeId,
+      callerPresentation: intent.callerPresentation || null,
+      targetPresentationId: intent.targetPresentationId || null,
+      widgetInstancePresent: intent.widgetInstancePresent,
+      cardGeneration: intent.cardGeneration || null,
+      bridgeInstanceId: intent.bridgeInstanceId
+    };
+    if (intent.targetKind === "job" && intent.targetJobId) {
+      const row = this.database
+        .prepare("SELECT status FROM jobs WHERE job_id = ?")
+        .get(intent.targetJobId) as { status: string } | undefined;
+      if (!row) throw new Error("Cancellation intent job disappeared before audit recording.");
+      this.insertJobEvent({
+        jobId: intent.targetJobId,
+        activityId: intent.targetActivityId,
+        scopeId: intent.scopeId,
+        scopeVersion,
+        eventType,
+        status: row.status,
+        createdAt: now,
+        payload
+      });
+      return;
+    }
+    this.insertActivityEvent({
+      activityId: intent.targetActivityId,
+      scopeId: intent.scopeId,
+      scopeVersion,
+      eventType,
+      createdAt: now,
+      payload
+    });
+  }
+
   private insertCompletionOutbox(input: {
     activityId: string;
     scopeId: string;
@@ -3017,6 +3725,275 @@ export class BridgeStateStore {
       if (existsSync(file)) chmodSync(file, 0o600);
     }
   }
+}
+
+type NormalizedCancellationOperationInput = Omit<BeginCancellationOperationInput, "now"> & {
+  now: number;
+};
+
+type NormalizedCancellationIntentInput = Omit<CreateCancellationIntentInput, "now"> & {
+  now: number;
+};
+
+function normalizeCancellationOperationInput(
+  input: BeginCancellationOperationInput
+): NormalizedCancellationOperationInput {
+  return {
+    scopeId: normalizeUuid(input.scopeId, "cancellation scopeId"),
+    requestId: normalizeUuid(input.requestId, "cancellation requestId"),
+    actionHash: normalizeDigest(input.actionHash, "cancellation actionHash"),
+    source: normalizeCancellationSource(input.source),
+    toolName: normalizeRequiredString(input.toolName, "cancellation tool name", 100),
+    actionName: normalizeRequiredString(input.actionName, "cancellation action name", 100),
+    target: normalizeCancellationTarget(input.target),
+    expectedVersion: normalizeExpectedVersion(input.expectedVersion),
+    callerPresentation: normalizeCancellationPresentation(input.callerPresentation),
+    widgetProof: normalizeCancellationWidgetProof(input.widgetProof),
+    callerRequestDigest: normalizeOptionalDigest(input.callerRequestDigest),
+    reasonCode: normalizeReasonCode(input.reasonCode),
+    now: normalizeEventTimestamp(input.now ?? Date.now())
+  };
+}
+
+function normalizeCancellationIntentInput(
+  input: CreateCancellationIntentInput
+): NormalizedCancellationIntentInput {
+  return {
+    scopeId: normalizeUuid(input.scopeId, "cancellation scopeId"),
+    requestId: normalizeUuid(input.requestId, "cancellation requestId"),
+    parentIntentId: normalizeUuid(input.parentIntentId, "parent cancellation intentId"),
+    cascadeId: normalizeUuid(input.cascadeId, "cancellation cascadeId"),
+    source: normalizeCancellationSource(input.source),
+    toolName: normalizeRequiredString(input.toolName, "cancellation tool name", 100),
+    actionName: normalizeRequiredString(input.actionName, "cancellation action name", 100),
+    target: normalizeCancellationTarget(input.target),
+    expectedVersion: normalizeExpectedVersion(input.expectedVersion),
+    callerPresentation: normalizeCancellationPresentation(input.callerPresentation),
+    widgetProof: normalizeCancellationWidgetProof(input.widgetProof),
+    callerRequestDigest: normalizeOptionalDigest(input.callerRequestDigest),
+    reasonCode: normalizeReasonCode(input.reasonCode),
+    now: normalizeEventTimestamp(input.now ?? Date.now())
+  };
+}
+
+function normalizeCancellationSource(source: CancellationSource): CancellationSource {
+  if (!CANCELLATION_SOURCES.includes(source)) throw new Error("Unsupported cancellation source.");
+  return source;
+}
+
+function normalizeCancellationTarget(target: CancellationTarget): CancellationTarget {
+  if (target.kind !== "job" && target.kind !== "activity") {
+    throw new Error("Unsupported cancellation target kind.");
+  }
+  const jobId = target.jobId
+    ? normalizeRequiredString(target.jobId, "cancellation target jobId", 200)
+    : undefined;
+  if ((target.kind === "job") !== Boolean(jobId)) {
+    throw new Error("Cancellation target kind and job id do not match.");
+  }
+  return {
+    kind: target.kind,
+    ...(jobId ? { jobId } : {}),
+    activityId: normalizeUuid(target.activityId, "cancellation target activityId"),
+    ...(target.agentId
+      ? { agentId: normalizeUuid(target.agentId, "cancellation target agentId") }
+      : {}),
+    ...(target.threadId
+      ? { threadId: normalizeRequiredString(target.threadId, "cancellation target threadId", 200) }
+      : {}),
+    ...(target.turnId
+      ? { turnId: normalizeRequiredString(target.turnId, "cancellation target turnId", 200) }
+      : {}),
+    ...(target.presentationId
+      ? {
+          presentationId: normalizeUuid(
+            target.presentationId,
+            "cancellation target presentationId"
+          )
+        }
+      : {})
+  };
+}
+
+function normalizeCancellationPresentation(
+  presentation: CancellationPresentation | undefined
+): CancellationPresentation | undefined {
+  if (!presentation) return undefined;
+  if (presentation.kind === "explicit") {
+    if (presentation.activityPresentationId) {
+      throw new Error("An explicit caller presentation cannot include an automatic presentation id.");
+    }
+    return { kind: "explicit" };
+  }
+  if (presentation.kind !== "automatic" || !presentation.activityPresentationId) {
+    throw new Error("An automatic caller presentation requires an exact presentation id.");
+  }
+  return {
+    kind: "automatic",
+    activityPresentationId: normalizeUuid(
+      presentation.activityPresentationId,
+      "caller activityPresentationId"
+    )
+  };
+}
+
+function normalizeCancellationWidgetProof(
+  proof: { instanceDigest: string; cardGeneration: number } | undefined
+): { instanceDigest: string; cardGeneration: number } | undefined {
+  if (!proof) return undefined;
+  if (!Number.isInteger(proof.cardGeneration) || proof.cardGeneration < 1) {
+    throw new Error("Cancellation card generation must be a positive integer.");
+  }
+  return {
+    instanceDigest: normalizeDigest(proof.instanceDigest, "widget instance digest"),
+    cardGeneration: proof.cardGeneration
+  };
+}
+
+function normalizeExpectedVersion(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error("Cancellation expectedVersion must be a positive integer.");
+  }
+  return value;
+}
+
+function normalizeReasonCode(value: string): string {
+  if (!CANCELLATION_REASON_CODE_PATTERN.test(value)) {
+    throw new Error("Cancellation/observation reasonCode must be a bounded stable code.");
+  }
+  return value;
+}
+
+function normalizeDigest(value: string, label: string): string {
+  const normalized = normalizeRequiredString(value, label, 64).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) throw new Error(`${label} must be a SHA-256 digest.`);
+  return normalized;
+}
+
+function normalizeOptionalDigest(value: string | undefined): string | undefined {
+  return value ? normalizeDigest(value, "caller request digest") : undefined;
+}
+
+function normalizeEventTimestamp(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid cancellation timestamp.");
+  return value;
+}
+
+function readCancellationOperationRow(row: Record<string, unknown>): CancellationOperationRecord {
+  return {
+    scopeId: String(row.scope_id),
+    requestId: String(row.request_id),
+    rootIntentId: String(row.root_intent_id),
+    actionHash: String(row.action_hash),
+    source: row.source as CancellationSource,
+    toolName: String(row.tool_name),
+    actionName: String(row.action_name),
+    targetKind: row.target_kind as CancellationOperationRecord["targetKind"],
+    targetJobId: row.target_job_id ? String(row.target_job_id) : undefined,
+    targetActivityId: String(row.target_activity_id),
+    targetAgentId: row.target_agent_id ? String(row.target_agent_id) : undefined,
+    targetThreadId: row.target_thread_id ? String(row.target_thread_id) : undefined,
+    targetTurnId: row.target_turn_id ? String(row.target_turn_id) : undefined,
+    targetPresentationId: row.target_presentation_id
+      ? String(row.target_presentation_id)
+      : undefined,
+    expectedVersion: Number(row.expected_version),
+    callerPresentation: readCancellationPresentationRow(row),
+    widgetInstancePresent: Number(row.widget_instance_present) === 1,
+    widgetInstanceDigest: row.widget_instance_digest
+      ? String(row.widget_instance_digest)
+      : undefined,
+    cardGeneration: row.card_generation === null || row.card_generation === undefined
+      ? undefined
+      : Number(row.card_generation),
+    callerRequestDigest: row.caller_request_digest
+      ? String(row.caller_request_digest)
+      : undefined,
+    bridgeInstanceId: String(row.bridge_instance_id),
+    reasonCode: String(row.reason_code),
+    status: row.status as CancellationOperationStatus,
+    result: row.result
+      ? parsePayload({ payload: String(row.result) }, "cancellation operation result")
+      : undefined,
+    createdAt: Number(row.created_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined
+      ? undefined
+      : Number(row.completed_at)
+  };
+}
+
+function readCancellationIntentRow(row: Record<string, unknown>): CancellationIntentRecord {
+  return {
+    intentId: String(row.intent_id),
+    scopeId: String(row.scope_id),
+    requestId: String(row.request_id),
+    parentIntentId: row.parent_intent_id ? String(row.parent_intent_id) : undefined,
+    cascadeId: String(row.cascade_id),
+    source: row.source as CancellationSource,
+    toolName: String(row.tool_name),
+    actionName: String(row.action_name),
+    targetKind: row.target_kind as CancellationIntentRecord["targetKind"],
+    targetJobId: row.target_job_id ? String(row.target_job_id) : undefined,
+    targetActivityId: String(row.target_activity_id),
+    targetAgentId: row.target_agent_id ? String(row.target_agent_id) : undefined,
+    targetThreadId: row.target_thread_id ? String(row.target_thread_id) : undefined,
+    targetTurnId: row.target_turn_id ? String(row.target_turn_id) : undefined,
+    targetPresentationId: row.target_presentation_id
+      ? String(row.target_presentation_id)
+      : undefined,
+    expectedVersion: Number(row.expected_version),
+    callerPresentation: readCancellationPresentationRow(row),
+    widgetInstancePresent: Number(row.widget_instance_present) === 1,
+    widgetInstanceDigest: row.widget_instance_digest
+      ? String(row.widget_instance_digest)
+      : undefined,
+    cardGeneration: row.card_generation === null || row.card_generation === undefined
+      ? undefined
+      : Number(row.card_generation),
+    callerRequestDigest: row.caller_request_digest
+      ? String(row.caller_request_digest)
+      : undefined,
+    bridgeInstanceId: String(row.bridge_instance_id),
+    reasonCode: String(row.reason_code),
+    status: row.status as CancellationIntentStatus,
+    createdAt: Number(row.created_at),
+    dispatchedAt: row.dispatched_at === null || row.dispatched_at === undefined
+      ? undefined
+      : Number(row.dispatched_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined
+      ? undefined
+      : Number(row.completed_at)
+  };
+}
+
+function readCancellationPresentationRow(
+  row: Record<string, unknown>
+): CancellationPresentation | undefined {
+  if (row.caller_presentation_kind === "explicit") return { kind: "explicit" };
+  if (row.caller_presentation_kind === "automatic" && row.caller_presentation_id) {
+    return {
+      kind: "automatic",
+      activityPresentationId: String(row.caller_presentation_id)
+    };
+  }
+  return undefined;
+}
+
+function readTransportObservationRow(row: Record<string, unknown>): TransportObservationRecord {
+  return {
+    observationId: Number(row.observation_id),
+    kind: row.kind as TransportObservationKind,
+    scopeId: row.scope_id ? String(row.scope_id) : undefined,
+    jobId: row.job_id ? String(row.job_id) : undefined,
+    activityId: row.activity_id ? String(row.activity_id) : undefined,
+    toolName: row.tool_name ? String(row.tool_name) : undefined,
+    callerRequestDigest: row.caller_request_digest
+      ? String(row.caller_request_digest)
+      : undefined,
+    bridgeInstanceId: String(row.bridge_instance_id),
+    reasonCode: String(row.reason_code),
+    createdAt: Number(row.created_at)
+  };
 }
 
 function hydrateJobPayload(row: JobStorageRow): unknown {

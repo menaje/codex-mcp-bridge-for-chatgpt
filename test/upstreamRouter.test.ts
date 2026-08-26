@@ -58,7 +58,13 @@ describe("CodexBackendRouter", () => {
       upstreamRequestId: "turn-1"
     };
 
-    await expect(router.forceTerminateWorker(assignment)).resolves.toMatchObject({
+    await expect(router.forceTerminateWorker(assignment, {
+      kind: "cancellation-intent",
+      intentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      source: "operator",
+      reasonCode: "test-interrupt"
+    })).resolves.toMatchObject({
       mode: "turn-interrupt"
     });
     await expect(router.steerThread("app-thread", "guide")).resolves.toEqual({ turnId: "turn-1" });

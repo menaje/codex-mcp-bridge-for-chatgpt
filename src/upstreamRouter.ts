@@ -1,6 +1,7 @@
 import type { CodexBackendKind } from "./config.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
+import type { WorkerTerminationCorrelation } from "./cancellation.js";
 import type {
   CodexThreadContinueRequest,
   CodexThreadForkRequest,
@@ -230,13 +231,14 @@ export class CodexBackendRouter implements CodexUpstream {
 
   forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs?: number
   ): Promise<JsonRpcTerminationResult> {
     const backend = this.backend(assignment.backendKind);
     if (!backend.forceTerminateWorker) {
       throw new Error(`Codex backend ${assignment.backendKind} does not support supervised force-stop.`);
     }
-    return backend.forceTerminateWorker(assignment, graceMs);
+    return backend.forceTerminateWorker(assignment, correlation, graceMs);
   }
 
   async respondToInteraction(

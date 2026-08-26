@@ -68,7 +68,7 @@
     "hashLength": 12,
     "minimumContractGeneration": {
       "settings": 5,
-      "activity": 6
+      "activity": 7
     },
     "resources": [
       "settings",

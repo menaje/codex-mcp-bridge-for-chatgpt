@@ -22,8 +22,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   IDs, expose each Agent's current or latest effective model/effort selection, and
   show only final folder names when multiple projects must be distinguished, never
   full working paths.
-- `codex_cancel` force-stops one scope-owned running job through exact App
-  Server turn interruption or the tracked worker process group; partial
+- `codex_cancel` requires a logical cancellation UUID and exact Job version,
+  then records a durable scope-owned intent before exact App Server turn
+  interruption or tracked worker-process termination. Exact retries replay the
+  recorded result; reusing the UUID with another payload is a conflict. Partial
   filesystem changes are not rolled back.
 - `codex_activity_update` publishes one exact-version discriminated operation
   for non-cancelling lifecycle, policy, and evidence-backed verification
@@ -31,7 +33,15 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   cancellation fields are rejected.
 - `codex_activity_cancel` is the separately annotated destructive whole-Activity
   force-stop. It requires a replay UUID, exact Activity version, scope ownership,
-  and the complete affected-job acknowledgement when workers are shared.
+  and the complete affected-job acknowledgement when workers are shared. Its
+  parent Activity intent is recorded before `activity-terminating`; every child
+  Job intent is linked by parent/cascade correlation before child cancellation,
+  and `activity-cancelled` is written only after all children are terminal.
+- `codex_activity_job_cancel` is an app-private destructive surface used by the
+  Activity card instead of public `codex_cancel`. It requires a widget-instance
+  proof, current card generation and presentation, live lease, exact Job
+  version, idempotency UUID, target ownership, and shared-worker acknowledgement.
+  Stale and superseded cards fail closed before intent creation or interruption.
 - `codex_interaction_respond` and `codex_job_steer` are app-private and require
   an active exact card lease plus exact scope, Job, Activity, Agent, and optimistic
   Job-version ownership. Their request UUIDs are idempotent; interaction resolution
@@ -83,9 +93,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   retain their original replay semantics.
 
 The bridge does not expose a raw shell tool, arbitrary process control,
-arbitrary Codex config, or a general Responses API proxy. Its only direct
-process-control surface is the exact mounted-card terminal termination described
-above. An explicitly enabled
+arbitrary Codex config, or a general Responses API proxy. Process termination is
+limited to the exact scope-owned public cancellation surfaces and the mounted-card
+private job/background-terminal controls described above. An explicitly enabled
 `danger-full-access` Codex session can nevertheless execute commands and access
 the network as the current macOS user.
 
@@ -152,9 +162,12 @@ the network as the current macOS user.
   terminal state. Background calls return immediately; Activity/status
   long-poll, model catalog, tunnel, and database waits remain bounded
   control-plane operations.
-- One user-visible force-stop action with exact worker generation/process-group
-  validation, TERM→KILL escalation, collateral confirmation, and terminal state
-  only after exit evidence. `termination-failed` remains an active slot.
+- Separate model-visible and card-private force-stop surfaces with exact worker
+  generation/process-group validation, TERM→KILL escalation, collateral
+  confirmation, a durable intent before side effects, and terminal state only
+  after exit evidence. `termination-failed` remains an active slot. A runtime
+  invariant rejects App Server interruption or worker termination without a
+  typed cancellation or assignment-containment correlation.
 - Automatic Activity render reservations are in-memory and keyed by the
   host-derived conversation scope plus an explicit assistant-response
   `activityPresentationId`. Documented ChatGPT MCP metadata does not expose an
@@ -167,6 +180,12 @@ the network as the current macOS user.
   the automatic owner, without claiming automatic handoff. Widget instance
   leases use `openai/widgetSessionId` and are released by abort/unmount/TTL or
   process restart.
+- HTTP/SSE detach, MCP `notifications/cancelled`, read-only status/snapshot wait
+  abort, presentation supersession, and widget unmount are observation
+  lifecycle only. They can release bounded waits/leases and append a bounded
+  transport diagnostic, but they never dispatch a domain cancellation. The
+  diagnostic stores only allowlisted IDs, hashes, bridge instance, timestamp,
+  tool, and reason code—not raw host metadata, prompts, answers, or auth data.
 - App Server background terminals left after a turn are observed separately
   from Agent idle state and require exact process termination before archive.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
@@ -243,6 +262,12 @@ identity.
   edits already performed. Verification evidence is bounded metadata supplied by
   the caller; it is an audit reference, not cryptographic proof that a test or
   artifact belongs only to that Activity.
+- Cancellation operations and intents are first-class SQLite records. They
+  retain the logical request UUID, source/tool/action, exact Job/Activity/thread/
+  turn and presentation targets where known, expected version, parent/cascade
+  correlation, hashed caller/widget correlation, bridge instance, timestamps,
+  status, and bounded reason code. They deliberately exclude raw host metadata,
+  prompt/answer content, and authentication material.
 - Job admission has a hard maximum of 100. The environment ceiling, saved user
   limit, Job Registry, job cancellation acknowledgement, and Activity
   cancellation acknowledgement all share that invariant, so a valid affected

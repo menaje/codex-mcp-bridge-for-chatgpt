@@ -20,6 +20,10 @@ import {
 } from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
+import {
+  assertWorkerTerminationCorrelation,
+  type WorkerTerminationCorrelation
+} from "./cancellation.js";
 import type {
   CodexThreadContinueRequest,
   CodexThreadForkRequest,
@@ -460,13 +464,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
 
   async forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs?: number
   ): Promise<JsonRpcTerminationResult> {
+    assertWorkerTerminationCorrelation(correlation);
     const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
-    const result = await worker.connection.interruptOrTerminate(assignment, graceMs);
+    const result = await worker.connection.interruptOrTerminate(assignment, correlation, graceMs);
     if (result.workerExited) {
       worker.connection = undefined;
       this.forgetWorkerThreads(worker.index);
@@ -1070,8 +1076,10 @@ class AppServerConnection {
 
   async interruptOrTerminate(
     assignment: UpstreamWorkerAssignment,
+    correlation: WorkerTerminationCorrelation,
     graceMs = 1_500
   ): Promise<JsonRpcTerminationResult> {
+    assertWorkerTerminationCorrelation(correlation);
     const identity = this.rpc.identity;
     if (!identity) throw new Error("App Server worker process identity is unavailable.");
     if (
@@ -1084,6 +1092,28 @@ class AppServerConnection {
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
     if (turnId && context) {
       try {
+        this.emit(context, {
+          eventId: `turn-interrupt:${turnId}:${correlation.kind}`,
+          type: "turn",
+          phase: "updated",
+          createdAt: Date.now(),
+          summary: "A correlated bridge interruption was dispatched.",
+          details: correlation.kind === "cancellation-intent"
+            ? {
+                evidence: "bridge-turn-interrupt",
+                cause: correlation.kind,
+                cancellationIntentId: correlation.intentId,
+                cancellationRequestId: correlation.requestId,
+                cancellationSource: correlation.source,
+                reasonCode: correlation.reasonCode
+              }
+            : {
+                evidence: "bridge-turn-interrupt",
+                cause: correlation.kind,
+                correlationId: correlation.correlationId,
+                reasonCode: correlation.reasonCode
+              }
+        });
         await this.rpc.request(
           "turn/interrupt",
           { threadId: context.threadId, turnId },
@@ -1193,11 +1223,16 @@ class AppServerConnection {
     try {
       onAssigned?.(assignment);
     } catch (error) {
+      const containmentCorrelation = {
+        kind: "assignment-containment" as const,
+        correlationId: randomUUID(),
+        reasonCode: "assignment-persistence-failed" as const
+      };
       try {
         // Keep the TurnContext and per-thread lock until terminal evidence is
         // observed. interruptOrTerminate waits for turn/completed and falls
         // back to terminating the worker process when confirmation is absent.
-        await this.interruptOrTerminate(assignment);
+        await this.interruptOrTerminate(assignment, containmentCorrelation);
       } catch {
         // A missing process identity is the only expected helper failure. Make
         // one direct containment attempt while preserving the originating
@@ -1530,17 +1565,21 @@ class AppServerConnection {
   }
 
   private onProcessExit(error: Error): void {
+    const expected = this.closeRequested || this.terminationRequested;
+    const terminalError = expected
+      ? error
+      : new Error("CODEX_WORKER_LOST: The Codex App Server worker exited during an active turn.");
     for (const interaction of this.pendingInteractions.values()) {
       if (interaction.autoResolutionTimer) clearTimeout(interaction.autoResolutionTimer);
-      interaction.reject(error);
+      interaction.reject(terminalError);
     }
     this.pendingInteractions.clear();
-    for (const context of this.activeTurns.values()) context.reject(error);
+    for (const context of this.activeTurns.values()) context.reject(terminalError);
     this.activeTurns.clear();
     this.threadTurns.clear();
     this.onExitObserved({
       generation: this.generation,
-      expected: this.closeRequested || this.terminationRequested
+      expected
     });
   }
 

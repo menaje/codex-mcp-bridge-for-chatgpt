@@ -475,6 +475,7 @@ describe("bridge tools", () => {
       "codex_activity",
       "codex_activity_cancel",
       "codex_activity_handoff",
+      "codex_activity_job_cancel",
       "codex_activity_snapshot",
       "codex_activity_update",
       "codex_agent",
@@ -571,6 +572,15 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("sessionMode");
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("adoptThread");
     expect(byName.get("codex_cancel")?.inputSchema.properties).not.toHaveProperty("scopeId");
+    expect(byName.get("codex_cancel")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["requestId", "jobId", "expectedVersion"])
+    });
+    expect(byName.get("codex_activity_job_cancel")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true,
+      "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+    });
     expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
       activity: { oneOf: expect.any(Array) },
       activityPresentationId: expect.any(Object),
@@ -1018,12 +1028,38 @@ describe("bridge tools", () => {
             "acknowledgeAffectedJobIds",
             "expectedVersion",
             "jobId",
+            "requestId",
           ],
-          "propertyCount": 3,
-          "schemaBytes": 549,
+          "propertyCount": 4,
+          "schemaBytes": 853,
           "visibility": {
             "app": false,
             "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_activity_job_cancel",
+          "properties": [
+            "acknowledgeAffectedJobIds",
+            "card",
+            "expectedJobVersion",
+            "jobId",
+            "requestId",
+            "scopeId",
+            "widgetInstanceId",
+          ],
+          "propertyCount": 7,
+          "schemaBytes": 1706,
+          "visibility": {
+            "app": true,
+            "model": false,
             "operatorCapability": false,
           },
         },
@@ -1533,7 +1569,7 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/5fd94685e070.html"
           ]
         : [
-            "ui://codex-mcp-bridge/activity/3d76de4080c2.html"
+            "ui://codex-mcp-bridge/activity/24b062eaa337.html"
           ]);
       expect(revisions[0].uri).toBe(currentUri);
       for (const revision of revisions) {
@@ -1548,6 +1584,8 @@ describe("bridge tools", () => {
         expect(html).not.toContain("Plugin refresh required");
         if (name === "activity" && revision.uri === currentUri) {
           expect(html).toContain('callTool("codex_background_process_terminate"');
+          expect(html).toContain('callTool("codex_activity_job_cancel"');
+          expect(html).not.toContain('callTool("codex_cancel"');
           expect(html).not.toContain('callTool("codex_agent"');
           expect(html).toContain('callTool("codex_activity_snapshot"');
           expect(html).toContain('callTool("codex_interaction_respond"');
@@ -4631,13 +4669,65 @@ describe("bridge tools", () => {
     });
     expect(cancelled.warning).toContain("not rolled back");
     expect(upstream.aborts).toBe(1);
-    expect(jobs.get(running.jobId)).toMatchObject({ status: "cancelled" });
+    expect(jobs.get(running.jobId)).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      cancellationIntentId: expect.any(String)
+    });
+    const cascadeIntents = jobs.listCancellationIntents({
+      requestId: cancellationArguments.requestId
+    });
+    expect(cascadeIntents).toHaveLength(2);
+    const parentIntent = cascadeIntents.find((intent) => intent.targetKind === "activity")!;
+    const childIntent = cascadeIntents.find((intent) => intent.targetJobId === running.jobId)!;
+    expect(parentIntent).toMatchObject({
+      source: "model-tool",
+      actionName: "cancel-activity",
+      status: "succeeded"
+    });
+    expect(childIntent).toMatchObject({
+      source: "activity-cascade",
+      actionName: "cancel-child-job",
+      parentIntentId: parentIntent.intentId,
+      cascadeId: parentIntent.intentId,
+      status: "succeeded"
+    });
+    const cascadeEvents = [
+      ...jobs.listActivityEvents(running.activityId),
+      ...jobs.listJobEvents(running.jobId)
+    ]
+      .sort((left, right) => left.scopeVersion - right.scopeVersion)
+      .filter((event) => [
+        "cancellation-intent-recorded",
+        "activity-terminating",
+        "job-terminating",
+        "job-cancelled",
+        "activity-cancelled"
+      ].includes(event.eventType));
+    const parentRecorded = cascadeEvents.findIndex((event) =>
+      event.eventType === "cancellation-intent-recorded" &&
+      (event.payload as Record<string, unknown>).cancellationIntentId === parentIntent.intentId
+    );
+    const activityTerminating = cascadeEvents.findIndex((event) =>
+      event.eventType === "activity-terminating"
+    );
+    const childRecorded = cascadeEvents.findIndex((event) =>
+      event.eventType === "cancellation-intent-recorded" &&
+      (event.payload as Record<string, unknown>).cancellationIntentId === childIntent.intentId
+    );
+    const childCancelled = cascadeEvents.findIndex((event) => event.eventType === "job-cancelled");
+    const activityCancelled = cascadeEvents.findIndex((event) => event.eventType === "activity-cancelled");
+    expect(parentRecorded).toBeGreaterThanOrEqual(0);
+    expect(activityTerminating).toBeGreaterThan(parentRecorded);
+    expect(childRecorded).toBeGreaterThan(activityTerminating);
+    expect(childCancelled).toBeGreaterThan(childRecorded);
+    expect(activityCancelled).toBeGreaterThan(childCancelled);
     const changedRetry = await client.callTool({
       name: "codex_activity_cancel",
       arguments: { ...cancellationArguments, reason: "Different cancellation semantics" }
     });
     expect(changedRetry.isError).toBe(true);
-    expect(JSON.stringify(changedRetry)).toContain("different mutation");
+    expect(JSON.stringify(changedRetry)).toContain("different cancellation payload");
 
     const attach = await client.callTool({
       name: "codex_task",
@@ -5364,7 +5454,7 @@ describe("bridge tools", () => {
   it("uses the same host-derived scope for job cancellation", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { rawCallTool, close } = await connectTestClient(
+    const { rawCallTool, jobs, close } = await connectTestClient(
       configFor(root),
       upstream
     );
@@ -5381,10 +5471,16 @@ describe("bridge tools", () => {
         _meta: { ...metadata, "codex/activityPresentationId": "acacacac-acac-4aca-8aca-acacacacacac" }
       })
     );
+    await Promise.resolve();
+    const currentVersion = jobs.get(started.jobId)?.version as number;
 
     const denied = await rawCallTool({
       name: "codex_cancel",
-      arguments: { jobId: started.jobId },
+      arguments: {
+        requestId: "adadadad-adad-4ada-8ada-adadadadadad",
+        jobId: started.jobId,
+        expectedVersion: currentVersion
+      },
       _meta: { "openai/session": "another-cancel-session" }
     });
     expect(denied.isError).toBe(true);
@@ -5393,7 +5489,11 @@ describe("bridge tools", () => {
     const cancelled = parseToolJson(
       await rawCallTool({
         name: "codex_cancel",
-        arguments: { jobId: started.jobId },
+        arguments: {
+          requestId: "aeaeaeae-aeae-4aea-8aea-aeaeaeaeaeae",
+          jobId: started.jobId,
+          expectedVersion: currentVersion
+        },
         _meta: metadata
       })
     );
@@ -5844,7 +5944,7 @@ describe("bridge tools", () => {
   it("filters status details by scope and exposes all scopes only on explicit audit", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     await runTask(client, { prompt: "A", sessionMode: "new", scopeId: SCOPE_A });
     await runTask(client, { prompt: "B", sessionMode: "new", scopeId: SCOPE_B });
 
@@ -6080,7 +6180,7 @@ describe("bridge tools", () => {
   it("uses the app-private Activity snapshot as the lightweight card watch API", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root),
       upstream
     );
@@ -6186,7 +6286,7 @@ describe("bridge tools", () => {
   it("deduplicates parallel Agents by one response presentation and keeps explicit cards distinct", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const activityPresentationId = "24242424-2424-4424-8424-242424242424";
     const first = parseToolJson(await client.callTool({
       name: "codex_task",
@@ -6342,8 +6442,131 @@ describe("bridge tools", () => {
           stopReason: "presentation-superseded"
         }
       });
+    expect(jobs.get(nextResponse.jobId)).toMatchObject({ status: "running" });
+    expect(jobs.get(nextResponse.jobId)).not.toHaveProperty("cancellationIntentId");
+    expect(jobs.listCancellationIntents({ jobId: nextResponse.jobId })).toHaveLength(0);
+    expect(jobs.listTransportObservations("presentation-superseded")).not.toHaveLength(0);
     upstream.resolveNext(fakeCodexResult("card-thread-1"));
     await waitForJobStatus(client, nextResponse.jobId, "completed");
+    await close();
+  });
+
+  it("requires a live private card proof and audits exact caller and target presentations", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const targetPresentationId = "81818181-8181-4181-8181-818181818181";
+    const callerPresentationId = "82828282-8282-4282-8282-828282828282";
+    const supersedingPresentationId = "83838383-8383-4383-8383-838383838383";
+    const widgetInstanceId = "84848484-8484-4484-8484-848484848484";
+    const cancellationRequestId = "85858585-8585-4585-8585-858585858585";
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "cancel from the exact mounted card",
+        sessionMode: "new",
+        executionMode: "background",
+        activityPresentationId: targetPresentationId
+      }
+    }));
+    await Promise.resolve();
+    jobs.activityCardRenderHint(
+      started.activityId,
+      "background",
+      undefined,
+      { activityPresentationId: callerPresentationId }
+    );
+    const card = {
+      activityId: started.activityId,
+      generation: jobs.getActivity(started.activityId)?.cardGeneration as number,
+      presentation: {
+        kind: "automatic" as const,
+        activityPresentationId: callerPresentationId
+      }
+    };
+    const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    expect(mounted.isError).not.toBe(true);
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const cancellationArguments = {
+      scopeId: SCOPE_A,
+      requestId: cancellationRequestId,
+      jobId: started.jobId,
+      expectedJobVersion,
+      card,
+      acknowledgeAffectedJobIds: [started.jobId]
+    };
+    const cancelled = parseToolJson(await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: cancellationArguments,
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    }));
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      cancellation: {
+        logicalRequestId: cancellationRequestId,
+        source: "widget-control",
+        tool: "codex_activity_job_cancel",
+        callerPresentation: {
+          kind: "automatic",
+          activityPresentationId: callerPresentationId
+        },
+        target: {
+          jobId: started.jobId,
+          presentationId: targetPresentationId
+        },
+        widgetProof: { present: true, cardGeneration: card.generation }
+      }
+    });
+    const replay = parseToolJson(await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: cancellationArguments,
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    }));
+    expect(replay).toEqual(cancelled);
+    expect(upstream.aborts).toBe(1);
+    const [intent] = jobs.listCancellationIntents({ requestId: cancellationRequestId });
+    expect(intent).toMatchObject({
+      source: "widget-control",
+      callerPresentation: {
+        kind: "automatic",
+        activityPresentationId: callerPresentationId
+      },
+      targetPresentationId,
+      widgetInstancePresent: true,
+      cardGeneration: card.generation
+    });
+    expect(intent.widgetInstanceDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(intent.widgetInstanceDigest).not.toBe(widgetInstanceId);
+
+    jobs.activityCardRenderHint(
+      started.activityId,
+      "background",
+      undefined,
+      { activityPresentationId: supersedingPresentationId }
+    );
+    const stale = await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: {
+        ...cancellationArguments,
+        requestId: "86868686-8686-4686-8686-868686868686",
+        expectedJobVersion: jobs.get(started.jobId)?.version
+      },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("CARD_VERSION_UNSUPPORTED");
+    expect(jobs.listCancellationIntents({
+      requestId: "86868686-8686-4686-8686-868686868686"
+    })).toHaveLength(0);
+    expect(upstream.aborts).toBe(1);
     await close();
   });
 
@@ -7215,7 +7438,7 @@ describe("bridge tools", () => {
   it("long-polls one existing status call until the job becomes terminal", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root),
       upstream
     );
@@ -7306,38 +7529,81 @@ describe("bridge tools", () => {
   it("cancels only a job owned by the supplied scope and forwards an abort signal", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root),
       upstream
     );
     const started = parseToolJson(
       await client.callTool({ name: "codex_task", arguments: { prompt: "cancel me", sessionMode: "new" } })
     );
+    await Promise.resolve();
+    const currentVersion = jobs.get(started.jobId)?.version as number;
 
     const denied = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_B, jobId: started.jobId }
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "71717171-7171-4171-8171-717171717171",
+        jobId: started.jobId,
+        expectedVersion: currentVersion
+      }
     });
     expect(denied.isError).toBe(true);
     expect(upstream.aborts).toBe(0);
 
-    const cancelled = parseToolJson(
-      await client.callTool({
-        name: "codex_cancel",
-        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
-      })
-    );
-    expect(cancelled).toMatchObject({ status: "cancelled", terminal: true });
+    const cancellationArguments = {
+      scopeId: SCOPE_A,
+      requestId: "72727272-7272-4272-8272-727272727272",
+      jobId: started.jobId,
+      expectedVersion: currentVersion
+    };
+    const [cancelledResult, concurrentReplayResult] = await Promise.all([
+      client.callTool({ name: "codex_cancel", arguments: cancellationArguments }),
+      client.callTool({ name: "codex_cancel", arguments: cancellationArguments })
+    ]);
+    const cancelled = parseToolJson(cancelledResult);
+    expect(parseToolJson(concurrentReplayResult)).toEqual(cancelled);
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      terminal: true,
+      terminalOrigin: "explicit-cancellation",
+      cancellation: {
+        logicalRequestId: cancellationArguments.requestId,
+        source: "model-tool",
+        tool: "codex_cancel",
+        action: "cancel-job",
+        reasonCode: "public-job-cancel",
+        status: "succeeded",
+        expectedVersion: currentVersion,
+        target: {
+          jobId: started.jobId,
+          activityId: started.activityId,
+          presentationId: started.activityPresentationId
+        },
+        durableDetailsAvailable: true
+      }
+    });
     expect(cancelled.error).toContain("Partial filesystem changes may remain");
     expect(upstream.aborts).toBe(1);
 
-    const repeated = parseToolJson(
+    const durableReplay = parseToolJson(
       await client.callTool({
         name: "codex_cancel",
-        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
+        arguments: cancellationArguments
       })
     );
-    expect(repeated.status).toBe("cancelled");
+    expect(durableReplay).toEqual(cancelled);
+    expect(upstream.aborts).toBe(1);
+    expect(jobs.listCancellationIntents({ requestId: cancellationArguments.requestId }))
+      .toHaveLength(1);
+    expect(jobs.getCancellationOperation(SCOPE_A, cancellationArguments.requestId))
+      .toMatchObject({ status: "completed", source: "model-tool", result: cancelled });
+    const conflictingReplay = await client.callTool({
+      name: "codex_cancel",
+      arguments: { ...cancellationArguments, expectedVersion: currentVersion + 1 }
+    });
+    expect(conflictingReplay.isError).toBe(true);
+    expect(JSON.stringify(conflictingReplay)).toContain("CANCELLATION_REQUEST_CONFLICT");
     expect(upstream.aborts).toBe(1);
     await close();
   });
@@ -7365,7 +7631,12 @@ describe("bridge tools", () => {
 
     const stale = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version - 1 }
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "73737373-7373-4373-8373-737373737373",
+        jobId: first.jobId,
+        expectedVersion: current.version - 1
+      }
     });
     expect(stale.isError).toBe(true);
     expect(JSON.stringify(stale)).toContain("version changed");
@@ -7373,7 +7644,12 @@ describe("bridge tools", () => {
 
     const unconfirmed = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version }
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "74747474-7474-4474-8474-747474747474",
+        jobId: first.jobId,
+        expectedVersion: current.version
+      }
     });
     expect(unconfirmed.isError).toBe(true);
     expect(JSON.stringify(unconfirmed)).toContain("acknowledgeAffectedJobIds");
@@ -7384,6 +7660,7 @@ describe("bridge tools", () => {
       name: "codex_cancel",
       arguments: {
         scopeId: SCOPE_A,
+        requestId: "75757575-7575-4575-8575-757575757575",
         jobId: first.jobId,
         expectedVersion: current.version,
         acknowledgeAffectedJobIds: affected
@@ -7393,8 +7670,16 @@ describe("bridge tools", () => {
     expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled", trackingState: "worker-lost" });
     expect(jobs.get(second.jobId)).toMatchObject({
       status: "interrupted",
+      terminalOrigin: "assignment-containment",
+      cancellationIntentId: expect.any(String),
       trackingState: "worker-lost",
       error: expect.stringContaining(`force-stopped job ${first.jobId}`)
+    });
+    const [containmentIntent] = jobs.listCancellationIntents({ jobId: second.jobId });
+    expect(containmentIntent).toMatchObject({
+      source: "assignment-containment",
+      actionName: "interrupt-shared-worker",
+      status: "succeeded"
     });
     expect(upstream.aborts).toBe(1);
     await close();
@@ -7409,7 +7694,9 @@ describe("bridge tools", () => {
       name: "codex_cancel",
       arguments: {
         scopeId: SCOPE_A,
+        requestId: "76767676-7676-4676-8676-767676767676",
         jobId: "missing-job",
+        expectedVersion: 1,
         acknowledgeAffectedJobIds: acknowledged
       }
     });
@@ -8242,6 +8529,7 @@ async function connectTestClient(
           request.name === "codex_activity" ||
           request.name === "codex_activity_snapshot" ||
           request.name === "codex_activity_handoff" ||
+          request.name === "codex_activity_job_cancel" ||
           request.name === "codex_activity_cancel" ||
           request.name === "codex_activity_update" ||
           request.name === "codex_agent" ||

@@ -45,7 +45,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_activity_update`: apply one exact-version, non-cancelling lifecycle, verification, or policy operation.
 - `codex_activity_cancel`: idempotently force-stop every active job in one Activity and mark it cancelled.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
-- `codex_cancel`: force-stop an active scope-owned turn/job. Filesystem changes are not rolled back.
+- `codex_cancel`: idempotently force-stop one active scope-owned turn/job using a cancellation `requestId` and exact `expectedVersion`. Filesystem changes are not rolled back.
 - `codex_models`: read the current picker-visible model catalog and exact supported efforts.
 - `codex_settings`: render saved named projects, policy, and preferences.
 
@@ -81,7 +81,25 @@ complete `acknowledgeAffectedJobIds` set. The former flat Activity update fields
 including `action: "cancel"`, have expired and are rejected; callers must use the
 current `operation` contract or `codex_activity_cancel` as appropriate.
 
-`codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. Settings mutation publishes only `expectedRevision` plus a discriminated reset/patch `operation`; patch groups Activity-card preferences and applies explicit project add/rename/relocate/remove deltas atomically. The Activity controls require an exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
+Every job or Activity force-stop records a first-class cancellation operation
+and intent before dispatching an App Server interrupt or worker termination.
+The audit keeps the logical request UUID, source/tool/action, exact targets and
+versions, caller/target presentation correlation, cascade links, bridge
+instance, timestamps, and a bounded reason code. Raw host metadata, prompts,
+authentication material, and widget instance IDs are not retained. An exact
+`requestId` replay returns the recorded result; a different payload using that
+UUID fails with `CANCELLATION_REQUEST_CONFLICT`.
+
+Terminal state preserves cause rather than treating every interruption as a
+cancel. A spontaneous App Server `interrupted` result is `job-interrupted` with
+`terminalOrigin: app-server-interrupted` and no cancellation intent. Explicit
+job or Activity-cascade force-stop is `job-cancelled` with
+`terminalOrigin: explicit-cancellation` and an exact durable intent. Shared
+worker containment is `job-interrupted` with `assignment-containment`; bridge
+restart and unexpected worker loss remain separately identifiable as
+`bridge-restart` and `worker-loss`.
+
+`codex_activity_snapshot`, `codex_activity_job_cancel`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity card never calls public `codex_cancel`: its destructive job control uses `codex_activity_job_cancel`, which requires an idempotency UUID, exact Job version, current card generation and presentation proof, a live widget lease, and any exact shared-worker acknowledgement. A stale or superseded card fails closed before an intent or side effect is created. Settings mutation publishes only `expectedRevision` plus a discriminated reset/patch `operation`; patch groups Activity-card preferences and applies explicit project add/rename/relocate/remove deltas atomically. The other Activity controls require the same exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
 ## Security defaults
 
@@ -92,7 +110,7 @@ current `operation` contract or `codex_activity_cancel` as appropriate.
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
 - Resolves every newly saved project to an existing canonical folder, rejects files and duplicate IDs/paths, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
-- Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, and bounded results in a private SQLite database.
+- Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, bounded results, cancellation operations/intents, and bounded transport observations in a private SQLite database.
 
 These are policy controls, not OS isolation. Use a staging copy, separate OS user, container, or VM when hard filesystem/network isolation is required. See [docs/security.md](docs/security.md).
 
@@ -354,7 +372,7 @@ The card does not expose event timelines, Agent/job/thread IDs, full working pat
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The current content-hashed Activity resource uses contract generation 6 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Earlier generations are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The current content-hashed Activity resource uses contract generation 7 and the exact app-private snapshot, proof, destructive-cancel, control, and batch-handoff contracts. Earlier generations are no longer registered or accepted. HTTP request abort, SSE disconnect, MCP `notifications/cancelled`, status/snapshot wait abort, presentation supersession, and widget unmount are transport or presentation observations only: they may release a bounded wait/lease and write a bounded diagnostic event, but never cancel a job. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result, and detaching that foreground response leaves the admitted job running to its normal terminal state. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout or wait abort does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 
@@ -384,7 +402,7 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist an
 
 ## Persistence and recovery
 
-SQLite schema v6 stores conversation scopes, first-class project admission identity, Agents, current/history threads with App Server session/fork lineage, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, settings, bridge generations, scope versions, idempotent Agent mutations, and completion outbox rows. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, or paths.
+SQLite schema v7 stores conversation scopes, first-class project admission identity, Agents, current/history threads with App Server session/fork lineage, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, settings, bridge generations, scope versions, idempotent Agent mutations, completion outbox rows, first-class cancellation operations/intents, and bounded transport observations. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, paths, raw host metadata, or authentication material.
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 

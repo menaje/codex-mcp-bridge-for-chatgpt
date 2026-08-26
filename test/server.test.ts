@@ -37,6 +37,10 @@ class FakeUpstream implements CodexUpstream {
 class DeferredUpstream extends FakeUpstream {
   private pending: Array<(result: ToolResult) => void> = [];
 
+  get pendingCount(): number {
+    return this.pending.length;
+  }
+
   override async callTool(): Promise<ToolResult> {
     return new Promise<ToolResult>((resolve) => {
       this.pending.push(resolve);
@@ -286,9 +290,9 @@ describe("http server", () => {
     expect(policy.stateStorage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 6,
+      schemaVersion: 7,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v6-lineage-aware-scope-agent-manager",
+      activityFoundation: "schema-v7-cancellation-provenance-scope-agent-manager",
       activityPersistent: true
     });
 
@@ -319,6 +323,136 @@ describe("http server", () => {
 
     await client.close();
   });
+
+  it("keeps a foreground job running to completion after its HTTP response detaches", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-detach-state-"));
+    const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });
+    const upstream = new DeferredUpstream();
+    const baseUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      upstream,
+      stateDirectory,
+      { stateStore }
+    );
+    const client = new Client({ name: "http-detach-client", version: "0.0.0" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+      await registerProject(client, mkdtempSync(path.join(tmpdir(), "bridge-http-detach-project-")));
+      const controller = new AbortController();
+      const foreground = rawToolCall(
+        baseUrl,
+        1201,
+        "codex_task",
+        {
+          scopeId: SCOPE_A,
+          requestId: "12121212-1212-4212-8212-121212121212",
+          activityPresentationId: "13131313-1313-4313-8313-131313131313",
+          prompt: "finish after the foreground caller detaches",
+          activity: {
+            mode: "new",
+            title: "Detached foreground task",
+            policy: { kind: "implementation" }
+          },
+          agent: { mode: "new", name: "Detached HTTP Agent" },
+          executionMode: "foreground"
+        },
+        controller.signal
+      );
+      await eventually(() => upstream.pendingCount === 1 && stateStore.listJobs().length === 1);
+      const running = stateStore.listJobs()[0] as Record<string, any>;
+      expect(running).toMatchObject({ status: "running", executionMode: "foreground" });
+      controller.abort();
+      await expect(foreground).rejects.toThrow();
+      await eventually(() => stateStore.listTransportObservations().some((entry) =>
+        entry.kind === "http-request-aborted" || entry.kind === "http-response-detached"
+      ));
+      expect(stateStore.listJobs()).toEqual([
+        expect.objectContaining({
+          jobId: running.jobId,
+          status: "running"
+        })
+      ]);
+      expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
+      expect(stateStore.listCancellationIntents({ jobId: running.jobId })).toHaveLength(0);
+
+      upstream.resolveNext();
+      await eventually(() => (stateStore.listJobs()[0] as Record<string, any>)?.status === "completed");
+      expect(stateStore.listJobs()).toEqual([
+        expect.objectContaining({
+          jobId: running.jobId,
+          status: "completed",
+          terminalOrigin: "normal-completion"
+        })
+      ]);
+      expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
+    } finally {
+      await client.close().catch(() => undefined);
+      await stopLastServer();
+      stateStore.close();
+    }
+  }, 15_000);
+
+  it("treats an aborted read-only status wait as observation only", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-wait-state-"));
+    const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });
+    const upstream = new DeferredUpstream();
+    const baseUrl = await start(
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      upstream,
+      stateDirectory,
+      { stateStore }
+    );
+    const client = new Client({ name: "http-wait-abort-client", version: "0.0.0" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+      await registerProject(client, mkdtempSync(path.join(tmpdir(), "bridge-http-wait-project-")));
+      const started = parseToolJson(await client.callTool({
+        name: "codex_task",
+        arguments: {
+          scopeId: SCOPE_A,
+          requestId: "14141414-1414-4414-8414-141414141414",
+          activityPresentationId: "15151515-1515-4515-8515-151515151515",
+          prompt: "remain active while status waiting detaches",
+          activity: { mode: "new", title: "Read wait task" },
+          agent: { mode: "new", name: "Read Wait Agent" },
+          executionMode: "background"
+        }
+      }));
+      await eventually(() => upstream.pendingCount === 1);
+      const before = stateStore.listJobs()[0] as Record<string, any>;
+      const controller = new AbortController();
+      const wait = rawToolCall(
+        baseUrl,
+        1401,
+        "codex_status",
+        {
+          scopeId: SCOPE_A,
+          query: { kind: "job", id: started.jobId, waitFor: "terminal", waitMs: 1_000 }
+        },
+        controller.signal
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort();
+      await expect(wait).rejects.toThrow();
+      await eventually(() => stateStore.listTransportObservations("status-wait-aborted").length > 0);
+      expect(stateStore.listJobs()).toEqual([
+        expect.objectContaining({
+          jobId: started.jobId,
+          status: "running",
+          version: before.version
+        })
+      ]);
+      expect(stateStore.listJobs()[0]).not.toHaveProperty("cancellationIntentId");
+      expect(stateStore.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+
+      upstream.resolveNext();
+      await eventually(() => (stateStore.listJobs()[0] as Record<string, any>)?.status === "completed");
+    } finally {
+      await client.close().catch(() => undefined);
+      await stopLastServer();
+      stateStore.close();
+    }
+  }, 15_000);
 
   it("keeps a host-derived scope stable across stateless requests and bridge restarts", async () => {
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-derived-scope-state-"));
@@ -555,6 +689,33 @@ function parseToolJson(result: unknown): Record<string, any> {
   return JSON.parse(content?.[0]?.text || "{}");
 }
 
+function rawToolCall(
+  baseUrl: string,
+  id: string | number,
+  name: string,
+  arguments_: Record<string, unknown>,
+  signal: AbortSignal
+): Promise<string> {
+  return fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name, arguments: arguments_ }
+    }),
+    signal
+  }).then(async (response) => {
+    const body = await response.text();
+    if (!response.ok) throw new Error(`Raw MCP request failed with ${response.status}: ${body}`);
+    return body;
+  });
+}
+
 async function waitForJobStatus(client: Client, jobId: string, expected: string): Promise<Record<string, any>> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const status = parseToolJson(
@@ -572,4 +733,13 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Timed out waiting for job status ${expected}.`);
+}
+
+async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for expected HTTP bridge state.");
 }

@@ -1,5 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -27,7 +27,7 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
   "Treat the saved versioned model policy as execution authority. In fixed mode omit selection. In automatic mode omit selection for the preferred/default choice or send exactly one currently exposed nested selection. Never invent aliases or legacy top-level model fields. Refresh tools and retry on MODEL_POLICY_CHANGED; results expose the immutable admission-time execution decision plus a requested/effective/actual execution audit with explicit evidence. A model reroute is reported, never hidden. CONTEXT_WINDOW_EXCEEDED is fail-closed: follow one of its stated recovery actions instead of silently selecting a smaller model or effort.",
   "Existing Agent threads remain pinned to the backend that created them, even after the configured default changes. Continue or fork to preserve that exact backend context. To deliberately cross backends, select the existing Agent with context='fresh' and provide a concise explicit handoffSummary. Tell the user that only this summary is copied into a new thread; the original transcript, hidden context, approvals, and backend state are not migrated. Do not provide handoffSummary for a new Agent or a same-backend fresh thread.",
   "In ChatGPT omit scopeId and let host metadata select the conversation scope. For a compatibility MCP host without that metadata, generate one UUID scopeId and reuse it only in that host context. Generate one UUID requestId per logical Codex call and reuse it only for that exact execution retry. When the current codex_task descriptor exposes activityPresentationId, generate one separate UUID for the current assistant response, reuse it across every codex_task in that response, and generate a new value for the next response. Presentation state never alters execution replay identity. Choose foreground when the current response must wait, or background for an immediate tracked job.",
-  "Call codex_task directly rather than through programmatic tool calling or an exec wrapper so ChatGPT preserves its native Activity UI. The saved always, background-only, or never setting is authoritative; presentation correlation cannot choose visibility; never call codex_activity after codex_task. Use codex_activity only when the user explicitly asks to open or reopen the Activity view. Only the newest automatic presentation owns the scope live watch and completion handoff; older automatic cards stop cleanly, while explicit cards use separate bounded watcher admission and do not compete for automatic handoff. Use codex_status without query for the scoped overview, or with exactly one query kind for authoritative detail, a final job result or bounded wait, or a cursor page. Use codex_cancel only to interrupt one active job; whole-Activity cancellation uses codex_activity_cancel. Use codex_agent with exactly one operation for reversible archive, restore, or rename. Mounted Activity cards own exact background-process termination; recovery detach requires the operator-enabled private recovery capability. Interruption and process termination never roll back filesystem changes."
+  "Call codex_task directly rather than through programmatic tool calling or an exec wrapper so ChatGPT preserves its native Activity UI. The saved always, background-only, or never setting is authoritative; presentation correlation cannot choose visibility; never call codex_activity after codex_task. Use codex_activity only when the user explicitly asks to open or reopen the Activity view. Only the newest automatic presentation owns the scope live watch and completion handoff; older automatic cards stop cleanly, while explicit cards use separate bounded watcher admission and do not compete for automatic handoff. Use codex_status without query for the scoped overview, or with exactly one query kind for authoritative detail, a final job result or bounded wait, or a cursor page. Use codex_cancel with a unique cancellation requestId and the exact authoritative job version only to interrupt one active job; whole-Activity cancellation uses codex_activity_cancel. Mounted cards use an app-private destructive surface and cannot substitute stale card state for model-visible cancellation intent. HTTP detach, status-wait abort, notifications/cancelled, presentation supersession, and widget unmount are observation lifecycle only and never authorize job cancellation. Use codex_agent with exactly one operation for reversible archive, restore, or rename. Mounted Activity cards own exact background-process termination; recovery detach requires the operator-enabled private recovery capability. Interruption and process termination never roll back filesystem changes."
 ].join(" ");
 
 export type BridgeHttpRuntimeOptions = {
@@ -153,6 +153,55 @@ export function createHttpServer(
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined
     });
+    const requestContext = transportObservationContext(req.body);
+    let detachObserved = false;
+    const recordDetach = (kind: "http-request-aborted" | "http-response-detached") => {
+      if (detachObserved) return;
+      detachObserved = true;
+      try {
+        const taskJob = requestContext.scopeId && requestContext.logicalRequestId
+          ? jobs.peekRequest(requestContext.scopeId, requestContext.logicalRequestId)
+          : undefined;
+        const target = taskJob
+          ? { jobId: taskJob.jobId, activityId: taskJob.activityId }
+          : {
+              ...(requestContext.jobId ? { jobId: requestContext.jobId } : {}),
+              ...(requestContext.activityId ? { activityId: requestContext.activityId } : {})
+            };
+        stateStore.recordTransportObservation({
+          kind,
+          scopeId: requestContext.scopeId,
+          ...target,
+          toolName: requestContext.toolName,
+          callerRequestDigest: requestContext.callerRequestDigest,
+          reasonCode: kind === "http-request-aborted"
+            ? "http-request-aborted"
+            : "http-response-detached"
+        });
+        if (requestContext.boundedObservationKind) {
+          stateStore.recordTransportObservation({
+            kind: requestContext.boundedObservationKind,
+            scopeId: requestContext.scopeId,
+            ...target,
+            toolName: requestContext.toolName,
+            callerRequestDigest: requestContext.callerRequestDigest,
+            reasonCode: requestContext.boundedObservationKind === "status-wait-aborted"
+              ? "host-aborted-read-wait"
+              : "host-aborted-activity-watch"
+          });
+        }
+      } catch (error) {
+        if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+          console.error("Could not persist detached transport observation:", error);
+        }
+      }
+    };
+    const onRequestAborted = () => recordDetach("http-request-aborted");
+    const onResponseClose = () => {
+      if (!res.writableEnded) recordDetach("http-response-detached");
+    };
+    req.once("aborted", onRequestAborted);
+    res.once("close", onResponseClose);
 
     try {
       await server.connect(transport);
@@ -174,6 +223,8 @@ export function createHttpServer(
         });
       }
     } finally {
+      req.removeListener("aborted", onRequestAborted);
+      res.removeListener("close", onResponseClose);
       await transport.close();
       await server.close();
     }
@@ -204,6 +255,75 @@ export function createHttpServer(
   const httpServer = createServer(app);
   if (ownsStateStore) httpServer.once("close", () => stateStore.close());
   return httpServer;
+}
+
+function transportObservationContext(body: unknown): {
+  toolName?: string;
+  callerRequestDigest?: string;
+  scopeId?: string;
+  logicalRequestId?: string;
+  jobId?: string;
+  activityId?: string;
+  boundedObservationKind?: "status-wait-aborted" | "activity-watch-aborted";
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+  const envelope = body as Record<string, unknown>;
+  const callerRequestDigest =
+    typeof envelope.id === "string" || typeof envelope.id === "number"
+      ? createHash("sha256")
+          .update("http-jsonrpc-request")
+          .update("\0")
+          .update(String(envelope.id))
+          .digest("hex")
+      : undefined;
+  const params = envelope.params;
+  const name = params && typeof params === "object" && !Array.isArray(params)
+    ? (params as Record<string, unknown>).name
+    : undefined;
+  const toolName = typeof name === "string" && /^codex_[a-z0-9_]{1,80}$/.test(name)
+    ? name
+    : undefined;
+  const arguments_ = params && typeof params === "object" && !Array.isArray(params)
+    ? (params as Record<string, unknown>).arguments
+    : undefined;
+  const input = arguments_ && typeof arguments_ === "object" && !Array.isArray(arguments_)
+    ? arguments_ as Record<string, unknown>
+    : undefined;
+  const uuid = (value: unknown) =>
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+      ? value.toLowerCase()
+      : undefined;
+  const scopeId = uuid(input?.scopeId);
+  const logicalRequestId = toolName === "codex_task" ? uuid(input?.requestId) : undefined;
+  const query = input?.query && typeof input.query === "object" && !Array.isArray(input.query)
+    ? input.query as Record<string, unknown>
+    : undefined;
+  const jobId = toolName === "codex_status" && query?.kind === "job" && typeof query.id === "string"
+    ? query.id.slice(0, 200)
+    : undefined;
+  const activityId = toolName === "codex_activity_snapshot"
+    ? uuid(
+        input?.card && typeof input.card === "object" && !Array.isArray(input.card)
+          ? (input.card as Record<string, unknown>).activityId
+          : undefined
+      )
+    : undefined;
+  const boundedObservationKind =
+    toolName === "codex_status" && query?.kind === "job" && query.waitFor !== undefined
+      ? "status-wait-aborted" as const
+      : toolName === "codex_activity_snapshot" && input?.afterVersion !== undefined
+        ? "activity-watch-aborted" as const
+        : undefined;
+  return {
+    toolName,
+    callerRequestDigest,
+    scopeId,
+    logicalRequestId,
+    jobId,
+    activityId,
+    boundedObservationKind
+  };
 }
 
 function createModelCatalog(

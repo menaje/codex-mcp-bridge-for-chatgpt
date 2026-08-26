@@ -111,6 +111,32 @@ describe("CodexStdioUpstream", () => {
     expect(clientCloses).toBe(2);
   });
 
+  it("marks an unexpected MCP process exit as worker loss", async () => {
+    let exited = false;
+    const upstream = new CodexStdioUpstream("codex", async () => ({
+      client: {
+        async listTools() {
+          return { tools: [] };
+        },
+        async callTool() {
+          exited = true;
+          throw new Error("codex process exited");
+        },
+        async close() {}
+      },
+      transport: {
+        get exited() {
+          return exited;
+        },
+        async close() {}
+      }
+    }));
+
+    await expect(upstream.callTool("lost-worker", {}))
+      .rejects.toThrow(/^CODEX_WORKER_LOST:/);
+    await upstream.close();
+  });
+
   it("retires a failed connection without closing it under unrelated in-flight calls", async () => {
     const slow = deferred<ToolResult>();
     const clientCloses: number[] = [];
