@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
 import { HARD_MAX_CONCURRENT_JOBS, loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
+import { projectNameKey } from "../src/projectRegistry.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import {
   ACTIVITY_CARD_CONTRACT_GENERATION,
   ACTIVITY_CARD_URI
@@ -420,6 +422,19 @@ class MutatingModelCatalog extends FakeModelCatalog {
   }
 }
 
+class AdmissionMutatingModelCatalog extends FakeModelCatalog {
+  public beforeGet?: () => void;
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    if (this.beforeGet) {
+      const mutate = this.beforeGet;
+      this.beforeGet = undefined;
+      mutate();
+    }
+    return super.getCatalog(options);
+  }
+}
+
 class DriftingModelCatalog extends FakeModelCatalog {
   override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
     this.calls.push(options);
@@ -605,7 +620,7 @@ describe("bridge tools", () => {
       required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
     expect((byName.get("codex_task")?.inputSchema as any).allOf).toEqual([
-      expect.objectContaining({ then: { required: ["projectId"] } })
+      expect.objectContaining({ then: { required: ["project"] } })
     ]);
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
@@ -661,9 +676,19 @@ describe("bridge tools", () => {
     expect(taskProperties?.requestId?.description).toContain(
       "Never reuse it to group different tasks or multiple calls in one GPT response"
     );
-    expect(taskProperties?.projectId?.description).toContain(
-      "mandatory for every new Activity and fresh Agent context"
-    );
+    expect(taskProperties).not.toHaveProperty("projectId");
+    expect(taskProperties?.project?.description).toContain("user-defined project name");
+    expect(taskProperties?.project?.oneOf?.[0]).toMatchObject({
+      required: ["name", "registryRevision"],
+      properties: {
+        name: { const: "Test Project" },
+        registryRevision: { const: 1 }
+      }
+    });
+    for (const variant of taskProperties?.project?.oneOf || []) {
+      expect(Object.keys(variant.properties || {}).sort())
+        .toEqual(["name", "registryRevision"]);
+    }
     const activityVariants = taskProperties?.activity?.oneOf as Array<Record<string, any>>;
     expect(activityVariants.map((variant) => variant.properties?.mode?.const).sort())
       .toEqual(["existing", "new"]);
@@ -840,10 +865,11 @@ describe("bridge tools", () => {
     });
     const updateSettingsSchema = byName.get("codex_update_settings")?.inputSchema as any;
     expect(Object.keys(updateSettingsSchema.properties).sort()).toEqual([
-      "expectedRevision",
+      "expectedRegistryRevision",
+      "expectedSettingsRevision",
       "operation"
     ]);
-    expect(updateSettingsSchema.required).toEqual(["expectedRevision", "operation"]);
+    expect(updateSettingsSchema.required).toEqual(["operation"]);
     expect(updateSettingsSchema.properties.operation.oneOf.map(
       (variant: any) => variant.properties.kind.const
     )).toEqual(["reset", "patch"]);
@@ -867,7 +893,7 @@ describe("bridge tools", () => {
     });
     expect(settingsPatchSchema.properties.projectOperations.items.oneOf.map(
       (variant: any) => variant.properties.kind.const
-    )).toEqual(["add", "rename", "relocate", "remove"]);
+    )).toEqual(["add", "rename", "relocate", "archive", "restore"]);
     expect(settingsPatchSchema.properties).not.toHaveProperty("defaultProjectId");
     expect(updateSettingsSchema.properties).not.toHaveProperty("projects");
     expect(updateSettingsSchema.properties).not.toHaveProperty("defaultCwd");
@@ -1251,11 +1277,12 @@ describe("bridge tools", () => {
           },
           "name": "codex_update_settings",
           "properties": [
-            "expectedRevision",
+            "expectedRegistryRevision",
+            "expectedSettingsRevision",
             "operation",
           ],
-          "propertyCount": 2,
-          "schemaBytes": 4249,
+          "propertyCount": 3,
+          "schemaBytes": 4871,
           "visibility": {
             "app": true,
             "model": false,
@@ -1275,14 +1302,14 @@ describe("bridge tools", () => {
             "activityPresentationId",
             "agent",
             "executionMode",
-            "projectId",
+            "project",
             "prompt",
             "requestId",
             "sandbox",
             "selection",
           ],
           "propertyCount": 9,
-          "schemaBytes": 6341,
+          "schemaBytes": 6407,
           "visibility": {
             "app": true,
             "model": true,
@@ -1408,7 +1435,7 @@ describe("bridge tools", () => {
         requestId: "10101010-1010-4010-8010-101010101010",
         activityPresentationId: "10101010-1010-4010-8010-101010101010",
         prompt: "review the design",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         executionMode: "foreground"
       }
     });
@@ -1513,7 +1540,7 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "43434343-4343-4343-8343-434343434343",
         prompt: "use host presentation correlation",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: { mode: "new" },
         agent: { mode: "new" },
         executionMode: "foreground"
@@ -1573,11 +1600,14 @@ describe("bridge tools", () => {
     expect(contents.text).not.toContain('id="default-cwd"');
     expect(contents.text).not.toContain('className="project-id-input"');
     expect(contents.text).not.toContain('projectField("settings.projectId"');
-    expect(contents.text).toContain("allocateProjectId(record.label,record.cwd,reservedIds)");
+    expect(contents.text).not.toContain("allocateProjectId");
+    expect(contents.text).toContain('operations.push({kind:"add",project:{name:project.name,cwd:project.cwd}})');
     expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(contents.text).not.toContain("defaultProjectId");
     expect(contents.text).toContain('operation:{kind:"patch",settings}');
     expect(contents.text).toContain('operation:{kind:"reset"}');
+    expect(contents.text).toContain("expectedSettingsRevision:view.settings.settingsRevision");
+    expect(contents.text).toContain("expectedRegistryRevision:view.settings.registryRevision");
     expect(contents.text).not.toContain('id="policy-service-tier"');
     expect(contents.text).toContain('all.dataset.action="all-efforts"');
     expect(contents.text).toContain('id="retry-models"');
@@ -1610,12 +1640,11 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
-            "ui://codex-mcp-bridge/settings/8aee714e2cbc.html",
-            "ui://codex-mcp-bridge/settings/4632bf12f0b0.html",
-            "ui://codex-mcp-bridge/settings/806437315544.html",
-            "ui://codex-mcp-bridge/settings/5f348837faba.html",
+            "ui://codex-mcp-bridge/settings/ad2c5a241a90.html",
+            "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/d7d73c496d9b.html",
             "ui://codex-mcp-bridge/activity/5804dd38e35a.html",
             "ui://codex-mcp-bridge/activity/536d28d41856.html",
             "ui://codex-mcp-bridge/activity/4a8f190de901.html",
@@ -1735,7 +1764,16 @@ describe("bridge tools", () => {
     mkdirSync(web);
     mkdirSync(api);
     mkdirSync(movedApi);
-    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
 
     const initialResult = await client.callTool({
       name: "codex_settings",
@@ -1745,23 +1783,22 @@ describe("bridge tools", () => {
     expect(JSON.stringify((initialResult as { structuredContent?: unknown }).structuredContent))
       .not.toContain(realpathSync(root));
     expect(initial.settings).toMatchObject({
-      projects: [{ id: "default", cwd: realpathSync(root) }]
+      settingsRevision: 0,
+      registryRevision: 0,
+      projects: []
     });
-    expect(initial.capabilities.projectAvailability).toEqual([
-      { id: "default", available: true }
-    ]);
+    expect(initial.capabilities.projectAvailability).toEqual([]);
 
     const saved = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 0,
+        expectedRegistryRevision: 0,
         operation: {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "remove", projectId: "default" },
-              { kind: "add", project: { id: "Web APP", label: "웹 앱", cwd: web } },
-              { kind: "add", project: { id: "API", label: "API 서비스", cwd: api } }
+              { kind: "add", project: { name: "웹 앱", cwd: web } },
+              { kind: "add", project: { name: "API 서비스", cwd: api } }
             ]
           }
         }
@@ -1770,55 +1807,69 @@ describe("bridge tools", () => {
     expect(saved.isError).not.toBe(true);
     const view = privateSettingsView(saved);
     expect(view.settings).toMatchObject({
-      revision: 1,
+      settingsRevision: 0,
+      registryRevision: 1,
       projects: [
-        { id: "web-app", label: "웹 앱", cwd: realpathSync(web) },
-        { id: "api", label: "API 서비스", cwd: realpathSync(api) }
+        { name: "웹 앱", cwd: realpathSync(web) },
+        { name: "API 서비스", cwd: realpathSync(api) }
       ]
     });
+    const [webProject, apiProject] = view.settings.projects as Array<Record<string, any>>;
+    expect(webProject.id).toMatch(SCOPE_ID_PATTERN);
+    expect(apiProject.id).toMatch(SCOPE_ID_PATTERN);
+    const publicSaved = JSON.stringify({
+      content: saved.content,
+      structuredContent: (saved as { structuredContent?: unknown }).structuredContent
+    });
+    expect(publicSaved).not.toContain(webProject.id);
+    expect(publicSaved).not.toContain(apiProject.id);
+    expect(publicSaved).not.toContain(realpathSync(web));
+    expect(publicSaved).not.toContain(realpathSync(api));
     expect(view.capabilities.projectAvailability).toEqual([
-      { id: "web-app", available: true },
-      { id: "api", available: true }
+      { projectId: webProject.id, name: "웹 앱", available: true, archived: false },
+      { projectId: apiProject.id, name: "API 서비스", available: true, archived: false }
     ]);
 
-    const duplicateId = await client.callTool({
+    const duplicateName = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 1,
+        expectedRegistryRevision: 1,
         operation: {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "add", project: { id: "WEB APP", label: "Duplicate", cwd: movedApi } }
+              { kind: "add", project: { name: "  웹   앱  ", cwd: movedApi } }
             ]
           }
         }
       }
     });
-    expect(duplicateId.isError).toBe(true);
-    expect(JSON.stringify(duplicateId)).toContain("PROJECT_DUPLICATE_ID");
+    expect(duplicateName.isError).toBe(true);
+    expect(JSON.stringify(duplicateName)).toContain("PROJECT_NAME_CONFLICT");
 
     const duplicatePath = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 1,
+        expectedRegistryRevision: 1,
         operation: {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "add", project: { id: "other", label: "Other", cwd: web } }
+              { kind: "add", project: { name: "Other", cwd: web } }
             ]
           }
         }
       }
     });
     expect(duplicatePath.isError).toBe(true);
-    expect(JSON.stringify(duplicatePath)).toContain("PROJECT_DUPLICATE_PATH");
+    expect(JSON.stringify(duplicatePath)).toContain("PROJECT_CWD_CONFLICT");
+    expect(privateSettingsView(await client.callTool({ name: "codex_settings", arguments: {} }))
+      .settings.registryRevision).toBe(1);
 
     const retiredDefault = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 1,
+        expectedSettingsRevision: 0,
         operation: {
           kind: "patch",
           settings: { defaultProjectId: "missing" }
@@ -1831,13 +1882,13 @@ describe("bridge tools", () => {
     const edited = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 1,
+        expectedRegistryRevision: 1,
         operation: {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "rename", projectId: "web-app", label: "Web Application" },
-              { kind: "relocate", projectId: "api", cwd: movedApi }
+              { kind: "rename", projectId: webProject.id, name: "Web Application" },
+              { kind: "relocate", projectId: apiProject.id, cwd: movedApi }
             ]
           }
         }
@@ -1845,38 +1896,71 @@ describe("bridge tools", () => {
     });
     expect(privateSettingsView(edited).settings)
       .toMatchObject({
-        revision: 2,
+        settingsRevision: 0,
+        registryRevision: 2,
         projects: [
-          { id: "web-app", label: "Web Application", cwd: realpathSync(web) },
-          { id: "api", label: "API 서비스", cwd: realpathSync(movedApi) }
+          { id: webProject.id, name: "Web Application", cwd: realpathSync(web) },
+          { id: apiProject.id, name: "API 서비스", cwd: realpathSync(movedApi) }
         ]
       });
-    const incompleteRename = await client.callTool({
+
+    const archived = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 2,
+        expectedRegistryRevision: 2,
         operation: {
           kind: "patch",
           settings: {
-            projectOperations: [{ kind: "rename", projectId: "web-app" }]
+            projectOperations: [{ kind: "archive", projectId: webProject.id }]
           }
         }
       }
     });
-    const pollutedRemove = await client.callTool({
+    expect(privateSettingsView(archived).settings).toMatchObject({
+      registryRevision: 3,
+      projects: expect.arrayContaining([
+        expect.objectContaining({ id: webProject.id, name: "Web Application", archivedAt: expect.any(Number) })
+      ])
+    });
+    const archivedDescriptor = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    );
+    expect(JSON.stringify(archivedDescriptor?.inputSchema)).not.toContain('"const":"Web Application"');
+    const archivedAdmission = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "51515151-5151-4151-8151-515151515151",
+        activityPresentationId: "52525252-5252-4252-8252-525252525252",
+        prompt: "an archived project cannot admit fresh work",
+        project: { name: "Web Application", registryRevision: 3 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Archived Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(archivedAdmission.isError).toBe(true);
+    expect(JSON.stringify(archivedAdmission)).toContain("PROJECT_NOT_FOUND");
+    expect(upstream.calls).toEqual([]);
+
+    const restored = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 2,
+        expectedRegistryRevision: 3,
         operation: {
           kind: "patch",
           settings: {
-            projectOperations: [{ kind: "remove", projectId: "web-app", label: "irrelevant" }]
+            projectOperations: [{ kind: "restore", projectId: webProject.id }]
           }
         }
       }
     });
-    expect(incompleteRename.isError).toBe(true);
-    expect(pollutedRemove.isError).toBe(true);
+    expect(privateSettingsView(restored).settings).toMatchObject({
+      registryRevision: 4,
+      projects: expect.arrayContaining([
+        expect.objectContaining({ id: webProject.id, name: "Web Application", cwd: realpathSync(web) })
+      ])
+    });
     await close();
   });
 
@@ -1891,7 +1975,8 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(opened.settings).toMatchObject({
-      revision: 0,
+      settingsRevision: 0,
+      registryRevision: 0,
       projects: []
     });
     expect(opened.capabilities).not.toHaveProperty("allowedRoots");
@@ -1899,30 +1984,31 @@ describe("bridge tools", () => {
     const firstSave = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 0,
+        expectedRegistryRevision: 0,
         operation: {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "add", project: { id: "first", label: "First", cwd: first } }
+              { kind: "add", project: { name: "First", cwd: first } }
             ]
           }
         }
       }
     });
     expect(privateSettingsView(firstSave).settings)
-      .toMatchObject({ projects: [{ id: "first", cwd: realpathSync(first) }] });
+      .toMatchObject({ registryRevision: 1, projects: [{ name: "First", cwd: realpathSync(first) }] });
 
     const secondSave = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 1,
+        expectedSettingsRevision: 0,
+        expectedRegistryRevision: 1,
         operation: {
           kind: "patch",
           settings: {
             uiLocalePreference: "ko",
             projectOperations: [
-              { kind: "add", project: { id: "second", label: "Second", cwd: second } }
+              { kind: "add", project: { name: "Second", cwd: second } }
             ]
           }
         }
@@ -1932,19 +2018,20 @@ describe("bridge tools", () => {
     const restored = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 2,
+        expectedSettingsRevision: 1,
         operation: { kind: "reset" }
       }
     });
     expect(privateSettingsView(restored).settings)
       .toMatchObject({
-        revision: 3,
+        settingsRevision: 2,
+        registryRevision: 2,
         uiLocalePreference: "auto",
         projects: beforeReset.projects
       });
 
     const task = await runTask(client, { prompt: "work here", projectId: "first" });
-    expect(task).toMatchObject({ structuredContent: { bridgeActivity: { projectId: "first" } } });
+    expect(task).toMatchObject({ structuredContent: { bridgeActivity: { projectName: "First" } } });
     await close();
   });
 
@@ -1977,22 +2064,28 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(view.capabilities.projectAvailability).toEqual([
-      { id: "active", available: true },
-      { id: "recovery", available: false }
+      { name: "Active", available: true, archived: false },
+      { name: "Recovery", available: false, archived: false }
     ]);
     expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
     expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
     expect(view.settings.projects).toContainEqual({
-      id: "recovery",
-      label: "Recovery"
+      name: "Recovery",
+      available: false,
+      archived: false
     });
     expect(privateSettingsView(await client.callTool({
       name: "codex_settings",
       arguments: {}
     })).settings.projects).toContainEqual({
-      id: "recovery",
+      id: expect.stringMatching(SCOPE_ID_PATTERN),
+      name: "Recovery",
       label: "Recovery",
-      cwd: realpathSync(second)
+      nameKey: "recovery",
+      cwd: realpathSync(second),
+      sortOrder: 1,
+      createdAt: expect.any(Number),
+      updatedAt: expect.any(Number)
     });
     await close();
   });
@@ -2026,10 +2119,12 @@ describe("bridge tools", () => {
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
     const baselineNotifications = listChanged;
-    expect(initial.capabilities.projectAvailability).toEqual([{ id: "alpha", available: true }]);
+    expect(initial.capabilities.projectAvailability).toEqual([
+      { name: "Alpha Workspace", available: true, archived: false }
+    ]);
     const initialDescriptor = await taskDescriptor();
-    expect(JSON.stringify(initialDescriptor.inputSchema.properties?.projectId))
-      .toContain('"const":"alpha"');
+    expect(JSON.stringify(initialDescriptor.inputSchema.properties?.project))
+      .toContain('"const":"Alpha Workspace"');
     expect(JSON.stringify(initialDescriptor)).not.toContain(realpathSync(project));
 
     renameSync(project, displaced);
@@ -2038,18 +2133,20 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(unavailable.capabilities.projectAvailability).toEqual([{ id: "alpha", available: false }]);
+    expect(unavailable.capabilities.projectAvailability).toEqual([
+      { name: "Alpha Workspace", available: false, archived: false }
+    ]);
     expect(listChanged).toBe(baselineNotifications + 1);
     const unavailableDescriptor = await taskDescriptor();
-    expect(JSON.stringify(unavailableDescriptor.inputSchema.properties?.projectId))
-      .not.toContain('"const":"alpha"');
+    expect(JSON.stringify(unavailableDescriptor.inputSchema.properties?.project))
+      .not.toContain('"const":"Alpha Workspace"');
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
     const unavailableStatus = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: {} })
     );
     expect(unavailableStatus.projects).toEqual([
-      { projectId: "alpha", projectLabel: "Alpha Workspace", available: false }
+      { projectName: "Alpha Workspace", available: false, archived: false }
     ]);
     expect(JSON.stringify(unavailableStatus)).not.toContain(project);
     expect(JSON.stringify(unavailableStatus)).not.toContain(displaced);
@@ -2060,7 +2157,7 @@ describe("bridge tools", () => {
         requestId: "71717171-7171-4171-8171-717171717171",
         activityPresentationId: "72727272-7272-4272-8272-727272727272",
         prompt: "do not run through a stale unavailable project descriptor",
-        projectId: "alpha",
+        project: { name: "Alpha Workspace", registryRevision: 1 },
         activity: { mode: "new" },
         agent: { mode: "new", name: "Stale Descriptor Agent" },
         executionMode: "foreground"
@@ -2079,12 +2176,14 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(recovered.capabilities.projectAvailability).toEqual([{ id: "alpha", available: true }]);
+    expect(recovered.capabilities.projectAvailability).toEqual([
+      { name: "Alpha Workspace", available: true, archived: false }
+    ]);
     expect(listChanged).toBe(baselineNotifications + 2);
     const recoveredDescriptor = await taskDescriptor();
-    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.projectId))
-      .toContain('"const":"alpha"');
-    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.projectId))
+    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.project))
+      .toContain('"const":"Alpha Workspace"');
+    expect(JSON.stringify(recoveredDescriptor.inputSchema.properties?.project))
       .toContain('"title":"Alpha Workspace"');
     expect(JSON.stringify(recoveredDescriptor)).not.toContain(realpathSync(project));
     await close();
@@ -2100,7 +2199,7 @@ describe("bridge tools", () => {
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      projects: [{ projectId: "default", projectLabel: path.basename(root), available: true }],
+      projects: [{ projectName: "Test Project", available: true, archived: false }],
       modelPolicy: {
         mode: "automatic",
         preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
@@ -2155,7 +2254,15 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({ projects: [] });
@@ -2440,7 +2547,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(unsupportedPriority)).toContain("Priority");
     const settings = await client.callTool({ name: "codex_settings", arguments: {} });
     expect((settings as { structuredContent?: Record<string, any> }).structuredContent?.settings)
-      .toMatchObject({ revision: 2, usePriorityServiceTier: false });
+      .toMatchObject({ settingsRevision: 2, usePriorityServiceTier: false });
     await close();
   });
 
@@ -2506,7 +2613,7 @@ describe("bridge tools", () => {
     });
     expect(saved.isError).not.toBe(true);
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
-      .toMatchObject({ revision: 1, modelPolicy: { mode: "automatic" } });
+      .toMatchObject({ settingsRevision: 1, modelPolicy: { mode: "automatic" } });
 
     const task = await runTask(client, { prompt: "use surviving selection", sessionMode: "new" });
     expect((task as { structuredContent?: Record<string, any> }).structuredContent)
@@ -2611,7 +2718,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(update)).toContain("policy revision 1");
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      modelPolicyRevision: 0,
+      settingsRevision: 0,
       modelPolicy: { mode: "automatic" }
     });
     expect(upstream.calls).toHaveLength(0);
@@ -2641,14 +2748,15 @@ describe("bridge tools", () => {
     expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
       settings: {
         schemaVersion: 2,
-        revision: 0,
+        settingsRevision: 0,
+        registryRevision: 1,
         accessStrategy: "adaptive",
         modelPolicy: {
           mode: "automatic",
           preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
           allowedSelections: { kind: "catalog-visible" }
         },
-        projects: [{ id: "default", label: path.basename(root) }],
+        projects: [{ name: "Test Project", available: true, archived: false }],
         uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
         activityCardVisibility: "always",
@@ -2666,7 +2774,9 @@ describe("bridge tools", () => {
     expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
       .not.toContain(realpathSync(root));
     expect(privateSettingsView(opened).settings).toMatchObject({
-      projects: [{ id: "default", cwd: realpathSync(root) }]
+      settingsRevision: 0,
+      registryRevision: 1,
+      projects: [{ name: "Test Project", cwd: realpathSync(root) }]
     });
 
     const saved = await client.callTool({
@@ -2686,7 +2796,7 @@ describe("bridge tools", () => {
       }
     });
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
-      revision: 1,
+      settingsRevision: 1,
       accessStrategy: "always-full",
       modelPolicy: {
         mode: "fixed",
@@ -2759,7 +2869,9 @@ describe("bridge tools", () => {
     const descriptor = (await client.listTools()).tools.find(
       (entry) => entry.name === "codex_update_settings"
     )!;
-    expect(descriptor.inputSchema.required).toContain("expectedRevision");
+    expect(descriptor.inputSchema.properties).toHaveProperty("expectedSettingsRevision");
+    expect(descriptor.inputSchema.properties).toHaveProperty("expectedRegistryRevision");
+    expect(descriptor.inputSchema.properties).not.toHaveProperty("expectedRevision");
     const missingRevision = await client.callTool({
       name: "codex_update_settings",
       arguments: { uiLocalePreference: "ko" }
@@ -2839,7 +2951,7 @@ describe("bridge tools", () => {
     });
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
       .toMatchObject({
-        revision: 1,
+        settingsRevision: 1,
         uiLocalePreference: "ko",
         showBridgeThreadsInCodexApp: true,
         activityCardVisibility: "background-only",
@@ -2873,7 +2985,7 @@ describe("bridge tools", () => {
     });
     expect((reset as { structuredContent?: Record<string, any> }).structuredContent?.settings)
       .toMatchObject({
-        revision: 2,
+        settingsRevision: 2,
         uiLocalePreference: "auto",
         showBridgeThreadsInCodexApp: false,
         activityCardVisibility: "always",
@@ -2966,7 +3078,7 @@ describe("bridge tools", () => {
     });
     expect(saved.isError).not.toBe(true);
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
-      .toMatchObject({ revision: 1, uiLocalePreference: "ko" });
+      .toMatchObject({ settingsRevision: 1, uiLocalePreference: "ko" });
     expect(catalog.calls.some((call) => call.refresh === true)).toBe(false);
 
     const changed = await client.callTool({
@@ -3090,7 +3202,7 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "24242424-0000-4000-8000-000000000012",
         prompt: "never accepts a stale descriptor without presentation",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: {
           mode: "new",
           title: "Never visibility current contract",
@@ -3486,10 +3598,11 @@ describe("bridge tools", () => {
   it("reuses one Agent across linked Activities and maps continue, fork, and fresh context exactly", async () => {
     const root = temporaryRoot();
     const upstream = new ForkLifecycleUpstream();
-    const { client, jobs, close } = await connectTestClient(
+    const { client, jobs, settings, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
+    const project = settings.current.projects[0];
 
     const first = await runTask(client, {
       prompt: "establish context",
@@ -3502,8 +3615,7 @@ describe("bridge tools", () => {
     const agentId = firstStructured.bridgeActivity.agentId;
     expect(firstStructured.threadId).toBe("thread-1");
     expect(firstStructured.bridgeActivity).toMatchObject({
-      projectId: "default",
-      projectLabel: path.basename(root)
+      projectName: "Test Project"
     });
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
     expect(jobs.listActivityAgentAssignments(sourceActivityId, agentId)).toEqual([
@@ -3533,8 +3645,8 @@ describe("bridge tools", () => {
     expect(jobs.getActivity(linkedActivityId)).toMatchObject({
       lifecycle: "open",
       continuationOfActivityId: sourceActivityId,
-      projectId: "default",
-      projectLabel: path.basename(root),
+      projectId: project.id,
+      projectLabel: "Test Project",
       cardGeneration: 1
     });
     expect(upstream.calls[1]).toMatchObject({
@@ -3554,7 +3666,7 @@ describe("bridge tools", () => {
     expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.threadId)
       .toBe("thread-forked");
     expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity)
-      .toMatchObject({ projectId: "default", projectLabel: path.basename(root) });
+      .toMatchObject({ projectName: "Test Project" });
     expect(upstream.calls[2]).toMatchObject({
       name: "codex-fork",
       args: { threadId: "thread-1", prompt: "independently verify the approach" }
@@ -3588,22 +3700,22 @@ describe("bridge tools", () => {
     expect(history.find((thread) => thread.threadId === "thread-1")).toMatchObject({
       isCurrent: false,
       contextMode: "fresh",
-      projectId: "default",
-      projectLabel: path.basename(root)
+      projectId: project.id,
+      projectLabel: "Test Project"
     });
     expect(history.find((thread) => thread.threadId === "thread-forked")).toMatchObject({
       isCurrent: false,
       contextMode: "fork",
       sessionId: "session-tree-1",
-      projectId: "default",
-      projectLabel: path.basename(root),
+      projectId: project.id,
+      projectLabel: "Test Project",
       forkedFromThreadId: "thread-1"
     });
     expect(history.find((thread) => thread.threadId === "thread-2")).toMatchObject({
       isCurrent: true,
       contextMode: "fresh",
-      projectId: "default",
-      projectLabel: path.basename(root)
+      projectId: project.id,
+      projectLabel: "Test Project"
     });
     expect(jobs.getAgent(agentId)).toMatchObject({
       agentId,
@@ -3618,12 +3730,23 @@ describe("bridge tools", () => {
     const root = realpathSync(temporaryRoot());
     const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
     const upstream = new FakeUpstream();
-    const sessions = new SessionRegistry({ allowedRoots: [root] });
-    const jobs = new CodexJobRegistry({ allowedRoots: [root] });
+    const stateStore = new BridgeStateStore({ file: ":memory:" });
+    const settings = new UserSettingsStore(config, { stateStore });
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Pinned Project", cwd: root } }],
+      undefined,
+      0
+    );
+    const project = settings.current.projects[0];
+    const sessions = new SessionRegistry({ allowedRoots: [root], stateStore });
+    const jobs = new CodexJobRegistry({ allowedRoots: [root], stateStore });
     const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Pinned MCP Agent" });
     jobs.linkAgentThread({
       agentId: agent.agentId,
       threadId: "mcp-thread",
+      projectId: project.id,
+      projectLabel: project.name,
       backendKind: "mcp-server",
       cwd: root,
       sandbox: "read-only",
@@ -3634,6 +3757,8 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       backendKind: "mcp-server",
       cwd: root,
+      projectId: project.id,
+      projectLabel: project.name,
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 0,
@@ -3646,12 +3771,12 @@ describe("bridge tools", () => {
       upstream,
       sessions,
       new FakeModelCatalog(),
-      undefined,
+      settings,
       jobs
     );
 
-    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
-    expect((settings as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
+    const settingsResult = await client.callTool({ name: "codex_settings", arguments: {} });
+    expect((settingsResult as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
       .toEqual(expect.arrayContaining([
         expect.stringContaining("Existing Agent threads remain pinned"),
         expect.stringContaining("handoffSummary")
@@ -3740,6 +3865,7 @@ describe("bridge tools", () => {
       })
     ]);
     await close();
+    stateStore.close();
   });
 
   it("manages Agent lifecycle through one scope-local idempotent tool without deleting history", async () => {
@@ -5429,7 +5555,7 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: { mode: "new", title: "Derived scope task", policy: { kind: "investigation" } },
         agent: { mode: "new", name: "Derived Scope Agent" },
         executionMode: "foreground"
@@ -5447,7 +5573,7 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: { mode: "new", title: "Derived scope task", policy: { kind: "investigation" } },
         agent: { mode: "new", name: "Derived Scope Agent" },
         executionMode: "foreground"
@@ -5557,7 +5683,7 @@ describe("bridge tools", () => {
         requestId: "abababab-abab-4aba-8aba-abababababab",
         activityPresentationId: "abababab-abab-4aba-8aba-abababababab",
         prompt: "compatibility scope",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: { mode: "new", title: "Compatibility scope task" },
         agent: { mode: "new", name: "Compatibility Agent" }
       }
@@ -5581,7 +5707,7 @@ describe("bridge tools", () => {
         arguments: {
           requestId: "acacacac-acac-4aca-8aca-acacacacacac",
           prompt: "cancel derived job",
-          projectId: "default",
+          project: { name: "Test Project", registryRevision: 1 },
           activity: { mode: "new", title: "Cancelable derived task", policy: { kind: "implementation" } },
           agent: { mode: "new", name: "Cancellation Agent" }
         },
@@ -5896,7 +6022,7 @@ describe("bridge tools", () => {
       requestId: "34343434-3434-4434-8434-343434343434",
       activityPresentationId: "34343434-3434-4434-8434-343434343434",
       prompt: "normalize admitted defaults",
-      projectId: "default",
+      project: { name: "Test Project", registryRevision: 1 },
       activity: { mode: "new" as const, title: "Normalized defaults" },
       agent: { mode: "new" as const }
     };
@@ -5904,7 +6030,7 @@ describe("bridge tools", () => {
     const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
     const admitted = jobs.listForScope(SCOPE_A)[0];
     expect(admitted).toMatchObject({
-      requestHashVersion: 4,
+      requestHashVersion: 5,
       executionMode: "background",
       executionDecision: {
         effectiveSelection: expect.objectContaining({
@@ -5976,7 +6102,7 @@ describe("bridge tools", () => {
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       prompt: "same raw request with an omitted mode",
-      projectId: "default",
+      project: { name: "Test Project", registryRevision: 1 },
       activity: {
         mode: "new" as const,
         title: "Stable exact-selection retry",
@@ -7020,7 +7146,9 @@ describe("bridge tools", () => {
       upstream,
       undefined,
       new FakeModelCatalog(),
-      settings
+      settings,
+      undefined,
+      false
     );
 
     settings.update({
@@ -7140,7 +7268,7 @@ describe("bridge tools", () => {
         requestId: "65656565-6565-4565-8565-656565656565",
         activityPresentationId: "66666666-6666-4666-8666-666666666666",
         prompt: "use the sole project explicitly",
-        projectId: "default",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: { mode: "new" },
         agent: { mode: "new", name: "Explicit Project Agent" },
         executionMode: "foreground"
@@ -7150,7 +7278,7 @@ describe("bridge tools", () => {
       .structuredContent!;
     const activityId = startedView.bridgeActivity.activityId as string;
     const agentId = startedView.bridgeActivity.agentId as string;
-    expect(startedView.bridgeActivity).toMatchObject({ projectId: "default" });
+    expect(startedView.bridgeActivity).toMatchObject({ projectName: "Test Project" });
 
     const continued = await rawCallTool({
       name: "codex_task",
@@ -7165,7 +7293,7 @@ describe("bridge tools", () => {
       }
     });
     expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeActivity: { projectId: "default" } });
+      .toMatchObject({ bridgeActivity: { projectName: "Test Project" } });
 
     const freshOmitted = await rawCallTool({
       name: "codex_task",
@@ -7185,7 +7313,158 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("projects named project IDs and pins routing across Activities, Agents, and removal", async () => {
+  it("fails closed at runtime for a stale registry descriptor without admitting side effects", async () => {
+    const root = temporaryRoot();
+    const second = path.join(root, "second");
+    mkdirSync(second);
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(configFor(root), upstream);
+
+    const staleSelection = { name: "Test Project", registryRevision: 1 };
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Second Project", cwd: second } }],
+      undefined,
+      1
+    );
+    const rejected = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "91919191-9191-4191-8191-919191919191",
+        activityPresentationId: "92929292-9292-4292-8292-929292929292",
+        prompt: "a missed tools/list_changed notification must not admit work",
+        project: staleSelection,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Stale Mapping Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+
+    // The generation token prevents stale mappings. At the same current
+    // generation, another exact valid name is a semantically valid selection;
+    // the bridge cannot infer whether the model intended a different project.
+    const validOther = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "93939393-9393-4393-8393-939393939393",
+        activityPresentationId: "94949494-9494-4494-8494-949494949494",
+        prompt: "select another exact current project",
+        project: { name: "Second Project", registryRevision: 2 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Current Mapping Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(validOther.isError).not.toBe(true);
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(second));
+    await close();
+  });
+
+  it("rechecks registry identity inside the Activity-Agent-Job admission transaction", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const catalog = new AdmissionMutatingModelCatalog();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+    const project = settings.current.projects[0];
+    catalog.beforeGet = () => settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: project.id, name: "Renamed During Admission" }],
+      undefined,
+      1
+    );
+
+    const raced = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "95959595-9595-4595-8595-959595959595",
+        activityPresentationId: "96969696-9696-4696-8696-969696969696",
+        prompt: "race the registry immediately before admission",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "TOCTOU Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(settings.current).toMatchObject({ registryRevision: 2 });
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    await close();
+  });
+
+  it("rechecks a new Activity selection atomically while continuing a pinned Agent", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const catalog = new AdmissionMutatingModelCatalog();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+    const seeded = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "97979797-9797-4797-8797-979797979797",
+        activityPresentationId: "98989898-9898-4898-8898-989898989898",
+        prompt: "seed the pinned Agent",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Pinned Admission Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const agentId = (seeded as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.agentId as string;
+    const project = settings.current.projects[0]!;
+    catalog.beforeGet = () => settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: project.id, name: "Renamed During Continue" }],
+      undefined,
+      1
+    );
+
+    const raced = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "99999999-9999-4999-8999-999999999999",
+        activityPresentationId: "90909090-9090-4090-8090-909090909090",
+        prompt: "create a new Activity on the pinned Agent",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Raced continuation" },
+        agent: { mode: "existing", id: agentId, context: "continue" },
+        executionMode: "foreground"
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(upstream.calls).toHaveLength(1);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    await close();
+  });
+
+  it("projects exact project names and pins routing across Activities, Agents, and archival", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const firstCwd = realpathSync(first);
@@ -7208,14 +7487,16 @@ describe("bridge tools", () => {
       upstream,
       sessions,
       new FakeModelCatalog(),
-      settings
+      settings,
+      undefined,
+      false
     );
 
     const taskDescriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task");
     const descriptorJson = JSON.stringify(taskDescriptor?.inputSchema);
-    expect(descriptorJson).toContain('"const":"alpha"');
-    expect(descriptorJson).toContain('"title":"알파 저장소"');
-    expect(descriptorJson).toContain('"const":"beta"');
+    expect(descriptorJson).toContain('"const":"알파 저장소"');
+    expect(descriptorJson).toContain('"registryRevision":{"const":1}');
+    expect(descriptorJson).toContain('"const":"Beta Workspace"');
     expect(descriptorJson).toContain('"title":"Beta Workspace"');
     expect(descriptorJson).not.toContain(firstCwd);
     expect(descriptorJson).not.toContain(secondCwd);
@@ -7237,36 +7518,37 @@ describe("bridge tools", () => {
 
     const alpha = await runTask(client, {
       prompt: "work in alpha",
-      projectId: "alpha",
+      project: { name: "알파 저장소", registryRevision: 1 },
       agentName: "Alpha Agent",
       contextMode: "fresh"
     });
     const alphaStructured = (alpha as { structuredContent?: Record<string, any> }).structuredContent!;
     const alphaActivityId = alphaStructured.bridgeActivity.activityId as string;
     const alphaAgentId = alphaStructured.bridgeActivity.agentId as string;
+    const alphaProject = settings.current.projects.find((project) => project.name === "알파 저장소")!;
     expect(alphaStructured).toMatchObject({
-      bridgeActivity: { projectId: "alpha", projectLabel: "알파 저장소" },
-      bridgeSession: { projectId: "alpha", projectLabel: "알파 저장소" }
+      bridgeActivity: { projectName: "알파 저장소" },
+      bridgeSession: { projectName: "알파 저장소" }
     });
     expect(jobs.getActivity(alphaActivityId)).toMatchObject({
-      projectId: "alpha",
+      projectId: alphaProject.id,
       projectLabel: "알파 저장소"
     });
     expect(sessions.get("thread-1")).toMatchObject({
-      projectId: "alpha",
+      projectId: alphaProject.id,
       projectLabel: "알파 저장소",
       cwd: firstCwd
     });
 
     const inherited = await runTask(client, {
       prompt: "add another alpha Agent",
-      projectId: "alpha",
+      project: { name: "알파 저장소", registryRevision: 1 },
       activityId: alphaActivityId,
       agentName: "Second Alpha Agent",
       contextMode: "fresh"
     });
     expect((inherited as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeActivity: { projectId: "alpha", projectLabel: "알파 저장소" } });
+      .toMatchObject({ bridgeActivity: { projectName: "알파 저장소" } });
     expect(upstream.calls[1]?.args.cwd).toBe(firstCwd);
 
     const conflict = await client.callTool({
@@ -7276,7 +7558,7 @@ describe("bridge tools", () => {
         activityId: alphaActivityId,
         agentId: alphaAgentId,
         contextMode: "continue",
-        projectId: "beta"
+        project: { name: "Beta Workspace", registryRevision: 1 }
       }
     });
     expect(conflict.isError).toBe(true);
@@ -7284,21 +7566,21 @@ describe("bridge tools", () => {
 
     const linkedBeta = await runTask(client, {
       prompt: "continue the goal with fresh beta context",
-      projectId: "beta",
+      project: { name: "Beta Workspace", registryRevision: 1 },
       continuationOfActivityId: alphaActivityId,
       agentName: "Linked Beta Agent",
       contextMode: "fresh"
     });
     expect((linkedBeta as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
-        bridgeActivity: { projectId: "beta", projectLabel: "Beta Workspace" },
-        bridgeSession: { projectId: "beta", projectLabel: "Beta Workspace" }
+        bridgeActivity: { projectName: "Beta Workspace" },
+        bridgeSession: { projectName: "Beta Workspace" }
       });
     expect(upstream.calls[2]?.args.cwd).toBe(secondCwd);
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status.projects).toEqual([
-      { projectId: "alpha", projectLabel: "알파 저장소", available: true },
-      { projectId: "beta", projectLabel: "Beta Workspace", available: true }
+      { projectName: "알파 저장소", available: true, archived: false },
+      { projectName: "Beta Workspace", available: true, archived: false }
     ]);
     expect(JSON.stringify(status)).not.toContain(firstCwd);
     expect(JSON.stringify(status)).not.toContain(secondCwd);
@@ -7320,7 +7602,7 @@ describe("bridge tools", () => {
       contextMode: "continue"
     });
     expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeSession: { projectId: "alpha", projectLabel: "알파 저장소" } });
+      .toMatchObject({ bridgeSession: { projectName: "알파 저장소" } });
     expect(upstream.calls[3]).toMatchObject({
       name: "codex-reply",
       args: { threadId: "thread-1" }
@@ -7332,7 +7614,7 @@ describe("bridge tools", () => {
         activityId: alphaActivityId,
         agentId: alphaAgentId,
         contextMode: "fresh",
-        projectId: "alpha"
+        project: { name: "알파 저장소", registryRevision: 2 }
       }
     });
     expect(removedFresh.isError).toBe(true);
@@ -7342,7 +7624,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         prompt: "new work cannot use a removed project",
-        projectId: "alpha",
+        project: { name: "알파 저장소", registryRevision: 2 },
         agentName: "Removed Project Agent",
         contextMode: "fresh"
       }
@@ -7419,62 +7701,56 @@ describe("bridge tools", () => {
         { id: "beta", label: "Beta", cwd: second }
       ]
     }, settings.current.revision);
-    const { client, jobs, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
       config,
       upstream,
       undefined,
       new FakeModelCatalog(),
       settings
     );
+    const alphaProject = settings.current.projects.find((project) => project.name === "Alpha")!;
     const requestId = "31313131-3131-4131-8131-313131313131";
     const args = {
+      scopeId: SCOPE_A,
       requestId,
+      activityPresentationId: "32323232-3232-4232-8232-323232323232",
       prompt: "idempotent project turn",
-      projectId: "alpha",
-      agentName: "Retry Agent",
-      contextMode: "fresh",
+      project: { name: "Alpha", registryRevision: 1 },
+      activity: { mode: "new" as const },
+      agent: { mode: "new" as const, name: "Retry Agent" },
       executionMode: "foreground"
     };
 
-    const firstResult = await client.callTool({ name: "codex_task", arguments: args });
-    settings.update({
-      projects: [{ id: "beta", label: "Beta", cwd: second }]
-    }, settings.current.revision);
-    const replay = await client.callTool({ name: "codex_task", arguments: args });
-    const explicitReplay = await client.callTool({
-      name: "codex_task",
-      arguments: { ...args, projectId: "alpha" }
-    });
+    const firstResult = await rawCallTool({ name: "codex_task", arguments: args });
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: alphaProject.id, name: "Alpha Renamed" }],
+      undefined,
+      1
+    );
+    const replay = await rawCallTool({ name: "codex_task", arguments: args });
     expect((replay as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
         threadId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.threadId,
         bridgeActivity: {
           activityId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.activityId,
           jobId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.jobId,
-          projectId: "alpha"
+          projectName: "Alpha"
         }
       });
-    expect((explicitReplay as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeActivity: {
-          activityId: (firstResult as { structuredContent?: Record<string, any> })
-            .structuredContent?.bridgeActivity.activityId,
-          jobId: (firstResult as { structuredContent?: Record<string, any> })
-            .structuredContent?.bridgeActivity.jobId,
-          projectId: "alpha"
-        }
-      });
+    expect(JSON.stringify(replay)).not.toContain(alphaProject.id);
+    expect(JSON.stringify(replay)).not.toContain(realpathSync(first));
     expect(upstream.calls).toHaveLength(1);
     expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
     expect(jobs.listForScope(SCOPE_A)[0]).toMatchObject({
-      projectId: "alpha",
+      projectId: alphaProject.id,
       projectLabel: "Alpha",
-      requestHashVersion: 4
+      requestHashVersion: 5
     });
 
-    const changed = await client.callTool({
+    const changed = await rawCallTool({
       name: "codex_task",
-      arguments: { ...args, projectId: "beta" }
+      arguments: { ...args, project: { name: "Beta", registryRevision: 2 } }
     });
     expect(changed.isError).toBe(true);
     expect(JSON.stringify(changed)).toContain("requestId was already used for a different Codex task");
@@ -7485,11 +7761,12 @@ describe("bridge tools", () => {
   it("keeps an existing Agent thread pinned after the registered projects change", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
+    const relocated = temporaryRoot();
     const upstream = new FakeUpstream();
     const sessions = new SessionRegistry();
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second},${relocated}`
     });
     const settings = new UserSettingsStore(config);
     const { client, jobs, close } = await connectTestClient(
@@ -7497,7 +7774,9 @@ describe("bridge tools", () => {
       upstream,
       sessions,
       new FakeModelCatalog(),
-      settings
+      settings,
+      undefined,
+      false
     );
 
     settings.update({
@@ -7516,9 +7795,13 @@ describe("bridge tools", () => {
       .structuredContent!;
     const activityId = startedStructured.bridgeActivity.activityId as string;
     const agentId = startedStructured.bridgeActivity.agentId as string;
-    settings.update({
-      projects: [{ id: "second", label: "Second", cwd: second }]
-    }, settings.current.revision);
+    const firstProject = settings.current.projects.find((project) => project.name === "First")!;
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "relocate", projectId: firstProject.id, cwd: relocated }],
+      undefined,
+      settings.current.registryRevision
+    );
     await runTask(client, {
       prompt: "continue after the project registry changes",
       activityId,
@@ -7526,15 +7809,47 @@ describe("bridge tools", () => {
       contextMode: "continue"
     });
 
+    const linked = await runTask(client, {
+      prompt: "continue in a new Activity without moving the pinned thread",
+      project: { name: "First", registryRevision: settings.current.registryRevision },
+      activityTitle: "Pinned follow-up Activity",
+      agentId,
+      contextMode: "continue"
+    });
+    const linkedActivityId = (linked as { structuredContent?: Record<string, any> })
+      .structuredContent?.bridgeActivity?.activityId as string;
+
     expect(sessions.get("thread-1")?.cwd).toBe(realpathSync(first));
     expect(jobs.listForAgent(agentId).map((job) => job.cwd)).toEqual([
       realpathSync(first),
+      realpathSync(first),
       realpathSync(first)
     ]);
-    expect(settings.current.projects).toEqual([
-      { id: "second", label: "Second", cwd: realpathSync(second) }
+    expect(jobs.getActivityProjectAdmission(linkedActivityId)).toMatchObject({
+      projectId: firstProject.id,
+      projectLabel: "First",
+      projectCwd: realpathSync(first)
+    });
+    expect(settings.current.projects.find((project) => project.id === firstProject.id))
+      .toMatchObject({ name: "First", cwd: realpathSync(relocated) });
+    await runTask(client, {
+      prompt: "start fresh at the relocated current folder",
+      projectId: "first",
+      agentId,
+      contextMode: "fresh"
+    });
+    expect(jobs.listForAgent(agentId).map((job) => job.cwd)).toEqual([
+      realpathSync(first),
+      realpathSync(first),
+      realpathSync(first),
+      realpathSync(relocated)
     ]);
-    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply"]);
+    expect(upstream.calls.map((call) => call.name)).toEqual([
+      "codex",
+      "codex-reply",
+      "codex-reply",
+      "codex"
+    ]);
     await close();
   });
 
@@ -8308,7 +8623,15 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
     const upstream = new FakeUpstream();
-    const { client, jobs, close } = await connectTestClient(config, upstream);
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
 
     const missing = await client.callTool({
       name: "codex_task",
@@ -8345,7 +8668,7 @@ describe("bridge tools", () => {
       }
     });
     expect(invalidSave.isError).toBe(true);
-    expect(JSON.stringify(invalidSave)).toContain("legacy operator restriction");
+    expect(JSON.stringify(invalidSave)).toContain("PROJECT_CWD_NOT_ALLOWED");
     const saved = await client.callTool({
       name: "codex_update_settings",
       arguments: {
@@ -8850,21 +9173,46 @@ async function connectTestClient(
   sessions?: SessionRegistry,
   modelCatalog: CodexModelCatalogProvider = new FakeModelCatalog(),
   userSettings?: UserSettingsStore,
-  jobs?: CodexJobRegistry
+  jobs?: CodexJobRegistry,
+  bootstrapProject = true
 ) {
-  const settingsStore = userSettings || new UserSettingsStore(config);
+  const ownedState = !userSettings && !jobs
+    ? new BridgeStateStore({ file: ":memory:" })
+    : undefined;
+  const sharedState = userSettings?.admissionStateStore ||
+    jobs?.admissionStateStore ||
+    ownedState;
+  const settingsStore = userSettings || new UserSettingsStore(config, {
+    stateStore: sharedState
+  });
+  if (bootstrapProject && settingsStore.current.projects.length === 0) {
+    const cwd = config.allowedRoots[0];
+    if (cwd) {
+      settingsStore.updateWithProjectOperations(
+        {},
+        [{ kind: "add", project: { name: "Test Project", cwd } }],
+        undefined,
+        0
+      );
+    }
+  }
   const jobRegistry = jobs || new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
-    allowedRoots: config.allowedRoots
+    allowedRoots: config.allowedRoots,
+    stateStore: sharedState
+  });
+  const sessionRegistry = sessions || new SessionRegistry({
+    allowedRoots: config.allowedRoots,
+    stateStore: sharedState
   });
   const server = createBridgeMcpServer(
     config,
     upstream,
-    sessions,
+    sessionRegistry,
     jobRegistry,
     modelCatalog,
     settingsStore
@@ -8891,11 +9239,24 @@ async function connectTestClient(
           activity?.mode !== "existing" ||
           agent?.mode === "new" ||
           (agent?.mode === "existing" && agent.context === "fresh");
-        if (
-          admitsFreshWork &&
-          !Object.prototype.hasOwnProperty.call(currentArguments, "projectId")
-        ) {
-          currentArguments.projectId = "default";
+        const legacyProjectId = typeof currentArguments.projectId === "string"
+          ? currentArguments.projectId
+          : undefined;
+        delete currentArguments.projectId;
+        if (admitsFreshWork && !Object.prototype.hasOwnProperty.call(currentArguments, "project")) {
+          const target = selectTestProject(settingsStore, legacyProjectId);
+          if (target) {
+            currentArguments.project = {
+              name: target.name,
+              registryRevision: settingsStore.current.registryRevision
+            };
+          }
+        } else if (legacyProjectId && !Object.prototype.hasOwnProperty.call(currentArguments, "project")) {
+          const target = selectTestProject(settingsStore, legacyProjectId);
+          currentArguments.project = {
+            name: target?.name || legacyProjectId,
+            registryRevision: settingsStore.current.registryRevision
+          };
         }
         const requestId = typeof currentArguments.requestId === "string"
           ? currentArguments.requestId
@@ -8916,7 +9277,11 @@ async function connectTestClient(
           ...(rest as [])
         );
       }
-      const currentArguments = currentToolTestArguments(request.name, arguments_);
+      const currentArguments = currentToolTestArguments(
+        request.name,
+        arguments_,
+        settingsStore
+      );
       if (
         (
           request.name === "codex_status" ||
@@ -8947,11 +9312,34 @@ async function connectTestClient(
     client,
     rawCallTool,
     jobs: jobRegistry,
+    settings: settingsStore,
     close: async () => {
       await client.close();
       await server.close();
+      ownedState?.close();
     }
   };
+}
+
+function selectTestProject(
+  settings: UserSettingsStore,
+  legacyProjectId?: string
+) {
+  const active = settings.current.projects.filter((project) => project.archivedAt === undefined);
+  if (!legacyProjectId || legacyProjectId === "default") return active[0];
+  let requestedKey: string | undefined;
+  try {
+    requestedKey = projectNameKey(legacyProjectId);
+  } catch {
+    // Invalid legacy routing values remain unknown names for negative tests.
+  }
+  const slug = (value: string) => value.normalize("NFKC").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return active.find((project) =>
+    project.id === legacyProjectId ||
+    (requestedKey !== undefined && project.nameKey === requestedKey) ||
+    slug(project.name) === slug(legacyProjectId)
+  );
 }
 
 async function runTask(client: Client, arguments_: Record<string, unknown>): Promise<unknown> {
@@ -9031,7 +9419,8 @@ function currentTaskTestArguments(input: Record<string, unknown>): Record<string
 
 function currentToolTestArguments(
   toolName: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  settingsStore: UserSettingsStore
 ): Record<string, unknown> {
   if (toolName === "codex_status" && !input.query) {
     const current = { ...input };
@@ -9138,43 +9527,83 @@ function currentToolTestArguments(
     return current;
   }
 
-  if (toolName === "codex_update_settings" && !input.operation) {
+  if (toolName === "codex_update_settings") {
     const current = { ...input };
-    if (current.reset === true) {
-      current.operation = { kind: "reset" };
-      delete current.reset;
-      return current;
-    }
-    const settings: Record<string, unknown> = {};
-    for (const key of [
-      "accessStrategy",
-      "modelPolicy",
-      "usePriorityServiceTier",
-      "uiLocalePreference",
-      "maxConcurrentJobs"
-    ]) {
-      if (Object.prototype.hasOwnProperty.call(current, key)) settings[key] = current[key];
-    }
-    if (current.activityCardVisibility !== undefined || current.completionHandoff !== undefined) {
-      settings.activityCard = {
-        ...(current.activityCardVisibility !== undefined
-          ? { visibility: current.activityCardVisibility }
-          : {}),
-        ...(current.completionHandoff !== undefined
-          ? { completionHandoff: current.completionHandoff }
-          : {})
-      };
-    }
-    if (Object.keys(settings).length > 0) {
-      current.operation = { kind: "patch", settings };
-      for (const key of [
-        ...Object.keys(settings),
-        "activityCardVisibility",
-        "completionHandoff"
-      ]) {
-        delete current[key];
+    if (!current.operation) {
+      if (current.reset === true) {
+        current.operation = { kind: "reset" };
+        delete current.reset;
+      } else {
+        const settings: Record<string, unknown> = {};
+        for (const key of [
+          "accessStrategy",
+          "modelPolicy",
+          "usePriorityServiceTier",
+          "uiLocalePreference",
+          "maxConcurrentJobs"
+        ]) {
+          if (Object.prototype.hasOwnProperty.call(current, key)) settings[key] = current[key];
+        }
+        if (current.activityCardVisibility !== undefined || current.completionHandoff !== undefined) {
+          settings.activityCard = {
+            ...(current.activityCardVisibility !== undefined
+              ? { visibility: current.activityCardVisibility }
+              : {}),
+            ...(current.completionHandoff !== undefined
+              ? { completionHandoff: current.completionHandoff }
+              : {})
+          };
+        }
+        if (Object.keys(settings).length > 0) {
+          current.operation = { kind: "patch", settings };
+          for (const key of [
+            ...Object.keys(settings),
+            "activityCardVisibility",
+            "completionHandoff"
+          ]) {
+            delete current[key];
+          }
+        }
       }
     }
+    const operation = current.operation as Record<string, any> | undefined;
+    if (operation?.kind === "patch" && operation.settings) {
+      const projectOperations = operation.settings.projectOperations as
+        | Array<Record<string, any>>
+        | undefined;
+      if (projectOperations) {
+        operation.settings = {
+          ...operation.settings,
+          projectOperations: projectOperations.map((entry) => {
+            if (entry.kind === "add") {
+              return {
+                kind: "add",
+                project: {
+                  name: entry.project?.name || entry.project?.label || entry.project?.id,
+                  cwd: entry.project?.cwd
+                }
+              };
+            }
+            const target = selectTestProject(settingsStore, entry.projectId);
+            const projectId = target?.id || entry.projectId;
+            if (entry.kind === "remove") return { kind: "archive", projectId };
+            if (entry.kind === "rename") {
+              return { kind: "rename", projectId, name: entry.name || entry.label };
+            }
+            if (entry.kind === "relocate") return { kind: "relocate", projectId, cwd: entry.cwd };
+            return { ...entry, projectId };
+          })
+        };
+        current.expectedRegistryRevision ??= settingsStore.current.registryRevision;
+      }
+    }
+    const hasGeneralMutation = operation?.kind === "reset" ||
+      (operation?.kind === "patch" && Object.keys(operation.settings || {})
+        .some((key) => key !== "projectOperations"));
+    if (hasGeneralMutation && current.expectedSettingsRevision === undefined) {
+      current.expectedSettingsRevision = current.expectedRevision;
+    }
+    delete current.expectedRevision;
     return current;
   }
 

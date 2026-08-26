@@ -1,200 +1,162 @@
-import { mkdtempSync, mkdirSync, realpathSync, renameSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MAX_REGISTERED_PROJECTS,
-  PROJECT_CWD_INVALID,
-  PROJECT_DUPLICATE_ID,
-  PROJECT_DUPLICATE_PATH,
+  PROJECT_CWD_CONFLICT,
   PROJECT_ID_INVALID,
-  PROJECT_ID_MAX_LENGTH,
-  PROJECT_LABEL_INVALID,
   PROJECT_LIMIT_EXCEEDED,
+  PROJECT_NAME_CONFLICT,
+  PROJECT_NAME_INVALID,
   PROJECT_NOT_FOUND,
+  PROJECT_REGISTRY_CHANGED,
   PROJECT_REQUIRED,
   PROJECT_SETUP_REQUIRED,
   PROJECT_UNAVAILABLE,
   ProjectRegistry,
-  legacyDefaultProject,
+  canonicalProjectCwd,
   normalizeProjectId,
-  normalizeProjectLabel
+  normalizeProjectName,
+  projectNameKey,
+  type ProjectTarget
 } from "../src/projectRegistry.js";
 
+const UUID_A = "11111111-1111-4111-8111-111111111111";
+const UUID_B = "22222222-2222-4222-8222-222222222222";
+
 describe("project registry", () => {
-  it("normalizes bounded ASCII routing IDs independently from labels", () => {
-    expect(normalizeProjectId("  Bridge_CORE  ")).toBe("bridge-core");
-    expect(normalizeProjectId("API   Server---V2")).toBe("api-server-v2");
-    expect(normalizeProjectId("ＡＰＩ＿2")).toBe("api-2");
-    expect(() => normalizeProjectId("한글-project")).toThrow(PROJECT_ID_INVALID);
-    expect(() => normalizeProjectId("project.name")).toThrow(PROJECT_ID_INVALID);
-    expect(() => normalizeProjectId("a".repeat(PROJECT_ID_MAX_LENGTH + 1))).toThrow(
-      PROJECT_ID_INVALID
-    );
+  it("accepts only internal UUID identities and never derives them from names", () => {
+    expect(normalizeProjectId(UUID_A.toUpperCase())).toBe(UUID_A);
+    for (const legacy of ["default", "bridge", "Bridge Core", "/tmp/project"]) {
+      expect(() => normalizeProjectId(legacy)).toThrow(PROJECT_ID_INVALID);
+    }
   });
 
-  it("preserves normalized printable Unicode labels and counts code points", () => {
-    expect(normalizeProjectLabel("  브리지 🛠️  ")).toBe("브리지 🛠️");
-    expect(normalizeProjectLabel("Cafe\u0301")).toBe("Café");
-    expect(() => normalizeProjectLabel("bad\nlabel")).toThrow(PROJECT_LABEL_INVALID);
-    expect(() => normalizeProjectLabel("🙂".repeat(121))).toThrow(PROJECT_LABEL_INVALID);
+  it("canonicalizes display names and rejects control, invisible, surrogate, and bidi input", () => {
+    expect(normalizeProjectName("  Cafe\u0301\u00a0\u00a0프로젝트  ")).toBe("Café 프로젝트");
+    expect(normalizeProjectName("  Mixed   Case  ")).toBe("Mixed Case");
+    for (const unsafe of [
+      "bad\nname",
+      "zero\u200bwidth",
+      "bidi\u202ename",
+      `surrogate${String.fromCharCode(0xd800)}`,
+      "\u2066isolated\u2069"
+    ]) {
+      expect(() => normalizeProjectName(unsafe)).toThrow(PROJECT_NAME_INVALID);
+    }
+    expect(() => normalizeProjectName("\u00a0\u00a0")).toThrow(PROJECT_NAME_INVALID);
+    expect(() => normalizeProjectName("가".repeat(121))).toThrow(PROJECT_NAME_INVALID);
   });
 
-  it("canonicalizes allowed paths and rejects arbitrary, missing, or relative paths", () => {
-    const root = temporaryDirectory("project-root-");
-    const project = path.join(root, "workspace");
-    const alias = path.join(root, "workspace-alias");
-    const outside = temporaryDirectory("project-outside-");
-    mkdirSync(project);
-    symlinkSync(project, alias);
-
-    const registry = new ProjectRegistry(
-      [{ id: "Bridge Core", label: "브리지 코어", cwd: alias }],
-      [root]
-    );
-    expect(registry.projects).toEqual([
-      { id: "bridge-core", label: "브리지 코어", cwd: project }
-    ]);
-    expect(registry.resolve("BRIDGE_core")).toMatchObject({ id: "bridge-core" });
-    expect(() => new ProjectRegistry(
-      [{ id: "outside", label: "Outside", cwd: outside }],
-      [root]
-    )).toThrow(/legacy operator restriction/);
-    expect(() => new ProjectRegistry(
-      [{ id: "missing", label: "Missing", cwd: path.join(root, "missing") }],
-      [root]
-    )).toThrow(/available folder/);
-    expect(() => new ProjectRegistry(
-      [{ id: "relative", label: "Relative", cwd: "workspace" }],
-      [root]
-    )).toThrow(PROJECT_CWD_INVALID);
+  it("uses locale-independent NFKC case folding for uniqueness and lookup", () => {
+    expect(projectNameKey("Ｓｔｒａßｅ")).toBe(projectNameKey("STRASSE"));
+    expect(projectNameKey("\u212aelvin")).toBe(projectNameKey("kelvin"));
+    expect(projectNameKey("  Alpha\u00a0Project ")).toBe(projectNameKey("alpha project"));
   });
 
-  it("does not move the startup security ceiling when an allowed root is replaced by a symlink", () => {
-    const container = temporaryDirectory("project-root-swap-");
-    const configuredRoot = path.join(container, "allowed");
-    const originalRoot = path.join(container, "allowed-original");
-    const outside = temporaryDirectory("project-root-outside-");
-    const outsideProject = path.join(outside, "workspace");
-    mkdirSync(configuredRoot);
-    mkdirSync(outsideProject);
-    const startupCeiling = realpathSync(configuredRoot);
+  it("requires name plus the exact registry generation without fallback", () => {
+    const root = temporaryDirectory("project-registry-");
+    const registry = new ProjectRegistry([project(UUID_A, "Codex Bridge", root)], [root], 7);
 
-    renameSync(configuredRoot, originalRoot);
-    symlinkSync(outside, configuredRoot);
+    expect(registry.resolve({ name: "codex bridge", registryRevision: 7 })).toMatchObject({
+      id: UUID_A,
+      name: "Codex Bridge",
+      cwd: root
+    });
+    expect(() => registry.resolve()).toThrow(PROJECT_REQUIRED);
+    expect(() => registry.resolve({ name: "Codex Bridge", registryRevision: 6 }))
+      .toThrow(PROJECT_REGISTRY_CHANGED);
+    expect(() => registry.resolve({ name: "Codex", registryRevision: 7 }))
+      .toThrow(PROJECT_NOT_FOUND);
+    expect(() => registry.resolve({ name: "default", registryRevision: 7 }))
+      .toThrow(PROJECT_NOT_FOUND);
+    expect(() => new ProjectRegistry([], [], 0).resolve()).toThrow(PROJECT_SETUP_REQUIRED);
+  });
 
+  it("rejects active name/cwd collisions and enforces the registry bound", () => {
+    const first = temporaryDirectory("project-first-");
+    const second = temporaryDirectory("project-second-");
     expect(() => new ProjectRegistry([
-      { id: "escaped", label: "Escaped", cwd: path.join(configuredRoot, "workspace") }
-    ], [startupCeiling])).toThrow(/legacy operator restriction/);
-  });
-
-  it("registers unrelated absolute folders when no legacy operator restriction is configured", () => {
-    const first = temporaryDirectory("project-anywhere-first-");
-    const second = temporaryDirectory("project-anywhere-second-");
-    const registry = new ProjectRegistry([
-      { id: "first", label: "First", cwd: first },
-      { id: "second", label: "Second", cwd: second }
-    ], []);
-
-    expect(registry.projects.map(({ cwd }) => cwd)).toEqual([first, second]);
-    expect(registry.resolve("second")).toMatchObject({ id: "second", cwd: second });
-  });
-
-  it("rejects IDs and canonical paths that collide after normalization", () => {
-    const root = temporaryDirectory("project-root-");
-    const first = path.join(root, "first");
-    const second = path.join(root, "second");
-    const firstAlias = path.join(root, "first-alias");
-    mkdirSync(first);
-    mkdirSync(second);
-    symlinkSync(first, firstAlias);
-
+      project(UUID_A, "Ｓｅｒｖｉｃｅ", first, 0),
+      project(UUID_B, "service", second, 1)
+    ], [], 1)).toThrow(PROJECT_NAME_CONFLICT);
     expect(() => new ProjectRegistry([
-      { id: "API Core", label: "One", cwd: first },
-      { id: "api_core", label: "Two", cwd: second }
-    ], [root])).toThrow(PROJECT_DUPLICATE_ID);
-    expect(() => new ProjectRegistry([
-      { id: "one", label: "One", cwd: first },
-      { id: "two", label: "Two", cwd: firstAlias }
-    ], [root])).toThrow(PROJECT_DUPLICATE_PATH);
-  });
-
-  it("enforces the registry limit independently from the app schema", () => {
-    const root = temporaryDirectory("project-root-");
+      project(UUID_A, "One", first, 0),
+      project(UUID_B, "Two", first, 1)
+    ], [], 1)).toThrow(PROJECT_CWD_CONFLICT);
     expect(() => new ProjectRegistry(
-      Array.from({ length: MAX_REGISTERED_PROJECTS + 1 }, (_, index) => ({
-        id: `project-${index}`,
-        label: `Project ${index}`,
-        cwd: root
-      })),
-      [root]
+      Array.from({ length: MAX_REGISTERED_PROJECTS + 1 }, (_, index) =>
+        project(uuidFor(index), `Project ${index}`, first, index)
+      ),
+      [],
+      1
     )).toThrow(PROJECT_LIMIT_EXCEEDED);
   });
 
-  it("requires an explicit selection even when exactly one project is registered", () => {
+  it("requires stored paths to retain their canonical identity", () => {
     const root = temporaryDirectory("project-root-");
-    const first = path.join(root, "first");
-    const second = path.join(root, "second");
-    mkdirSync(first);
-    mkdirSync(second);
-    const projects = [
-      { id: "first", label: "First", cwd: first },
-      { id: "second", label: "Second", cwd: second }
-    ];
+    const workspace = path.join(root, "workspace");
+    const alias = path.join(root, "alias");
+    mkdirSync(workspace);
+    symlinkSync(workspace, alias);
 
-    expect(new ProjectRegistry(projects, [root]).resolve("second"))
-      .toMatchObject({ id: "second", cwd: second });
-    const sole = new ProjectRegistry([projects[0]!], [root]);
-    expect(() => sole.resolve()).toThrow(PROJECT_REQUIRED);
-    expect(sole.resolve("first")).toMatchObject({ id: "first" });
-    expect(() => new ProjectRegistry([], []).resolve()).toThrow(PROJECT_SETUP_REQUIRED);
-    expect(() => new ProjectRegistry(projects, [root]).resolve()).toThrow(PROJECT_REQUIRED);
-    expect(() => new ProjectRegistry(projects, [root]).resolve("unknown")).toThrow(
-      PROJECT_NOT_FOUND
-    );
+    expect(canonicalProjectCwd(alias, [root])).toBe(realpathSync(workspace));
+    expect(() => new ProjectRegistry([
+      project(UUID_A, "Alias", alias)
+    ], [root], 1)).toThrow(PROJECT_UNAVAILABLE);
+    const retained = new ProjectRegistry([
+      project(UUID_A, "Alias", alias)
+    ], [root], 1, { retainUnavailable: true });
+    expect(retained.selectableProjects).toEqual([]);
+    expect(() => retained.resolve({ name: "Alias", registryRevision: 1 }))
+      .toThrow(PROJECT_UNAVAILABLE);
   });
 
-  it("retains unavailable metadata for recovery while excluding it from admission", () => {
-    const allowed = temporaryDirectory("project-allowed-");
-    const unavailable = temporaryDirectory("project-unavailable-");
+  it("excludes archived projects while retaining immutable recovery metadata", () => {
+    const root = temporaryDirectory("project-active-");
     const registry = new ProjectRegistry([
-      { id: "ready", label: "Ready", cwd: allowed },
-      { id: "archive", label: "보관됨", cwd: unavailable }
-    ], [allowed], {
-      retainUnavailable: true
-    });
+      project(UUID_A, "Active", root),
+      { ...project(UUID_B, "Archived", "/missing", 1), archivedAt: 10 }
+    ], [root], 4, { retainUnavailable: true });
 
-    expect(registry.projects).toEqual([
-      { id: "ready", label: "Ready", cwd: allowed },
-      { id: "archive", label: "보관됨", cwd: unavailable }
-    ]);
-    expect(registry.selectableProjects.map(({ id }) => id)).toEqual(["ready"]);
-    expect(registry.unavailableProjectIds).toEqual(["archive"]);
-    expect(() => registry.resolve("archive")).toThrow(PROJECT_UNAVAILABLE);
-    expect(registry.resolve("ready")).toMatchObject({ id: "ready" });
-  });
-
-  it("creates a deterministic compatibility target without exposing a full path as identity", () => {
-    expect(legacyDefaultProject("/work/브리지")).toEqual({
-      id: "default",
-      label: "브리지",
-      cwd: "/work/브리지"
-    });
+    expect(registry.projects.map(({ id }) => id)).toEqual([UUID_A, UUID_B]);
+    expect(registry.selectableProjects.map(({ id }) => id)).toEqual([UUID_A]);
+    expect(() => registry.resolve({ name: "Archived", registryRevision: 4 }))
+      .toThrow(PROJECT_NOT_FOUND);
   });
 
   it("returns defensive copies", () => {
-    const root = temporaryDirectory("project-root-");
-    const registry = new ProjectRegistry([
-      { id: "default", label: "Original", cwd: root }
-    ], [root]);
-    const projects = registry.projects;
-    projects[0]!.label = "Mutated";
-    const availability = registry.availability;
-    availability[0]!.project.label = "Also mutated";
-
-    expect(registry.projects[0]!.label).toBe("Original");
+    const root = temporaryDirectory("project-copy-");
+    const registry = new ProjectRegistry([project(UUID_A, "Original", root)], [root], 1);
+    registry.projects[0]!.name = "Mutated";
+    registry.availability[0]!.project.name = "Also mutated";
+    expect(registry.projects[0]!.name).toBe("Original");
   });
 });
+
+function project(
+  id: string,
+  name: string,
+  cwd: string,
+  sortOrder = 0
+): ProjectTarget {
+  return {
+    id,
+    name,
+    label: name,
+    nameKey: projectNameKey(name),
+    cwd,
+    sortOrder,
+    createdAt: sortOrder + 1,
+    updatedAt: sortOrder + 1
+  };
+}
+
+function uuidFor(index: number): string {
+  const suffix = String(index + 1).padStart(12, "0");
+  return `00000000-0000-4000-8000-${suffix}`;
+}
 
 function temporaryDirectory(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));

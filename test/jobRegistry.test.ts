@@ -37,15 +37,13 @@ describe("CodexJobRegistry persistence", () => {
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
-  it("persists project admission identity with request-hash version 3", async () => {
+  it("persists retired request-hash version 3 without inventing a project identity", async () => {
     const root = temporaryRoot();
     const stateFile = path.join(root, "private", "jobs.json");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start(
       {
         ...jobInput(root),
-        projectId: "bridge",
-        projectLabel: "Codex MCP Bridge",
         requestHashVersion: 3
       },
       async () => result("project-thread")
@@ -54,13 +52,11 @@ describe("CodexJobRegistry persistence", () => {
     await job.promise;
     const restored = persistentRegistry(root, stateFile);
     expect(restored.get(job.jobId)).toMatchObject({
-      projectId: "bridge",
-      projectLabel: "Codex MCP Bridge",
       requestHashVersion: 3
     });
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
       version: 10,
-      jobs: [expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })]
+      jobs: [expect.objectContaining({ requestHashVersion: 3 })]
     });
   });
 

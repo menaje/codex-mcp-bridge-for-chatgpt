@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,74 +60,81 @@ describe("BridgeStateStore", () => {
   it("persists first-class project admission without exposing the canonical path on Activities", () => {
     const file = stateFile();
     const store = new BridgeStateStore({ file });
+    const cwd = temporaryRoot();
+    const project = registerProject(store, "Codex MCP Bridge", cwd);
     const activityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     store.createActivity({
       activityId,
       scopeId: SCOPE_A,
-      projectId: "bridge",
-      projectLabel: "Codex MCP Bridge",
-      projectCwd: "/tmp/repository",
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: cwd,
       title: "Project-aware work",
       now: 1
     });
     store.upsertSession({
       ...session("thread-project"),
-      projectId: "bridge",
-      projectLabel: "Codex MCP Bridge"
+      cwd,
+      projectId: project.id,
+      projectLabel: project.name
     });
     store.upsertJob({
       ...job("job-project", "request-project"),
       activityId,
-      cwd: "/tmp/repository",
-      projectId: "bridge",
-      projectLabel: "Codex MCP Bridge"
+      cwd,
+      projectId: project.id,
+      projectLabel: project.name
     });
 
     expect(store.getActivity(activityId)).toMatchObject({
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge"
     });
     expect(store.getActivity(activityId)).not.toHaveProperty("projectCwd");
     expect(store.getActivityProjectAdmission(activityId)).toEqual({
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
-      projectCwd: "/tmp/repository"
+      projectCwd: cwd
     });
     expect(store.listSessions()).toEqual([
-      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+      expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
     ]);
     expect(store.listJobs()).toEqual([
-      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+      expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
     ]);
     expect(() => store.upsertJob({
       ...job("job-project", "request-project"),
       activityId,
-      cwd: "/tmp/repository",
-      projectId: "other",
+      cwd,
+      projectId: "22222222-2222-4222-8222-222222222222",
       projectLabel: "Other"
     })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(7);
-    expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe("bridge");
+    expect(restored.schemaVersion).toBe(8);
+    expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
-      expect.objectContaining({ projectId: "bridge", projectLabel: "Codex MCP Bridge" })
+      expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
     ]);
     restored.close();
   });
 
   it("inherits a continuation project by default but permits an explicit fresh-project admission", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
+    const alphaCwd = temporaryRoot();
+    const betaCwd = temporaryRoot();
+    const alpha = registerProject(store, "Alpha", alphaCwd);
+    const beta = registerProject(store, "Beta", betaCwd);
     const sourceId = "abababab-abab-4bab-8bab-abababababab";
     const inheritedId = "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc";
     const switchedId = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
     store.createActivity({
       activityId: sourceId,
       scopeId: SCOPE_A,
-      projectId: "alpha",
+      projectId: alpha.id,
       projectLabel: "Alpha",
-      projectCwd: "/tmp/alpha",
+      projectCwd: alphaCwd,
       now: 1
     });
 
@@ -141,53 +148,56 @@ describe("BridgeStateStore", () => {
       activityId: switchedId,
       scopeId: SCOPE_A,
       continuationOfActivityId: sourceId,
-      projectId: "beta",
+      projectId: beta.id,
       projectLabel: "Beta",
-      projectCwd: "/tmp/beta",
+      projectCwd: betaCwd,
       now: 3
     });
 
     expect(store.getActivityProjectAdmission(inheritedId)).toMatchObject({
-      projectId: "alpha",
-      projectCwd: "/tmp/alpha"
+      projectId: alpha.id,
+      projectCwd: alphaCwd
     });
     expect(store.getActivityProjectAdmission(switchedId)).toMatchObject({
-      projectId: "beta",
-      projectCwd: "/tmp/beta"
+      projectId: beta.id,
+      projectCwd: betaCwd
     });
     store.close();
   });
 
   it("backfills a legacy Activity only when every admitted job uses the selected project folder", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
+    const cwd = temporaryRoot();
+    const otherCwd = temporaryRoot();
+    const project = registerProject(store, "Codex MCP Bridge", cwd);
     const compatibleActivity = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     store.createActivity({ activityId: compatibleActivity, scopeId: SCOPE_A, now: 1 });
     store.upsertJob({
       ...job("legacy-job", "legacy-request"),
       activityId: compatibleActivity,
-      cwd: "/tmp/repository"
+      cwd
     });
     store.upsertJob({
       ...job("project-job", "project-request"),
       activityId: compatibleActivity,
-      cwd: "/tmp/repository",
-      projectId: "bridge",
+      cwd,
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge"
     });
-    expect(store.getActivityProjectAdmission(compatibleActivity)?.projectId).toBe("bridge");
+    expect(store.getActivityProjectAdmission(compatibleActivity)?.projectId).toBe(project.id);
 
     const ambiguousActivity = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     store.createActivity({ activityId: ambiguousActivity, scopeId: SCOPE_A, now: 3 });
     store.upsertJob({
       ...job("other-legacy-job", "other-legacy-request"),
       activityId: ambiguousActivity,
-      cwd: "/tmp/other"
+      cwd: otherCwd
     });
     expect(() => store.upsertJob({
       ...job("other-project-job", "other-project-request"),
       activityId: ambiguousActivity,
-      cwd: "/tmp/repository",
-      projectId: "bridge",
+      cwd,
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge"
     })).toThrow(/PROJECT_CONTEXT_CONFLICT/);
     expect(store.getActivityProjectAdmission(ambiguousActivity)).toBeUndefined();
@@ -376,6 +386,19 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 
 function stateFile(): string {
   return path.join(mkdtempSync(path.join(tmpdir(), "bridge-sqlite-state-")), "private", "state.sqlite");
+}
+
+function temporaryRoot(): string {
+  return realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-state-project-")));
+}
+
+function registerProject(store: BridgeStateStore, name: string, cwd: string) {
+  const before = store.getProjectRegistryRevision();
+  return store.applyProjectOperations(
+    [{ kind: "add", project: { name, cwd } }],
+    before,
+    []
+  ).projects.at(-1)!;
 }
 
 function session(threadId: string) {

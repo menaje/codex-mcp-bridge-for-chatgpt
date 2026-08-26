@@ -52,7 +52,8 @@ secret-filename preflight intentionally rejects project folders containing
 The launcher deliberately does not choose a filesystem project. After the
 connection is available, register one or more existing absolute folders in the
 Settings card. They may be unrelated locations anywhere on this PC. GPT receives
-only their project IDs, never their paths.
+only their names plus a registry freshness generation, never internal UUIDs or
+paths.
 
 The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
 
@@ -118,28 +119,31 @@ The model catalog is loaded when Settings opens, using the bridge's short TTL an
 There is one conversation-scoped flat Activity feed. Retired saved layout
 preferences are safely discarded and are not selectable in Settings.
 
-The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The card automatically allocates a stable normalized routing ID, keeps it out of the form, and preserves it when the name or folder changes. New or edited folders are canonicalized with `realpath`; files, missing folders, and canonical-path collisions are rejected. Projects have no default selection; every new Activity or fresh Agent context must name one exact project. Removing and adding an entry creates a new internal identity.
+The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The server generates an immutable UUID and keeps it private and stable across rename, relocate, archive, and restore. New or edited folders are canonicalized with `realpath`; files and active normalized-name/canonical-path collisions are rejected. Projects have no default selection; every new Activity or fresh Agent context must select one exact current name and `registryRevision`. No name, label, slug, alias, or list position is an identity.
 
 Settings also warns that changing the default backend affects only new threads.
 Existing Agents stay pinned. To move one deliberately, use that Agent with
 fresh context and an explicit handoff summary; only the summary reaches the new
 backend thread, not the prior transcript or backend state.
 
-Settings card generation 7 sends `expectedRevision` and exactly one `reset` or
-`patch` operation. A patch groups the ordinary settings and a bounded atomic list
-of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
-the whole saved project array. The bridge checks the revision both before a fresh
-model-catalog lookup and immediately before commit. Reset restores general
-preferences only: project IDs, names, paths, order, and recovery entries are
-preserved. Generation 6 is retired because it still sent the removed
-default-project field; compatible generation-7 content revisions may be retained.
+Settings card generation 9 sends independent `expectedSettingsRevision` and
+`expectedRegistryRevision` CAS values with exactly one `reset` or `patch`
+operation. A patch groups ordinary settings and a bounded atomic list of project
+`add`, `rename`, `relocate`, `archive`, and `restore` operations; it never replaces
+the registry. Each effective project transaction advances `registryRevision`
+exactly once, while ordinary changes advance `settingsRevision` independently.
+Both are checked immediately before the single commit. Reset restores general
+preferences only: project UUIDs, names, paths, order, archive state, and recovery
+entries are preserved. Earlier Settings generations are retired because their
+ID/default and single-revision mutation contracts are incompatible.
 
 On a fresh install the list is empty. When `codex_task` needs new context it returns
 `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action, so GPT can show
 the card and explain what must be registered. A project whose folder disappears
 remains visible as **Needs recovery**, but it cannot admit work until its folder is
-fixed or the entry is removed. Existing Activity/Agent threads keep their pinned
-admission-time folder. The card cannot change tunnel credentials, operator
+fixed or the project is archived. Archived projects are excluded from new
+selection; restore keeps the same UUID. Existing Activity/Agent threads keep
+their pinned admission-time folder. The card cannot change tunnel credentials, operator
 capabilities, or the Codex approval policy.
 
 Project selection and access strategy are independent:
@@ -148,7 +152,9 @@ Project selection and access strategy are independent:
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. Every new Activity or fresh Agent context must send an exact `projectId`, even when only one project is available. Missing selection fails closed with `PROJECT_REQUIRED` (or `PROJECT_SETUP_REQUIRED` when the registry is empty). Existing Activities and continued/forked Agent threads may omit it and keep their admission-time project and sandbox after Settings changes; conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
+The public `codex_task` descriptor never contains `cwd` or an internal UUID. It projects only selectable `{ name, registryRevision }` objects. Every new Activity or fresh Agent context must send one exact object, even when only one project is available. Missing selection fails closed with `PROJECT_REQUIRED` (or `PROJECT_SETUP_REQUIRED` when the registry is empty). Runtime generation validation is authoritative even if `tools/list_changed` is missed. Activity, Agent creation/assignment, replay, and Job admission recheck it atomically and pin UUID/cwd; a backend-assigned resumable thread receives the same pin before reuse. An exact admitted `requestId` replay remains valid after registry changes. Continue/fork omits `project` and keeps the admission-time snapshot after rename, relocate, archive, or restore; an unavailable pinned folder returns `PROJECT_UNAVAILABLE` without fallback. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
+
+The token prevents stale name mappings. A different exact active name from the same current revision is still a valid transport-level choice; the bridge cannot infer contrary natural-language intent. Multi-project write/full-access fresh confirmation remains a separate app-private follow-up rather than a model-visible `confirmed` field.
 
 ### Dynamic model/effort behavior
 
@@ -171,7 +177,7 @@ Call `codex_status` and confirm:
 Inspect `tools/list`:
 
 - `codex_task` has no caller `scopeId`, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`; when automatic Activity UI is enabled it requires one response-scoped `activityPresentationId`;
-- `projectId` lists only currently selectable registered IDs and their labels;
+- `project` lists only exact selectable names paired with one current `registryRevision`;
 - fixed access modes have no `sandbox`;
 - `adaptive` exposes only permitted sandboxes;
 - Activity and Agent routing use separate discriminated `activity` and `agent` objects;
@@ -187,7 +193,7 @@ Use these routes:
 {
   "requestId": "...",
   "activityPresentationId": "...",
-  "projectId": "bridge",
+  "project": { "name": "Bridge Workspace", "registryRevision": 4 },
   "activity": {
     "mode": "new",
     "title": "Implement the agreed design",
@@ -330,14 +336,14 @@ App Server may leave a background terminal after the turn itself completes. The 
 In a new ChatGPT conversation:
 
 1. open Settings and confirm it renders without an old-resource error;
-2. add two project folders, verify IDs normalize, duplicate IDs/paths are rejected inline, and save;
-3. add projects from two unrelated absolute locations, edit one label/folder, remove the unused project, and confirm no separate allowed-root list is shown;
+2. add two project folders, verify Unicode/whitespace/case-equivalent names and canonical duplicate paths are rejected inline, and save;
+3. add projects from two unrelated absolute locations, rename/relocate one, archive/restore the other, and confirm identity and archive state persist;
 4. change a harmless preference and save;
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
-7. confirm `codex_task` has no `cwd`, projects only the registered selectable `projectId` values/labels, and fixed access modes have no `sandbox`;
-8. start narrow foreground read-only Activities in each project, then omit `projectId` for a new Activity and confirm `PROJECT_REQUIRED`; continue an existing Activity without it and confirm the pinned project is inherited;
-9. try a conflicting project on an existing Activity/thread and confirm `PROJECT_CONTEXT_CONFLICT` without another Codex call;
+7. confirm `codex_task` has no `cwd`/UUID, projects only exact names plus `registryRevision`, and fixed access modes have no `sandbox`;
+8. start narrow foreground read-only Activities in each project, then omit `project` for a new Activity and confirm `PROJECT_REQUIRED`; continue an existing Activity without it and confirm the pinned project is inherited;
+9. retain an old descriptor, mutate the registry, and confirm its stale generation fails without an Activity, Agent, Job, or Codex call even if no `tools/list_changed` notification is consumed;
 10. open the flat Activity feed and verify project labels appear only when useful and there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
 11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
 12. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
@@ -380,11 +386,11 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Runtime dotenv rejected: use a regular non-symlink file owned by the current user with mode `0600`; do not put it in a registered project.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: first confirm its URI is present in `dist/ui-manifest.json`. Supported cached URIs must render; deploy current server, use plugin **Refresh**, then start a new conversation only when new metadata is required.
-- `PROJECT_REQUIRED`: refresh the tool list and send one exact projected `projectId` for the new Activity or fresh Agent context.
-- `PROJECT_DUPLICATE_PATH`: choose a different folder for one of the highlighted projects.
-- `PROJECT_DUPLICATE_ID`: refresh Settings; project IDs are internal and generated automatically.
-- `PROJECT_UNAVAILABLE`: fix or remove the **Needs recovery** project before saving or admitting work.
-- Unrecognized Task `cwd`: refresh the plugin/tool list; select a registered `projectId` instead.
+- `PROJECT_REQUIRED`: refresh the tool list and send one exact projected `{ name, registryRevision }` object for the new Activity or fresh Agent context.
+- `PROJECT_REGISTRY_CHANGED`: the descriptor is stale; refresh tools and choose again. No work was admitted.
+- `PROJECT_NAME_CONFLICT` / `PROJECT_CWD_CONFLICT`: choose a unique active normalized name/canonical folder.
+- `PROJECT_UNAVAILABLE`: restore the exact pinned folder, or fix/archive the **Needs recovery** project. The bridge does not fall back elsewhere.
+- Unrecognized Task `cwd`: refresh the plugin/tool list; select a registered project name/revision instead.
 - `SANDBOX_OVERRIDE_UNAVAILABLE`: refresh tools; the fixed saved access strategy is authoritative.
 - Repository refused: remove common secret files from the exposed copy or use a sanitized staging copy.
 - Write/full access refused: start the bridge with the needed operator capability, then Refresh the plugin.

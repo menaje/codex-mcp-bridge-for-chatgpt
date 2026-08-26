@@ -99,7 +99,7 @@ worker containment is `job-interrupted` with `assignment-containment`; bridge
 restart and unexpected worker loss remain separately identifiable as
 `bridge-restart` and `worker-loss`.
 
-`codex_activity_snapshot`, `codex_activity_job_cancel`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity card never calls public `codex_cancel`: its destructive job control uses `codex_activity_job_cancel`, which requires an idempotency UUID, exact Job version, current card generation and presentation proof, a live widget lease, and any exact shared-worker acknowledgement. A stale or superseded card fails closed before an intent or side effect is created. Settings mutation publishes only `expectedRevision` plus a discriminated reset/patch `operation`; patch groups Activity-card preferences and applies explicit project add/rename/relocate/remove deltas atomically. The other Activity controls require the same exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
+`codex_activity_snapshot`, `codex_activity_job_cancel`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. The Activity card never calls public `codex_cancel`: its destructive job control uses `codex_activity_job_cancel`, which requires an idempotency UUID, exact Job version, current card generation and presentation proof, a live widget lease, and any exact shared-worker acknowledgement. A stale or superseded card fails closed before an intent or side effect is created. Settings mutation uses independent `expectedSettingsRevision` and `expectedRegistryRevision` compare-and-swap tokens with one discriminated reset/patch `operation`; patch groups Activity-card preferences and explicit project add/rename/relocate/archive/restore deltas in one transaction. The other Activity controls require the same exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
 Every bridge tool that returns MCP `structuredContent` declares an `outputSchema`. UI-bearing Task, Activity, and snapshot tools additionally describe the bootstrap/presentation fields and Activity view shape that their components consume, so the host can validate and hydrate the tool result before mounting the card.
 
@@ -107,10 +107,10 @@ Every bridge tool that returns MCP `structuredContent` declares an `outputSchema
 
 - Binds to `127.0.0.1`.
 - Uses `read-only` and `on-request` unless the operator enables broader capabilities.
-- Uses one settings-managed registry of stable project IDs, Unicode labels, and canonical folders. A normal fresh install starts empty and the first registered project becomes the default automatically.
+- Uses one settings-managed registry with server-generated immutable UUID identities, normalized Unicode names, and canonical folders. UUIDs and folders stay private; a normal fresh install starts empty and has no implicit/default selection.
 - Rejects per-call `cwd` in the strict Task schema instead of running in an unintended repository.
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
-- Resolves every newly saved project to an existing canonical folder, rejects files and duplicate IDs/paths, and checks common secret filenames before new execution.
+- Resolves every newly saved project to an existing canonical folder, rejects files and active normalized-name/canonical-path collisions, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
 - Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, bounded results, cancellation operations/intents, and bounded transport observations in a private SQLite database.
 
@@ -195,7 +195,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - access strategy: `read-only`, `adaptive`, or operator-enabled `always-full`;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- named projects with stable normalized IDs, Unicode labels, and canonical folders anywhere on the PC;
+- named projects with unique normalized Unicode names and canonical folders anywhere on the PC;
 - UI language;
 - active-job limit;
 - bridge-thread visibility in the Codex app;
@@ -216,11 +216,13 @@ The Activity card has one conversation-scoped flat-feed layout. Older saved
 layout preferences are safely discarded; there is no layout selector or active
 layout setting.
 
-The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the card allocates a stable normalized routing ID automatically and keeps it hidden. The folders may be unrelated and live anywhere on the PC. Adding or editing a project resolves its folder with `realpath`, rejects files and duplicate canonical paths, and preserves identity across name/folder edits. No project is a default: every new Activity or fresh Agent context must select one exact registered project. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until it is fixed or removed. Legacy `defaultCwd` data is deterministically migrated to a registered `default` project, while the retired default selection fields are removed.
+The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the server generates a private immutable UUID and keeps it stable across rename, relocate, archive, and restore. The folders may be unrelated and live anywhere on the PC. Saving resolves folders with `realpath`, rejects files and active normalized-name/canonical-path collisions, and never derives identity from a name or slug. No project is a default: every new Activity or fresh Agent context must select one exact registered name from the current descriptor. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until the folder is restored or the project is archived. Archived projects are not selectable; restore keeps the same UUID. Legacy project/default identifiers are intentionally not imported into this identity model.
 
-The generation-8 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 6 is retired because its mutation contract still contained default-project selection; compatible generation-7 content revisions remain retainable.
+The generation-9 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project UUIDs, names, folders, order, archive state, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, `archive`, and `restore` variants expose only their relevant app-private fields. Ordinary settings use `settingsRevision`; the project registry uses an independent `registryRevision` that advances exactly once for each effective project transaction, regardless of the number of operations. Both generations are checked immediately before the single commit. Earlier Settings generations are retired because their ID/default and single-revision mutation contracts are incompatible with this boundary.
 
-`codex_task` projects the currently selectable project IDs and labels, never their paths. Every new Activity or fresh Agent context requires an exact `projectId`, even when only one project is registered. Omission fails with `PROJECT_REQUIRED`; with no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Existing Activities and continued/forked Agent threads may omit `projectId` and retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder selects where Codex starts; filesystem reach remains governed by the saved access/sandbox policy.
+`codex_task` projects only currently selectable `{ name, registryRevision }` objects, never internal UUIDs or paths. Every new Activity or fresh Agent context requires one exact object, even when only one project is registered. Omission fails with `PROJECT_REQUIRED`; with no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Runtime revision/name resolution is the safety boundary: a stale descriptor fails closed even if `tools/list_changed` was lost. The registry is rechecked in the same SQLite transaction as Activity, Agent creation/assignment, replay registration, and Job admission, which pins the immutable UUID plus canonical cwd snapshot. Once the backend assigns a resumable thread ID, its session/Agent-thread record receives that exact pin before it can be continued or forked. Continue/fork omits `project`, retains the snapshot across rename/relocate/archive/restore, and returns `PROJECT_UNAVAILABLE` without fallback if the pinned folder cannot be resolved exactly. An exact admitted `requestId` replay retains its original admission/result after later registry changes.
+
+The generation guard prevents stale name mappings. It does not prove natural-language intent when a caller supplies a different, valid project name from the same current revision; both choices are valid under this transport contract. A stronger user-confirmation capability for multi-project write/full-access fresh work remains a separate app-private follow-up, not a model-visible `confirmed` flag.
 
 Access strategy and project selection are separate:
 
@@ -306,7 +308,7 @@ Every `codex_task` call requires a fresh UUID `requestId`; reuse it only for an 
 
 Routing fields are:
 
-- pass one projected `projectId` for every new Activity/fresh context; omit it only for an existing Activity/thread continue or fork that inherits its pinned project;
+- pass one projected `project: { name, registryRevision }` for every new Activity/fresh context; omit it only for an existing Activity/thread continue or fork that inherits its pinned project;
 - use `activity: { mode: "existing", id }` for another turn in one exact open Activity;
 - use `activity: { mode: "new", continuationOf?, title?, policy? }` to create a new or linked Activity; `policy` may contain `kind`, `handoff`, and `completion`;
 - use `agent: { mode: "existing", id, context?, handoffSummary? }` to continue, fork, or deliberately replace one exact Agent context; `handoffSummary` is required only for an explicit fresh cross-backend replacement;
@@ -319,7 +321,7 @@ For example:
 {
   "requestId": "...",
   "activityPresentationId": "...",
-  "projectId": "bridge",
+  "project": { "name": "Bridge Workspace", "registryRevision": 4 },
   "activity": {
     "mode": "new",
     "title": "Implement the agreed design",
@@ -337,7 +339,7 @@ Recommended mappings:
 - independent verification/alternative: another fresh Agent, or an explicit fork of an existing Agent;
 - unrelated goal: new Activity + new Agent + `fresh`.
 
-One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an existing Activity has multiple Agent candidates, the bridge requires an exact nested Agent ID instead of guessing. Activity title, kind, handoff, completion, Agent name, fresh context, and assignment role have neutral defaults; generated Agent names are deterministic from `requestId` and remain unique within a scope. The assignment role defaults to `primary` and is display-only metadata: it is read only for Activity/history presentation and never participates in routing, authorization, context selection, lifecycle transitions, or handoff eligibility. New-Activity policy, Activity/Agent creation, assignment, v4 replay registration, and Job admission commit in one transaction. The expired flat routing envelope is rejected by the strict current contract.
+One Agent/thread admits only one active turn. Different Agents/threads can run in parallel in the same scope and folder. If an existing Activity has multiple Agent candidates, the bridge requires an exact nested Agent ID instead of guessing. Activity title, kind, handoff, completion, Agent name, fresh context, and assignment role have neutral defaults; generated Agent names are deterministic from `requestId` and remain unique within a scope. The assignment role defaults to `primary` and is display-only metadata: it is read only for Activity/history presentation and never participates in routing, authorization, context selection, lifecycle transitions, or handoff eligibility. New-Activity policy, Activity/Agent creation, assignment, v5 replay registration, and Job admission commit in one transaction. The expired flat routing envelope is rejected by the strict current contract.
 
 `continue`, `fork`, and `fresh` map to backend resume, fork, and start. A fresh context on the same logical Agent adds a thread-history entry and makes the new thread current. If an exact backend probe proves that a persisted thread is missing or in a system-error state, the Agent becomes `orphaned`; replacement requires explicit `fresh` and the old history remains auditable. Busy and transient probe states remain retryable and do not destroy continuity evidence.
 
@@ -407,7 +409,7 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist an
 
 ## Persistence and recovery
 
-SQLite schema v7 stores conversation scopes, first-class project admission identity, Agents, current/history threads with App Server session/fork lineage, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, settings, bridge generations, scope versions, idempotent Agent mutations, completion outbox rows, first-class cancellation operations/intents, and bounded transport observations. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, paths, raw host metadata, or authentication material.
+SQLite schema v8 stores conversation scopes, the private immutable project registry, project-pinned Agents and thread history, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, split settings/registry generations, scope versions, idempotent Agent mutations, completion outbox rows, first-class cancellation operations/intents, and bounded transport observations. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, paths, raw host metadata, or authentication material.
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 

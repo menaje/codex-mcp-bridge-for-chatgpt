@@ -87,14 +87,15 @@ import {
 } from "./stateStore.js";
 import {
   MAX_REGISTERED_PROJECTS,
-  PROJECT_ID_MAX_LENGTH,
-  PROJECT_LABEL_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
   PROJECT_CONTEXT_CONFLICT,
+  PROJECT_REGISTRY_CHANGED,
   PROJECT_SETUP_REQUIRED,
   PROJECT_UNAVAILABLE,
-  ProjectRegistry,
   normalizeProjectId,
-  normalizeProjectLabel,
+  normalizeProjectName,
+  projectNameKey,
+  type ProjectSelection,
   type ProjectTarget
 } from "./projectRegistry.js";
 import type {
@@ -198,15 +199,13 @@ const codexTaskOutputSchema = z.object({
   bridgeSession: z.object({
     scopeId: z.string(),
     requestId: z.string(),
-    projectId: z.string().nullable(),
-    projectLabel: z.string().nullable(),
+    projectName: z.string().nullable(),
     activityPresentationId: z.string().nullable()
   }).passthrough().optional(),
   bridgeActivity: activityCardTrackingOutputSchema.extend({
     jobId: z.string(),
     agentId: z.string().nullable(),
-    projectId: z.string().nullable(),
-    projectLabel: z.string().nullable(),
+    projectName: z.string().nullable(),
     executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
   }).passthrough().optional(),
   error: openStructuredObjectOutputSchema.optional()
@@ -293,7 +292,8 @@ const activityViewOutputSchema = z.object({
 
 const bridgeUserSettingsOutputSchema = z.object({
   schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
-  revision: z.number().int().min(0),
+  settingsRevision: z.number().int().min(0),
+  registryRevision: z.number().int().min(0),
   updatedAt: z.string().nullable(),
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
   modelPolicy: modelPolicyZod(),
@@ -301,8 +301,9 @@ const bridgeUserSettingsOutputSchema = z.object({
   legacyPreferredModel: z.string().optional(),
   projects: z.array(z.object({
     id: z.string(),
-    label: z.string(),
-    cwd: z.string()
+    name: z.string(),
+    cwd: z.string(),
+    archivedAt: z.number().optional()
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
@@ -315,8 +316,9 @@ const publicBridgeUserSettingsOutputSchema = bridgeUserSettingsOutputSchema
   .omit({ projects: true })
   .extend({
     projects: z.array(z.object({
-      id: z.string(),
-      label: z.string()
+      name: z.string(),
+      available: z.boolean(),
+      archived: z.boolean()
     }))
   });
 
@@ -359,8 +361,9 @@ const settingsViewOutputSchema = z.object({
     availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
     availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     projectAvailability: z.array(z.strictObject({
-      id: z.string(),
-      available: z.boolean()
+      name: z.string(),
+      available: z.boolean(),
+      archived: z.boolean()
     })),
     maxConcurrentJobs: z.number().int().positive(),
     defaultBackend: z.enum(["mcp-server", "app-server"]),
@@ -393,9 +396,17 @@ const settingsViewOutputSchema = z.object({
 });
 
 type PublicSettingsView = z.infer<typeof settingsViewOutputSchema>;
-type SettingsView = Omit<PublicSettingsView, "settings" | "operatorDefaults"> & {
+type SettingsView = Omit<PublicSettingsView, "settings" | "operatorDefaults" | "capabilities"> & {
   settings: BridgeUserSettings;
   operatorDefaults: BridgeUserSettings;
+  capabilities: Omit<PublicSettingsView["capabilities"], "projectAvailability"> & {
+    projectAvailability: Array<{
+      projectId: string;
+      name: string;
+      available: boolean;
+      archived: boolean;
+    }>;
+  };
 };
 
 type SessionDecision = {
@@ -432,10 +443,10 @@ type CodexRouting = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 2 | 3 | 4;
+  requestHashVersion: 2 | 3 | 4 | 5;
 };
 
-const CURRENT_TASK_REQUEST_HASH_VERSION = 4 as const;
+const CURRENT_TASK_REQUEST_HASH_VERSION = 5 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -530,6 +541,8 @@ type CodexJob = {
   activityId: string;
   projectId?: string;
   projectLabel?: string;
+  /** Caller-facing name+generation selection retained only for exact replay. */
+  projectRequest?: ProjectSelection;
   agentId?: string;
   contextMode?: AgentContextMode;
   threadId?: string;
@@ -554,7 +567,7 @@ type CodexJob = {
   requestId: string;
   activityPresentationId?: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3 | 4;
+  requestHashVersion: 1 | 2 | 3 | 4 | 5;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
@@ -743,6 +756,11 @@ export class CodexJobRegistry {
 
   get activityPersistent(): boolean {
     return this.activityStore.persistent;
+  }
+
+  /** Internal composition hook for registry/admission transaction sharing. */
+  get admissionStateStore(): BridgeStateStore {
+    return this.activityStore;
   }
 
   get staleThresholdMs(): number {
@@ -3189,9 +3207,9 @@ export function registerBridgeTools(
         build: BRIDGE_BUILD_INFO,
         auth: config.token && !config.noAuth ? "bearer-token" : "none",
         projects: userSettings.projectRegistry.availability.map(({ project, available }) => ({
-          projectId: project.id,
-          projectLabel: project.label,
-          available
+          projectName: project.name,
+          available,
+          archived: project.archivedAt !== undefined
         })),
         defaultSandbox: userSettings.resolveSandbox(),
         accessStrategy: preferences.accessStrategy,
@@ -3199,7 +3217,8 @@ export function registerBridgeTools(
         allowDangerFullAccess: config.allowDangerFullAccess,
         defaultApprovalPolicy: config.defaultApprovalPolicy,
         settingsSchemaVersion: preferences.schemaVersion,
-        modelPolicyRevision: preferences.revision,
+        settingsRevision: preferences.settingsRevision,
+        registryRevision: preferences.registryRevision,
         modelPolicy: preferences.modelPolicy,
         usePriorityServiceTier: preferences.usePriorityServiceTier,
         showBridgeThreadsInCodexApp: preferences.showBridgeThreadsInCodexApp,
@@ -3248,7 +3267,7 @@ export function registerBridgeTools(
           transactional: persistenceBackend === "sqlite",
           schemaVersion: jobs.persistenceSchemaVersion,
           bridgeInstanceId: jobs.bridgeInstanceId,
-          activityFoundation: "schema-v7-cancellation-provenance-scope-agent-manager",
+          activityFoundation: "schema-v8-project-registry-atomic-admission",
           activityPersistent: jobs.activityPersistent
         },
         jobPolicy: {
@@ -4822,8 +4841,7 @@ export function registerBridgeTools(
     ? z.enum(["read-only", "adaptive", "always-full"])
     : z.enum(["read-only", "adaptive"]);
   const projectOperationTargetInput = z.strictObject({
-    id: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
-    label: z.string().trim().min(1).max(PROJECT_LABEL_MAX_LENGTH),
+    name: z.string().min(1).max(PROJECT_NAME_MAX_LENGTH),
     cwd: z.string().trim().min(1).max(4_096)
   });
   const projectRegistryOperationInput = z.discriminatedUnion("kind", [
@@ -4833,17 +4851,23 @@ export function registerBridgeTools(
     }),
     z.strictObject({
       kind: z.literal("rename"),
-      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
-      label: z.string().trim().min(1).max(PROJECT_LABEL_MAX_LENGTH)
+      projectId: scopeIdSchema(),
+      name: z.string().min(1).max(PROJECT_NAME_MAX_LENGTH)
     }),
     z.strictObject({
       kind: z.literal("relocate"),
-      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH),
+      projectId: scopeIdSchema(),
       cwd: z.string().trim().min(1).max(4_096)
     }),
     z.strictObject({
-      kind: z.literal("remove"),
-      projectId: z.string().trim().min(1).max(PROJECT_ID_MAX_LENGTH)
+      kind: z.literal("archive"),
+      projectId: scopeIdSchema()
+    }),
+    z.strictObject({
+      kind: z.literal("restore"),
+      projectId: scopeIdSchema(),
+      name: z.string().min(1).max(PROJECT_NAME_MAX_LENGTH).optional(),
+      cwd: z.string().trim().min(1).max(4_096).optional()
     })
   ]);
   const activityCardSettingsPatchBase = z.strictObject({
@@ -4885,8 +4909,10 @@ export function registerBridgeTools(
     })
   ]);
   const settingsInput = z.strictObject({
-    expectedRevision: z.number().int().min(0)
-      .describe("Exact shared-settings revision rendered by this Settings card."),
+    expectedSettingsRevision: z.number().int().min(0).optional()
+      .describe("Exact ordinary settingsRevision; required only when ordinary settings may change."),
+    expectedRegistryRevision: z.number().int().min(0).optional()
+      .describe("Exact project registryRevision; required only when project operations are present."),
     operation: settingsOperationInput.describe(
       "Reset defaults, or atomically patch settings and an explicit project-registry delta."
     )
@@ -4897,7 +4923,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Project identity changes use explicit add, rename, relocate, and remove operations. Reset restores general preferences only and preserves every project entry and its order.",
+        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, and restore operations; add UUIDs are server-generated. Reset restores general preferences only and preserves the registry.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -4966,9 +4992,23 @@ export function registerBridgeTools(
 
       // Fail stale cards before any external catalog lookup. reset/update repeat
       // the same check immediately before persistence after the await boundary.
-      userSettings.assertExpectedRevision(args.expectedRevision);
+      const hasGeneralMutation = resetRequested || Object.keys(patch).length > 0;
+      if (hasGeneralMutation && args.expectedSettingsRevision === undefined) {
+        throw new Error("SETTINGS_REVISION_CONFLICT: expectedSettingsRevision is required.");
+      }
+      if (projectOperations.length > 0 && args.expectedRegistryRevision === undefined) {
+        throw new Error(
+          "PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required."
+        );
+      }
+      if (hasGeneralMutation) {
+        userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
+      }
+      if (projectOperations.length > 0) {
+        userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
+      }
       const current = userSettings.current;
-      const nextRevision = current.revision + 1;
+      const nextRevision = current.settingsRevision + 1;
       let validatedCatalog: CodexModelCatalogSnapshot | undefined;
       if (resetRequested) {
         const catalog = await freshCatalogForPolicy(
@@ -4990,7 +5030,7 @@ export function registerBridgeTools(
           userSettings.defaults.usePriorityServiceTier,
           nextRevision
         );
-        userSettings.reset(args.expectedRevision);
+        userSettings.reset(args.expectedSettingsRevision as number);
       } else {
         if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
           const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
@@ -5025,9 +5065,14 @@ export function registerBridgeTools(
           if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
         }
         if (projectOperations.length > 0) {
-          userSettings.updateWithProjectOperations(patch, projectOperations, args.expectedRevision);
+          userSettings.updateWithProjectOperations(
+            patch,
+            projectOperations,
+            hasGeneralMutation ? args.expectedSettingsRevision : undefined,
+            args.expectedRegistryRevision
+          );
         } else {
-          userSettings.update(patch, args.expectedRevision);
+          userSettings.update(patch, args.expectedSettingsRevision as number);
         }
       }
       const projectionStatus = publishTaskProjection(validatedCatalog);
@@ -5054,7 +5099,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select an exact currently exposed projectId, even when only one project is available; there is no first, sole, or saved-default fallback. If no project is exposed, do not invent a path: call codex_settings and ask the user to register a project. Existing Activity continue/fork calls may omit projectId and retain the Activity or Agent thread's admission-time project, folder, and access mode. Never send or infer a local filesystem path. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select one exact currently exposed project object containing the user-defined name and registryRevision freshness token, even when only one project is available. There is no first, sole, default, slug, ID, alias, or path fallback. Existing Activity continue/fork calls omit project and retain their admission-time project UUID and cwd snapshot. tools/list_changed only improves discovery; runtime revision validation is authoritative. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry; an exact admitted replay remains valid after registry changes. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -5094,7 +5139,7 @@ export function registerBridgeTools(
         resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingV4Request = jobs.peekRequest(scope.scopeId, args.requestId);
         if (
-          args.projectId === undefined &&
+          args.project === undefined &&
           (
             args.activityId === undefined ||
             args.contextMode === "fresh" ||
@@ -5133,29 +5178,15 @@ export function registerBridgeTools(
 
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
         if (existingRequest) {
-          const replayProjectId = existingRequest.requestHashVersion >= 3
-            ? args.projectId === undefined
-              ? existingRequest.projectId
-              : normalizeProjectId(args.projectId)
-            : undefined;
-          const replayRouting = resolveTaskRouting(
-            args,
-            scope.scopeId,
-            replayProjectId,
-            existingRequest.requestHashVersion >= 3 ? 3 : 2
+          throw new Error(
+            "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired project-ID contract. Use a new requestId and the current name+revision contract."
           );
-          const replay = jobs.findRequest(
-            replayRouting.scopeId,
-            replayRouting.requestId,
-            replayRouting.requestHash
-          );
-          if (replay) return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
         }
         validateTaskSelectionInput(args, preferences);
         const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
         if (
-          args.projectId === undefined &&
+          args.project === undefined &&
           (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
         ) {
           // Distinguish an empty registry (setup required) from an omitted
@@ -5223,6 +5254,7 @@ export function registerBridgeTools(
           const routing = resolveTaskRoutingV4({
             args,
             scopeId: scope.scopeId,
+            projectRequest: args.project,
             projectId: projectAdmission?.projectId,
             cwd,
             sandbox,
@@ -5253,6 +5285,7 @@ export function registerBridgeTools(
             sessions,
             jobs,
             modelCatalog,
+            userSettings,
             preferences,
             activityRequest,
             agent: agentResolution.agent,
@@ -5290,6 +5323,7 @@ export function registerBridgeTools(
         const routing = resolveTaskRoutingV4({
           args,
           scopeId: scope.scopeId,
+          projectRequest: args.project,
           projectId: projectAdmission?.projectId,
           cwd: session.cwd,
           sandbox: session.sandbox,
@@ -5324,7 +5358,9 @@ export function registerBridgeTools(
             executionDecision,
             agent: agentResolution.agent,
             agentRole: agentResolution.role,
-            projectAdmission
+            projectAdmission,
+            userSettings,
+            projectRequest: args.project
           });
         }
         return await continueTrackedSession({
@@ -5346,7 +5382,9 @@ export function registerBridgeTools(
           agent: agentResolution.agent,
           contextMode: "continue",
           agentRole: agentResolution.role,
-          projectAdmission
+          projectAdmission,
+          userSettings,
+          projectRequest: args.project
         });
       } catch (error) {
         if (error instanceof ActivityPresentationContractError) {
@@ -5396,7 +5434,7 @@ type CodexTaskArgs = {
   requestId: string;
   activityPresentationId?: string;
   prompt: string;
-  projectId?: string;
+  project?: ProjectSelection;
   activity?: CodexTaskActivityInput;
   agent?: CodexTaskAgentInput;
   activityId?: string;
@@ -5742,7 +5780,7 @@ function resolveTaskProjectAdmission(input: {
     input.activityRequest.activityId === undefined ||
     input.agentResolution.contextMode === "fresh";
   const selectedProject = requiresExplicitProject
-    ? input.userSettings.resolveProject(input.args.projectId)
+    ? input.userSettings.resolveProject(input.args.project)
     : undefined;
   const usesExistingThread =
     Boolean(input.agentResolution.agent) &&
@@ -5785,8 +5823,8 @@ function resolveTaskProjectAdmission(input: {
 
   if (activityAdmission) {
     const admission = taskProjectFromActivity(activityAdmission);
-    assertRequestedProjectMatches(input.args.projectId, admission);
-    assertSelectedProjectMatchesAdmission(selectedProject, admission);
+    assertRequestedProjectMatches(input.args.project, admission, requiresExplicitProject);
+    assertSelectedProjectMatchesAdmission(selectedProject, admission, usesExistingThread);
     if (
       threadContext &&
       (threadContext.cwd !== admission.cwd ||
@@ -5800,7 +5838,7 @@ function resolveTaskProjectAdmission(input: {
   }
 
   if (activityCwdAmbiguous) {
-    if (input.args.projectId !== undefined) {
+    if (input.args.project !== undefined) {
       throw new Error(
         `${PROJECT_CONTEXT_CONFLICT}: This migrated Activity spans multiple working folders and cannot be assigned one project.`
       );
@@ -5814,11 +5852,12 @@ function resolveTaskProjectAdmission(input: {
         `${PROJECT_CONTEXT_CONFLICT}: The selected Agent thread working folder conflicts with the Activity.`
       );
     }
-    return resolveLegacyPinnedProject(
-      legacyActivityCwd,
-      input.args.projectId,
-      input.userSettings
-    );
+    if (input.args.project !== undefined) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: Legacy cwd-only Activities cannot acquire a project identity.`
+      );
+    }
+    return undefined;
   }
 
   if (threadContext) {
@@ -5828,62 +5867,48 @@ function resolveTaskProjectAdmission(input: {
         projectLabel: threadContext.projectLabel,
         cwd: threadContext.cwd
       };
-      assertRequestedProjectMatches(input.args.projectId, admission);
-      assertSelectedProjectMatchesAdmission(selectedProject, admission);
+      assertRequestedProjectMatches(input.args.project, admission, requiresExplicitProject);
+      assertSelectedProjectMatchesAdmission(selectedProject, admission, usesExistingThread);
       return admission;
     }
-    return resolveLegacyPinnedProject(
-      threadContext.cwd,
-      input.args.projectId,
-      input.userSettings
-    );
+    if (input.args.project !== undefined) {
+      throw new Error(
+        `${PROJECT_CONTEXT_CONFLICT}: Legacy cwd-only Agent threads cannot acquire a project identity.`
+      );
+    }
+    return undefined;
   }
 
   return taskProjectFromTarget(
-    selectedProject || input.userSettings.resolveProject(input.args.projectId)
+    selectedProject || input.userSettings.resolveProject(input.args.project)
   );
-}
-
-function resolveLegacyPinnedProject(
-  cwd: string,
-  requestedProjectId: string | undefined,
-  userSettings: UserSettingsStore
-): TaskProjectAdmission | undefined {
-  if (requestedProjectId !== undefined) {
-    const selected = userSettings.resolveProject(requestedProjectId);
-    if (selected.cwd !== cwd) {
-      throw new Error(
-        `${PROJECT_CONTEXT_CONFLICT}: The requested project does not match the pinned working folder.`
-      );
-    }
-    return taskProjectFromTarget(selected);
-  }
-  const matched = userSettings.projectRegistry.availability.find(
-    ({ project }) => project.cwd === cwd
-  );
-  return matched ? taskProjectFromTarget(matched.project) : undefined;
 }
 
 function assertRequestedProjectMatches(
-  requestedProjectId: string | undefined,
-  admission: TaskProjectAdmission
+  requestedProject: ProjectSelection | undefined,
+  admission: TaskProjectAdmission,
+  selectionRequired: boolean
 ): void {
-  if (
-    requestedProjectId !== undefined &&
-    normalizeProjectId(requestedProjectId) !== admission.projectId
-  ) {
+  if (!requestedProject) return;
+  if (!selectionRequired) {
     throw new Error(
-      `${PROJECT_CONTEXT_CONFLICT}: The requested project conflicts with the pinned Activity or Agent thread.`
+      `${PROJECT_CONTEXT_CONFLICT}: Omit project when continuing or forking a pinned Activity or Agent thread.`
     );
   }
+  // The resolved UUID/cwd comparison below is authoritative. Snapshot names
+  // remain audit/display data and never route an existing context.
 }
 
 function assertSelectedProjectMatchesAdmission(
   selected: ProjectTarget | undefined,
-  admission: TaskProjectAdmission
+  admission: TaskProjectAdmission,
+  preservePinnedCwd: boolean
 ): void {
   if (!selected) return;
-  if (selected.id !== admission.projectId || selected.cwd !== admission.cwd) {
+  if (
+    selected.id !== admission.projectId ||
+    (!preservePinnedCwd && selected.cwd !== admission.cwd)
+  ) {
     throw new Error(
       `${PROJECT_CONTEXT_CONFLICT}: The selected project no longer matches the pinned Activity or Agent thread.`
     );
@@ -5899,7 +5924,7 @@ function taskProjectFromActivity(admission: ActivityProjectAdmission): TaskProje
 }
 
 function taskProjectFromTarget(project: ProjectTarget): TaskProjectAdmission {
-  return { projectId: project.id, projectLabel: project.label, cwd: project.cwd };
+  return { projectId: project.id, projectLabel: project.name, cwd: project.cwd };
 }
 
 async function requireAgentSession(
@@ -6018,7 +6043,7 @@ function resolveActivityForTask(
   }
   return jobs.createActivity({
     scopeId,
-    projectId: projectAdmission?.projectId,
+          projectId: projectAdmission?.projectId,
     projectLabel: projectAdmission?.projectLabel,
     projectCwd: projectAdmission?.cwd,
     continuationOfActivityId: validated.continuationOfActivityId,
@@ -6109,6 +6134,7 @@ async function startNewSession(input: {
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
   modelCatalog: CodexModelCatalogProvider;
+  userSettings: UserSettingsStore;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
   agent?: BridgeAgent;
@@ -6148,6 +6174,7 @@ async function startNewSession(input: {
   };
   return runCodex({
     jobs: input.jobs,
+    userSettings: input.userSettings,
     config: input.config,
     preferences: input.preferences,
     operation: "start",
@@ -6166,6 +6193,7 @@ async function startNewSession(input: {
     contextMode: input.contextMode,
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    projectRequest: input.args.project,
     sourceThreadId: input.backendHandoff?.sourceThreadId,
     run: (onProgress, onAssigned) => input.upstream.startThread
       ? input.upstream.startThread(
@@ -6274,6 +6302,8 @@ async function continueTrackedSession(input: {
   contextMode: Extract<AgentContextMode, "continue">;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
+  userSettings: UserSettingsStore;
+  projectRequest?: ProjectSelection;
 }): Promise<ToolResult> {
   const forcedSandbox = forcedSandboxForStrategy(input.preferences);
   if (forcedSandbox && input.session.sandbox !== forcedSandbox) {
@@ -6318,6 +6348,8 @@ async function continueTrackedSession(input: {
     contextMode: input.contextMode,
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    userSettings: input.userSettings,
+    projectRequest: input.projectRequest,
     sourceThreadId: input.session.threadId,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => {
@@ -6416,6 +6448,8 @@ async function forkTrackedSession(input: {
   agent: BridgeAgent;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
+  userSettings: UserSettingsStore;
+  projectRequest?: ProjectSelection;
 }): Promise<ToolResult> {
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
@@ -6459,6 +6493,8 @@ async function forkTrackedSession(input: {
     contextMode: "fork",
     agentRole: input.agentRole,
     projectAdmission: input.projectAdmission,
+    userSettings: input.userSettings,
+    projectRequest: input.projectRequest,
     sourceThreadId: input.session.threadId,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => input.upstream.forkThread?.(
@@ -6519,6 +6555,7 @@ async function forkTrackedSession(input: {
 
 async function runCodex(input: {
   jobs: CodexJobRegistry;
+  userSettings?: UserSettingsStore;
   config: BridgeConfig;
   preferences: BridgeUserSettings;
   operation: CodexJobOperation;
@@ -6534,6 +6571,7 @@ async function runCodex(input: {
   contextMode: AgentContextMode;
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
+  projectRequest?: ProjectSelection;
   sourceThreadId?: string;
   selectionKey: string;
   executionDecision: ExecutionDecision;
@@ -6550,7 +6588,7 @@ async function runCodex(input: {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
   }
   let job!: CodexJob;
-  input.jobs.activityTransaction(() => {
+  const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
       input.routing.requestId,
@@ -6560,11 +6598,35 @@ async function runCodex(input: {
       job = replay;
       return;
     }
+    let projectAdmission = input.projectAdmission;
+    if (input.projectRequest) {
+      if (!input.userSettings) {
+        throw new Error("Project registry authority is missing from project-selecting admission.");
+      }
+      const currentProject = taskProjectFromTarget(
+        input.userSettings.resolveProject(input.projectRequest)
+      );
+      if (
+        !projectAdmission ||
+        currentProject.projectId !== projectAdmission.projectId ||
+        (input.contextMode === "fresh" && currentProject.cwd !== projectAdmission.cwd)
+      ) {
+        throw new Error(
+          `${PROJECT_REGISTRY_CHANGED}: Project choices changed before admission. Refresh the tool descriptor and retry.`
+        );
+      }
+      projectAdmission = input.contextMode === "fresh"
+        ? currentProject
+        : {
+            ...projectAdmission,
+            projectLabel: currentProject.projectLabel
+          };
+    }
     const activity = resolveActivityForTask(
       input.jobs,
       input.activityRequest,
       input.routing.scopeId,
-      input.projectAdmission
+      projectAdmission
     );
     const agent = input.agent || input.jobs.createAgent({
       scopeId: input.routing.scopeId,
@@ -6581,8 +6643,9 @@ async function runCodex(input: {
         operation: input.operation,
         backendKind: input.backendKind,
         activityId: activity.activityId,
-        projectId: input.projectAdmission?.projectId,
-        projectLabel: input.projectAdmission?.projectLabel,
+        projectId: projectAdmission?.projectId,
+        projectLabel: projectAdmission?.projectLabel,
+        projectRequest: input.projectRequest,
         agentId: agent.agentId,
         contextMode: input.contextMode,
         executionMode: input.executionMode,
@@ -6602,7 +6665,22 @@ async function runCodex(input: {
         ],
         sessionDecision: input.sessionDecision
       },
-      input.run,
+      (onProgress, onAssigned) => {
+        let canonicalCwd: string;
+        try {
+          canonicalCwd = resolveAllowedCwd(input.cwd, input.config.allowedRoots);
+        } catch {
+          throw new Error(
+            `${PROJECT_UNAVAILABLE}: The admitted project folder became unavailable before Codex started.`
+          );
+        }
+        if (canonicalCwd !== input.cwd) {
+          throw new Error(
+            `${PROJECT_UNAVAILABLE}: The admitted project folder changed canonical identity before Codex started.`
+          );
+        }
+        return input.run(onProgress, onAssigned);
+      },
       input.onComplete
         ? (result) => input.onComplete?.(result, agent)
         : undefined,
@@ -6613,6 +6691,11 @@ async function runCodex(input: {
         : undefined
     );
   });
+  if (input.userSettings && input.projectRequest) {
+    input.userSettings.admissionTransaction(admit);
+  } else {
+    admit();
+  }
   if (job.executionMode === "background") {
     return textResult(formatJobStatus(job, input.config.jobStaleAfterMs, undefined, input.preferences, input.jobs, true));
   }
@@ -6720,9 +6803,8 @@ function formatJobStatus(
     turnId: appServerTurnId(job) || null,
     version: job.version,
     operation: job.operation,
-    projectId: job.projectId || null,
-    projectLabel: job.projectLabel || null,
-    workspaceLabel: job.projectLabel || path.basename(job.cwd),
+    projectName: job.projectLabel || null,
+    workspaceLabel: job.projectLabel || "Pinned workspace",
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
     executionAudit: formatExecutionAudit(job),
@@ -6735,16 +6817,14 @@ function formatJobStatus(
       ...job.sessionDecision,
       scopeId: job.scopeId,
       requestId: job.requestId,
-      projectId: job.projectId || null,
-      projectLabel: job.projectLabel || null,
+      projectName: job.projectLabel || null,
       activityPresentationId: job.activityPresentationId || null
     },
     bridgeActivity: {
       activityId: job.activityId,
       jobId: job.jobId,
       agentId: job.agentId || null,
-      projectId: job.projectId || null,
-      projectLabel: job.projectLabel || null,
+      projectName: job.projectLabel || null,
       executionMode: job.executionMode,
       ...activityTracking
     },
@@ -6873,9 +6953,8 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
     operation: job.operation,
-    projectId: job.projectId || null,
-    projectLabel: job.projectLabel || null,
-    workspaceLabel: job.projectLabel || path.basename(job.cwd),
+    projectName: job.projectLabel || null,
+    workspaceLabel: job.projectLabel || "Pinned workspace",
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
     executionAudit: formatExecutionAudit(job),
@@ -6948,8 +7027,7 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   return {
     activityId: activity.activityId,
     scopeId: activity.scopeId,
-    projectId: activity.projectId || null,
-    projectLabel: activity.projectLabel || null,
+    projectName: activity.projectLabel || null,
     continuationOfActivityId: activity.continuationOfActivityId || null,
     cardGeneration: activity.cardGeneration,
     title: activity.title,
@@ -7042,8 +7120,7 @@ function formatSessionSummary(session: TrackedCodexSession): Record<string, unkn
     sessionId: session.sessionId || null,
     forkedFromThreadId: session.forkedFromThreadId || null,
     scopeId: session.scopeId,
-    projectId: session.projectId || null,
-    projectLabel: session.projectLabel || null,
+    projectName: session.projectLabel || null,
     sandbox: session.sandbox,
     selection: session.selection,
     policyRevision: session.policyRevision,
@@ -7063,8 +7140,7 @@ function formatAgentThreadSummary(
     sessionId: thread.sessionId || null,
     agentId: thread.agentId,
     scopeId: thread.scopeId,
-    projectId: thread.projectId || null,
-    projectLabel: thread.projectLabel || null,
+    projectName: thread.projectLabel || null,
     backendKind: thread.backendKind,
     sandbox: thread.sandbox,
     contextMode: thread.contextMode,
@@ -7634,8 +7710,7 @@ async function buildActivityView(
     return {
       rowType: "activity" as const,
       activityId: activity.activityId,
-      projectId: activity.projectId || null,
-      projectLabel: activity.projectLabel || null,
+      projectName: activity.projectLabel || null,
       title: activity.title,
       kind: activity.kind,
       lifecycle: activity.lifecycle,
@@ -7656,14 +7731,13 @@ async function buildActivityView(
     };
   });
   const hasMultipleWorkspaces = new Set(
-    activityRows.flatMap((row) => row.projectId
-      ? [`project:${row.projectId}:${row.projectLabel || ""}`]
+    activityRows.flatMap((row) => row.projectName
+      ? [`project-name:${row.projectName}`]
       : row.workspaceLabels.map((label) => `legacy:${label}`))
   ).size > 1;
   if (!hasMultipleWorkspaces) {
     for (const row of activityRows) {
-      row.projectId = null;
-      row.projectLabel = null;
+      row.projectName = null;
       row.workspaceLabels = [];
     }
   }
@@ -8144,7 +8218,7 @@ function codexTaskInputSchema(
     requestId,
     ...(settings.activityCardVisibility === "never" ? {} : { activityPresentationId }),
     prompt,
-    projectId: projectedProjectIdZod(config, settings),
+    project: projectedProjectZod(config, settings),
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode
@@ -8215,14 +8289,17 @@ function codexTaskInputSchema(
           }
         ]
       },
-      then: { required: ["projectId"] }
+      then: { required: ["project"] }
     }
   ];
   // Runtime parsing stays broader only where current policy/catalog/project
   // state is the execution authority and can change between tool listings.
   const runtime = z.strictObject({
     ...runtimeCommon,
-    projectId: z.string().trim().min(1).max(64).optional(),
+    project: z.strictObject({
+      name: z.string().min(1).max(PROJECT_NAME_MAX_LENGTH),
+      registryRevision: z.number().int().min(0)
+    }).optional(),
     activityPresentationId: scopeIdSchema().optional(),
     sandbox: sandboxSchema(config).optional(),
     selection: modelChoiceZod().optional()
@@ -8230,29 +8307,46 @@ function codexTaskInputSchema(
   return withJsonSchemaProjection(runtime, projectedJsonSchema) as z.ZodType<CodexTaskArgs>;
 }
 
-function projectedProjectIdZod(
+function projectedProjectZod(
   config: BridgeConfig,
   settings: BridgeUserSettings
-): z.ZodType<string | undefined> {
-  const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
-    retainUnavailable: true
-  }).selectableProjects;
+): z.ZodType<ProjectSelection | undefined> {
+  const selectable = new (class {
+    readonly projects = settings.projects
+      .filter((project) => project.archivedAt === undefined)
+      .filter((project) => {
+        try {
+          return resolveAllowedCwd(project.cwd, config.allowedRoots) === project.cwd;
+        } catch {
+          return false;
+        }
+      });
+  })().projects;
   const projected = selectable.length === 0
     ? { not: {} }
     : {
         oneOf: selectable.map((project) => ({
-          const: project.id,
-          title: project.label,
-          description: `${project.label} (${project.id})`
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "registryRevision"],
+          properties: {
+            name: { const: project.name },
+            registryRevision: { const: settings.registryRevision }
+          },
+          title: project.name,
+          description: project.name
         }))
       };
-  // Keep the public descriptor limited to currently selectable IDs while the
-  // separate runtime schema accepts a bounded stale ID so the registry can
-  // return PROJECT_UNAVAILABLE/PROJECT_NOT_FOUND instead of a generic parse error.
-  return withJsonSchemaProjection(z.string(), projected)
+  // Runtime parsing is intentionally broader than discovery. The serialized
+  // DB admission boundary, not tools/list_changed delivery, validates both
+  // the generation and exact normalized active name.
+  return withJsonSchemaProjection(z.strictObject({
+    name: z.string().min(1).max(PROJECT_NAME_MAX_LENGTH),
+    registryRevision: z.number().int().min(0)
+  }), projected)
     .optional()
     .describe(
-      "Stable ID of a Settings-registered project. It is mandatory for every new Activity and fresh Agent context. Omit it only when an existing Activity/thread continues or forks its pinned project. If no project choice is exposed, call codex_settings so the user can register one. Never provide or infer a local path."
+      "Exact user-defined project name plus the registryRevision const from this descriptor. Mandatory for new Activities and fresh contexts. Omit for continue/fork so the server uses the pinned UUID/cwd snapshot. Never send an ID, slug, default alias, or local path."
     );
 }
 
@@ -8260,14 +8354,21 @@ function projectProjectionFingerprint(
   config: BridgeConfig,
   settings: BridgeUserSettings
 ): string {
-  const selectable = new ProjectRegistry(settings.projects, config.allowedRoots, {
-    retainUnavailable: true
-  }).selectableProjects.map(({ id, label }) => ({ id, label }));
-  // Hash only GPT-facing identity data. Canonical folders and unavailable
-  // reasons are deliberately excluded so the signature cannot disclose local
-  // filesystem layout through diagnostics, notifications, or future logging.
+  const selectable = settings.projects
+    .filter((project) => project.archivedAt === undefined)
+    .flatMap((project) => {
+      try {
+        return resolveAllowedCwd(project.cwd, config.allowedRoots) === project.cwd
+          ? [{ name: project.name }]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  // Hash only GPT-facing names and the freshness generation. UUIDs, cwd, and
+  // unavailable reasons cannot leak through notifications or diagnostics.
   return createHash("sha256")
-    .update(JSON.stringify({ version: 1, selectable }))
+    .update(JSON.stringify({ version: 2, registryRevision: settings.registryRevision, selectable }))
     .digest("hex");
 }
 
@@ -8408,6 +8509,7 @@ function resolveTaskRouting(
 type TaskRequestHashV4Input = {
   args: CodexTaskArgs;
   scopeId: string;
+  projectRequest?: ProjectSelection;
   projectId?: string;
   cwd: string;
   sandbox: SandboxMode;
@@ -8454,7 +8556,13 @@ function resolveTaskRoutingV4(input: TaskRequestHashV4Input): CodexRouting {
                   .digest("hex")
               }
             : null,
-        project: input.projectId
+        projectRequest: input.projectRequest
+          ? {
+              name: normalizeProjectName(input.projectRequest.name),
+              registryRevision: input.projectRequest.registryRevision
+            }
+          : null,
+        admittedProject: input.projectId
           ? { projectId: input.projectId, cwd: input.cwd }
           : null,
         routing: {
@@ -8520,13 +8628,11 @@ function resolveTaskReplayRoutingV4(
     throw new Error("Persisted Codex task replay identity is incomplete.");
   }
   const contextMode = args.contextMode || job.contextMode;
-  const requestedProjectId = args.projectId === undefined
-    ? job.projectId
-    : normalizeProjectId(args.projectId);
   return resolveTaskRoutingV4({
     args,
     scopeId,
-    projectId: requestedProjectId,
+    projectRequest: args.project,
+    projectId: job.projectId,
     cwd: job.cwd,
     sandbox: contextMode === "fresh" ? args.sandbox || job.sandbox : job.sandbox,
     operation: contextMode === "continue" ? "continue" : "start",
@@ -8674,7 +8780,12 @@ async function buildSettingsView(
       availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
       availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
       projectAvailability: userSettings.projectRegistry.availability.map(
-        ({ project, available }) => ({ id: project.id, available })
+        ({ project, available }) => ({
+          projectId: project.id,
+          name: project.name,
+          available,
+          archived: project.archivedAt !== undefined
+        })
       ),
       maxConcurrentJobs: config.maxConcurrentJobs,
       defaultBackend: config.defaultBackend,
@@ -8717,7 +8828,7 @@ async function buildSettingsView(
     scopeNotice:
       "These settings are shared by every conversation using this bridge instance, not stored per ChatGPT account. Bridge security and operator model ceilings cannot be changed from the card.",
     policyActivation: {
-      policyRevision: userSettings.current.revision,
+      policyRevision: userSettings.current.settingsRevision,
       executionPolicyActive: true,
       schemaRefreshRequested,
       schemaRefreshGuaranteed: false
@@ -8771,10 +8882,20 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
       }))
     }
   };
+  const publicProjectAvailability = localizedView.capabilities.projectAvailability.map(
+    ({ name, available, archived }) => ({ name, available, archived })
+  );
   const publicView = settingsViewOutputSchema.parse({
     ...localizedView,
-    settings: publicUserSettings(localizedView.settings),
-    operatorDefaults: publicUserSettings(localizedView.operatorDefaults)
+    capabilities: {
+      ...localizedView.capabilities,
+      projectAvailability: publicProjectAvailability
+    },
+    settings: publicUserSettings(localizedView.settings, localizedView.capabilities.projectAvailability),
+    operatorDefaults: publicUserSettings(
+      localizedView.operatorDefaults,
+      localizedView.capabilities.projectAvailability
+    )
   });
   return {
     structuredContent: publicView,
@@ -8805,11 +8926,17 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
 }
 
 function publicUserSettings(
-  settings: BridgeUserSettings
+  settings: BridgeUserSettings,
+  availability: SettingsView["capabilities"]["projectAvailability"]
 ): z.infer<typeof publicBridgeUserSettingsOutputSchema> {
+  const byId = new Map(availability.map((entry) => [entry.projectId, entry]));
   return publicBridgeUserSettingsOutputSchema.parse({
     ...settings,
-    projects: settings.projects.map(({ id, label }) => ({ id, label }))
+    projects: settings.projects.map((project) => ({
+      name: project.name,
+      available: byId.get(project.id)?.available || false,
+      archived: project.archivedAt !== undefined
+    }))
   });
 }
 
@@ -9410,6 +9537,7 @@ function readPersistedJob(
     : [];
   const executionDecision = readExecutionDecision(value.executionDecision);
   let project: { projectId: string; projectLabel: string } | undefined;
+  let projectRequest: ProjectSelection | undefined;
   try {
     if (stateVersion >= 9 && (value.projectId !== undefined || value.projectLabel !== undefined)) {
       if (typeof value.projectId !== "string" || typeof value.projectLabel !== "string") {
@@ -9417,7 +9545,21 @@ function readPersistedJob(
       }
       project = {
         projectId: normalizeProjectId(value.projectId),
-        projectLabel: normalizeProjectLabel(value.projectLabel)
+        projectLabel: normalizeProjectName(value.projectLabel)
+      };
+    }
+    if (value.projectRequest !== undefined) {
+      if (
+        !isRecord(value.projectRequest) ||
+        typeof value.projectRequest.name !== "string" ||
+        !Number.isInteger(value.projectRequest.registryRevision) ||
+        Number(value.projectRequest.registryRevision) < 0
+      ) {
+        return undefined;
+      }
+      projectRequest = {
+        name: normalizeProjectName(value.projectRequest.name),
+        registryRevision: Number(value.projectRequest.registryRevision)
       };
     }
   } catch {
@@ -9446,7 +9588,8 @@ function readPersistedJob(
     (requestHashVersion !== 1 &&
       requestHashVersion !== 2 &&
       requestHashVersion !== 3 &&
-      requestHashVersion !== 4) ||
+      requestHashVersion !== 4 &&
+      requestHashVersion !== 5) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -9486,6 +9629,7 @@ function readPersistedJob(
     jobId,
     activityId,
     ...(project || {}),
+    ...(projectRequest ? { projectRequest } : {}),
     agentId: value.agentId,
     contextMode: value.contextMode as AgentContextMode | undefined,
     threadId: value.threadId || sessionDecision.threadId,
@@ -9852,37 +9996,36 @@ function forwardResult(
   const structured = isRecord((forwarded as { structuredContent?: unknown }).structuredContent)
     ? (forwarded as { structuredContent: Record<string, unknown> }).structuredContent
     : {};
+  const publicStructured = stripInternalProjectData({
+    ...structured,
+    threadId: extractThreadId(forwarded) || job.sessionDecision.threadId,
+    bridgeSession: {
+      ...job.sessionDecision,
+      scopeId: job.scopeId,
+      requestId: job.requestId,
+      projectName: job.projectLabel || null,
+      activityPresentationId: job.activityPresentationId || null
+    },
+    bridgeActivity: {
+      activityId: job.activityId,
+      jobId: job.jobId,
+      agentId: job.agentId || null,
+      projectName: job.projectLabel || null,
+      executionMode: job.executionMode,
+      ...(registry
+        ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {
+            reserve: true,
+            activityPresentationId: job.activityPresentationId,
+            reservationOwnerId: job.jobId
+          })
+        : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
+    },
+    executionDecision: job.executionDecision || null,
+    executionAudit: formatExecutionAudit(job)
+  }) as Record<string, unknown>;
   return {
     ...forwarded,
-    structuredContent: {
-      ...structured,
-      threadId: extractThreadId(forwarded) || job.sessionDecision.threadId,
-      bridgeSession: {
-        ...job.sessionDecision,
-        scopeId: job.scopeId,
-        requestId: job.requestId,
-        projectId: job.projectId || null,
-        projectLabel: job.projectLabel || null,
-        activityPresentationId: job.activityPresentationId || null
-      },
-      bridgeActivity: {
-        activityId: job.activityId,
-        jobId: job.jobId,
-        agentId: job.agentId || null,
-        projectId: job.projectId || null,
-        projectLabel: job.projectLabel || null,
-        executionMode: job.executionMode,
-        ...(registry
-          ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {
-              reserve: true,
-              activityPresentationId: job.activityPresentationId,
-              reservationOwnerId: job.jobId
-            })
-          : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
-      },
-      executionDecision: job.executionDecision || null,
-      executionAudit: formatExecutionAudit(job)
-    }
+    structuredContent: publicStructured
   };
 }
 
@@ -9894,10 +10037,39 @@ function retainedStructuredError(result: ToolResult | undefined): Record<string,
 }
 
 function textResult(value: unknown): ToolResult {
+  const publicValue = stripInternalProjectData(value);
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
-    ...(isRecord(value) ? { structuredContent: value } : {})
+    content: [{ type: "text", text: JSON.stringify(publicValue, null, 2) }],
+    ...(isRecord(publicValue) ? { structuredContent: publicValue } : {})
   };
+}
+
+function stripInternalProjectData(value: unknown, depth = 0): unknown {
+  if (depth > 20 || value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripInternalProjectData(entry, depth + 1));
+  }
+  if (!isRecord(value)) return value;
+  const hidden = new Set([
+    "projectId",
+    "project_id",
+    "projectUuid",
+    "project_uuid",
+    "cwd",
+    "projectCwd",
+    "project_cwd",
+    "projectCwdSnapshot",
+    "project_cwd_snapshot"
+  ]);
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (hidden.has(key)) continue;
+    const publicKey = key === "projectLabel" || key === "project_name_snapshot"
+      ? "projectName"
+      : key;
+    output[publicKey] = stripInternalProjectData(entry, depth + 1);
+  }
+  return output;
 }
 
 function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {

@@ -67,7 +67,7 @@
     "hashAlgorithm": "sha256",
     "hashLength": 12,
     "minimumContractGeneration": {
-      "settings": 7,
+      "settings": 9,
       "activity": 7
     },
     "resources": [

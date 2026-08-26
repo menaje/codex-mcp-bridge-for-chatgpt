@@ -85,11 +85,16 @@ const ENGLISH = {
   "settings.projectAvailable": "Available",
   "settings.projectUnavailable": "Needs recovery",
   "settings.projectNew": "New",
+  "settings.archiveProject": "Archive",
+  "settings.restoreProject": "Restore",
   "settings.removeProject": "Remove",
+  "settings.projectArchived": "Archived",
+  "settings.projectArchivePending": "Archive on save",
+  "settings.projectRestorePending": "Restore on save",
   "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project name.",
   "settings.projectInvalidCwd": "Enter an existing absolute folder path.",
   "settings.projectDuplicatePath": "Each project must use a different canonical folder.",
-  "settings.projectUnavailableSave": "Fix or remove every project that needs recovery before saving.",
+  "settings.projectUnavailableSave": "Fix or archive every project that needs recovery before saving.",
   "settings.projectLimit": "At most 100 projects can be registered.",
   "settings.projectError": "Review the Projects section and correct the highlighted values.",
   "settings.language": "Interface language",
@@ -1381,6 +1386,76 @@ const ISSUE26_OVERRIDES: Record<
   }
 };
 
+const ISSUE33_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "settings.archiveProject": "보관",
+    "settings.restoreProject": "복원",
+    "settings.projectArchived": "보관됨",
+    "settings.projectArchivePending": "저장 시 보관",
+    "settings.projectRestorePending": "저장 시 복원",
+    "settings.projectUnavailableSave": "복구가 필요한 프로젝트를 수정하거나 보관한 뒤 저장하세요."
+  },
+  ja: {
+    "settings.archiveProject": "アーカイブ",
+    "settings.restoreProject": "復元",
+    "settings.projectArchived": "アーカイブ済み",
+    "settings.projectArchivePending": "保存時にアーカイブ",
+    "settings.projectRestorePending": "保存時に復元",
+    "settings.projectUnavailableSave": "復旧が必要なプロジェクトを修正またはアーカイブしてから保存してください。"
+  },
+  "zh-Hans": {
+    "settings.archiveProject": "归档",
+    "settings.restoreProject": "恢复",
+    "settings.projectArchived": "已归档",
+    "settings.projectArchivePending": "保存时归档",
+    "settings.projectRestorePending": "保存时恢复",
+    "settings.projectUnavailableSave": "请先修复或归档需要恢复的项目，再保存。"
+  },
+  "zh-Hant": {
+    "settings.archiveProject": "封存",
+    "settings.restoreProject": "復原",
+    "settings.projectArchived": "已封存",
+    "settings.projectArchivePending": "儲存時封存",
+    "settings.projectRestorePending": "儲存時復原",
+    "settings.projectUnavailableSave": "請先修正或封存需要復原的專案，再儲存。"
+  },
+  es: {
+    "settings.archiveProject": "Archivar",
+    "settings.restoreProject": "Restaurar",
+    "settings.projectArchived": "Archivado",
+    "settings.projectArchivePending": "Archivar al guardar",
+    "settings.projectRestorePending": "Restaurar al guardar",
+    "settings.projectUnavailableSave": "Corrige o archiva los proyectos que necesitan recuperación antes de guardar."
+  },
+  fr: {
+    "settings.archiveProject": "Archiver",
+    "settings.restoreProject": "Restaurer",
+    "settings.projectArchived": "Archivé",
+    "settings.projectArchivePending": "Archiver à l’enregistrement",
+    "settings.projectRestorePending": "Restaurer à l’enregistrement",
+    "settings.projectUnavailableSave": "Corrigez ou archivez les projets à récupérer avant l’enregistrement."
+  },
+  de: {
+    "settings.archiveProject": "Archivieren",
+    "settings.restoreProject": "Wiederherstellen",
+    "settings.projectArchived": "Archiviert",
+    "settings.projectArchivePending": "Beim Speichern archivieren",
+    "settings.projectRestorePending": "Beim Speichern wiederherstellen",
+    "settings.projectUnavailableSave": "Korrigieren oder archivieren Sie wiederherzustellende Projekte vor dem Speichern."
+  },
+  pt: {
+    "settings.archiveProject": "Arquivar",
+    "settings.restoreProject": "Restaurar",
+    "settings.projectArchived": "Arquivado",
+    "settings.projectArchivePending": "Arquivar ao salvar",
+    "settings.projectRestorePending": "Restaurar ao salvar",
+    "settings.projectUnavailableSave": "Corrija ou arquive os projetos que precisam de recuperação antes de salvar."
+  }
+};
+
 const CODEX_APP_THREAD_OVERRIDES: Record<
   Exclude<SupportedUiLocale, "en">,
   Partial<UiTranslationBundle>
@@ -1441,8 +1516,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

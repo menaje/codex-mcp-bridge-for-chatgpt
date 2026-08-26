@@ -134,15 +134,16 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("primary-role");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("commit atomically");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("ACTIVITY_METADATA_REQUIRED");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectId exposed by the current codex_task descriptor");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("project object exposed by the current codex_task descriptor");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("mandatory even when only one project is registered");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never infer a first, sole, or previously selected project");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("admission-time project");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never infer a first, sole, default, slug");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("immutable project UUID and cwd snapshot");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("tools/list_changed is delayed or lost");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never call codex_activity after codex_task");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exact authoritative version");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_activity_cancel");
-    expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b|\bcwd\b/);
+    expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b/);
   });
 
   it("serves health without auth", async () => {
@@ -241,7 +242,7 @@ describe("http server", () => {
     const saved = await client.callTool({
       name: "codex_update_settings",
       arguments: {
-        expectedRevision: 0,
+        expectedSettingsRevision: 0,
         operation: {
           kind: "patch",
           settings: {
@@ -292,9 +293,9 @@ describe("http server", () => {
     expect(policy.stateStorage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 7,
+      schemaVersion: 8,
       bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v7-cancellation-provenance-scope-agent-manager",
+      activityFoundation: "schema-v8-project-registry-atomic-admission",
       activityPersistent: true
     });
 
@@ -306,7 +307,7 @@ describe("http server", () => {
           requestId: REQUEST_A,
           activityPresentationId: PRESENTATION_A,
           prompt: "slow",
-          projectId: "test-project",
+          project: { name: "Test Project", registryRevision: 1 },
           activity: {
             mode: "new",
             title: "Slow HTTP task",
@@ -351,7 +352,7 @@ describe("http server", () => {
           requestId: "12121212-1212-4212-8212-121212121212",
           activityPresentationId: "13131313-1313-4313-8313-131313131313",
           prompt: "finish after the foreground caller detaches",
-          projectId: "test-project",
+          project: { name: "Test Project", registryRevision: 1 },
           activity: {
             mode: "new",
             title: "Detached foreground task",
@@ -425,7 +426,7 @@ describe("http server", () => {
           requestId: "14141414-1414-4414-8414-141414141414",
           activityPresentationId: "15151515-1515-4515-8515-151515151515",
           prompt: "remain active while status waiting detaches",
-          projectId: "test-project",
+          project: { name: "Test Project", registryRevision: 1 },
           activity: { mode: "new", title: "Read wait task" },
           agent: { mode: "new", name: "Read Wait Agent" },
           executionMode: "background"
@@ -499,7 +500,7 @@ describe("http server", () => {
         requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         activityPresentationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         prompt: "derive scope",
-        projectId: "test-project",
+        project: { name: "Test Project", registryRevision: 1 },
         activity: {
           mode: "new",
           title: "Derive HTTP scope",
@@ -570,7 +571,7 @@ describe("http server", () => {
         requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         activityPresentationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
         prompt: "persist Activity",
-        projectId: "test-project",
+        project: { name: "Test Project", registryRevision: 1 },
         agent: { mode: "new", name: "HTTP Persistent Agent" },
         executionMode: "foreground",
         activity: {
@@ -688,17 +689,17 @@ async function stopLastServer(): Promise<void> {
 async function registerProject(client: Client, cwd: string): Promise<void> {
   const opened = await client.callTool({ name: "codex_settings", arguments: {} });
   const revision = (opened as { structuredContent?: Record<string, any> })
-    .structuredContent?.settings?.revision;
-  if (!Number.isInteger(revision)) throw new Error("Expected Settings revision.");
+    .structuredContent?.settings?.registryRevision;
+  if (!Number.isInteger(revision)) throw new Error("Expected project registry revision.");
   const saved = await client.callTool({
     name: "codex_update_settings",
     arguments: {
-      expectedRevision: revision,
+      expectedRegistryRevision: revision,
       operation: {
         kind: "patch",
         settings: {
           projectOperations: [
-            { kind: "add", project: { id: "test-project", label: "Test project", cwd } }
+            { kind: "add", project: { name: "Test Project", cwd } }
           ]
         }
       }

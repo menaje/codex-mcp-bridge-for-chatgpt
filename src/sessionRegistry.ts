@@ -80,6 +80,11 @@ export class SessionRegistry {
     return this.stateStore?.persistencePath || this.stateFile || null;
   }
 
+  /** Internal composition hook for shared registry/admission persistence. */
+  get admissionStateStore(): BridgeStateStore | undefined {
+    return this.stateStore;
+  }
+
   record(session: TrackedCodexSession): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);

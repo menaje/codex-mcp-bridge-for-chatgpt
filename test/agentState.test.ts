@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,12 +60,18 @@ describe("scope-level bridge Agents", () => {
   it("persists normalized names, assignments, current/history threads, and mutations", () => {
     const file = path.join(mkdtempSync(path.join(tmpdir(), "bridge-agent-state-")), "state.sqlite");
     const store = new BridgeStateStore({ file });
+    const projectCwd = realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-agent-project-")));
+    const project = store.applyProjectOperations(
+      [{ kind: "add", project: { name: "Codex MCP Bridge", cwd: projectCwd } }],
+      0,
+      []
+    ).projects[0]!;
     store.createActivity({
       activityId: ACTIVITY_A,
       scopeId: SCOPE_A,
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
-      projectCwd: "/workspace/original",
+      projectCwd,
       title: "Original goal",
       now: 10
     });
@@ -86,10 +92,10 @@ describe("scope-level bridge Agents", () => {
       agentId: agent.agentId,
       threadId: "thread-original",
       sessionId: "session-tree-1",
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
       backendKind: "app-server",
-      cwd: "/workspace/original",
+      cwd: projectCwd,
       sandbox: "read-only",
       contextMode: "fresh",
       now: 40
@@ -97,10 +103,10 @@ describe("scope-level bridge Agents", () => {
     expect(() => store.linkAgentThread({
       agentId: agent.agentId,
       threadId: "thread-original",
-      projectId: "other",
+      projectId: "22222222-2222-4222-8222-222222222222",
       projectLabel: "Other project",
       backendKind: "app-server",
-      cwd: "/workspace/original",
+      cwd: projectCwd,
       sandbox: "read-only",
       contextMode: "continue",
       now: 41
@@ -108,7 +114,7 @@ describe("scope-level bridge Agents", () => {
     expect(() => store.linkAgentThread({
       agentId: agent.agentId,
       threadId: "thread-original",
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
       backendKind: "app-server",
       cwd: "/workspace/switched",
@@ -139,10 +145,10 @@ describe("scope-level bridge Agents", () => {
       agentId: agent.agentId,
       threadId: "thread-fork",
       sessionId: "session-tree-1",
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
       backendKind: "app-server",
-      cwd: "/workspace/original",
+      cwd: projectCwd,
       sandbox: "read-only",
       contextMode: "fork",
       forkedFromThreadId: "thread-original",
@@ -157,22 +163,22 @@ describe("scope-level bridge Agents", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(7);
+    expect(restored.schemaVersion).toBe(8);
     expect(restored.getActivity(ACTIVITY_A)).toMatchObject({
       lifecycle: "open",
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge"
     });
     expect(restored.getActivity(ACTIVITY_B)).toMatchObject({
       continuationOfActivityId: ACTIVITY_A,
       cardGeneration: 1,
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge"
     });
     expect(restored.getActivityProjectAdmission(ACTIVITY_B)).toEqual({
-      projectId: "bridge",
+      projectId: project.id,
       projectLabel: "Codex MCP Bridge",
-      projectCwd: "/workspace/original"
+      projectCwd
     });
     expect(restored.getAgent(agent.agentId)).toMatchObject({
       scopeId: SCOPE_A,
@@ -184,7 +190,7 @@ describe("scope-level bridge Agents", () => {
       expect.objectContaining({
         threadId: "thread-original",
         sessionId: "session-tree-1",
-        projectId: "bridge",
+        projectId: project.id,
         projectLabel: "Codex MCP Bridge",
         contextMode: "fresh",
         isCurrent: false,
@@ -193,7 +199,7 @@ describe("scope-level bridge Agents", () => {
       expect.objectContaining({
         threadId: "thread-fork",
         sessionId: "session-tree-1",
-        projectId: "bridge",
+        projectId: project.id,
         projectLabel: "Codex MCP Bridge",
         contextMode: "fork",
         isCurrent: true,

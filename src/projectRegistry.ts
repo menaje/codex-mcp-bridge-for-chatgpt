@@ -1,30 +1,52 @@
 import path from "node:path";
 import { requireAllowedCwd } from "./config.js";
 
-export const PROJECT_ID_MAX_LENGTH = 64;
-export const PROJECT_LABEL_MAX_LENGTH = 120;
+export const PROJECT_NAME_MAX_LENGTH = 120;
+/** @deprecated Internal compatibility alias. Project names replace labels. */
+export const PROJECT_LABEL_MAX_LENGTH = PROJECT_NAME_MAX_LENGTH;
 export const MAX_REGISTERED_PROJECTS = 100;
 
 export const PROJECT_SETUP_REQUIRED = "PROJECT_SETUP_REQUIRED";
 export const PROJECT_REQUIRED = "PROJECT_REQUIRED";
 export const PROJECT_NOT_FOUND = "PROJECT_NOT_FOUND";
 export const PROJECT_UNAVAILABLE = "PROJECT_UNAVAILABLE";
+export const PROJECT_REGISTRY_CHANGED = "PROJECT_REGISTRY_CHANGED";
+export const PROJECT_REGISTRY_REVISION_CONFLICT = "PROJECT_REGISTRY_REVISION_CONFLICT";
 export const PROJECT_ID_INVALID = "PROJECT_ID_INVALID";
-export const PROJECT_LABEL_INVALID = "PROJECT_LABEL_INVALID";
+export const PROJECT_NAME_INVALID = "PROJECT_NAME_INVALID";
+/** @deprecated Internal compatibility alias. */
+export const PROJECT_LABEL_INVALID = PROJECT_NAME_INVALID;
 export const PROJECT_CWD_INVALID = "PROJECT_CWD_INVALID";
 export const PROJECT_CWD_NOT_ALLOWED = "PROJECT_CWD_NOT_ALLOWED";
-export const PROJECT_DUPLICATE_ID = "PROJECT_DUPLICATE_ID";
-export const PROJECT_DUPLICATE_PATH = "PROJECT_DUPLICATE_PATH";
+export const PROJECT_NAME_CONFLICT = "PROJECT_NAME_CONFLICT";
+export const PROJECT_CWD_CONFLICT = "PROJECT_CWD_CONFLICT";
+export const PROJECT_CWD_STILL_PINNED = "PROJECT_CWD_STILL_PINNED";
 export const PROJECT_LIMIT_EXCEEDED = "PROJECT_LIMIT_EXCEEDED";
 export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
+export const PROJECT_ARCHIVED = "PROJECT_ARCHIVED";
+export const PROJECT_OPERATION_CONFLICT = "PROJECT_OPERATION_CONFLICT";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FORBIDDEN_PROJECT_NAME_CODE_POINT = /[\p{Cc}\p{Cs}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u;
+const UNICODE_WHITESPACE = /\p{White_Space}+/gu;
+
+/** Internal-only immutable project record. UUID and cwd must never enter model-facing output. */
 export type ProjectTarget = {
-  /** Stable, normalized ASCII routing key exposed to GPT. */
   id: string;
-  /** Human-facing Unicode display name. */
+  name: string;
+  /** Internal compatibility spelling for audit snapshots. Always equals name. */
   label: string;
-  /** Canonical absolute path when the target is available. */
+  nameKey: string;
   cwd: string;
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+};
+
+export type ProjectSelection = {
+  name: string;
+  registryRevision: number;
 };
 
 export type ProjectAvailability = {
@@ -33,135 +55,150 @@ export type ProjectAvailability = {
   unavailableReason?: string;
 };
 
+export type ProjectRegistrySnapshot = {
+  registryRevision: number;
+  updatedAt: number;
+  projects: ProjectTarget[];
+};
+
+export type ProjectRegistryOperation =
+  | { kind: "add"; project: { name: string; cwd: string } }
+  | { kind: "rename"; projectId: string; name: string }
+  | { kind: "relocate"; projectId: string; cwd: string }
+  | { kind: "archive"; projectId: string }
+  | { kind: "restore"; projectId: string; name?: string; cwd?: string }
+  | { kind: "reorder"; projectIds: string[] };
+
 export type ProjectRegistryOptions = {
-  /**
-   * Preserve structurally valid absolute paths that cannot currently be
-   * admitted. This is intended only for loading previously saved settings so
-   * an operator root change or temporarily missing folder remains recoverable.
-   */
+  /** Retain a saved canonical path when it is temporarily unavailable. */
   retainUnavailable?: boolean;
 };
 
-/**
- * Normalize a user-supplied project key into a bounded GPT-facing identifier.
- * Labels are deliberately kept separate so renaming a project never changes
- * this routing identity.
- */
+/** Validate the server-generated immutable project UUID. */
 export function normalizeProjectId(value: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${PROJECT_ID_INVALID}: Expected a string project ID.`);
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+    throw new Error(`${PROJECT_ID_INVALID}: Invalid internal project identity.`);
   }
-  const normalized = value
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/gu, "-")
-    .replace(/-+/g, "-");
-  if (
-    normalized.length === 0 ||
-    normalized.length > PROJECT_ID_MAX_LENGTH ||
-    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized)
-  ) {
-    throw new Error(
-      `${PROJECT_ID_INVALID}: Use 1-${PROJECT_ID_MAX_LENGTH} lowercase ASCII letters or digits separated by hyphens.`
-    );
-  }
-  return normalized;
+  return value.toLowerCase();
 }
 
-/** Normalize display text without restricting natural-language labels. */
-export function normalizeProjectLabel(value: string): string {
+/** Canonical user-visible project name used by add, rename, restore, and lookup. */
+export function normalizeProjectName(value: string): string {
   if (typeof value !== "string") {
-    throw new Error(`${PROJECT_LABEL_INVALID}: Expected a string project label.`);
+    throw new Error(`${PROJECT_NAME_INVALID}: Expected a project name string.`);
   }
-  const normalized = value.normalize("NFC").trim();
-  if (
-    normalized.length === 0 ||
-    Array.from(normalized).length > PROJECT_LABEL_MAX_LENGTH ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(normalized)
-  ) {
+  rejectForbiddenProjectNameCodePoints(value);
+  const normalized = value.normalize("NFC");
+  rejectForbiddenProjectNameCodePoints(normalized);
+  const canonical = normalized.replace(UNICODE_WHITESPACE, " ").trim();
+  rejectForbiddenProjectNameCodePoints(canonical);
+  if (!canonical || Array.from(canonical).length > PROJECT_NAME_MAX_LENGTH) {
     throw new Error(
-      `${PROJECT_LABEL_INVALID}: Use 1-${PROJECT_LABEL_MAX_LENGTH} printable Unicode characters.`
+      `${PROJECT_NAME_INVALID}: Use 1-${PROJECT_NAME_MAX_LENGTH} visible Unicode characters.`
     );
   }
-  return normalized;
+  return canonical;
 }
 
 /**
- * A validated immutable view over saved projects. Strict construction is used
- * for writes; recovery construction is used only for persisted settings.
+ * Locale-independent Unicode NFKC case folding.
+ *
+ * ECMAScript does not expose Unicode CaseFolding.txt directly. Per-code-point
+ * upper/lower closure implements the full mappings (including expansions such
+ * as sharp-s and final sigma); dotless-i and Cherokee are the Unicode-defined
+ * exceptions where the case-fold representative is not that closure.
  */
+export function projectNameKey(value: string): string {
+  const canonical = normalizeProjectName(value).normalize("NFKC");
+  const folded = Array.from(canonical, (character) => {
+    if (character === "\u0131") return character;
+    if (character === "\u1e9e") return "ss";
+    const codePoint = character.codePointAt(0) as number;
+    if (
+      (codePoint >= 0x13a0 && codePoint <= 0x13ff) ||
+      (codePoint >= 0xab70 && codePoint <= 0xabbf)
+    ) {
+      return character.toUpperCase();
+    }
+    return character.toUpperCase().toLowerCase();
+  }).join("");
+  return folded.normalize("NFKC");
+}
+
+/** @deprecated Internal compatibility alias. */
+export const normalizeProjectLabel = normalizeProjectName;
+
+export function canonicalProjectCwd(
+  input: string,
+  allowedRoots: readonly string[]
+): string {
+  if (typeof input !== "string" || !path.isAbsolute(input) || /[\r\n\0]/u.test(input)) {
+    throw new Error(`${PROJECT_CWD_INVALID}: Project cwd must be an absolute folder path.`);
+  }
+  try {
+    return requireAllowedCwd(input, [...allowedRoots]);
+  } catch {
+    throw new Error(
+      `${PROJECT_CWD_NOT_ALLOWED}: Project cwd must be an existing, canonical, allowed folder.`
+    );
+  }
+}
+
+/** Immutable view over a revisioned registry snapshot. */
 export class ProjectRegistry {
   private readonly entries: ProjectAvailability[];
-  private readonly allowedRoots: string[];
 
   constructor(
     projects: readonly ProjectTarget[],
-    allowedRoots: readonly string[],
+    private readonly allowedRoots: readonly string[],
+    readonly registryRevision = 0,
     options: ProjectRegistryOptions = {}
   ) {
-    if (!Array.isArray(projects)) {
-      throw new Error("Invalid projects: expected an array.");
-    }
+    if (!Array.isArray(projects)) throw new Error("Invalid projects: expected an array.");
     if (projects.length > MAX_REGISTERED_PROJECTS) {
       throw new Error(
         `${PROJECT_LIMIT_EXCEEDED}: At most ${MAX_REGISTERED_PROJECTS} projects may be registered.`
       );
     }
-    this.allowedRoots = allowedRoots.map((root) => {
-      if (!path.isAbsolute(root) || /[\r\n\0]/u.test(root)) {
-        throw new Error("Allowed project roots must be absolute paths.");
-      }
-      // Explicit roots are retained only for backwards-compatible operator
-      // restrictions. A normal installation passes an empty list and uses the
-      // project registry itself as the sole source of working folders.
-      return path.normalize(root);
-    });
-    const seenIds = new Set<string>();
-    const seenPaths = new Set<string>();
-    this.entries = projects.map((input, index) => {
-      if (!isProjectTarget(input)) {
-        throw new Error(`Invalid project at index ${index}.`);
-      }
-      const id = normalizeProjectId(input.id);
-      const label = normalizeProjectLabel(input.label);
-      if (seenIds.has(id)) {
-        throw new Error(`${PROJECT_DUPLICATE_ID}: Duplicate project ID: ${id}`);
-      }
-      seenIds.add(id);
-
-      if (!path.isAbsolute(input.cwd) || /[\r\n\0]/u.test(input.cwd)) {
-        throw new Error(
-          `${PROJECT_CWD_INVALID}: Project "${id}" must use an absolute cwd.`
-        );
-      }
-      let cwd = input.cwd;
-      let unavailableReason: string | undefined;
-      try {
-        cwd = requireAllowedCwd(input.cwd, [...this.allowedRoots]);
-      } catch (error) {
-        if (!options.retainUnavailable) {
-          throw new Error(
-            `${PROJECT_CWD_NOT_ALLOWED}: Project "${id}" must point to an available folder: ${error instanceof Error ? error.message : String(error)}`
-          );
+    const activeNames = new Set<string>();
+    const activeCwds = new Set<string>();
+    const ids = new Set<string>();
+    this.entries = projects
+      .map((input, index) => validateProjectTarget(input, index))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt - right.createdAt)
+      .map((project) => {
+        if (ids.has(project.id)) throw new Error(`${PROJECT_ID_INVALID}: Duplicate project identity.`);
+        ids.add(project.id);
+        if (project.archivedAt === undefined) {
+          if (activeNames.has(project.nameKey)) {
+            throw new Error(`${PROJECT_NAME_CONFLICT}: Active project names must be unique.`);
+          }
+          if (activeCwds.has(project.cwd)) {
+            throw new Error(`${PROJECT_CWD_CONFLICT}: Active project folders must be unique.`);
+          }
+          activeNames.add(project.nameKey);
+          activeCwds.add(project.cwd);
         }
-        unavailableReason = error instanceof Error ? error.message : String(error);
-      }
-
-      const pathKey = unavailableReason === undefined
-        ? cwd
-        : path.normalize(input.cwd);
-      if (seenPaths.has(pathKey)) {
-        throw new Error(`${PROJECT_DUPLICATE_PATH}: Duplicate project cwd: ${input.cwd}`);
-      }
-      seenPaths.add(pathKey);
-      return {
-        project: { id, label, cwd },
-        available: unavailableReason === undefined,
-        ...(unavailableReason === undefined ? {} : { unavailableReason })
-      };
-    });
-
+        let available = false;
+        let unavailableReason: string | undefined;
+        try {
+          available = canonicalProjectCwd(project.cwd, this.allowedRoots) === project.cwd;
+          if (!available) {
+            unavailableReason = "The saved folder no longer resolves canonically.";
+            if (!options.retainUnavailable && project.archivedAt === undefined) {
+              throw new Error(`${PROJECT_UNAVAILABLE}: ${unavailableReason}`);
+            }
+          }
+        } catch (error) {
+          if (!options.retainUnavailable && project.archivedAt === undefined) throw error;
+          unavailableReason = error instanceof Error ? error.message : String(error);
+        }
+        return {
+          project,
+          available: project.archivedAt === undefined && available,
+          ...(unavailableReason ? { unavailableReason } : {})
+        };
+      });
   }
 
   get projects(): ProjectTarget[] {
@@ -169,72 +206,94 @@ export class ProjectRegistry {
   }
 
   get availability(): ProjectAvailability[] {
-    return this.entries.map((entry) => ({
-      ...entry,
-      project: { ...entry.project }
-    }));
+    return this.entries.map((entry) => ({ ...entry, project: { ...entry.project } }));
   }
 
   get selectableProjects(): ProjectTarget[] {
     return this.entries
-      .filter((entry) => entry.available)
+      .filter((entry) => entry.available && entry.project.archivedAt === undefined)
       .map(({ project }) => ({ ...project }));
   }
 
   get unavailableProjectIds(): string[] {
     return this.entries
-      .filter((entry) => !entry.available)
+      .filter((entry) => entry.project.archivedAt === undefined && !entry.available)
       .map(({ project }) => project.id);
   }
 
-  resolve(projectId?: string): ProjectTarget {
-    if (this.entries.length === 0) {
+  resolve(selection?: ProjectSelection): ProjectTarget {
+    const active = this.entries.filter((entry) => entry.project.archivedAt === undefined);
+    if (active.length === 0) {
       throw new Error(
         `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting new work.`
       );
     }
-    if (projectId === undefined) {
+    if (!selection) {
       throw new Error(
-        `${PROJECT_REQUIRED}: Select an exact registered project before starting new work.`
+        `${PROJECT_REQUIRED}: Select an exact current project name and registry revision before starting new work.`
       );
     }
-    const selectedId = normalizeProjectId(projectId);
-    const entry = this.entries.find(({ project }) => project.id === selectedId);
-    if (!entry) {
-      throw new Error(`${PROJECT_NOT_FOUND}: Unknown project ID: ${selectedId}`);
+    if (
+      !Number.isInteger(selection.registryRevision) ||
+      selection.registryRevision < 0 ||
+      selection.registryRevision !== this.registryRevision
+    ) {
+      throw new Error(
+        `${PROJECT_REGISTRY_CHANGED}: Project choices changed. Refresh the tool descriptor and retry.`
+      );
     }
+    const key = projectNameKey(selection.name);
+    const matches = active.filter(({ project }) => project.nameKey === key);
+    if (matches.length !== 1) {
+      throw new Error(`${PROJECT_NOT_FOUND}: No active project has that exact normalized name.`);
+    }
+    const entry = matches[0] as ProjectAvailability;
     if (!entry.available) {
       throw new Error(
-        `${PROJECT_UNAVAILABLE}: Project "${selectedId}" folder is unavailable. Check or update it in Codex settings.`
+        `${PROJECT_UNAVAILABLE}: The selected project folder is unavailable. Check it in Codex settings.`
       );
     }
     return { ...entry.project };
   }
 }
 
-/** Deterministic compatibility target for the former single-default setting. */
-export function legacyDefaultProject(cwd: string): ProjectTarget {
-  if (!path.isAbsolute(cwd)) {
-    throw new Error(`${PROJECT_CWD_INVALID}: Legacy default cwd must be absolute.`);
+function rejectForbiddenProjectNameCodePoints(value: string): void {
+  if (FORBIDDEN_PROJECT_NAME_CODE_POINT.test(value)) {
+    throw new Error(
+      `${PROJECT_NAME_INVALID}: Control, surrogate, invisible, and bidirectional formatting characters are not allowed.`
+    );
   }
-  const rawLabel = path.basename(path.normalize(cwd)) || "Migrated project";
-  const printableLabel = rawLabel
-    .normalize("NFC")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
-    .trim() || "Migrated project";
-  return {
-    id: "default",
-    label: normalizeProjectLabel(Array.from(printableLabel).slice(0, PROJECT_LABEL_MAX_LENGTH).join("")),
-    cwd
-  };
 }
 
-function isProjectTarget(value: unknown): value is ProjectTarget {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.id === "string" &&
-    typeof candidate.label === "string" &&
-    typeof candidate.cwd === "string"
-  );
+function validateProjectTarget(value: ProjectTarget, index: number): ProjectTarget {
+  if (!value || typeof value !== "object") throw new Error(`Invalid project at index ${index}.`);
+  const id = normalizeProjectId(value.id);
+  const name = normalizeProjectName(value.name ?? value.label);
+  const nameKey = projectNameKey(name);
+  if (value.nameKey !== undefined && value.nameKey !== nameKey) {
+    throw new Error(`${PROJECT_NAME_INVALID}: Stored project name key is not canonical.`);
+  }
+  if (typeof value.cwd !== "string" || !path.isAbsolute(value.cwd) || /[\r\n\0]/u.test(value.cwd)) {
+    throw new Error(`${PROJECT_CWD_INVALID}: Stored project cwd must be absolute.`);
+  }
+  if (!Number.isInteger(value.sortOrder) || value.sortOrder < 0) {
+    throw new Error("Invalid project sort order.");
+  }
+  if (!Number.isFinite(value.createdAt) || !Number.isFinite(value.updatedAt)) {
+    throw new Error("Invalid project timestamps.");
+  }
+  if (value.archivedAt !== undefined && !Number.isFinite(value.archivedAt)) {
+    throw new Error("Invalid project archive timestamp.");
+  }
+  return {
+    id,
+    name,
+    label: name,
+    nameKey,
+    cwd: path.normalize(value.cwd),
+    sortOrder: value.sortOrder,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    ...(value.archivedAt === undefined ? {} : { archivedAt: value.archivedAt })
+  };
 }

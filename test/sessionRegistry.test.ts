@@ -7,6 +7,7 @@ import { BridgeStateStore } from "../src/stateStore.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
+const PROJECT_A = "33333333-3333-4333-8333-333333333333";
 
 describe("SessionRegistry", () => {
   it("persists only session metadata and restores it after restart", () => {
@@ -21,7 +22,7 @@ describe("SessionRegistry", () => {
       sessionId: "session-tree-1",
       forkedFromThreadId: "thread-parent",
       cwd: root,
-      projectId: "bridge",
+      projectId: PROJECT_A,
       projectLabel: "Codex MCP Bridge",
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
@@ -41,7 +42,7 @@ describe("SessionRegistry", () => {
     expect(restored.get("thread-1")).toMatchObject({
       scopeId: SCOPE_A,
       cwd: root,
-      projectId: "bridge",
+      projectId: PROJECT_A,
       projectLabel: "Codex MCP Bridge",
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },

@@ -3,7 +3,6 @@ import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import {
   SETTINGS_CARD_HTML,
-  SETTINGS_PROJECT_ID_HELPERS,
   uiBridgeErrorMessage
 } from "../src/settingsCard.js";
 import {
@@ -31,7 +30,11 @@ const PROJECT_TRANSLATION_KEYS = [
   "settings.projectAvailable",
   "settings.projectUnavailable",
   "settings.projectNew",
-  "settings.removeProject",
+  "settings.archiveProject",
+  "settings.restoreProject",
+  "settings.projectArchived",
+  "settings.projectArchivePending",
+  "settings.projectRestorePending",
   "settings.projectInvalidLabel",
   "settings.projectInvalidCwd",
   "settings.projectDuplicatePath",
@@ -278,11 +281,13 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain("defaultProjectId");
     expect(SETTINGS_CARD_HTML).toContain('operation:{kind:"patch",settings}');
     expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
-    expect(SETTINGS_CARD_HTML).toContain("allocateProjectId(record.label,record.cwd,reservedIds)");
-    expect(SETTINGS_CARD_HTML).toContain("record.row.dataset.projectId=record.id");
+    expect(SETTINGS_CARD_HTML).not.toContain("allocateProjectId");
+    expect(SETTINGS_CARD_HTML).toContain("if(project.id)row.dataset.projectId=project.id");
     expect(SETTINGS_CARD_HTML).toContain('row.querySelector(".project-label-input").focus()');
     expect(SETTINGS_CARD_HTML).not.toContain("PROJECT_DUPLICATE_ID");
-    expect(SETTINGS_CARD_HTML).toContain("PROJECT_DUPLICATE_PATH");
+    expect(SETTINGS_CARD_HTML).toContain("PROJECT_CWD_CONFLICT");
+    expect(SETTINGS_CARD_HTML).toContain('{kind:"archive",projectId:project.id}');
+    expect(SETTINGS_CARD_HTML).toContain('{kind:"restore",projectId:project.id');
     expect(SETTINGS_CARD_HTML).toContain("normalizedPathKey");
     expect(SETTINGS_CARD_HTML).not.toContain('document.createElement("details")');
     expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
@@ -377,30 +382,6 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
   });
 
-  it("allocates hidden stable project IDs from names or folders without reusing reserved IDs", () => {
-    const helpers = new Function(
-      `${SETTINGS_PROJECT_ID_HELPERS}\nreturn { projectIdStem, allocateProjectId, validProjectId };`
-    )() as {
-      projectIdStem: (value: unknown) => string;
-      allocateProjectId: (label: string, cwd: string, reserved: Set<string>) => string;
-      validProjectId: (value: unknown) => boolean;
-    };
-
-    expect(helpers.allocateProjectId("Web App", "/work/ignored", new Set())).toBe("web-app");
-    expect(helpers.allocateProjectId("Café", "/work/ignored", new Set())).toBe("cafe");
-    expect(helpers.allocateProjectId("웹 앱", "/work/api-service", new Set())).toBe("api-service");
-    expect(helpers.allocateProjectId("웹 앱", "/작업/폴더", new Set())).toBe("project");
-    expect(helpers.allocateProjectId(
-      "Web App",
-      "/work/web-app",
-      new Set(["web-app", "web-app-2"])
-    )).toBe("web-app-3");
-    const generated = helpers.allocateProjectId("x".repeat(100), "/work/x", new Set());
-    expect(generated).toHaveLength(64);
-    expect(helpers.validProjectId(generated)).toBe(true);
-    expect(helpers.projectIdStem("---")).toBe("");
-  });
-
   it("preserves nested host and project errors instead of rendering object coercions", () => {
     expect(uiBridgeErrorMessage({
       code: -32603,
@@ -413,9 +394,9 @@ describe("human-facing UI localization", () => {
     );
     expect(uiBridgeErrorMessage({
       error: {
-        content: [{ type: "text", text: "PROJECT_DUPLICATE_PATH: Duplicate project cwd." }]
+        content: [{ type: "text", text: "PROJECT_CWD_CONFLICT: Duplicate project cwd." }]
       }
-    }, "fallback")).toBe("PROJECT_DUPLICATE_PATH: Duplicate project cwd.");
+    }, "fallback")).toBe("PROJECT_CWD_CONFLICT: Duplicate project cwd.");
     expect(uiBridgeErrorMessage(new Error("[object Object]"), "fallback")).toBe("fallback");
 
     const circular: Record<string, unknown> = {};
