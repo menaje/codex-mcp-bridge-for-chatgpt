@@ -16,7 +16,6 @@ export const PROJECT_CWD_NOT_ALLOWED = "PROJECT_CWD_NOT_ALLOWED";
 export const PROJECT_DUPLICATE_ID = "PROJECT_DUPLICATE_ID";
 export const PROJECT_DUPLICATE_PATH = "PROJECT_DUPLICATE_PATH";
 export const PROJECT_LIMIT_EXCEEDED = "PROJECT_LIMIT_EXCEEDED";
-export const PROJECT_DEFAULT_NOT_FOUND = "PROJECT_DEFAULT_NOT_FOUND";
 export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
 
 export type ProjectTarget = {
@@ -35,7 +34,6 @@ export type ProjectAvailability = {
 };
 
 export type ProjectRegistryOptions = {
-  defaultProjectId?: string | null;
   /**
    * Preserve structurally valid absolute paths that cannot currently be
    * admitted. This is intended only for loading previously saved settings so
@@ -95,7 +93,6 @@ export function normalizeProjectLabel(value: string): string {
  */
 export class ProjectRegistry {
   private readonly entries: ProjectAvailability[];
-  private readonly selectedDefaultProjectId: string | null;
   private readonly allowedRoots: string[];
 
   constructor(
@@ -165,26 +162,10 @@ export class ProjectRegistry {
       };
     });
 
-    const requestedDefault = options.defaultProjectId ?? null;
-    this.selectedDefaultProjectId = requestedDefault === null
-      ? this.entries.length === 1 ? this.entries[0]!.project.id : null
-      : normalizeProjectId(requestedDefault);
-    if (
-      this.selectedDefaultProjectId !== null &&
-      !seenIds.has(this.selectedDefaultProjectId)
-    ) {
-      throw new Error(
-        `${PROJECT_DEFAULT_NOT_FOUND}: Default project does not exist: ${this.selectedDefaultProjectId}`
-      );
-    }
   }
 
   get projects(): ProjectTarget[] {
     return this.entries.map(({ project }) => ({ ...project }));
-  }
-
-  get defaultProjectId(): string | null {
-    return this.selectedDefaultProjectId;
   }
 
   get availability(): ProjectAvailability[] {
@@ -206,25 +187,18 @@ export class ProjectRegistry {
       .map(({ project }) => project.id);
   }
 
-  get effectiveDefaultProjectId(): string | null {
-    if (this.selectedDefaultProjectId !== null) return this.selectedDefaultProjectId;
-    return this.entries.length === 1 ? this.entries[0]?.project.id || null : null;
-  }
-
   resolve(projectId?: string): ProjectTarget {
     if (this.entries.length === 0) {
       throw new Error(
         `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting new work.`
       );
     }
-    const selectedId = projectId === undefined
-      ? this.effectiveDefaultProjectId
-      : normalizeProjectId(projectId);
-    if (selectedId === null) {
+    if (projectId === undefined) {
       throw new Error(
-        `${PROJECT_REQUIRED}: Select a registered project before starting new work.`
+        `${PROJECT_REQUIRED}: Select an exact registered project before starting new work.`
       );
     }
+    const selectedId = normalizeProjectId(projectId);
     const entry = this.entries.find(({ project }) => project.id === selectedId);
     if (!entry) {
       throw new Error(`${PROJECT_NOT_FOUND}: Unknown project ID: ${selectedId}`);
@@ -243,11 +217,11 @@ export function legacyDefaultProject(cwd: string): ProjectTarget {
   if (!path.isAbsolute(cwd)) {
     throw new Error(`${PROJECT_CWD_INVALID}: Legacy default cwd must be absolute.`);
   }
-  const rawLabel = path.basename(path.normalize(cwd)) || "Default project";
+  const rawLabel = path.basename(path.normalize(cwd)) || "Migrated project";
   const printableLabel = rawLabel
     .normalize("NFC")
     .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
-    .trim() || "Default project";
+    .trim() || "Migrated project";
   return {
     id: "default",
     label: normalizeProjectLabel(Array.from(printableLabel).slice(0, PROJECT_LABEL_MAX_LENGTH).join("")),
