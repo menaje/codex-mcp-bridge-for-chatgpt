@@ -40,6 +40,8 @@ export type BridgeUserSettings = {
   projects: ProjectTarget[];
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
+  /** Persist bridge-created Codex threads so they appear in the Codex app. */
+  showBridgeThreadsInCodexApp: boolean;
   activityCardVisibility: ActivityCardVisibility;
   completionHandoff: CompletionHandoffMode;
 };
@@ -119,6 +121,7 @@ export class UserSettingsStore {
       projects: legacyBootstrapRegistry.projects,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
+      showBridgeThreadsInCodexApp: true,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
@@ -351,6 +354,9 @@ export class UserSettingsStore {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
     validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
+    if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
+      throw new Error("Invalid Codex app thread-visibility preference.");
+    }
     if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
       throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
     }
@@ -524,6 +530,7 @@ export class UserSettingsStore {
       "usePriorityServiceTier" in value &&
       !migratedModelPolicy.changed &&
       "uiLocalePreference" in value &&
+      "showBridgeThreadsInCodexApp" in value &&
       "activityCardVisibility" in value &&
       "completionHandoff" in value &&
       !this.projectRegistryMigrationPending
@@ -622,6 +629,12 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Loaded
   if (value.usePriorityServiceTier !== undefined && typeof value.usePriorityServiceTier !== "boolean") {
     throw new Error(`Invalid usePriorityServiceTier in bridge settings at ${stateFile}.`);
   }
+  if (
+    value.showBridgeThreadsInCodexApp !== undefined &&
+    typeof value.showBridgeThreadsInCodexApp !== "boolean"
+  ) {
+    throw new Error(`Invalid showBridgeThreadsInCodexApp in bridge settings at ${stateFile}.`);
+  }
   const updatedAt = requiredStringOrNull("updatedAt");
   const legacyModel = value.defaultModel === undefined ? null : requiredStringOrNull("defaultModel");
   const legacyEffort = value.defaultReasoningEffort === undefined
@@ -668,6 +681,9 @@ function readSettings(value: Record<string, unknown>, stateFile: string): Loaded
         ? value.uiLocalePreference
         : "auto",
       maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
+      showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
+        ? value.showBridgeThreadsInCodexApp
+        : true,
       activityCardVisibility:
         value.activityCardVisibility === "always" ||
         value.activityCardVisibility === "background-only" ||
@@ -787,6 +803,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "projects",
     "uiLocalePreference",
     "maxConcurrentJobs",
+    "showBridgeThreadsInCodexApp",
     "activityCardVisibility",
     "completionHandoff"
   ]);

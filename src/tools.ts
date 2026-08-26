@@ -306,6 +306,7 @@ const bridgeUserSettingsOutputSchema = z.object({
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
+  showBridgeThreadsInCodexApp: z.boolean(),
   activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
@@ -362,6 +363,7 @@ const settingsViewOutputSchema = z.object({
       available: z.boolean()
     })),
     maxConcurrentJobs: z.number().int().positive(),
+    defaultBackend: z.enum(["mcp-server", "app-server"]),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
     operatorModelCeiling: z.array(modelChoiceZod()).nullable(),
@@ -3200,6 +3202,7 @@ export function registerBridgeTools(
         modelPolicyRevision: preferences.revision,
         modelPolicy: preferences.modelPolicy,
         usePriorityServiceTier: preferences.usePriorityServiceTier,
+        showBridgeThreadsInCodexApp: preferences.showBridgeThreadsInCodexApp,
         operatorModelCeiling: config.operatorModelCeiling || null,
         uiLocalePreference: preferences.uiLocalePreference,
         dynamicModelCatalog: true,
@@ -4779,7 +4782,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, bridge-enforced limits, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge, and whenever codex_task returns PROJECT_SETUP_REQUIRED so the user can register a project folder.",
+        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, Codex-app thread visibility, bridge-enforced limits, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge, and whenever codex_task returns PROJECT_SETUP_REQUIRED so the user can register a project folder.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -4860,6 +4863,7 @@ export function registerBridgeTools(
     usePriorityServiceTier: z.boolean().optional(),
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
+    showBridgeThreadsInCodexApp: z.boolean().optional(),
     activityCard: activityCardSettingsPatchInput.optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
@@ -4924,6 +4928,7 @@ export function registerBridgeTools(
           "usePriorityServiceTier",
           "uiLocalePreference",
           "maxConcurrentJobs",
+          "showBridgeThreadsInCodexApp",
           "activityCard",
           "projectOperations"
         ] as const;
@@ -4935,7 +4940,8 @@ export function registerBridgeTools(
           "modelPolicy",
           "usePriorityServiceTier",
           "uiLocalePreference",
-          "maxConcurrentJobs"
+          "maxConcurrentJobs",
+          "showBridgeThreadsInCodexApp"
         ] as const) {
           if (settings[key] !== undefined) {
             (patch as Record<string, unknown>)[key] = settings[key];
@@ -6127,6 +6133,12 @@ async function startNewSession(input: {
     sandbox,
     "approval-policy": input.config.defaultApprovalPolicy
   };
+  const ephemeralAppServerThread =
+    input.config.defaultBackend === "app-server" &&
+    !input.preferences.showBridgeThreadsInCodexApp;
+  if (input.config.defaultBackend === "app-server") {
+    payload.ephemeral = ephemeralAppServerThread;
+  }
   applyModelSelection(payload, executionDecision.effectiveSelection, input.config.defaultBackend);
   const sessionDecision: SessionDecision = {
     requestedMode: input.requestedMode,
@@ -6163,7 +6175,10 @@ async function startNewSession(input: {
             cwd,
             sandbox,
             approvalPolicy: input.config.defaultApprovalPolicy,
-            selection: executionDecision.effectiveSelection
+            selection: executionDecision.effectiveSelection,
+            ...(input.config.defaultBackend === "app-server"
+              ? { ephemeral: ephemeralAppServerThread }
+              : {})
           },
           onProgress,
           onAssigned
@@ -6451,7 +6466,8 @@ async function forkTrackedSession(input: {
         backendKind: input.session.backendKind,
         threadId: input.session.threadId,
         prompt: input.prompt,
-        selection: input.executionDecision.effectiveSelection
+        selection: input.executionDecision.effectiveSelection,
+        ephemeral: !input.preferences.showBridgeThreadsInCodexApp
       },
       onProgress,
       onAssigned
@@ -8661,6 +8677,7 @@ async function buildSettingsView(
         ({ project, available }) => ({ id: project.id, available })
       ),
       maxConcurrentJobs: config.maxConcurrentJobs,
+      defaultBackend: config.defaultBackend,
       allowWorkspaceWrite: config.allowWorkspaceWrite,
       allowDangerFullAccess: config.allowDangerFullAccess,
       operatorModelCeiling: config.operatorModelCeiling || null,

@@ -96,6 +96,9 @@ const ENGLISH = {
   "settings.language.auto": "Automatic",
   "settings.languageHint": "Automatic follows the host application's language.",
   "settings.concurrency": "Maximum concurrent jobs",
+  "settings.codexAppThreads": "Show bridge threads in the Codex app",
+  "settings.codexAppThreadsHint": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged.",
+  "settings.codexAppThreadsMcpHint": "Saved for App Server use. The current MCP Server backend cannot hide its threads; switch the bridge backend to App Server and restart to apply this to new and forked threads.",
   "settings.cardVisibility": "Activity card",
   "settings.cardVisibility.always": "Automatically show for all Codex work",
   "settings.cardVisibility.background": "Automatically show only for background Codex work",
@@ -108,7 +111,7 @@ const ENGLISH = {
   "settings.save": "Save settings",
   "settings.refreshModels": "Retry model lookup",
   "settings.reset": "Restore general defaults",
-  "settings.resetHint": "Restores access, model, interface, concurrency, and Activity settings. Projects and their order are kept.",
+  "settings.resetHint": "Restores access, model, Codex-app thread visibility, interface, concurrency, and Activity settings. Projects and their order are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.refreshing": "Retrying model lookup…",
@@ -1378,14 +1381,68 @@ const ISSUE26_OVERRIDES: Record<
   }
 };
 
+const CODEX_APP_THREAD_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "settings.codexAppThreads": "브리지 스레드를 Codex 앱에 표시",
+    "settings.codexAppThreadsHint": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다.",
+    "settings.codexAppThreadsMcpHint": "App Server용으로 저장됩니다. 현재 MCP Server 백엔드는 스레드를 숨길 수 없습니다. 새 스레드에 적용하려면 브리지 백엔드를 App Server로 변경하고 재시작하세요.",
+    "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+  },
+  ja: {
+    "settings.codexAppThreads": "ブリッジのスレッドを Codex アプリに表示",
+    "settings.codexAppThreadsHint": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。",
+    "settings.codexAppThreadsMcpHint": "App Server 用に保存されます。現在の MCP Server バックエンドではスレッドを非表示にできません。新しいスレッドに適用するには、ブリッジのバックエンドを App Server に変更して再起動してください。",
+    "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数、Activity の設定だけを戻します。プロジェクトと順序は保持されます。"
+  },
+  "zh-Hans": {
+    "settings.codexAppThreads": "在 Codex 应用中显示桥接线程",
+    "settings.codexAppThreadsHint": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。",
+    "settings.codexAppThreadsMcpHint": "此设置会保存供 App Server 使用。当前 MCP Server 后端无法隐藏线程；若要对新线程生效，请将桥接后端改为 App Server 并重启。",
+    "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、界面、并发数和 Activity 设置。项目和顺序会保留。"
+  },
+  "zh-Hant": {
+    "settings.codexAppThreads": "在 Codex 應用程式中顯示橋接執行緒",
+    "settings.codexAppThreadsHint": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。",
+    "settings.codexAppThreadsMcpHint": "此設定會儲存供 App Server 使用。目前的 MCP Server 後端無法隱藏執行緒；若要套用到新執行緒，請將橋接後端改為 App Server 並重新啟動。",
+    "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、介面、並行數與 Activity 設定。專案與順序會保留。"
+  },
+  es: {
+    "settings.codexAppThreads": "Mostrar los hilos del puente en la app Codex",
+    "settings.codexAppThreadsHint": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian.",
+    "settings.codexAppThreadsMcpHint": "Se guarda para usarlo con App Server. El backend MCP Server actual no puede ocultar sus hilos; cambia el backend del puente a App Server y reinícialo para aplicarlo a hilos nuevos.",
+    "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, interfaz, concurrencia y Activity. Se conservan los proyectos y su orden."
+  },
+  fr: {
+    "settings.codexAppThreads": "Afficher les fils du pont dans l’app Codex",
+    "settings.codexAppThreadsHint": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas.",
+    "settings.codexAppThreadsMcpHint": "Ce réglage est enregistré pour App Server. Le backend MCP Server actuel ne peut pas masquer ses fils ; passez le backend du pont à App Server et redémarrez-le pour l’appliquer aux nouveaux fils.",
+    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’interface, la simultanéité et Activity. Les projets et leur ordre sont conservés."
+  },
+  de: {
+    "settings.codexAppThreads": "Bridge-Threads in der Codex-App anzeigen",
+    "settings.codexAppThreadsHint": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert.",
+    "settings.codexAppThreadsMcpHint": "Die Einstellung wird für App Server gespeichert. Das aktuelle MCP-Server-Backend kann seine Threads nicht ausblenden; wechseln Sie das Bridge-Backend zu App Server und starten Sie neu, damit sie für neue Threads gilt.",
+    "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Oberfläche, Parallelität und Activity zurück. Projekte und Reihenfolge bleiben erhalten."
+  },
+  pt: {
+    "settings.codexAppThreads": "Mostrar threads da ponte no app Codex",
+    "settings.codexAppThreadsHint": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam.",
+    "settings.codexAppThreadsMcpHint": "A configuração é salva para uso com o App Server. O backend MCP Server atual não consegue ocultar seus threads; altere o backend da ponte para App Server e reinicie para aplicá-la a novos threads.",
+    "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, interface, concorrência e Activity. Projetos e ordem são mantidos."
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

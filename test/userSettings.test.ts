@@ -32,6 +32,7 @@ describe("user settings store", () => {
       projects: [],
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
+      showBridgeThreadsInCodexApp: true,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
@@ -43,6 +44,7 @@ describe("user settings store", () => {
         accessStrategy: "always-full",
         uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
+        showBridgeThreadsInCodexApp: false,
         activityCardVisibility: "background-only",
         completionHandoff: "auto-handoff"
       },
@@ -54,13 +56,19 @@ describe("user settings store", () => {
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
+      showBridgeThreadsInCodexApp: false,
       activityCardVisibility: "background-only",
       completionHandoff: "auto-handoff"
     });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
       version: 2,
-      settings: { schemaVersion: 2, revision: 1, accessStrategy: "always-full" }
+      settings: {
+        schemaVersion: 2,
+        revision: 1,
+        accessStrategy: "always-full",
+        showBridgeThreadsInCodexApp: false
+      }
     });
 
     const restored = new UserSettingsStore(config, { stateFile });
@@ -69,10 +77,39 @@ describe("user settings store", () => {
       accessStrategy: "always-full",
       uiLocalePreference: "ko",
       maxConcurrentJobs: 12,
+      showBridgeThreadsInCodexApp: false,
       activityCardVisibility: "background-only",
       completionHandoff: "auto-handoff"
     });
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
+  });
+
+  it("migrates a missing Codex-app visibility preference to the visible default", () => {
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+    const original = new UserSettingsStore(config, { stateFile });
+    original.update({ uiLocalePreference: "ko" }, 0);
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
+    delete persisted.settings.showBridgeThreadsInCodexApp;
+    writeFileSync(stateFile, JSON.stringify(persisted));
+
+    const migrated = new UserSettingsStore(config, {
+      stateFile,
+      now: () => Date.parse("2026-08-21T02:03:04Z")
+    });
+    expect(migrated.current).toMatchObject({
+      revision: 2,
+      updatedAt: "2026-08-21T02:03:04.000Z",
+      showBridgeThreadsInCodexApp: true
+    });
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings)
+      .toMatchObject({ revision: 2, showBridgeThreadsInCodexApp: true });
+
+    const invalid = JSON.parse(readFileSync(stateFile, "utf8"));
+    invalid.settings.showBridgeThreadsInCodexApp = "no";
+    writeFileSync(stateFile, JSON.stringify(invalid));
+    expect(() => new UserSettingsStore(config, { stateFile }))
+      .toThrow(/Invalid showBridgeThreadsInCodexApp/);
   });
 
   it("registers unrelated folders without a default and preserves projects on reset", () => {
@@ -108,6 +145,7 @@ describe("user settings store", () => {
       revision: 3,
       accessStrategy: "adaptive",
       uiLocalePreference: "auto",
+      showBridgeThreadsInCodexApp: true,
       projects: projectsBeforeReset
     });
     expect(reset).not.toHaveProperty("defaultProjectId");

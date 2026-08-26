@@ -15,6 +15,7 @@ const pendingServerRequests = new Map();
 const archivedThreads = new Set();
 const knownThreads = new Set();
 const threadLineages = new Map();
+const threadEphemeral = new Map();
 const loadedThreads = new Set();
 const systemErrorThreads = new Set();
 const backgroundTerminals = new Map();
@@ -125,6 +126,7 @@ lines.on("line", (line) => {
     const id = `fake-thread-${++threadSequence}`;
     knownThreads.add(id);
     threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
+    threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
     response(message.id, { thread: { id, ...threadLineages.get(id) } });
     return;
@@ -170,6 +172,7 @@ lines.on("line", (line) => {
       sessionId: threadLineages.get(message.params.threadId)?.sessionId || `fake-session-${threadSequence}`,
       forkedFromId: message.params.threadId
     });
+    threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
     response(message.id, { thread: { id, ...threadLineages.get(id) } });
     return;
@@ -531,6 +534,10 @@ function beginTurn(context) {
   }
   if (prompt.includes("report selection")) {
     finishTurn(context, "completed", `SELECTION:${JSON.stringify(context.selection)}`);
+    return;
+  }
+  if (prompt.includes("report ephemeral")) {
+    finishTurn(context, "completed", `EPHEMERAL:${String(threadEphemeral.get(threadId))}`);
     return;
   }
   if (prompt.includes("context window exceeded")) {

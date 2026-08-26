@@ -198,6 +198,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 - named projects with stable normalized IDs, Unicode labels, and canonical folders anywhere on the PC;
 - UI language;
 - active-job limit;
+- bridge-thread visibility in the Codex app;
 - Activity-card visibility: `always` makes all Codex work eligible for automatic
   display, `background-only` limits automatic display to jobs using
   `executionMode: background`, and `never` disables automatic cards;
@@ -207,6 +208,8 @@ In automatic policy's explicit mode, models and reasoning efforts are selected s
 
 Priority is an independent user preference, not part of the model policy. GPT sees and selects only `model` and `reasoningEffort`. When Priority is enabled, the bridge validates that the chosen model supports the Priority/Fast tier and injects the catalog's `priority` (or `fast`) identifier only into the downstream Codex call. Existing MCP threads retain their admission-time tier when that backend cannot change tiers on continuation.
 
+`Show bridge threads in the Codex app` defaults on to preserve existing behavior. With the App Server backend, turning it off makes only newly created and forked threads ephemeral, so they stay out of the Codex app list; existing threads are unchanged. Ephemeral threads live only in their App Server worker and cannot be resumed after that worker or the bridge restarts. The current MCP Server tool contract has no ephemeral-thread option, so the card saves the preference but explains that hiding requires switching the bridge backend to App Server and restarting.
+
 Opening Settings resolves the model catalog through the normal short-lived cache. There is no persistent refresh control or polling; when the lookup is stale or fails, the card keeps the last-known-good catalog and shows a contextual retry action.
 
 The Activity card has one conversation-scoped flat-feed layout. Older saved
@@ -215,7 +218,7 @@ layout setting.
 
 The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the card allocates a stable normalized routing ID automatically and keeps it hidden. The folders may be unrelated and live anywhere on the PC. Adding or editing a project resolves its folder with `realpath`, rejects files and duplicate canonical paths, and preserves identity across name/folder edits. No project is a default: every new Activity or fresh Agent context must select one exact registered project. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until it is fixed or removed. Legacy `defaultCwd` data is deterministically migrated to a registered `default` project, while the retired default selection fields are removed.
 
-The generation-7 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 6 is retired because its mutation contract still contained default-project selection; compatible generation-7 content revisions remain retainable.
+The generation-8 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project IDs, names, folders, order, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, and `remove` variants expose only their relevant fields. The bridge checks `expectedRevision` before any fresh model-catalog lookup and again immediately before persistence. Generation 6 is retired because its mutation contract still contained default-project selection; compatible generation-7 content revisions remain retainable.
 
 `codex_task` projects the currently selectable project IDs and labels, never their paths. Every new Activity or fresh Agent context requires an exact `projectId`, even when only one project is registered. Omission fails with `PROJECT_REQUIRED`; with no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Existing Activities and continued/forked Agent threads may omit `projectId` and retain their admission-time project, folder, and sandbox even after Settings changes. A conflicting project selection returns `PROJECT_CONTEXT_CONFLICT`. A project folder selects where Codex starts; filesystem reach remains governed by the saved access/sandbox policy.
 

@@ -4,6 +4,39 @@ import type { CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src
 import { backendRoutingArgument, CodexBackendRouter } from "../src/upstreamRouter.js";
 
 describe("CodexBackendRouter", () => {
+  it("forwards ephemeral only for App Server thread starts", async () => {
+    const mcp = fakeBackend("mcp-server");
+    const app = fakeBackend("app-server");
+    const router = new CodexBackendRouter("app-server", mcp.backend, app.backend);
+    const selection = { model: "gpt-5.6-sol", reasoningEffort: "high" };
+
+    await router.startThread?.({
+      backendKind: "app-server",
+      prompt: "hidden",
+      cwd: "/tmp/project",
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      selection,
+      ephemeral: true
+    });
+    expect(app.calls.at(-1)?.args).toMatchObject({
+      prompt: "hidden",
+      ephemeral: true
+    });
+
+    await router.startThread?.({
+      backendKind: "mcp-server",
+      prompt: "visible",
+      cwd: "/tmp/project",
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      selection,
+      ephemeral: true
+    });
+    expect(mcp.calls.at(-1)?.args).not.toHaveProperty("ephemeral");
+    await router.close();
+  });
+
   it("uses the configured backend for new threads and pins every continuation", async () => {
     const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");

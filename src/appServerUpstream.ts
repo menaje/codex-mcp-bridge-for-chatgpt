@@ -300,7 +300,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       requestArguments(input.prompt, input.selection, {
         cwd: input.cwd,
         sandbox: input.sandbox,
-        "approval-policy": input.approvalPolicy
+        "approval-policy": input.approvalPolicy,
+        ephemeral: input.ephemeral === true
       }),
       onProgress,
       onAssigned
@@ -332,7 +333,9 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const connection = await this.connectionFor(worker);
       const result = await connection.forkThreadAndTurn(
         input.threadId,
-        requestArguments(input.prompt, input.selection, {}),
+        requestArguments(input.prompt, input.selection, {
+          ephemeral: input.ephemeral === true
+        }),
         onProgress,
         (assignment) => {
           if (assignment.threadId) {
@@ -790,7 +793,7 @@ class AppServerConnection {
         serviceTier: optionalString(args.serviceTier) || null,
         config: isRecord(args.config) ? args.config : null,
         experimentalRawEvents: false,
-        ephemeral: false
+        ephemeral: args.ephemeral === true
       },
       { timeoutMs: this.protocolOptions.requestTimeoutMs }
     );
@@ -799,9 +802,9 @@ class AppServerConnection {
     const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
     this.threadLineage.set(threadId, lineage);
-    // Persist the durable thread identity before turn/start. If the worker
-    // exits between these two protocol steps, the bridge can still expose and
-    // resume the exact created thread instead of losing it.
+    // Record the thread identity before turn/start. Durable threads can be
+    // resumed after a worker exit; ephemeral threads remain correlated for
+    // diagnostics but may become orphaned when their worker disappears.
     onAssigned?.(this.workerAssignment(threadId));
     return this.startTurn(
       threadId,
@@ -838,7 +841,7 @@ class AppServerConnection {
   ): Promise<ToolResult> {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
-      { threadId: sourceThreadId },
+      { threadId: sourceThreadId, ephemeral: args.ephemeral === true },
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
         lateResponseContext: { sourceThreadId }

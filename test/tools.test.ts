@@ -1255,7 +1255,7 @@ describe("bridge tools", () => {
             "operation",
           ],
           "propertyCount": 2,
-          "schemaBytes": 4200,
+          "schemaBytes": 4249,
           "visibility": {
             "app": true,
             "model": false,
@@ -1610,10 +1610,12 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/4632bf12f0b0.html",
             "ui://codex-mcp-bridge/settings/806437315544.html",
             "ui://codex-mcp-bridge/settings/5f348837faba.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/5804dd38e35a.html",
             "ui://codex-mcp-bridge/activity/536d28d41856.html",
             "ui://codex-mcp-bridge/activity/4a8f190de901.html",
             "ui://codex-mcp-bridge/activity/030f9817fd9e.html",
@@ -2828,6 +2830,7 @@ describe("bridge tools", () => {
           kind: "patch",
           settings: {
             uiLocalePreference: "ko",
+            showBridgeThreadsInCodexApp: false,
             activityCard: { visibility: "background-only", completionHandoff: "auto-handoff" }
           }
         }
@@ -2837,6 +2840,7 @@ describe("bridge tools", () => {
       .toMatchObject({
         revision: 1,
         uiLocalePreference: "ko",
+        showBridgeThreadsInCodexApp: false,
         activityCardVisibility: "background-only",
         completionHandoff: "auto-handoff"
       });
@@ -2870,6 +2874,7 @@ describe("bridge tools", () => {
       .toMatchObject({
         revision: 2,
         uiLocalePreference: "auto",
+        showBridgeThreadsInCodexApp: true,
         activityCardVisibility: "always",
         completionHandoff: "off"
       });
@@ -3281,6 +3286,50 @@ describe("bridge tools", () => {
     ]);
 
     await close();
+  });
+
+  it("maps the Codex-app visibility preference only to new App Server threads", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new FakeUpstream();
+    const settings = new UserSettingsStore(config);
+    settings.update({ showBridgeThreadsInCodexApp: false }, settings.current.revision);
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+
+    await runTask(client, { prompt: "hidden App Server thread", sessionMode: "new" });
+    expect(upstream.calls[0]).toMatchObject({
+      name: "codex",
+      args: { ephemeral: true }
+    });
+
+    settings.update({ showBridgeThreadsInCodexApp: true }, settings.current.revision);
+    await runTask(client, { prompt: "visible App Server thread", sessionMode: "new" });
+    expect(upstream.calls[1]).toMatchObject({
+      name: "codex",
+      args: { ephemeral: false }
+    });
+    await close();
+
+    const mcpUpstream = new FakeUpstream();
+    const mcpConfig = configFor(root);
+    const mcpSettings = new UserSettingsStore(mcpConfig);
+    mcpSettings.update({ showBridgeThreadsInCodexApp: false }, mcpSettings.current.revision);
+    const mcpClient = await connectTestClient(
+      mcpConfig,
+      mcpUpstream,
+      undefined,
+      new FakeModelCatalog(),
+      mcpSettings
+    );
+    await runTask(mcpClient.client, { prompt: "MCP thread", sessionMode: "new" });
+    expect(mcpUpstream.calls[0]?.args).not.toHaveProperty("ephemeral");
+    await mcpClient.close();
   });
 
   it("creates and reuses one explicit Activity across parallel background Codex jobs", async () => {

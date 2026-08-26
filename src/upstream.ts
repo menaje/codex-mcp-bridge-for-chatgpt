@@ -156,6 +156,8 @@ export type CodexThreadStartRequest = {
   sandbox: SandboxMode;
   approvalPolicy: ApprovalPolicy;
   selection: ModelSelection;
+  /** App Server only: keep the new thread in memory instead of materializing it on disk. */
+  ephemeral?: boolean;
 };
 
 export type CodexThreadContinueRequest = {
@@ -170,6 +172,8 @@ export type CodexThreadForkRequest = {
   threadId: string;
   prompt: string;
   selection?: ModelSelection;
+  /** App Server only: keep the fork in memory instead of materializing it on disk. */
+  ephemeral?: boolean;
 };
 
 export type CodexUpstream = {

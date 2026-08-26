@@ -297,6 +297,44 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("creates hidden App Server starts and forks as ephemeral threads", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const hidden = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "report ephemeral start",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        ephemeral: true
+      });
+      expect(hidden.content).toEqual([{ type: "text", text: "EPHEMERAL:true" }]);
+
+      const visible = await pool.startThread!({
+        backendKind: "app-server",
+        prompt: "report ephemeral default",
+        cwd: process.cwd(),
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      });
+      expect(visible.content).toEqual([{ type: "text", text: "EPHEMERAL:false" }]);
+
+      const sourceThreadId = (visible.structuredContent as { threadId: string }).threadId;
+      const hiddenFork = await pool.forkThread!({
+        backendKind: "app-server",
+        threadId: sourceThreadId,
+        prompt: "report ephemeral fork",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        ephemeral: true
+      });
+      expect(hiddenFork.content).toEqual([{ type: "text", text: "EPHEMERAL:true" }]);
+    } finally {
+      await pool.close();
+    }
+  }, 15_000);
+
   it("fails closed with actionable structured recovery for context-window exhaustion", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {

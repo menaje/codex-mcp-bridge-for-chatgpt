@@ -68,6 +68,13 @@ describe("human-facing UI localization", () => {
         UI_TRANSLATIONS.en["settings.cardVisibility"]
       );
       for (const key of [
+        "settings.codexAppThreads",
+        "settings.codexAppThreadsHint",
+        "settings.codexAppThreadsMcpHint"
+      ] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
+      for (const key of [
         "settings.cardVisibility.always",
         "settings.cardVisibility.background",
         "settings.cardVisibility.never",
@@ -121,6 +128,15 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.cardVisibility.background"]).toBe(
       "백그라운드 Codex 작업에만 자동 표시"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
+      "브리지 스레드를 Codex 앱에 표시"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsHint"]).toContain(
+      "Codex 앱 목록에 나타나지 않으며"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsMcpHint"]).toContain(
+      "MCP Server 백엔드는 스레드를 숨길 수 없습니다"
     );
   });
 
@@ -187,6 +203,15 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
     expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).toContain(
+      'id="show-bridge-threads-in-codex-app" type="checkbox"'
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
+      "showBridgeThreadsInCodexApp:elements.codexAppThreads.checked"
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
+      'view.capabilities.defaultBackend==="app-server"'
+    );
     expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
     expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");

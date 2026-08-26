@@ -75,6 +75,9 @@ export class CodexBackendRouter implements CodexUpstream {
         cwd: input.cwd,
         sandbox: input.sandbox,
         "approval-policy": input.approvalPolicy,
+        ...(input.backendKind === "app-server"
+          ? { ephemeral: input.ephemeral === true }
+          : {}),
         ...selectionArguments(input.selection, input.backendKind),
         ...backendRoutingArgument(input.backendKind)
       },
