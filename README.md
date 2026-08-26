@@ -136,11 +136,21 @@ instead of guessing a local path.
 For a tunnel connection:
 
 ```bash
-export CONTROL_PLANE_API_KEY="<runtime-key>"
-export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
+install -d -m 700 "$HOME/.config/codex-mcp-bridge"
+install -m 600 .env.example "$HOME/.config/codex-mcp-bridge/.env"
+
+# Edit the two CONTROL_PLANE_* values once, without committing the file.
+${EDITOR:-vi} "$HOME/.config/codex-mcp-bridge/.env"
 
 npm run bridge:secure
 ```
+
+The bundled launcher automatically reads `~/.config/codex-mcp-bridge/.env`.
+Use `--env-file <path>` or `CODEX_MCP_BRIDGE_ENV_FILE` for an explicit override.
+Already-exported process variables take precedence. A repository-root `.env`
+is a development fallback only: registered project folders reject common
+secret filenames, so production credentials should stay in the private config
+directory outside every project.
 
 Capability profiles are operator ceilings:
 
@@ -344,7 +354,7 @@ The card does not expose event timelines, Agent/job/thread IDs, full working pat
 
 Automatic card duplication is suppressed per `scopeId + activityPresentationId`; the first eligible result reserves that presentation across Activities, Agents, and exact retries. `activityId + cardGeneration` remains only the mounted Activity validity check. A mounted widget renews an in-memory lease keyed by `openai/widgetSessionId`; abort/unmount/TTL releases it, and restart does not restore presentation ownership. After restart, the first valid mounted automatic card safely re-establishes ownership.
 
-Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The current and sole retained content-hashed Activity revisions both use generation 4 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Older flat status/control generations are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
+Only the newest automatic presentation in a conversation owns the bounded scope-version long poll and completion handoff. Activating a new presentation wakes the prior automatic card, which keeps its last snapshot and receives a normal `presentation-superseded` stop signal instead of retrying or retaining a watcher slot. Explicitly opened `codex_activity` cards are a separate class: at most three may watch per scope alongside the one automatic owner, and they never compete for automatic completion handoff. `openai/widgetSessionId` is correlation evidence, not authorization by itself; control tools also revalidate the exact Activity/generation/presentation lease and resource ownership. The current content-hashed Activity resource uses contract generation 6 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Earlier generations are no longer registered or accepted. `executionMode: background` returns a tracked job immediately; `foreground` waits for its terminal result. Neither mode changes Activity completion. Use `codex_status({ query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 55000 } })` only as a bounded fallback; timeout does not stop Codex.
 
 ## UI cache-key and Plugin Refresh policy
 
@@ -355,18 +365,20 @@ ui://codex-mcp-bridge/settings/<sha256-prefix>.html
 ui://codex-mcp-bridge/activity/<sha256-prefix>.html
 ```
 
-`ui-manifest.lock.json` and `ui-resources/` contain source-side current/retained snapshots. `npm run release:sync` is the only command that updates them and the generated source manifest. Build reproduces `dist/ui-manifest.json` and packages current plus one previous URI. `release:check` rejects content/digest, metadata, resource/descriptor, `ui.resourceUri`, `openai/outputTemplate`, missing-resource, duplicate-URI, or snapshot drift.
+`ui-manifest.lock.json` and `ui-resources/` contain source-side current/retained snapshots. `npm run release:sync` is the only command that updates them and the generated source manifest. Build reproduces `dist/ui-manifest.json` and packages the current URI plus every historical revision whose `codex/uiContractGeneration` is still supported by `uiResources.minimumContractGeneration`. Raising a minimum generation is the explicit retirement boundary. `release:check` rejects content/digest, metadata, resource/descriptor, `ui.resourceUri`, `openai/outputTemplate`, missing-resource, duplicate-URI, or snapshot drift.
 
 SemVer and UI identity are independent: a release-only version change preserves unchanged UI URIs; a UI or relevant resource-metadata change creates a new URI even within the same development version.
+
+A routine bridge, tunnel, or machine restart with the same packaged build does not change these URIs and does not require a ChatGPT plugin Refresh. Refresh is required only after tool or UI metadata changes. Supported cached descriptors continue resolving through the retained compatibility resources while the new descriptor is adopted.
 
 Deployment order:
 
 1. run `npm run release:sync`, `npm run release:check`, and `npm run check`;
-2. deploy/restart the server that serves both current and previous resources;
+2. deploy/restart the server that serves the current and all supported compatibility resources;
 3. in ChatGPT Developer mode, open the plugin detail and select **Refresh**;
 4. confirm `codex_settings`'s output template equals the current Settings URI in `dist/ui-manifest.json`;
 5. smoke-test Settings open/save/model refresh/default restore and Activity rendering in a new conversation;
-6. check an existing conversation. If it retains the old tool list, request tool rediscovery or start a new conversation. The bridge cannot force cached conversation metadata to refresh.
+6. check an existing conversation. Its supported cached UI URI must still resolve; request tool rediscovery or start a new conversation only to adopt the new tool metadata. The bridge cannot force cached conversation metadata to refresh.
 
 See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist and [docs/releasing.md](docs/releasing.md) for release details.
 
@@ -400,7 +412,7 @@ npm run check
 
 Do not hand-edit `.codex-plugin/plugin.json`, `.app.json`, generated UI manifests/snapshots, or use `npm version` directly.
 
-The current product/repository/package names include **for ChatGPT**. Bare `codex-mcp-bridge` values are a retained runtime namespace covering the executable, environment prefix, local state directory, Keychain services, tunnel profile, and MCP App URI namespace.
+The current product/repository/package names include **for ChatGPT**. Bare `codex-mcp-bridge` values are a retained runtime namespace covering the executable, environment prefix, private dotenv directory, local state directory, tunnel profile, and MCP App URI namespace.
 
 ## Configuration
 
@@ -408,6 +420,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | --- | --- | --- |
 | `CODEX_MCP_BRIDGE_HOST` | `127.0.0.1` | HTTP bind host |
 | `CODEX_MCP_BRIDGE_PORT` | `8765` | Direct-server port; launcher defaults to `8876` |
+| `CODEX_MCP_BRIDGE_ENV_FILE` | `~/.config/codex-mcp-bridge/.env` | Explicit private dotenv path for bundled launchers |
 | `CODEX_MCP_BRIDGE_TOKEN` | unset | Bearer token unless loopback no-auth is used |
 | `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Allowed only on loopback |
 | `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI command; App Server requires the manifest-pinned exact version |
@@ -435,17 +448,6 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Local diagnostics/upstream stderr |
 
 Legacy `DEFAULT_SESSION_MODE`, `AUTO_RESUME_TTL_MS`, `FAST_RETURN_MS`, and `UPSTREAM_TIMEOUT_MS` variables are ignored with migration warnings. The pre-fork `CODEX_GPT_BRIDGE_*` prefix is a temporary compatibility fallback.
-
-## macOS Keychain
-
-The service strings are retained runtime compatibility keys:
-
-```bash
-security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-api-key" -w "<runtime-key>" -U
-security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-tunnel-id" -w "tunnel_..." -U
-
-npm run bridge:secure:keychain
-```
 
 `CODEX_MCP_BRIDGE_ROOTS` remains accepted only as a backwards-compatible
 restriction for older direct-server deployments. The bundled launchers never

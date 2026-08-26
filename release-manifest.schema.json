@@ -132,12 +132,20 @@
     "uiResources": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy", "hashAlgorithm", "hashLength", "retainPrevious", "resources"],
+      "required": ["strategy", "hashAlgorithm", "hashLength", "minimumContractGeneration", "resources"],
       "properties": {
         "strategy": { "const": "content-hash" },
         "hashAlgorithm": { "const": "sha256" },
         "hashLength": { "type": "integer", "minimum": 12, "maximum": 64 },
-        "retainPrevious": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "minimumContractGeneration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["settings", "activity"],
+          "properties": {
+            "settings": { "type": "integer", "minimum": 1 },
+            "activity": { "type": "integer", "minimum": 1 }
+          }
+        },
         "resources": {
           "type": "array",
           "minItems": 2,

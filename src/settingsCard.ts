@@ -8,8 +8,8 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 5;
-export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 4;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 6;
+export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 5;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Settings`,
@@ -34,6 +34,58 @@ export const SETTINGS_PROJECT_ID_HELPERS = String.raw`
     function projectIdStem(value) { return String(value||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").replace(/-+/g,"-").slice(0,64).replace(/-+$/g,""); }
     function allocateProjectId(label,cwd,reserved) { const folder=String(cwd||"").replace(/\/+$/g,"").split("/").pop()||"",base=projectIdStem(label)||projectIdStem(folder)||"project";if(!reserved.has(base))return base;for(let suffix=2;suffix<10000;suffix+=1){const tail="-"+suffix,candidate=(base.slice(0,64-tail.length).replace(/-+$/g,"")||"project")+tail;if(!reserved.has(candidate))return candidate;}throw new Error("PROJECT_ID_ALLOCATION_FAILED"); }
     function validProjectId(value) { return typeof value==="string"&&value.length>0&&value.length<=64&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value); }`;
+
+export function uiBridgeErrorMessage(
+  value: unknown,
+  fallback = "Something went wrong."
+): string {
+  const visited = new Set<object>();
+  const visit = (candidate: unknown): string => {
+    if (typeof candidate === "string") {
+      const message = candidate.trim();
+      return message === "[object Object]" ? "" : message;
+    }
+    if (typeof candidate === "number" || typeof candidate === "boolean") {
+      return String(candidate);
+    }
+    if (candidate === null || typeof candidate !== "object") return "";
+    if (visited.has(candidate)) return "";
+    visited.add(candidate);
+
+    const record = candidate as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    let message = "";
+    for (const key of ["message", "error", "data", "cause", "detail", "details"]) {
+      message = visit(record[key]);
+      if (message) break;
+    }
+    if (!message && Array.isArray(record.content)) {
+      for (const item of record.content) {
+        if (
+          item &&
+          typeof item === "object" &&
+          (item as Record<string, unknown>).type === "text" &&
+          typeof (item as Record<string, unknown>).text === "string"
+        ) {
+          message = visit((item as Record<string, unknown>).text);
+          if (message) break;
+        }
+      }
+    }
+    if (!message) {
+      try {
+        const serialized = JSON.stringify(candidate);
+        if (serialized && serialized !== "{}") message = serialized;
+      } catch {
+        // Circular or otherwise non-serializable host errors fall through.
+      }
+    }
+    if (code && message && !message.includes(code)) return `${code}: ${message}`;
+    return message || code;
+  };
+
+  return visit(value) || fallback;
+}
 
 export function registerSettingsCardResource(server: McpServer): void {
   for (const [index, revision] of uiResourceRevisions("settings").entries()) {
@@ -171,9 +223,11 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
   </main>
   <script>
     const BUNDLES = ${serializedUiTranslations()};
+    ${uiBridgeErrorMessage.toString()}
     const pendingRequests = new Map();
     const REQUEST_TIMEOUT_MS = 90000;
     let nextRequestId = 1;
+    let standardBridgeReady = Promise.resolve(false);
     let view = null;
     let modelPolicyDirty = false;
     let savedPreferredKey = "";
@@ -194,10 +248,13 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     function effectiveLocaleTag() { return localePreference==="auto"?hostLocaleTag:localePreference; }
     function setLocale(value,rerender=true) { localeTag=String(value||"en").replaceAll("_","-");locale=resolveLocale(localeTag);t=BUNDLES[locale]||BUNDLES.en;document.documentElement.lang=localeTag;for(const node of document.querySelectorAll("[data-i18n]"))node.textContent=t[node.dataset.i18n]||BUNDLES.en[node.dataset.i18n]||node.dataset.i18n;if(rerender&&view)render(view,true,true); }
     function option(value,label) { const node=document.createElement("option");node.value=value;node.textContent=label;return node; }
-    function callTool(name,args) { if(window.openai&&typeof window.openai.callTool==="function")return window.openai.callTool(name,args);return new Promise((resolve,reject)=>{const id=nextRequestId++;const timer=setTimeout(()=>{pendingRequests.delete(id);reject(new Error(t["common.error"]));},REQUEST_TIMEOUT_MS);pendingRequests.set(id,{resolve:(v)=>{clearTimeout(timer);resolve(v);},reject:(e)=>{clearTimeout(timer);reject(e);}});window.parent.postMessage({jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments:args}},"*");}); }
+    function rpcRequest(method,params,timeout=REQUEST_TIMEOUT_MS) { return new Promise((resolve,reject)=>{const id=nextRequestId++;const timer=setTimeout(()=>{pendingRequests.delete(id);reject(new Error(t["common.error"]));},timeout);pendingRequests.set(id,{resolve:(v)=>{clearTimeout(timer);resolve(v);},reject:(e)=>{clearTimeout(timer);reject(e);}});window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*");}); }
+    function rpcNotification(method,params) { window.parent.postMessage({jsonrpc:"2.0",method,params},"*"); }
+    async function initializeStandardBridge() { try { const result=await rpcRequest("ui/initialize",{appInfo:{name:"codex-mcp-bridge-settings",version:"${SETTINGS_CARD_CONTRACT_GENERATION}"},appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"},5000);if(!result||typeof result.protocolVersion!=="string")return false;document.documentElement.dataset.mcpApps="initialized";const context=result.hostContext||{};if(context.locale)hostLocaleTag=String(context.locale);rpcNotification("ui/notifications/initialized",{});if(localePreference==="auto")setLocale(hostLocaleTag);return true;}catch{document.documentElement.dataset.mcpApps="fallback";return false;} }
+    async function callTool(name,args) { if(window.openai&&typeof window.openai.callTool==="function"){try{return await window.openai.callTool(name,args);}catch(error){throw new Error(uiBridgeErrorMessage(error,t["common.error"]));}}await standardBridgeReady;return rpcRequest("tools/call",{name,arguments:args}); }
     function toolText(result) { const entry=result&&Array.isArray(result.content)&&result.content.find((item)=>item&&item.type==="text"&&typeof item.text==="string");return entry&&entry.text||""; }
     function parsedToolText(result) { const value=toolText(result);if(!value)return null;try{return JSON.parse(value);}catch{return null;} }
-    function toolErrorMessage(result,parsed) { const payload=result&&result.structuredContent||parsed||result,error=payload&&payload.error;if(typeof error==="string")return error;if(error&&typeof error.message==="string")return(typeof error.code==="string"?error.code+": ":"")+error.message;return toolText(result)||t["common.error"]; }
+    function toolErrorMessage(result,parsed) { const payload=result&&result.structuredContent||parsed||result,error=payload&&payload.error,message=uiBridgeErrorMessage(error,"");return message||toolText(result)||uiBridgeErrorMessage(result,t["common.error"]); }
     function privateSettingsView(metadata) { const candidate=metadata&&metadata["codex/settingsView"];return candidate&&candidate.settings&&candidate.capabilities&&candidate.catalog?candidate:null; }
     function unwrap(result) { if(result&&result._meta){const responseHostLocale=result._meta.hostLocale||result._meta["webplus/i18n"];if(responseHostLocale)hostLocaleTag=String(responseHostLocale);}const parsed=parsedToolText(result),next=privateSettingsView(result&&result._meta)||result&&result.structuredContent||parsed||result;if(result&&result.isError||next&&next.error&&!next.settings)throw new Error(toolErrorMessage(result,parsed));if(!next||!next.settings||!next.capabilities||!next.catalog||(next.settings.projects||[]).some((project)=>typeof project.cwd!=="string")){const text=toolText(result);if(text&&!parsed)throw new Error(text);throw new Error(t["settings.invalidResponse"]);}return next; }
     function modelFor(id) { return view&&view.catalog.models.find((entry)=>entry.id===id); }
@@ -282,10 +339,10 @@ ${SETTINGS_PROJECT_ID_HELPERS}
     function updateCardPolicy() { const hidden=elements.cardVisibility.value==="never";if(hidden)elements.handoff.value="off";elements.handoff.disabled=hidden;elements.handoffHint.textContent=hidden?t["settings.handoffRequiresCard"]:""; }
     function render(next,localeReady=false,preserveLocalePreference=false) { if(!next||!next.settings)return;view=next;const settings=next.settings,limits=next.capabilities;if(!preserveLocalePreference)localePreference=settings.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);elements.access.replaceChildren();const accessLabels={"read-only":t["settings.access.readOnly"],adaptive:t["settings.access.adaptive"],"always-full":t["settings.access.full"]};for(const value of limits.availableAccessStrategies||[])elements.access.appendChild(option(value,accessLabels[value]||value));elements.access.value=settings.accessStrategy;elements.priority.checked=settings.usePriorityServiceTier===true;modelPolicyDirty=false;renderModelPolicy(settings.modelPolicy,settings.legacyPreferredModel?defaultSelectionForModel(settings.legacyPreferredModel):null);renderProjects(settings,limits);elements.language.replaceChildren();for(const value of limits.availableUiLocalePreferences||["auto",...Object.keys(LANGUAGE_LABELS)])elements.language.appendChild(option(value,value==="auto"?t["settings.language.auto"]:LANGUAGE_LABELS[value]||value));elements.language.value=localePreference;elements.concurrency.value=String(settings.maxConcurrentJobs);elements.concurrency.max=String(limits.maxConcurrentJobs);elements.cardVisibility.value=settings.activityCardVisibility||"always";elements.handoff.value=settings.completionHandoff||"off";updateAccessNotice();updateCardPolicy();const catalogProblem=Boolean(next.catalog.warning||next.catalog.stale||next.catalog.validation==="invalid"),warnings=[next.catalog.warning,...(next.warnings||[])].filter(Boolean).join("\n")||(catalogProblem?t["common.error"]:"");elements.catalogWarningText.textContent=warnings;elements.catalogWarning.classList.toggle("show",Boolean(warnings));elements.retryModels.hidden=!catalogProblem; }
     function setBusy(busy,message) { for(const node of[elements.save,elements.retryModels,elements.reset])node.disabled=busy;elements.addProject.disabled=busy||projectRows().length>=100;elements.status.classList.remove("error");elements.status.textContent=message||""; }
-    function setError(error) { elements.status.classList.add("error");elements.status.textContent=error instanceof Error?error.message:String(error); }
-    async function handleMutationError(error) { const value=error instanceof Error?error.message:String(error);if(value.includes("PROJECT_")||value.includes("DEFAULT_CWD_NOT_ALLOWED")){setBusy(false);showProjectError(projectErrorMessage(value));elements.status.classList.add("error");elements.status.textContent=t["settings.projectError"];return;}if(!value.includes("SETTINGS_REVISION_CONFLICT")){setBusy(false);setError(error);return;}try{render(unwrap(await callTool("codex_settings",{})));setBusy(false);elements.status.classList.add("error");elements.status.textContent=t["settings.conflict"];}catch(refreshError){setBusy(false);setError(refreshError);} }
+    function setError(error) { elements.status.classList.add("error");elements.status.textContent=uiBridgeErrorMessage(error,t["common.error"]); }
+    async function handleMutationError(error) { const value=uiBridgeErrorMessage(error,t["common.error"]);if(value.includes("PROJECT_")||value.includes("DEFAULT_CWD_NOT_ALLOWED")){setBusy(false);showProjectError(projectErrorMessage(value));elements.status.classList.add("error");elements.status.textContent=t["settings.projectError"];return;}if(!value.includes("SETTINGS_REVISION_CONFLICT")){setBusy(false);setError(error);return;}try{render(unwrap(await callTool("codex_settings",{})));setBusy(false);elements.status.classList.add("error");elements.status.textContent=t["settings.conflict"];}catch(refreshError){setBusy(false);setError(refreshError);} }
     function integerValue(input) { const value=Number(input.value);if(!Number.isSafeInteger(value))throw new Error(t["common.error"]);return value; }
-    window.addEventListener("message",(event)=>{if(event.source!==window.parent)return;const message=event.data;if(!message||message.jsonrpc!=="2.0")return;if(message.id!==undefined&&pendingRequests.has(message.id)){const pending=pendingRequests.get(message.id);pendingRequests.delete(message.id);message.error?pending.reject(new Error(message.error.message||t["common.error"])):pending.resolve(message.result);return;}if(message.method==="ui/notifications/tool-result"){const next=privateSettingsView(message.params&&message.params._meta);if(next)render(next);}},{passive:true});
+    window.addEventListener("message",(event)=>{if(event.source!==window.parent)return;const message=event.data;if(!message||message.jsonrpc!=="2.0")return;if(message.method==="ping"&&message.id!==undefined){window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return;}if(message.method==="ui/resource-teardown"&&message.id!==undefined){for(const request of pendingRequests.values())request.reject(new Error("Settings card unmounted"));pendingRequests.clear();window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return;}if(message.id!==undefined&&pendingRequests.has(message.id)){const pending=pendingRequests.get(message.id);pendingRequests.delete(message.id);message.error?pending.reject(new Error(uiBridgeErrorMessage(message.error,t["common.error"]))):pending.resolve(message.result);return;}if(message.method==="ui/notifications/host-context-changed"&&message.params&&message.params.locale){hostLocaleTag=String(message.params.locale);if(localePreference==="auto")setLocale(hostLocaleTag);return;}if(message.method==="ui/notifications/tool-result"){const next=privateSettingsView(message.params&&message.params._meta);if(next)render(next);}},{passive:true});
     window.addEventListener("openai:set_globals",(event)=>{const globals=event.detail&&event.detail.globals,metadata=globals&&globals.toolResponseMetadata;const responseHostLocale=metadata&&(metadata.hostLocale||metadata["webplus/i18n"]||metadata["openai/locale"]);if(globals&&globals.locale)hostLocaleTag=String(globals.locale);else if(responseHostLocale)hostLocaleTag=String(responseHostLocale);if(localePreference==="auto"){setLocale(hostLocaleTag,false);updateAccessNotice();updateCardPolicy();localizeProjectRows();}const next=privateSettingsView(metadata);if(next)render(next);});
     window.addEventListener("pagehide",()=>{for(const [id,request] of pendingRequests){window.parent.postMessage({jsonrpc:"2.0",method:"notifications/cancelled",params:{requestId:id,reason:"Settings card unmounted"}},"*");request.reject(new Error("Settings card unmounted"));}pendingRequests.clear();});
     elements.access.addEventListener("change",updateAccessNotice);
@@ -304,7 +361,7 @@ ${SETTINGS_PROJECT_ID_HELPERS}
     elements.form.addEventListener("submit",async(event)=>{event.preventDefault();if(!view)return;const projectSettings=buildProjectSettings();if(!projectSettings||!elements.form.reportValidity())return;setBusy(true,t["settings.saving"]);try{const settings={accessStrategy:elements.access.value,usePriorityServiceTier:elements.priority.checked,defaultProjectId:projectSettings.defaultProjectId,uiLocalePreference:elements.language.value,maxConcurrentJobs:integerValue(elements.concurrency),activityCard:{visibility:elements.cardVisibility.value,completionHandoff:elements.handoff.value}},projectOperations=buildProjectOperations(projectSettings.projects);if(projectOperations.length)settings.projectOperations=projectOperations;if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy();const args={expectedRevision:view.settings.revision,operation:{kind:"patch",settings}};const result=await callTool("codex_update_settings",args);render(unwrap(result));setBusy(false,t["settings.saved"]);}catch(error){await handleMutationError(error);}});
     elements.retryModels.addEventListener("click",async()=>{setBusy(true,t["settings.refreshing"]);try{render(unwrap(await callTool("codex_settings",{refreshModels:true})));setBusy(false,t["settings.refreshed"]);}catch(error){setBusy(false);setError(error);}});
     elements.reset.addEventListener("click",async()=>{if(!view)return;setBusy(true,t["settings.resetting"]);try{render(unwrap(await callTool("codex_update_settings",{expectedRevision:view.settings.revision,operation:{kind:"reset"}})));setBusy(false,t["settings.resetDone"]);}catch(error){await handleMutationError(error);}});
-    setLocale(localeTag);const initialView=privateSettingsView(initialMetadata);if(initialView)render(initialView);else callTool("codex_settings",{}).then((result)=>render(unwrap(result))).catch(setError);
+    standardBridgeReady=initializeStandardBridge();setLocale(localeTag);const initialView=privateSettingsView(initialMetadata);if(initialView)render(initialView);else callTool("codex_settings",{}).then((result)=>render(unwrap(result))).catch(setError);
   </script>
 </body>
 </html>`;

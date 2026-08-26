@@ -145,7 +145,7 @@ export function validateReleaseManifest(value) {
   const uiResources = requiredRecord(root.uiResources, "uiResources");
   assertKeys(
     uiResources,
-    ["strategy", "hashAlgorithm", "hashLength", "retainPrevious", "resources"],
+    ["strategy", "hashAlgorithm", "hashLength", "minimumContractGeneration", "resources"],
     "uiResources"
   );
   if (uiResources.strategy !== "content-hash") fail("uiResources.strategy must be content-hash");
@@ -153,8 +153,20 @@ export function validateReleaseManifest(value) {
   if (!Number.isInteger(uiResources.hashLength) || uiResources.hashLength < 12 || uiResources.hashLength > 64) {
     fail("uiResources.hashLength must be an integer between 12 and 64");
   }
-  if (!Number.isInteger(uiResources.retainPrevious) || uiResources.retainPrevious < 1 || uiResources.retainPrevious > 5) {
-    fail("uiResources.retainPrevious must be an integer between 1 and 5");
+  const minimumContractGeneration = requiredRecord(
+    uiResources.minimumContractGeneration,
+    "uiResources.minimumContractGeneration"
+  );
+  assertKeys(
+    minimumContractGeneration,
+    ["settings", "activity"],
+    "uiResources.minimumContractGeneration"
+  );
+  for (const name of ["settings", "activity"]) {
+    const generation = minimumContractGeneration[name];
+    if (!Number.isInteger(generation) || generation < 1) {
+      fail(`uiResources.minimumContractGeneration.${name} must be a positive integer`);
+    }
   }
   if (
     !Array.isArray(uiResources.resources) ||
@@ -343,6 +355,17 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
     }
     const digest = uiResourceDigest(config.hashAlgorithm, html, metadata);
     const uri = `ui://${manifest.product.runtimeName}/${name}/${digest.slice(0, config.hashLength)}.html`;
+    const minimumContractGeneration = config.minimumContractGeneration[name];
+    const currentContractGeneration = uiContractGeneration({ metadata });
+    if (currentContractGeneration === undefined) {
+      throw new Error(`Rendered UI resource ${name} is missing codex/uiContractGeneration metadata.`);
+    }
+    if (currentContractGeneration < minimumContractGeneration) {
+      throw new Error(
+        `Rendered UI resource ${name} contract generation ${currentContractGeneration} is older than ` +
+        `the supported minimum ${minimumContractGeneration}.`
+      );
+    }
     const prior = previous?.resources?.[name];
     const candidates = prior && prior.digest !== digest
       ? [{ digest: prior.digest, uri: prior.uri, ...(prior.metadata ? { metadata: prior.metadata } : {}) }, ...(Array.isArray(prior.previous) ? prior.previous : [])]
@@ -353,13 +376,14 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
     const seenDigests = new Set([digest]);
     for (const entry of candidates) {
       if (!validUiRevision(entry) || seenDigests.has(entry.digest)) continue;
+      const contractGeneration = uiContractGeneration(entry);
+      if (contractGeneration === undefined || contractGeneration < minimumContractGeneration) continue;
       seenDigests.add(entry.digest);
       previousRevisions.push({
         digest: entry.digest,
         uri: entry.uri,
         ...(entry.metadata ? { metadata: entry.metadata } : {})
       });
-      if (previousRevisions.length >= config.retainPrevious) break;
     }
     for (const candidateUri of [uri, ...previousRevisions.map((entry) => entry.uri)]) {
       if (seenUris.has(candidateUri)) throw new Error(`UI resource URI collision: ${candidateUri}.`);
@@ -372,7 +396,7 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
     strategy: config.strategy,
     hashAlgorithm: config.hashAlgorithm,
     hashLength: config.hashLength,
-    retainPrevious: config.retainPrevious,
+    minimumContractGeneration: structuredClone(config.minimumContractGeneration),
     resources
   };
 }
@@ -615,6 +639,11 @@ function validUiRevision(value) {
     typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest) &&
     typeof value.uri === "string" && value.uri.startsWith("ui://") &&
     (value.metadata === undefined || isRecord(value.metadata));
+}
+
+function uiContractGeneration(revision) {
+  const value = revision?.metadata?.content?.["codex/uiContractGeneration"];
+  return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function uiResourceDigest(algorithm, html, metadata) {

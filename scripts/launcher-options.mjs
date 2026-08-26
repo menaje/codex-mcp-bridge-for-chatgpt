@@ -1,6 +1,7 @@
 const VALUE_OPTIONS = new Map([
   ["--mode", "mode"],
   ["--port", "port"],
+  ["--env-file", "envFile"],
   ["--tunnel-id", "tunnelId"],
   ["--profile", "profile"],
   ["--tunnel-client", "tunnelClient"]

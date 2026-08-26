@@ -1464,6 +1464,11 @@ describe("bridge tools", () => {
     expect(contents.text).not.toContain('id="timeout-minutes"');
     expect(contents.text).toContain('id="concurrency" type="number" min="1" step="1" required');
     expect(contents.text).toContain("const REQUEST_TIMEOUT_MS = 90000;");
+    expect(contents.text).toContain('rpcRequest("ui/initialize"');
+    expect(contents.text).toContain('rpcNotification("ui/notifications/initialized"');
+    expect(contents.text).toContain("ui/notifications/host-context-changed");
+    expect(contents.text).toContain("uiBridgeErrorMessage(message.error");
+    expect(contents.text).not.toContain("new Error(message.error.message");
     expect(contents.text).toContain("result&&result.isError");
     expect(contents.text).toContain("function parsedToolText(result)");
     expect(contents.text).toContain("if(text&&!parsed)throw new Error(text)");
@@ -1519,7 +1524,17 @@ describe("bridge tools", () => {
       ["activity", ACTIVITY_CARD_URI]
     ] as const) {
       const revisions = uiResourceRevisions(name);
-      expect(revisions).toHaveLength(2);
+      expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
+        ? [
+            "ui://codex-mcp-bridge/settings/ac27ae6493ff.html",
+            "ui://codex-mcp-bridge/settings/72cea6992d09.html",
+            "ui://codex-mcp-bridge/settings/00b18e9d3e23.html",
+            "ui://codex-mcp-bridge/settings/0cef3dd8da8b.html",
+            "ui://codex-mcp-bridge/settings/5fd94685e070.html"
+          ]
+        : [
+            "ui://codex-mcp-bridge/activity/3d76de4080c2.html"
+          ]);
       expect(revisions[0].uri).toBe(currentUri);
       for (const revision of revisions) {
         expect(listedUris).toContain(revision.uri);
@@ -1528,16 +1543,16 @@ describe("bridge tools", () => {
           uri: revision.uri,
           mimeType: "text/html;profile=mcp-app"
         });
-        expect((resource.contents[0] as { text?: string }).text).toContain("<!doctype html>");
-        if (name === "activity") {
-          const html = (resource.contents[0] as { text?: string }).text || "";
+        const html = (resource.contents[0] as { text?: string }).text || "";
+        expect(html).toContain("<!doctype html>");
+        expect(html).not.toContain("Plugin refresh required");
+        if (name === "activity" && revision.uri === currentUri) {
           expect(html).toContain('callTool("codex_background_process_terminate"');
           expect(html).not.toContain('callTool("codex_agent"');
           expect(html).toContain('callTool("codex_activity_snapshot"');
           expect(html).toContain('callTool("codex_interaction_respond"');
           expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
-        } else {
-          const html = (resource.contents[0] as { text?: string }).text || "";
+        } else if (name === "settings" && revision.uri === currentUri) {
           expect(html).toContain('operation:{kind:"patch",settings}');
           expect(html).toContain('operation:{kind:"reset"}');
           expect(html).not.toContain("projects:projectSettings.projects");

@@ -7,12 +7,15 @@ describe("bridge launcher options", () => {
       "--mode",
       "secure",
       "--allow-write",
+      "--env-file",
+      "/private/runtime.env",
       "--tunnel-id",
       "tunnel_test",
       "--no-build"
     ])).toEqual({
       mode: "secure",
       allowWrite: true,
+      envFile: "/private/runtime.env",
       tunnelId: "tunnel_test",
       noBuild: true
     });
@@ -23,7 +26,7 @@ describe("bridge launcher options", () => {
   });
 
   it("fails closed when a supported option value is missing", () => {
-    for (const option of ["--mode", "--port", "--tunnel-id", "--profile", "--tunnel-client"]) {
+    for (const option of ["--mode", "--port", "--env-file", "--tunnel-id", "--profile", "--tunnel-client"]) {
       expect(() => parseLauncherArgs([option])).toThrow(`${option} requires a value`);
       expect(() => parseLauncherArgs([option, "--no-build"])).toThrow(`${option} requires a value`);
     }

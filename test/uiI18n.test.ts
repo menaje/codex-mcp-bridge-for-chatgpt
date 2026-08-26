@@ -3,7 +3,8 @@ import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import {
   SETTINGS_CARD_HTML,
-  SETTINGS_PROJECT_ID_HELPERS
+  SETTINGS_PROJECT_ID_HELPERS,
+  uiBridgeErrorMessage
 } from "../src/settingsCard.js";
 import {
   isUiLocalePreference,
@@ -103,6 +104,11 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
     expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
+    for (const locale of SUPPORTED_UI_LOCALES) {
+      expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).toBe(
+        UI_TRANSLATIONS[locale]["activity.workComplete"]
+      );
+    }
     expect(UI_TRANSLATIONS.ko["settings.appServerExperimental"]).toContain(
       "개인·개발 환경에서만 사용"
     );
@@ -223,6 +229,11 @@ describe("human-facing UI localization", () => {
     );
     expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
     expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
+    expect(SETTINGS_CARD_HTML).toContain('rpcRequest("ui/initialize"');
+    expect(SETTINGS_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
+    expect(SETTINGS_CARD_HTML).toContain('message.method==="ui/notifications/host-context-changed"');
+    expect(SETTINGS_CARD_HTML).toContain("new Error(uiBridgeErrorMessage(message.error");
+    expect(SETTINGS_CARD_HTML).not.toContain("new Error(message.error.message");
     expect(SETTINGS_CARD_HTML).toContain(
       'id="policy-effort" required aria-describedby="effort-description effort-compatibility"'
     );
@@ -348,5 +359,27 @@ describe("human-facing UI localization", () => {
     expect(generated).toHaveLength(64);
     expect(helpers.validProjectId(generated)).toBe(true);
     expect(helpers.projectIdStem("---")).toBe("");
+  });
+
+  it("preserves nested host and project errors instead of rendering object coercions", () => {
+    expect(uiBridgeErrorMessage({
+      code: -32603,
+      message: {
+        code: "PROJECT_CWD_NOT_ALLOWED",
+        message: "The selected folder is unavailable."
+      }
+    }, "fallback")).toBe(
+      "PROJECT_CWD_NOT_ALLOWED: The selected folder is unavailable."
+    );
+    expect(uiBridgeErrorMessage({
+      error: {
+        content: [{ type: "text", text: "PROJECT_DUPLICATE_PATH: Duplicate project cwd." }]
+      }
+    }, "fallback")).toBe("PROJECT_DUPLICATE_PATH: Duplicate project cwd.");
+    expect(uiBridgeErrorMessage(new Error("[object Object]"), "fallback")).toBe("fallback");
+
+    const circular: Record<string, unknown> = {};
+    circular.error = circular;
+    expect(uiBridgeErrorMessage(circular, "fallback")).toBe("fallback");
   });
 });

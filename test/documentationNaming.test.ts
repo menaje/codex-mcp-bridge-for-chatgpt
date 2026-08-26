@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -35,6 +35,21 @@ describe("documentation naming", () => {
   it("keeps the historical third-party name only in the upstream attribution", () => {
     expect(read("README.md")).not.toContain("DeepCogNeural/codex-gpt-bridge");
     expect(read("UPSTREAM.md")).toContain("DeepCogNeural/codex-gpt-bridge");
+  });
+
+  it("ships dotenv-only secure launcher credentials", () => {
+    const packageJson = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const scripts = packageJson.scripts ?? {};
+
+    expect(Object.keys(scripts).some((name) => /keychain/i.test(name))).toBe(false);
+    expect(Object.values(scripts).some((command) => /keychain/i.test(command))).toBe(false);
+    expect(existsSync(path.join(ROOT, "scripts/start-secure-from-keychain.sh"))).toBe(false);
+
+    for (const file of ["README.md", "docs/security.md", "docs/releasing.md"]) {
+      expect(read(file), file).not.toMatch(/keychain/i);
+    }
   });
 });
 

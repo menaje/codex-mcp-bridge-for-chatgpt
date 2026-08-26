@@ -6,10 +6,24 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { parseLauncherArgs } from "./launcher-options.mjs";
+import {
+  loadRuntimeEnvFile,
+  resolveRuntimeEnvFile,
+  validateSecureTunnelEnvironment
+} from "./runtime-env.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const args = parseLauncherArgs(process.argv.slice(2));
+const runtimeEnvFile = resolveRuntimeEnvFile({
+  explicitPath: args.envFile,
+  repoRoot
+});
+const runtimeEnvLoaded = args.help
+  ? false
+  : loadRuntimeEnvFile(runtimeEnvFile, {
+      required: Boolean(args.envFile || process.env.CODEX_MCP_BRIDGE_ENV_FILE)
+    });
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
 const port = String(args.port || process.env.CODEX_MCP_BRIDGE_PORT || "8876");
 const host = "127.0.0.1";
@@ -31,6 +45,17 @@ async function main() {
   if (mode !== "local" && mode !== "secure") {
     throw new Error(`Unknown mode: ${mode}. Use local or secure.`);
   }
+  if (runtimeEnvLoaded) console.log(`Loaded runtime environment from ${runtimeEnvFile}.`);
+  const secureTunnelEnvironment =
+    mode === "secure"
+      ? validateSecureTunnelEnvironment(
+          {
+            ...process.env,
+            CONTROL_PLANE_TUNNEL_ID: args.tunnelId || process.env.CONTROL_PLANE_TUNNEL_ID
+          },
+          runtimeEnvFile
+        )
+      : undefined;
   ensurePrerequisites();
   ensureBuilt();
   startBridge();
@@ -43,7 +68,7 @@ async function main() {
     return;
   }
 
-  await startSecureTunnel();
+  await startSecureTunnel(secureTunnelEnvironment);
 }
 
 function ensurePrerequisites() {
@@ -79,15 +104,7 @@ function buildMatchesSource(cliPath) {
   }
 }
 
-async function startSecureTunnel() {
-  const tunnelId = args.tunnelId || process.env.CONTROL_PLANE_TUNNEL_ID;
-  if (!tunnelId) {
-    throw new Error("Secure mode needs --tunnel-id or CONTROL_PLANE_TUNNEL_ID.");
-  }
-  if (!process.env.CONTROL_PLANE_API_KEY) {
-    throw new Error("Secure mode needs CONTROL_PLANE_API_KEY.");
-  }
-
+async function startSecureTunnel({ tunnelId }) {
   const tunnelClient = args.tunnelClient || process.env.TUNNEL_CLIENT || defaultTunnelClient();
   const profile = args.profile || process.env.TUNNEL_CLIENT_PROFILE || "codex-mcp-bridge";
   const init = spawnSync(
@@ -226,6 +243,7 @@ Options:
   --write                Enable workspace-write for this process.
   --allow-write          Keep read-only as the default, but allow explicit workspace-write calls.
   --allow-full-access    Keep read-only as the default, but allow workspace-write and danger-full-access calls.
+  --env-file <path>      Dotenv file. Defaults to ~/.config/codex-mcp-bridge/.env.
   --tunnel-id <id>       OpenAI Secure MCP Tunnel id.
   --profile <name>       tunnel-client profile name.
   --tunnel-client <path> tunnel-client binary path.

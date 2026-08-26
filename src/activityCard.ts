@@ -8,7 +8,7 @@ import {
 } from "./uiResources.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
-export const ACTIVITY_CARD_CONTRACT_GENERATION = 5;
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 6;
 export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 5;
 export const ACTIVITY_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const ACTIVITY_CARD_RESOURCE_DESCRIPTOR = {

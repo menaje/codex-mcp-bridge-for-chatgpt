@@ -33,11 +33,21 @@ npm run check
 Create an MCP tunnel in OpenAI Platform and associate it with the ChatGPT workspace that will use it. The operator needs applicable Tunnel Read/Use permissions and ChatGPT Developer mode. Keep the runtime key and tunnel ID outside Git.
 
 ```bash
-export CONTROL_PLANE_API_KEY="<runtime-key>"
-export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
+install -d -m 700 "$HOME/.config/codex-mcp-bridge"
+install -m 600 .env.example "$HOME/.config/codex-mcp-bridge/.env"
+
+# Replace the CONTROL_PLANE_API_KEY and CONTROL_PLANE_TUNNEL_ID examples.
+${EDITOR:-vi} "$HOME/.config/codex-mcp-bridge/.env"
 
 npm run bridge:secure
 ```
+
+The launcher reads that dotenv file automatically. Use `--env-file <path>` or
+`CODEX_MCP_BRIDGE_ENV_FILE` only for an explicit alternate location. It rejects
+symlinks, files owned by another user, and group/world-readable permissions.
+Do not place the runtime dotenv file inside a registered project: the bridge's
+secret-filename preflight intentionally rejects project folders containing
+`.env`.
 
 The launcher deliberately does not choose a filesystem project. After the
 connection is available, register one or more existing absolute folders in the
@@ -72,7 +82,9 @@ npm run release:check
 npm run check
 ```
 
-Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves both the newly advertised current URI and the retained previous URI.
+Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves the newly advertised current URI and every retained URI whose UI contract generation is still supported.
+
+Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
 
 After Refresh:
 
@@ -80,7 +92,7 @@ After Refresh:
 2. confirm the registered `codex_settings` `_meta.ui.resourceUri` and `openai/outputTemplate` exactly equal the manifest's current Settings URI;
 3. confirm both `codex_task` (unless visibility is `never`) and `codex_activity` point to the current Activity URI;
 4. open a new conversation and run the smoke checklist below;
-5. test an existing conversation. If it still has an old tool descriptor, ask it to rediscover tools or use a new conversation. The bridge cannot inject refreshed metadata into an already cached conversation.
+5. test an existing conversation. Its supported cached URI must still render; ask it to rediscover tools or use a new conversation only to pick up the new descriptor. The bridge cannot inject refreshed metadata into an already cached conversation.
 
 See OpenAI's [Plugin Refresh guidance](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata) and [MCP App UI guidance](https://developers.openai.com/plugins/build/chatgpt-ui).
 
@@ -113,13 +125,13 @@ Existing Agents stay pinned. To move one deliberately, use that Agent with
 fresh context and an explicit handoff summary; only the summary reaches the new
 backend thread, not the prior transcript or backend state.
 
-Settings card generation 5 sends `expectedRevision` and exactly one `reset` or
+Settings card generation 6 sends `expectedRevision` and exactly one `reset` or
 `patch` operation. A patch groups the ordinary settings and a bounded atomic list
 of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
 the whole saved project array. The bridge checks the revision both before a fresh
 model-catalog lookup and immediately before commit. Reset restores general
 preferences only: project IDs, names, paths, order, recovery entries, and default
-project are preserved. Generation 4 is retained in the one-revision UI window.
+project are preserved. Every compatible generation 5 revision remains retained.
 
 On a fresh install the list is empty. When `codex_task` needs new context it returns
 `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action, so GPT can show
@@ -267,7 +279,7 @@ The card deliberately omits a KPI dashboard, card-grid Agent list, layout select
 
 Automatic duplicate suppression is keyed by `scopeId + activityPresentationId`; `activityId + cardGeneration` is retained only to validate a mounted Activity reference. The first eligible result for a presentation reserves it across all Agents, Activities, and exact retries. A new presentation can render even while an older card for the same Activity remains mounted.
 
-Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. The current and sole retained content-hashed Activity revisions both use generation 4 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Older legacy calls have expired. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
+Only the newest automatic presentation owns the scope live watch and completion handoff. When a newer presentation activates, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. The current content-hashed Activity resource uses generation 6 and the exact app-private snapshot, proof, control, and batch-handoff contracts. Earlier generations and their legacy calls have expired. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
 
 `executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
 
@@ -277,7 +289,7 @@ Only the newest automatic presentation owns the scope live watch and completion 
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. `codex_activity_cancel` force-stops every active job in one exact-version Activity. Both record cancellation only after exit evidence and never roll back changes.
 
-App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. Both current and retained Activity resources call this dedicated tool; the former Agent-operation shortcut has expired.
+App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. Every supported Activity resource calls this dedicated tool; the former Agent-operation shortcut has expired.
 
 ## 8. Smoke checklist after Plugin Refresh
 
@@ -323,15 +335,17 @@ In an existing pre-refresh conversation:
 1. inspect whether it still advertises old `cwd`/`threadId` fields or an old Settings URI;
 2. trigger tool rediscovery if the surface supports it;
 3. otherwise document that a new conversation is required;
-4. confirm the retained previous UI resource resolves during the rollout window rather than returning resource-not-found.
+4. confirm every cached UI resource within the supported contract-generation range resolves rather than returning resource-not-found.
 
 Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavior, and any host cache limitation in the release or issue report.
 
 ## 9. Troubleshooting
 
 - Tunnel missing: verify workspace association and Tunnel Read/Use permissions.
+- Runtime dotenv missing: create `~/.config/codex-mcp-bridge/.env` from `.env.example`, replace both `CONTROL_PLANE_*` values, and run `chmod 600` on it.
+- Runtime dotenv rejected: use a regular non-symlink file owned by the current user with mode `0600`; do not put it in a registered project.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
-- Old Settings card/tool schema: deploy current server first, use plugin **Refresh**, then start a new conversation if the old one stays cached.
+- Old Settings card/tool schema: first confirm its URI is present in `dist/ui-manifest.json`. Supported cached URIs must render; deploy current server, use plugin **Refresh**, then start a new conversation only when new metadata is required.
 - `DEFAULT_CWD_REQUIRED`: choose a default project (or keep exactly one available project) in Settings.
 - `PROJECT_DUPLICATE_PATH`: choose a different folder for one of the highlighted projects.
 - `PROJECT_DUPLICATE_ID`: refresh Settings; project IDs are internal and generated automatically.

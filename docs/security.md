@@ -69,7 +69,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   collisions. The card generates stable routing IDs internally; users edit only
   project names and folders. Reset preserves the complete project registry,
   including order, recovery entries, and default project. The current Settings
-  resource uses generation 5 and retains generation 4 for in-flight compatibility.
+  resource uses generation 6 and retains compatible generation 5 revisions.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
@@ -177,6 +177,15 @@ the network as the current macOS user.
 ## Authentication
 
 Secure Tunnel mode starts a loopback-only HTTP server with no application-level authentication. The OpenAI-managed tunnel and its organization/workspace permissions are the transport boundary. The bridge rejects no-auth mode on non-loopback host bindings.
+
+The bundled launcher reads the tunnel runtime key and tunnel ID from the
+operator-owned `~/.config/codex-mcp-bridge/.env` by default. It accepts only a
+regular non-symlink file owned by the current user with no group/world access.
+Keep that file outside every registered project so the secret-filename
+preflight remains effective and Codex tasks cannot read the tunnel credential
+through their project root. Exported process variables take precedence only as
+an explicit operator override. Bundled launchers do not query an operating
+system credential store.
 
 When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
 

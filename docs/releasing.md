@@ -64,9 +64,11 @@ The command is the only supported writer for:
 - `src/uiManifest.generated.ts`, which gives the server the same identities;
 - build-time `dist/ui-manifest.json` and packaged snapshots.
 
-The server registers both the current URI and the configured retained previous
-generation. This lets a ChatGPT descriptor cached during rollout resolve while
-the new descriptor is being refreshed. The resource descriptor,
+The server registers the current URI and every historical revision at or above
+the configured minimum contract generation for that resource. This lets a
+ChatGPT descriptor cached across process restarts or releases resolve while the
+new descriptor is being refreshed. Raising the minimum contract generation is
+the explicit compatibility-retirement operation. The resource descriptor,
 `_meta.ui.resourceUri`, and compatibility `openai/outputTemplate` must all name
 the same current URI.
 
@@ -75,6 +77,12 @@ metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
 template drift. Do not edit generated manifests or snapshots by hand. A SemVer
 change with identical cards preserves the URIs; a card or relevant metadata
 change produces new URIs even before the next version bump.
+
+A restart with an unchanged build does not require plugin metadata refresh.
+After a UI or tool-metadata change, follow the OpenAI deployment order: sync and
+build, restart the MCP server, select **Refresh** in ChatGPT Plugins, then test a
+new conversation. Existing conversations may keep their cached descriptor, so
+the supported compatibility resources remain part of the packaged build.
 
 ## App Server protocol compatibility
 
@@ -147,8 +155,9 @@ package names:
 
 - the installed executable;
 - the `CODEX_MCP_BRIDGE_*` environment prefix;
+- the private `~/.config/codex-mcp-bridge/.env` runtime configuration path;
 - `~/.codex-mcp-bridge` and its SQLite/legacy state files;
-- macOS Keychain service names and the default tunnel profile;
+- the default tunnel profile;
 - MCP App resource URIs and the conversation-scope HMAC namespace.
 
 Renaming those values requires a separate credential, state, service, and UI

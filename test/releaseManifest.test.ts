@@ -114,14 +114,22 @@ describe("release manifest", () => {
           html: "<!doctype html><p>settings</p>",
           metadata: {
             descriptor: { mimeType: "text/html;profile=mcp-app" },
-            content: { prefersBorder: true, csp: { connectDomains: [] } }
+            content: {
+              prefersBorder: true,
+              csp: { connectDomains: [] },
+              "codex/uiContractGeneration": 5
+            }
           }
         },
         activity: {
           html: "<!doctype html><p>activity</p>",
           metadata: {
             descriptor: { mimeType: "text/html;profile=mcp-app" },
-            content: { prefersBorder: true, csp: { connectDomains: [] } }
+            content: {
+              prefersBorder: true,
+              csp: { connectDomains: [] },
+              "codex/uiContractGeneration": 6
+            }
           }
         }
       }
@@ -147,6 +155,72 @@ describe("release manifest", () => {
     htmlChanged.resources.activity.html += "<!-- changed -->";
     const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, initial);
     expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
+  });
+
+  it("retains every supported UI contract revision and prunes retired generations", () => {
+    const manifest = loadReleaseManifest(REPO_ROOT);
+    const legacyPolicy = structuredClone(manifest);
+    legacyPolicy.uiResources.minimumContractGeneration = { settings: 3, activity: 4 };
+    const renderedRevision = (
+      settingsHtml: string,
+      activityHtml: string,
+      settingsGeneration: number,
+      activityGeneration: number
+    ) => ({
+      resources: {
+        settings: {
+          html: settingsHtml,
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: { "codex/uiContractGeneration": settingsGeneration }
+          }
+        },
+        activity: {
+          html: activityHtml,
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: { "codex/uiContractGeneration": activityGeneration }
+          }
+        }
+      }
+    });
+
+    let rendered = renderedRevision("settings-v3", "activity-v4", 3, 4);
+    let history = deriveUiResourceManifest(legacyPolicy, rendered);
+    const retiredSettingsUri = history.resources.settings.uri;
+    const retiredActivityUri = history.resources.activity.uri;
+
+    rendered = renderedRevision("settings-v4", "activity-v5", 4, 5);
+    history = deriveUiResourceManifest(legacyPolicy, rendered, history);
+    for (let revision = 1; revision <= 6; revision += 1) {
+      rendered = renderedRevision(
+        `settings-v5-${revision}`,
+        `activity-v6-${revision}`,
+        5,
+        6
+      );
+      history = deriveUiResourceManifest(legacyPolicy, rendered, history);
+    }
+
+    expect(history.resources.settings.previous.length).toBeGreaterThan(5);
+    expect(history.resources.activity.previous.length).toBeGreaterThan(5);
+
+    const reconciled = deriveUiResourceManifest(manifest, rendered, history);
+    expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
+      .not.toContain(retiredSettingsUri);
+    expect(reconciled.resources.activity.previous.map((entry: any) => entry.uri))
+      .not.toContain(retiredActivityUri);
+    expect(reconciled.resources.settings.previous.every((entry: any) =>
+      entry.metadata.content["codex/uiContractGeneration"] >= 5
+    )).toBe(true);
+    expect(reconciled.resources.activity.previous.every((entry: any) =>
+      entry.metadata.content["codex/uiContractGeneration"] >= 6
+    )).toBe(true);
+
+    const missingGeneration = structuredClone(rendered);
+    delete missingGeneration.resources.settings.metadata.content["codex/uiContractGeneration"];
+    expect(() => deriveUiResourceManifest(manifest, missingGeneration, reconciled))
+      .toThrow(/settings is missing codex\/uiContractGeneration/);
   });
 
   it("rejects unknown manifest fields and invalid GitHub owners", () => {

@@ -202,7 +202,7 @@ const ENGLISH = {
   "agent.idle": "Idle", "agent.active": "Active", "agent.waiting-input": "Waiting for input", "agent.archived": "Archived", "agent.orphaned": "Thread unavailable",
   "kind.discussion": "Discussion", "kind.investigation": "Investigation", "kind.review": "Review", "kind.implementation": "Implementation", "kind.other": "Other",
   "lifecycle.open": "Open", "lifecycle.sealed": "Sealed", "lifecycle.terminating": "Terminating", "lifecycle.completed": "Completed", "lifecycle.cancelled": "Cancelled", "lifecycle.abandoned": "Abandoned",
-  "waiting.none": "No pending owner", "waiting.codex": "Waiting for Codex", "waiting.orchestrator": "Waiting for GPT", "waiting.user": "Waiting for user", "waiting.verification": "Waiting for verification",
+  "waiting.none": "No pending owner", "waiting.codex": "Waiting for Codex", "waiting.orchestrator": "Work complete", "waiting.user": "Waiting for user", "waiting.verification": "Waiting for verification",
   "verification.not-required": "Verification not required", "verification.pending": "Verification pending", "verification.verifying": "Verifying", "verification.verified": "Verified", "verification.failed": "Verification failed",
   "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled"
 } as const;
@@ -719,56 +719,56 @@ const STATE_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTransl
   ko: {
     "kind.discussion": "토론", "kind.investigation": "조사", "kind.review": "검토", "kind.implementation": "구현", "kind.other": "기타",
     "lifecycle.open": "진행 가능", "lifecycle.sealed": "작업 추가 마감", "lifecycle.terminating": "강제 종료 중", "lifecycle.completed": "완료", "lifecycle.cancelled": "취소됨", "lifecycle.abandoned": "중단됨",
-    "waiting.none": "대기 없음", "waiting.codex": "Codex 작업 대기", "waiting.orchestrator": "GPT 판단 대기", "waiting.user": "사용자 입력 대기", "waiting.verification": "검증 대기",
+    "waiting.none": "대기 없음", "waiting.codex": "Codex 작업 대기", "waiting.orchestrator": "작업 완료", "waiting.user": "사용자 입력 대기", "waiting.verification": "검증 대기",
     "verification.not-required": "검증 불필요", "verification.pending": "검증 대기", "verification.verifying": "검증 중", "verification.verified": "검증 완료", "verification.failed": "검증 실패",
     "job.running": "진행 중", "job.terminating": "강제 종료 중", "job.termination-failed": "종료 확인 실패", "job.completed": "완료", "job.failed": "실패", "job.interrupted": "중단됨", "job.cancelled": "취소됨"
   },
   ja: {
     "kind.discussion": "ディスカッション", "kind.investigation": "調査", "kind.review": "レビュー", "kind.implementation": "実装", "kind.other": "その他",
     "lifecycle.open": "進行可能", "lifecycle.sealed": "追加受付終了", "lifecycle.terminating": "強制終了中", "lifecycle.completed": "完了", "lifecycle.cancelled": "キャンセル済み", "lifecycle.abandoned": "中止済み",
-    "waiting.none": "待機なし", "waiting.codex": "Codex を待機", "waiting.orchestrator": "GPT の判断待ち", "waiting.user": "ユーザー入力待ち", "waiting.verification": "検証待ち",
+    "waiting.none": "待機なし", "waiting.codex": "Codex を待機", "waiting.orchestrator": "作業完了", "waiting.user": "ユーザー入力待ち", "waiting.verification": "検証待ち",
     "verification.not-required": "検証不要", "verification.pending": "検証待ち", "verification.verifying": "検証中", "verification.verified": "検証済み", "verification.failed": "検証失敗",
     "job.running": "実行中", "job.terminating": "強制終了中", "job.termination-failed": "終了未確認", "job.completed": "完了", "job.failed": "失敗", "job.interrupted": "中断", "job.cancelled": "キャンセル済み"
   },
   "zh-Hans": {
     "kind.discussion": "讨论", "kind.investigation": "调查", "kind.review": "审查", "kind.implementation": "实现", "kind.other": "其他",
     "lifecycle.open": "可继续", "lifecycle.sealed": "已停止添加任务", "lifecycle.terminating": "正在强制停止", "lifecycle.completed": "已完成", "lifecycle.cancelled": "已取消", "lifecycle.abandoned": "已放弃",
-    "waiting.none": "无等待", "waiting.codex": "等待 Codex", "waiting.orchestrator": "等待 GPT 判断", "waiting.user": "等待用户", "waiting.verification": "等待验证",
+    "waiting.none": "无等待", "waiting.codex": "等待 Codex", "waiting.orchestrator": "工作完成", "waiting.user": "等待用户", "waiting.verification": "等待验证",
     "verification.not-required": "无需验证", "verification.pending": "等待验证", "verification.verifying": "正在验证", "verification.verified": "已验证", "verification.failed": "验证失败",
     "job.running": "运行中", "job.terminating": "正在强制停止", "job.termination-failed": "未确认终止", "job.completed": "已完成", "job.failed": "失败", "job.interrupted": "已中断", "job.cancelled": "已取消"
   },
   "zh-Hant": {
     "kind.discussion": "討論", "kind.investigation": "調查", "kind.review": "審查", "kind.implementation": "實作", "kind.other": "其他",
     "lifecycle.open": "可繼續", "lifecycle.sealed": "已停止新增工作", "lifecycle.terminating": "正在強制停止", "lifecycle.completed": "已完成", "lifecycle.cancelled": "已取消", "lifecycle.abandoned": "已放棄",
-    "waiting.none": "無等待", "waiting.codex": "等待 Codex", "waiting.orchestrator": "等待 GPT 判斷", "waiting.user": "等待使用者", "waiting.verification": "等待驗證",
+    "waiting.none": "無等待", "waiting.codex": "等待 Codex", "waiting.orchestrator": "工作完成", "waiting.user": "等待使用者", "waiting.verification": "等待驗證",
     "verification.not-required": "無需驗證", "verification.pending": "等待驗證", "verification.verifying": "正在驗證", "verification.verified": "已驗證", "verification.failed": "驗證失敗",
     "job.running": "執行中", "job.terminating": "正在強制停止", "job.termination-failed": "未確認終止", "job.completed": "已完成", "job.failed": "失敗", "job.interrupted": "已中斷", "job.cancelled": "已取消"
   },
   es: {
     "kind.discussion": "Debate", "kind.investigation": "Investigación", "kind.review": "Revisión", "kind.implementation": "Implementación", "kind.other": "Otro",
     "lifecycle.open": "Abierta", "lifecycle.sealed": "Cerrada a nuevas tareas", "lifecycle.terminating": "Deteniendo", "lifecycle.completed": "Completada", "lifecycle.cancelled": "Cancelada", "lifecycle.abandoned": "Abandonada",
-    "waiting.none": "Sin espera", "waiting.codex": "Esperando a Codex", "waiting.orchestrator": "Esperando decisión de GPT", "waiting.user": "Esperando al usuario", "waiting.verification": "Esperando verificación",
+    "waiting.none": "Sin espera", "waiting.codex": "Esperando a Codex", "waiting.orchestrator": "Trabajo completado", "waiting.user": "Esperando al usuario", "waiting.verification": "Esperando verificación",
     "verification.not-required": "Verificación no requerida", "verification.pending": "Verificación pendiente", "verification.verifying": "Verificando", "verification.verified": "Verificado", "verification.failed": "Verificación fallida",
     "job.running": "En curso", "job.terminating": "Detención forzada", "job.termination-failed": "Finalización no confirmada", "job.completed": "Completado", "job.failed": "Falló", "job.interrupted": "Interrumpido", "job.cancelled": "Cancelado"
   },
   fr: {
     "kind.discussion": "Discussion", "kind.investigation": "Investigation", "kind.review": "Revue", "kind.implementation": "Implémentation", "kind.other": "Autre",
     "lifecycle.open": "Ouverte", "lifecycle.sealed": "Fermée aux nouvelles tâches", "lifecycle.terminating": "Arrêt en cours", "lifecycle.completed": "Terminée", "lifecycle.cancelled": "Annulée", "lifecycle.abandoned": "Abandonnée",
-    "waiting.none": "Aucune attente", "waiting.codex": "En attente de Codex", "waiting.orchestrator": "En attente de la décision de GPT", "waiting.user": "En attente de l’utilisateur", "waiting.verification": "En attente de vérification",
+    "waiting.none": "Aucune attente", "waiting.codex": "En attente de Codex", "waiting.orchestrator": "Travail terminé", "waiting.user": "En attente de l’utilisateur", "waiting.verification": "En attente de vérification",
     "verification.not-required": "Vérification non requise", "verification.pending": "Vérification en attente", "verification.verifying": "Vérification en cours", "verification.verified": "Vérifié", "verification.failed": "Échec de la vérification",
     "job.running": "En cours", "job.terminating": "Arrêt forcé en cours", "job.termination-failed": "Arrêt non confirmé", "job.completed": "Terminé", "job.failed": "Échec", "job.interrupted": "Interrompu", "job.cancelled": "Annulé"
   },
   de: {
     "kind.discussion": "Diskussion", "kind.investigation": "Untersuchung", "kind.review": "Prüfung", "kind.implementation": "Implementierung", "kind.other": "Sonstiges",
     "lifecycle.open": "Offen", "lifecycle.sealed": "Für neue Jobs geschlossen", "lifecycle.terminating": "Wird beendet", "lifecycle.completed": "Abgeschlossen", "lifecycle.cancelled": "Abgebrochen", "lifecycle.abandoned": "Aufgegeben",
-    "waiting.none": "Keine Warteaktion", "waiting.codex": "Warten auf Codex", "waiting.orchestrator": "Warten auf GPT-Entscheidung", "waiting.user": "Warten auf Benutzer", "waiting.verification": "Warten auf Prüfung",
+    "waiting.none": "Keine Warteaktion", "waiting.codex": "Warten auf Codex", "waiting.orchestrator": "Arbeit abgeschlossen", "waiting.user": "Warten auf Benutzer", "waiting.verification": "Warten auf Prüfung",
     "verification.not-required": "Keine Prüfung erforderlich", "verification.pending": "Prüfung ausstehend", "verification.verifying": "Wird geprüft", "verification.verified": "Geprüft", "verification.failed": "Prüfung fehlgeschlagen",
     "job.running": "Läuft", "job.terminating": "Stopp wird erzwungen", "job.termination-failed": "Beendigung unbestätigt", "job.completed": "Abgeschlossen", "job.failed": "Fehlgeschlagen", "job.interrupted": "Unterbrochen", "job.cancelled": "Abgebrochen"
   },
   pt: {
     "kind.discussion": "Discussão", "kind.investigation": "Investigação", "kind.review": "Revisão", "kind.implementation": "Implementação", "kind.other": "Outro",
     "lifecycle.open": "Aberta", "lifecycle.sealed": "Fechada para novas tarefas", "lifecycle.terminating": "Encerrando", "lifecycle.completed": "Concluída", "lifecycle.cancelled": "Cancelada", "lifecycle.abandoned": "Abandonada",
-    "waiting.none": "Sem espera", "waiting.codex": "Aguardando o Codex", "waiting.orchestrator": "Aguardando decisão do GPT", "waiting.user": "Aguardando o usuário", "waiting.verification": "Aguardando verificação",
+    "waiting.none": "Sem espera", "waiting.codex": "Aguardando o Codex", "waiting.orchestrator": "Trabalho concluído", "waiting.user": "Aguardando o usuário", "waiting.verification": "Aguardando verificação",
     "verification.not-required": "Verificação não necessária", "verification.pending": "Verificação pendente", "verification.verifying": "Verificando", "verification.verified": "Verificado", "verification.failed": "Falha na verificação",
     "job.running": "Em execução", "job.terminating": "Forçando parada", "job.termination-failed": "Finalização não confirmada", "job.completed": "Concluído", "job.failed": "Falhou", "job.interrupted": "Interrompido", "job.cancelled": "Cancelado"
   }
