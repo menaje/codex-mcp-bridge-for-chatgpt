@@ -103,7 +103,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 - access strategy;
 - fixed or automatic exact model policy;
 - independent Priority/Fast processing for Codex calls;
-- named projects and an optional compatibility default;
+- named projects with explicit per-task selection;
 - UI language;
 - concurrent-job limit;
 - card visibility;
@@ -118,20 +118,21 @@ The model catalog is loaded when Settings opens, using the bridge's short TTL an
 There is one conversation-scoped flat Activity feed. Retired saved layout
 preferences are safely discarded and are not selectable in Settings.
 
-The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The card automatically allocates a stable normalized routing ID, keeps it out of the form, and preserves it when the name or folder changes. New or edited folders are canonicalized with `realpath`; files, missing folders, and canonical-path collisions are rejected. The first project becomes the default automatically. Removing and adding an entry creates a new internal identity.
+The **Projects** section is the single source of Codex start folders. Users enter only a Unicode project name and an existing absolute folder. The card automatically allocates a stable normalized routing ID, keeps it out of the form, and preserves it when the name or folder changes. New or edited folders are canonicalized with `realpath`; files, missing folders, and canonical-path collisions are rejected. Projects have no default selection; every new Activity or fresh Agent context must name one exact project. Removing and adding an entry creates a new internal identity.
 
 Settings also warns that changing the default backend affects only new threads.
 Existing Agents stay pinned. To move one deliberately, use that Agent with
 fresh context and an explicit handoff summary; only the summary reaches the new
 backend thread, not the prior transcript or backend state.
 
-Settings card generation 6 sends `expectedRevision` and exactly one `reset` or
+Settings card generation 7 sends `expectedRevision` and exactly one `reset` or
 `patch` operation. A patch groups the ordinary settings and a bounded atomic list
 of project `add`, `rename`, `relocate`, and `remove` operations; it never replaces
 the whole saved project array. The bridge checks the revision both before a fresh
 model-catalog lookup and immediately before commit. Reset restores general
-preferences only: project IDs, names, paths, order, recovery entries, and default
-project are preserved. Every compatible generation 5 revision remains retained.
+preferences only: project IDs, names, paths, order, and recovery entries are
+preserved. Generation 6 is retired because it still sent the removed
+default-project field; compatible generation-7 content revisions may be retained.
 
 On a fresh install the list is empty. When `codex_task` needs new context it returns
 `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action, so GPT can show
@@ -141,13 +142,13 @@ fixed or the entry is removed. Existing Activity/Agent threads keep their pinned
 admission-time folder. The card cannot change tunnel credentials, operator
 capabilities, or the Codex approval policy.
 
-The compatibility default project and access strategy are independent:
+Project selection and access strategy are independent:
 
 - fixed `read-only` forces read-only and removes per-call `sandbox` from `codex_task`;
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. A new Activity/fresh context uses an explicit `projectId`, the configured default, or the sole project. Existing Activities and continued/forked Agent threads keep their admission-time project and sandbox after Settings changes, and conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
+The public `codex_task` descriptor never contains `cwd`; it projects only the currently selectable project IDs and labels. Every new Activity or fresh Agent context must send an exact `projectId`, even when only one project is available. Missing selection fails closed with `PROJECT_REQUIRED` (or `PROJECT_SETUP_REQUIRED` when the registry is empty). Existing Activities and continued/forked Agent threads may omit it and keep their admission-time project and sandbox after Settings changes; conflicting project IDs fail with `PROJECT_CONTEXT_CONFLICT`. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
 
 ### Dynamic model/effort behavior
 
@@ -161,8 +162,8 @@ If a saved effort is no longer supported, Settings warns instead of rewriting it
 
 Call `codex_status` and confirm:
 
-- the saved projects/default-project compatibility mirror, `accessStrategy`, card visibility, and language;
-- the saved project/default-project registry and mutation capability flags;
+- the saved project registry, `accessStrategy`, card visibility, and language;
+- the project availability and mutation capability flags;
 - default backend and active build ID;
 - settings schema/model policy and catalog source/fingerprint/LKG status;
 - SQLite state is reachable.
@@ -296,13 +297,13 @@ App Server may leave a background terminal after the turn itself completes. The 
 In a new ChatGPT conversation:
 
 1. open Settings and confirm it renders without an old-resource error;
-2. add two project folders, verify IDs normalize, duplicate IDs/paths are rejected inline, choose a default, and save;
+2. add two project folders, verify IDs normalize, duplicate IDs/paths are rejected inline, and save;
 3. add projects from two unrelated absolute locations, edit one label/folder, remove the unused project, and confirm no separate allowed-root list is shown;
 4. change a harmless preference and save;
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
 7. confirm `codex_task` has no `cwd`, projects only the registered selectable `projectId` values/labels, and fixed access modes have no `sandbox`;
-8. start narrow foreground read-only Activities in each project, then omit `projectId` and confirm the configured default/sole-project rule;
+8. start narrow foreground read-only Activities in each project, then omit `projectId` for a new Activity and confirm `PROJECT_REQUIRED`; continue an existing Activity without it and confirm the pinned project is inherited;
 9. try a conflicting project on an existing Activity/thread and confirm `PROJECT_CONTEXT_CONFLICT` without another Codex call;
 10. open the flat Activity feed and verify project labels appear only when useful and there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
 11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
@@ -346,7 +347,7 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Runtime dotenv rejected: use a regular non-symlink file owned by the current user with mode `0600`; do not put it in a registered project.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: first confirm its URI is present in `dist/ui-manifest.json`. Supported cached URIs must render; deploy current server, use plugin **Refresh**, then start a new conversation only when new metadata is required.
-- `DEFAULT_CWD_REQUIRED`: choose a default project (or keep exactly one available project) in Settings.
+- `PROJECT_REQUIRED`: refresh the tool list and send one exact projected `projectId` for the new Activity or fresh Agent context.
 - `PROJECT_DUPLICATE_PATH`: choose a different folder for one of the highlighted projects.
 - `PROJECT_DUPLICATE_ID`: refresh Settings; project IDs are internal and generated automatically.
 - `PROJECT_UNAVAILABLE`: fix or remove the **Needs recovery** project before saving or admitting work.

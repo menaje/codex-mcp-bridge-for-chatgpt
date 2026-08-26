@@ -68,8 +68,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   existing directories, and are rejected on normalized-ID or canonical-path
   collisions. The card generates stable routing IDs internally; users edit only
   project names and folders. Reset preserves the complete project registry,
-  including order, recovery entries, and default project. The current Settings
-  resource uses generation 6 and retains compatible generation 5 revisions.
+  including order and recovery entries. The current Settings resource uses
+  generation 7; generation 6 is retired because it still contained the removed
+  default-project mutation contract.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
   sandbox is exposed only for adaptive policy and only within owner-enabled
@@ -94,11 +95,11 @@ the network as the current macOS user.
 - Loopback host binding.
 - A single settings-managed registry of stable project IDs, Unicode labels, and
   canonical existing folders. A normal fresh install starts with no project;
-  the first registered entry becomes the default automatically. `codex_task`
-  accepts only projected
+  no first/sole/default fallback is created. `codex_task` accepts only projected
   registered project IDs, resolves paths internally, and pins the admitted
-  identity to the Activity, job, session, and Agent thread. The default project
-  handles omission; existing Activities and continued/forked
+  identity to the Activity, job, session, and Agent thread. Every new Activity
+  or fresh Agent context requires an exact project ID; only existing Activity
+  continue/fork calls may omit it and inherit their pinned project. Existing
   threads cannot silently switch projects. Per-call cwd is absent from and
   rejected by the strict Task contract. With an empty registry, the task returns
   structured `PROJECT_SETUP_REQUIRED` and directs GPT to `codex_settings`.

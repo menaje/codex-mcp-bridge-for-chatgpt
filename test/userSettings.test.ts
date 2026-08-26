@@ -30,13 +30,13 @@ describe("user settings store", () => {
       },
       usePriorityServiceTier: false,
       projects: [],
-      defaultProjectId: null,
-      defaultCwd: null,
       uiLocalePreference: "auto",
       maxConcurrentJobs: 30,
       activityCardVisibility: "always",
       completionHandoff: "off"
     });
+    expect(store.current).not.toHaveProperty("defaultProjectId");
+    expect(store.current).not.toHaveProperty("defaultCwd");
 
     const updated = store.update(
       {
@@ -75,7 +75,7 @@ describe("user settings store", () => {
     expect(restored.resolveSandbox("read-only")).toBe("danger-full-access");
   });
 
-  it("registers unrelated folders, makes the first project default, and preserves projects on reset", () => {
+  it("registers unrelated folders without a default and preserves projects on reset", () => {
     const first = temporaryDirectory("bridge-project-first-");
     const second = temporaryDirectory("bridge-project-second-");
     const config = loadConfig({
@@ -88,15 +88,15 @@ describe("user settings store", () => {
       kind: "add",
       project: { id: "first", label: "첫 프로젝트", cwd: first }
     }], 0);
-    expect(firstSaved).toMatchObject({
-      defaultProjectId: "first",
-      defaultCwd: realpathSync(first)
-    });
+    expect(firstSaved.projects).toEqual([
+      { id: "first", label: "첫 프로젝트", cwd: realpathSync(first) }
+    ]);
+    expect(() => store.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(store.resolveProject("first")).toMatchObject({ id: "first" });
 
     const customized = store.updateWithProjectOperations({
       accessStrategy: "always-full",
-      uiLocalePreference: "ko",
-      defaultProjectId: "second"
+      uiLocalePreference: "ko"
     }, [{
       kind: "add",
       project: { id: "second", label: "Second", cwd: second }
@@ -108,10 +108,10 @@ describe("user settings store", () => {
       revision: 3,
       accessStrategy: "adaptive",
       uiLocalePreference: "auto",
-      projects: projectsBeforeReset,
-      defaultProjectId: "second",
-      defaultCwd: realpathSync(second)
+      projects: projectsBeforeReset
     });
+    expect(reset).not.toHaveProperty("defaultProjectId");
+    expect(reset).not.toHaveProperty("defaultCwd");
   });
 
   it("rejects stale cards and values beyond bridge-enforced limits", () => {
@@ -129,7 +129,9 @@ describe("user settings store", () => {
 
     expect(() => store.update({ uiLocalePreference: "auto" }, 0)).toThrow(/SETTINGS_REVISION_CONFLICT/);
     expect(() => store.update({ accessStrategy: "always-full" }, 1)).toThrow(/security policy disables/);
-    expect(() => store.update({ defaultCwd: outside }, 1)).toThrow(/legacy operator restriction/);
+    expect(() => store.update({
+      projects: [{ id: "outside", label: "Outside", cwd: outside }]
+    }, 1)).toThrow(/legacy operator restriction/);
     expect(() => store.update({ maxConcurrentJobs: 5 }, 1)).toThrow(/Concurrent job limit/);
     expect(() =>
       store.update({ uiLocalePreference: "it" as "ko" }, 1)
@@ -179,6 +181,7 @@ describe("user settings store", () => {
     expect(persisted).not.toHaveProperty("completionDeliveryMode");
     expect(migrated.loadWarnings).toEqual([
       expect.stringContaining("model policy"),
+      expect.stringContaining("default project selection"),
       expect.stringContaining("completionDeliveryMode was migrated")
     ]);
   });
@@ -239,7 +242,8 @@ describe("user settings store", () => {
     });
     expect(JSON.stringify(migrated.current.modelPolicy)).not.toContain("serviceTier");
     expect(migrated.loadWarnings).toEqual([
-      expect.stringContaining("independent Priority preference")
+      expect.stringContaining("independent Priority preference"),
+      expect.stringContaining("default project selection")
     ]);
     const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
     expect(persisted.usePriorityServiceTier).toBe(true);
@@ -322,6 +326,7 @@ describe("user settings store", () => {
     expect(migrated.current.modelPolicy).not.toHaveProperty("preferredSelection");
     expect(migrated.loadWarnings).toEqual([
       expect.stringContaining("legacy preference"),
+      expect.stringContaining("default project selection"),
       expect.stringContaining("completionDeliveryMode was migrated")
     ]);
     expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
@@ -387,8 +392,6 @@ describe("user settings store", () => {
         label: path.basename(config.allowedRoots[0]!),
         cwd: config.allowedRoots[0]
       }],
-      defaultProjectId: "default",
-      defaultCwd: config.allowedRoots[0],
       modelPolicy: {
         mode: "automatic",
         preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
@@ -406,10 +409,10 @@ describe("user settings store", () => {
         id: "default",
         label: path.basename(config.allowedRoots[0]!),
         cwd: config.allowedRoots[0]
-      }],
-      defaultProjectId: "default",
-      defaultCwd: config.allowedRoots[0]
+      }]
     });
+    expect(persisted).not.toHaveProperty("defaultProjectId");
+    expect(persisted).not.toHaveProperty("defaultCwd");
 
     const reloaded = new UserSettingsStore(config, { stateStore });
     expect(reloaded.current).toEqual(migrated.current);
@@ -492,28 +495,28 @@ describe("user settings store", () => {
     expect(migrated.current).toMatchObject({
       revision: 8,
       updatedAt: "2026-08-24T01:02:03.000Z",
-      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }],
-      defaultProjectId: "default",
-      defaultCwd: canonicalRoot
+      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }]
     });
-    expect(migrated.resolveProject()).toEqual({
+    expect(() => migrated.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(migrated.resolveProject("default")).toEqual({
       id: "default",
       label: path.basename(canonicalRoot),
       cwd: canonicalRoot
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+    expect(persisted).toMatchObject({
       revision: 8,
-      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }],
-      defaultProjectId: "default",
-      defaultCwd: canonicalRoot
+      projects: [{ id: "default", label: path.basename(canonicalRoot), cwd: canonicalRoot }]
     });
+    expect(persisted).not.toHaveProperty("defaultProjectId");
+    expect(persisted).not.toHaveProperty("defaultCwd");
 
     const reloaded = new UserSettingsStore(config, { stateFile });
     expect(reloaded.current).toEqual(migrated.current);
     expect(reloaded.loadWarnings).toEqual([]);
   });
 
-  it("persists a named multi-project registry and mirrors its default for legacy execution", () => {
+  it("persists a named multi-project registry and requires exact project resolution", () => {
     const first = temporaryDirectory("bridge-first-");
     const second = temporaryDirectory("bridge-second-");
     const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
@@ -528,24 +531,62 @@ describe("user settings store", () => {
       projects: [
         { id: "Web_APP", label: "웹 앱", cwd: first },
         { id: "API", label: "API 서비스", cwd: second }
-      ],
-      defaultProjectId: "API"
+      ]
     }, 0);
     expect(updated).toMatchObject({
       projects: [
         { id: "web-app", label: "웹 앱", cwd: canonicalFirst },
         { id: "api", label: "API 서비스", cwd: canonicalSecond }
-      ],
-      defaultProjectId: "api",
-      defaultCwd: canonicalSecond
+      ]
     });
-    expect(store.resolveProject()).toMatchObject({ id: "api", cwd: canonicalSecond });
+    expect(() => store.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(store.resolveProject("api")).toMatchObject({ id: "api", cwd: canonicalSecond });
     expect(store.resolveProject("WEB APP")).toMatchObject({ id: "web-app", cwd: canonicalFirst });
-    expect(store.resolveCwd()).toBe(canonicalSecond);
 
     const reloaded = new UserSettingsStore(config, { stateFile });
     expect(reloaded.current).toEqual(updated);
-    expect(reloaded.resolveProject()).toMatchObject({ id: "api", cwd: canonicalSecond });
+    expect(() => reloaded.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(reloaded.resolveProject("api")).toMatchObject({ id: "api", cwd: canonicalSecond });
+  });
+
+  it("removes persisted default selection fields without changing registered projects", () => {
+    const first = temporaryDirectory("bridge-first-");
+    const second = temporaryDirectory("bridge-second-");
+    const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const original = new UserSettingsStore(config, { stateFile });
+    const saved = original.update({
+      projects: [
+        { id: "first", label: "First", cwd: first },
+        { id: "second", label: "Second", cwd: second }
+      ]
+    }, 0);
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8"));
+    legacy.settings.defaultProjectId = "second";
+    legacy.settings.defaultCwd = config.allowedRoots[1];
+    writeFileSync(stateFile, JSON.stringify(legacy));
+
+    const migrated = new UserSettingsStore(config, {
+      stateFile,
+      now: () => Date.parse("2026-08-24T04:05:06Z")
+    });
+    expect(migrated.current).toMatchObject({
+      revision: saved.revision + 1,
+      updatedAt: "2026-08-24T04:05:06.000Z",
+      projects: saved.projects
+    });
+    expect(migrated.loadWarnings).toEqual([
+      expect.stringContaining("default project selection was retired")
+    ]);
+    expect(() => migrated.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(migrated.resolveProject("second")).toMatchObject({ cwd: config.allowedRoots[1] });
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+    expect(persisted.projects).toEqual(saved.projects);
+    expect(persisted).not.toHaveProperty("defaultProjectId");
+    expect(persisted).not.toHaveProperty("defaultCwd");
   });
 
   it("applies explicit project registry operations atomically at one expected revision", () => {
@@ -559,7 +600,6 @@ describe("user settings store", () => {
     const store = new UserSettingsStore(config);
 
     const added = store.updateWithProjectOperations({
-      defaultProjectId: "api",
       uiLocalePreference: "ko"
     }, [
       { kind: "add", project: { id: "web", label: "Web", cwd: first } },
@@ -568,22 +608,19 @@ describe("user settings store", () => {
     expect(added).toMatchObject({
       revision: 1,
       uiLocalePreference: "ko",
-      defaultProjectId: "api",
       projects: [
         { id: "web", label: "Web", cwd: config.allowedRoots[0] },
         { id: "api", label: "API", cwd: config.allowedRoots[1] }
       ]
     });
 
-    const edited = store.updateWithProjectOperations({ defaultProjectId: "web" }, [
+    const edited = store.updateWithProjectOperations({}, [
       { kind: "rename", projectId: "web", label: "웹 앱" },
       { kind: "relocate", projectId: "web", cwd: relocated },
       { kind: "remove", projectId: "api" }
     ], 1);
     expect(edited).toMatchObject({
       revision: 2,
-      defaultProjectId: "web",
-      defaultCwd: config.allowedRoots[2],
       projects: [{ id: "web", label: "웹 앱", cwd: config.allowedRoots[2] }]
     });
 
@@ -613,9 +650,11 @@ describe("user settings store", () => {
       ]
     }, 0)).toThrow(/PROJECT_DUPLICATE_ID/);
     expect(() => store.update({
-      projects: [{ id: "first", label: "First", cwd: first }],
       defaultProjectId: "missing"
-    }, 0)).toThrow(/PROJECT_DEFAULT_NOT_FOUND/);
+    } as never, 0)).toThrow(/SETTINGS_FIELD_RETIRED/);
+    expect(() => store.update({
+      defaultCwd: first
+    } as never, 0)).toThrow(/SETTINGS_FIELD_RETIRED/);
     expect(store.current.revision).toBe(0);
     expect(store.current.projects).toEqual([]);
   });
@@ -634,8 +673,7 @@ describe("user settings store", () => {
       projects: [
         { id: "active", label: "활성", cwd: first },
         { id: "stale", label: "복구 필요", cwd: second }
-      ],
-      defaultProjectId: "active"
+      ]
     }, 0);
 
     const narrowedConfig = loadConfig({
@@ -651,7 +689,8 @@ describe("user settings store", () => {
     expect(narrowed.projectRegistry.unavailableProjectIds).toEqual(["stale"]);
     expect(narrowed.loadWarnings).toEqual([expect.stringContaining("PROJECT_UNAVAILABLE")]);
     expect(() => narrowed.resolveProject("stale")).toThrow(/PROJECT_UNAVAILABLE/);
-    expect(narrowed.resolveProject()).toMatchObject({ id: "active" });
+    expect(() => narrowed.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(narrowed.resolveProject("active")).toMatchObject({ id: "active" });
 
     const unrelated = narrowed.update(
       { uiLocalePreference: "ko" },
@@ -665,14 +704,13 @@ describe("user settings store", () => {
     });
 
     const recovered = narrowed.update({
-      projects: [{ id: "active", label: "활성", cwd: first }],
-      defaultProjectId: "active"
+      projects: [{ id: "active", label: "활성", cwd: first }]
     }, narrowed.current.revision);
     expect(recovered.projects).toHaveLength(1);
     expect(narrowed.projectRegistry.unavailableProjectIds).toEqual([]);
   });
 
-  it("migrates an unavailable legacy default as recovery metadata without allowing null to erase it", () => {
+  it("migrates an unavailable legacy folder as recovery metadata without restoring a default", () => {
     const oldRoot = temporaryDirectory("bridge-old-");
     const newRoot = temporaryDirectory("bridge-new-");
     const stateFile = path.join(temporaryDirectory("bridge-settings-"), "settings.json");
@@ -713,39 +751,35 @@ describe("user settings store", () => {
         id: "default",
         label: path.basename(oldCanonicalRoot),
         cwd: oldCanonicalRoot
-      }],
-      defaultProjectId: "default",
-      defaultCwd: null
+      }]
     });
     expect(narrowed.projectRegistry.unavailableProjectIds).toEqual(["default"]);
-    expect(() => narrowed.resolveProject()).toThrow(/PROJECT_UNAVAILABLE/);
-    expect(() => narrowed.update({ defaultCwd: null }, 4)).toThrow(/DEFAULT_CWD_NOT_ALLOWED/);
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
-      projects: [{ id: "default", cwd: oldCanonicalRoot }],
-      defaultProjectId: "default",
-      defaultCwd: oldCanonicalRoot
+    expect(() => narrowed.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(() => narrowed.resolveProject("default")).toThrow(/PROJECT_UNAVAILABLE/);
+    const migratedPersisted = JSON.parse(readFileSync(stateFile, "utf8")).settings;
+    expect(migratedPersisted).toMatchObject({
+      projects: [{ id: "default", cwd: oldCanonicalRoot }]
     });
+    expect(migratedPersisted).not.toHaveProperty("defaultProjectId");
+    expect(migratedPersisted).not.toHaveProperty("defaultCwd");
 
     const reset = narrowed.reset(4);
     expect(reset).toMatchObject({
       revision: 5,
-      projects: [{ id: "default", cwd: oldCanonicalRoot }],
-      defaultProjectId: "default",
-      defaultCwd: null
+      projects: [{ id: "default", cwd: oldCanonicalRoot }]
     });
     expect(JSON.parse(readFileSync(stateFile, "utf8")).settings).toMatchObject({
       revision: 5,
-      projects: [{ id: "default", cwd: oldCanonicalRoot }],
-      defaultProjectId: "default",
-      defaultCwd: oldCanonicalRoot
+      projects: [{ id: "default", cwd: oldCanonicalRoot }]
     });
 
     const restored = new UserSettingsStore(oldConfig, { stateFile });
-    expect(restored.resolveProject()).toMatchObject({ id: "default", cwd: oldCanonicalRoot });
-    expect(restored.current.defaultCwd).toBe(oldCanonicalRoot);
+    expect(() => restored.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(restored.resolveProject("default"))
+      .toMatchObject({ id: "default", cwd: oldCanonicalRoot });
   });
 
-  it("imports an unavailable legacy JSON default into SQLite exactly once without erasing recovery data", () => {
+  it("imports an unavailable JSON project into SQLite exactly once without erasing recovery data", () => {
     const oldRoot = temporaryDirectory("bridge-import-old-root-");
     const newRoot = temporaryDirectory("bridge-import-new-root-");
     const stateDirectory = temporaryDirectory("bridge-import-settings-");
@@ -770,15 +804,11 @@ describe("user settings store", () => {
     });
     const firstRevision = first.current.revision;
     expect(first.current).toMatchObject({
-      defaultCwd: null,
-      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }],
-      defaultProjectId: "default"
+      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }]
     });
     expect(firstState.getSettings()).toMatchObject({
       revision: firstRevision,
-      defaultCwd: oldConfig.allowedRoots[0],
-      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }],
-      defaultProjectId: "default"
+      projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }]
     });
     firstState.close();
 
@@ -790,15 +820,13 @@ describe("user settings store", () => {
     });
     expect(reopened.current.revision).toBe(firstRevision);
     expect(reopened.current.projects).toEqual(first.current.projects);
-    expect(reopened.current.defaultCwd).toBeNull();
     expect(reopenedState.getSettings()).toMatchObject({
-      revision: firstRevision,
-      defaultCwd: oldConfig.allowedRoots[0]
+      revision: firstRevision
     });
     reopenedState.close();
   });
 
-  it("keeps the legacy defaultCwd mutation path synchronized during UI integration", () => {
+  it("keeps project registration independent from selection during UI integration", () => {
     const first = temporaryDirectory("bridge-first-");
     const second = temporaryDirectory("bridge-second-");
     const config = loadConfig({
@@ -808,24 +836,19 @@ describe("user settings store", () => {
     const [canonicalFirst, canonicalSecond] = config.allowedRoots;
     const store = new UserSettingsStore(config);
 
-    const firstSelection = store.update({ defaultCwd: first }, 0);
-    expect(firstSelection).toMatchObject({
-      projects: [{ id: "default", label: path.basename(canonicalFirst), cwd: canonicalFirst }],
-      defaultProjectId: "default",
-      defaultCwd: canonicalFirst
-    });
-    const secondSelection = store.update({ defaultCwd: second }, 1);
-    expect(secondSelection).toMatchObject({
-      projects: [{ id: "default", label: path.basename(canonicalSecond), cwd: canonicalSecond }],
-      defaultProjectId: "default",
-      defaultCwd: canonicalSecond
-    });
-    const cleared = store.update({ defaultCwd: null }, 2);
-    expect(cleared).toMatchObject({
-      projects: [],
-      defaultProjectId: null,
-      defaultCwd: null
-    });
+    const saved = store.update({
+      projects: [
+        { id: "first", label: "First", cwd: first },
+        { id: "second", label: "Second", cwd: second }
+      ]
+    }, 0);
+    expect(saved.projects).toEqual([
+      { id: "first", label: "First", cwd: canonicalFirst },
+      { id: "second", label: "Second", cwd: canonicalSecond }
+    ]);
+    expect(() => store.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(store.resolveProject("first")).toMatchObject({ cwd: canonicalFirst });
+    expect(store.resolveProject("second")).toMatchObject({ cwd: canonicalSecond });
   });
 
   it("forces read-only even when a caller asks for full access", () => {
@@ -880,7 +903,6 @@ describe("user settings store", () => {
       revision: 2,
       updatedAt: "2026-08-22T00:00:00.000Z",
       accessStrategy: "read-only",
-      defaultCwd: null,
       maxConcurrentJobs: 2
     });
     expect(reconciled.current).not.toHaveProperty("taskTimeoutMs");
@@ -888,19 +910,18 @@ describe("user settings store", () => {
     expect(reconciled.current).not.toHaveProperty("autoResumeTtlMs");
     expect(reconciled.loadWarnings).toHaveLength(5);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/downgraded to read-only/);
-    expect(reconciled.loadWarnings.join(" ")).toMatch(/default project folder is unavailable/i);
+    expect(reconciled.loadWarnings.join(" ")).toMatch(/PROJECT_UNAVAILABLE/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/taskTimeoutMs was retired and removed/);
     expect(reconciled.loadWarnings.join(" ")).toMatch(/Activity-managed/);
-    expect(() => reconciled.resolveCwd()).toThrow(/DEFAULT_CWD_NOT_ALLOWED/);
-    expect(() => reconciled.update({ uiLocalePreference: "ko" }, 2)).toThrow(
-      /DEFAULT_CWD_NOT_ALLOWED/
-    );
+    expect(() => reconciled.resolveProject()).toThrow(/PROJECT_REQUIRED/);
+    expect(() => reconciled.resolveProject("default")).toThrow(/PROJECT_UNAVAILABLE/);
+    expect(reconciled.update({ uiLocalePreference: "ko" }, 2).uiLocalePreference).toBe("ko");
     const migrated = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(migrated).toMatchObject({
       settings: {
-        revision: 2,
+        revision: 3,
         accessStrategy: "read-only",
-        defaultCwd: oldConfig.allowedRoots[0],
+        projects: [{ id: "default", cwd: oldConfig.allowedRoots[0] }],
         maxConcurrentJobs: 2
       }
     });
@@ -909,7 +930,7 @@ describe("user settings store", () => {
     expect(migrated.settings).not.toHaveProperty("autoResumeTtlMs");
 
     const rootsRestored = new UserSettingsStore(oldConfig, { stateFile });
-    expect(rootsRestored.current.defaultCwd).toBe(oldConfig.allowedRoots[0]);
+    expect(rootsRestored.resolveProject("default").cwd).toBe(oldConfig.allowedRoots[0]);
   });
 });
 
