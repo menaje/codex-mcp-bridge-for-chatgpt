@@ -32,7 +32,7 @@
     "bridge:secure:allow-full-access": "node scripts/start-codex-mcp-bridge.mjs --mode secure --allow-full-access",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=4",
     "check": "npm run build && npm run test"
   },
   "keywords": [
