@@ -137,14 +137,22 @@ preferences only: project UUIDs, names, paths, order, archive state, and recover
 entries are preserved. Earlier Settings generations are retired because their
 ID/default and single-revision mutation contracts are incompatible.
 
-On a fresh install the list is empty. When `codex_task` needs new context it returns
-`PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action, so GPT can show
-the card and explain what must be registered. A project whose folder disappears
-remains visible as **Needs recovery**, but it cannot admit work until its folder is
-fixed or the project is archived. Archived projects are excluded from new
-selection; restore keeps the same UUID. Existing Activity/Agent threads keep
-their pinned admission-time folder. The card cannot change tunnel credentials, operator
-capabilities, or the Codex approval policy.
+On a fresh install the project registry contains no entries. The public `codex_task`
+descriptor then omits both `project` and the conditional project-required rule,
+which leaves one intentional projectless setup-probe path. Its Activity-card UI
+binding is also absent, preventing a blank Activity card from mounting before
+onboarding; project registration restores that binding through the dynamic tool
+refresh. Do not open Settings merely because a conversation starts or the plugin
+is attached. After the user explicitly requests new or fresh Codex work, call
+`codex_task` once without `project`; it admits no Activity, Agent, Job, session, or
+upstream work and returns `PROJECT_SETUP_REQUIRED` with `codex_settings` as the
+next action. Only then should GPT show the card and explain what must be registered.
+
+A project whose folder disappears remains visible as **Needs recovery**, but it
+cannot admit work until its folder is fixed or the project is archived. Archived
+projects are excluded from new selection; restore keeps the same UUID. Existing
+Activity/Agent threads keep their pinned admission-time folder. The card cannot
+change tunnel credentials, operator capabilities, or the Codex approval policy.
 
 Project selection and access strategy are independent:
 
@@ -152,7 +160,24 @@ Project selection and access strategy are independent:
 - fixed `always-full` forces `danger-full-access` and removes per-call `sandbox`;
 - `adaptive` exposes only operator-enabled per-turn sandbox choices.
 
-The public `codex_task` descriptor never contains `cwd` or an internal UUID. It projects only selectable `{ name, registryRevision }` objects. Every new Activity or fresh Agent context must send one exact object, even when only one project is available. Missing selection fails closed with `PROJECT_REQUIRED` (or `PROJECT_SETUP_REQUIRED` when the registry is empty). Runtime generation validation is authoritative even if `tools/list_changed` is missed. Activity, Agent creation/assignment, replay, and Job admission recheck it atomically and pin UUID/cwd; a backend-assigned resumable thread receives the same pin before reuse. An exact admitted `requestId` replay remains valid after registry changes. Continue/fork omits `project` and keeps the admission-time snapshot after rename, relocate, archive, or restore; an unavailable pinned folder returns `PROJECT_UNAVAILABLE` without fallback. A caller that sends `cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends `sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
+The public `codex_task` descriptor never contains `cwd` or an internal UUID. Once
+the first project entry is registered, the first-install setup-probe exception
+disappears. The descriptor projects only selectable `{ name, registryRevision }`
+objects and conditionally requires one for every new Activity or fresh Agent
+context, even when only one project is available. If registered entries exist but
+none are selectable because they are archived or unavailable, the descriptor
+does not expose the first-install probe; after an explicit user work request,
+Settings is the recovery path. Missing selection with an active registry fails
+closed with `PROJECT_REQUIRED`; a truly empty registry returns
+`PROJECT_SETUP_REQUIRED`. Runtime generation validation is authoritative even if
+`tools/list_changed` is missed. Activity, Agent creation/assignment, replay, and
+Job admission recheck it atomically and pin UUID/cwd; a backend-assigned resumable
+thread receives the same pin before reuse. An exact admitted `requestId` replay
+remains valid after registry changes. Continue/fork omits `project` and keeps the
+admission-time snapshot after rename, relocate, archive, or restore; an unavailable
+pinned folder returns `PROJECT_UNAVAILABLE` without fallback. A caller that sends
+`cwd` fails strict schema parsing; a stale fixed-mode descriptor that still sends
+`sandbox` receives `SANDBOX_OVERRIDE_UNAVAILABLE`.
 
 The token prevents stale name mappings. A different exact active name from the same current revision is still a valid transport-level choice; the bridge cannot infer contrary natural-language intent. Multi-project write/full-access fresh confirmation remains a separate app-private follow-up rather than a model-visible `confirmed` field.
 

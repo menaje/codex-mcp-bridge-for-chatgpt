@@ -137,6 +137,20 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("project object exposed by the current codex_task descriptor");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("mandatory even when only one project is registered");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never infer a first, sole, default, slug");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
+      "Never call codex_settings merely because a conversation starts or this plugin is attached"
+    );
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
+      "call codex_task once without project as a setup probe"
+    );
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
+      "admits no Activity, Agent, Job, session, or upstream work"
+    );
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exposes no Activity-card UI");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
+      "registered entries exist but none are selectable because they are archived or unavailable"
+    );
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("open codex_settings as a recovery action");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("immutable project UUID and cwd snapshot");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("tools/list_changed is delayed or lost");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");

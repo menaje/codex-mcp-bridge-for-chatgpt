@@ -4801,7 +4801,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, Codex-app thread visibility, bridge-enforced limits, and current backend-aware model catalog. Use this whenever the user asks where or how to configure this ChatGPT-to-Codex bridge, and whenever codex_task returns PROJECT_SETUP_REQUIRED so the user can register a project folder.",
+        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, Codex-app thread visibility, bridge-enforced limits, and current backend-aware model catalog. Use this when the user explicitly asks where or how to configure this ChatGPT-to-Codex bridge, after an actual codex_task response returns PROJECT_SETUP_REQUIRED, or after the user explicitly requests new or fresh work when registered project entries exist but the current codex_task descriptor exposes no selectable project because those entries need recovery. Never open it merely because a conversation starts or this plugin is attached.",
       inputSchema: {
         refreshModels: z
           .boolean()
@@ -5099,7 +5099,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this UI-bearing tool directly so ChatGPT can preserve its native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select one exact currently exposed project object containing the user-defined name and registryRevision freshness token, even when only one project is available. There is no first, sole, default, slug, ID, alias, or path fallback. Existing Activity continue/fork calls omit project and retain their admission-time project UUID and cwd snapshot. tools/list_changed only improves discovery; runtime revision validation is authoritative. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry; an exact admitted replay remains valid after registry changes. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this tool directly; outside the first-install setup-probe state its UI binding lets ChatGPT preserve the native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select one exact currently exposed project object containing the user-defined name and registryRevision freshness token, even when only one project is available. There is no first, sole, default, slug, ID, alias, or path fallback. When the registry contains no project entries, the descriptor omits project; after the user explicitly requests new or fresh Codex work, call this tool once without project as a setup probe. The probe admits no work, exposes no Activity card, and returns PROJECT_SETUP_REQUIRED; only then follow its codex_settings next action. If registered entries exist but none are selectable because they are archived or unavailable, do not use the first-install probe; after an explicit user work request, use codex_settings for recovery. Never open Settings merely because a conversation starts or this plugin is attached. Existing Activity continue/fork calls omit project and retain their admission-time project UUID and cwd snapshot. tools/list_changed only improves discovery; runtime revision validation is authoritative. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry; an exact admitted replay remains valid after registry changes. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -8152,6 +8152,11 @@ function codexTaskInputSchema(
   settings: BridgeUserSettings,
   catalog: CodexModelCatalogSnapshot | undefined
 ): z.ZodType<CodexTaskArgs> {
+  // Only a truly empty registry omits both the public field and its conditional
+  // requirement so the model can make the first-install setup probe.
+  // Runtime parsing remains broad enough for stale descriptors, while the
+  // registry still distinguishes setup-required from missing/stale selection.
+  const allowsProjectlessSetupProbe = settings.projects.length === 0;
   const activity = z.discriminatedUnion("mode", [
     z.strictObject({
       mode: z.literal("existing"),
@@ -8218,7 +8223,7 @@ function codexTaskInputSchema(
     requestId,
     ...(settings.activityCardVisibility === "never" ? {} : { activityPresentationId }),
     prompt,
-    project: projectedProjectZod(config, settings),
+    ...(allowsProjectlessSetupProbe ? {} : { project: projectedProjectZod(config, settings) }),
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode
@@ -8252,46 +8257,48 @@ function codexTaskInputSchema(
     ...publicModel
   });
   const projectedJsonSchema = jsonSchemaBody(projected);
-  projectedJsonSchema.allOf = [
-    {
-      if: {
-        anyOf: [
-          { not: { required: ["activity"] } },
-          {
-            required: ["activity"],
-            properties: {
-              activity: {
-                required: ["mode"],
-                properties: { mode: { const: "new" } }
+  if (!allowsProjectlessSetupProbe) {
+    projectedJsonSchema.allOf = [
+      {
+        if: {
+          anyOf: [
+            { not: { required: ["activity"] } },
+            {
+              required: ["activity"],
+              properties: {
+                activity: {
+                  required: ["mode"],
+                  properties: { mode: { const: "new" } }
+                }
               }
-            }
-          },
-          {
-            required: ["agent"],
-            properties: {
-              agent: {
-                required: ["mode"],
-                properties: { mode: { const: "new" } }
+            },
+            {
+              required: ["agent"],
+              properties: {
+                agent: {
+                  required: ["mode"],
+                  properties: { mode: { const: "new" } }
+                }
               }
-            }
-          },
-          {
-            required: ["agent"],
-            properties: {
-              agent: {
-                required: ["mode", "context"],
-                properties: {
-                  mode: { const: "existing" },
-                  context: { const: "fresh" }
+            },
+            {
+              required: ["agent"],
+              properties: {
+                agent: {
+                  required: ["mode", "context"],
+                  properties: {
+                    mode: { const: "existing" },
+                    context: { const: "fresh" }
+                  }
                 }
               }
             }
-          }
-        ]
-      },
-      then: { required: ["project"] }
-    }
-  ];
+          ]
+        },
+        then: { required: ["project"] }
+      }
+    ];
+  }
   // Runtime parsing stays broader only where current policy/catalog/project
   // state is the execution authority and can change between tool listings.
   const runtime = z.strictObject({
@@ -9960,9 +9967,13 @@ function activityCardToolMetadata(): Record<string, unknown> {
 }
 
 function codexTaskActivityCardMetadata(
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility" | "projects">
 ): Record<string, unknown> | undefined {
-  return preferences.activityCardVisibility === "never"
+  // A truly empty registry can only produce the first-run setup result for
+  // fresh work. Do not mount a blank Activity card before Settings onboarding.
+  // Keep the binding for archived registries because pinned Activities may
+  // still continue even when no project is selectable for new work.
+  return preferences.activityCardVisibility === "never" || preferences.projects.length === 0
     ? undefined
     : activityCardToolMetadata();
 }

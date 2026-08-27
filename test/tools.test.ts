@@ -2138,8 +2138,20 @@ describe("bridge tools", () => {
     ]);
     expect(listChanged).toBe(baselineNotifications + 1);
     const unavailableDescriptor = await taskDescriptor();
-    expect(JSON.stringify(unavailableDescriptor.inputSchema.properties?.project))
+    const unavailableSchema = unavailableDescriptor.inputSchema as Record<string, any>;
+    expect(JSON.stringify(unavailableSchema.properties?.project))
       .not.toContain('"const":"Alpha Workspace"');
+    expect(unavailableSchema.properties?.project).toMatchObject({ not: {} });
+    expect(unavailableSchema.allOf).toEqual([
+      expect.objectContaining({
+        then: expect.objectContaining({ required: expect.arrayContaining(["project"]) })
+      })
+    ]);
+    expect(unavailableDescriptor._meta).toMatchObject({
+      ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
+      "openai/outputTemplate": ACTIVITY_CARD_URI
+    });
+    expect(unavailableDescriptor.description).toContain("do not use the first-install probe");
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
     const unavailableStatus = parseToolJson(
@@ -8614,6 +8626,128 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("uses a projectless codex_task setup probe before first-run Settings onboarding", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, sessions, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+
+    const initialTools = await client.listTools();
+    const initialTask = initialTools.tools.find((tool) => tool.name === "codex_task");
+    const initialSchema = initialTask?.inputSchema as Record<string, any>;
+    expect(initialSchema.properties).not.toHaveProperty("project");
+    expect(initialSchema).not.toHaveProperty("allOf");
+    expect(JSON.stringify(initialSchema)).not.toContain('"not":{}');
+    expect(initialTask?._meta).toBeUndefined();
+    expect(initialTask?.description).toContain("call this tool once without project as a setup probe");
+    const settingsTool = initialTools.tools.find((tool) => tool.name === "codex_settings");
+    expect(settingsTool?.description).toContain("after an actual codex_task response");
+    expect(settingsTool?.description).toContain(
+      "Never open it merely because a conversation starts or this plugin is attached"
+    );
+    expect(settingsTool?.description).toContain(
+      "registered project entries exist but the current codex_task descriptor exposes no selectable project"
+    );
+
+    const setupProbe = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "75757575-7575-4575-8575-757575757575",
+        activityPresentationId: "76767676-7676-4676-8676-767676767676",
+        prompt: "start the requested first-run Codex work",
+        activity: { mode: "new", title: "First-run setup probe" },
+        agent: { mode: "new", name: "First-run Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(setupProbe).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "PROJECT_SETUP_REQUIRED",
+          nextAction: { tool: "codex_settings", arguments: {} }
+        }
+      }
+    });
+    const setupContent = (setupProbe as { structuredContent?: Record<string, unknown> })
+      .structuredContent;
+    expect(setupContent).not.toHaveProperty("bridgeActivity");
+    expect(setupContent).not.toHaveProperty("bridgeSession");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "First Project", cwd: root } }
+            ]
+          }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+
+    const registeredTask = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    );
+    const registeredSchema = registeredTask?.inputSchema as Record<string, any>;
+    expect(registeredSchema.allOf).toEqual([
+      expect.objectContaining({
+        then: expect.objectContaining({ required: expect.arrayContaining(["project"]) })
+      })
+    ]);
+    expect(registeredSchema.properties.project.oneOf).toEqual([
+      expect.objectContaining({
+        required: ["name", "registryRevision"],
+        properties: {
+          name: { const: "First Project" },
+          registryRevision: { const: 1 }
+        }
+      })
+    ]);
+    expect(registeredTask?._meta).toMatchObject({
+      ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
+      "openai/outputTemplate": ACTIVITY_CARD_URI
+    });
+
+    const missingProject = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "77777777-7777-4777-8777-777777777777",
+        activityPresentationId: "78787878-7878-4878-8878-787878787878",
+        prompt: "new work must now select the exact registered project",
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Missing Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(missingProject.isError).toBe(true);
+    expect(JSON.stringify(missingProject)).toContain("PROJECT_REQUIRED");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+    await close();
+  });
+
   it("requires a registered project for multiple roots and retires every per-call cwd override", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
@@ -9312,6 +9446,7 @@ async function connectTestClient(
     client,
     rawCallTool,
     jobs: jobRegistry,
+    sessions: sessionRegistry,
     settings: settingsStore,
     close: async () => {
       await client.close();
