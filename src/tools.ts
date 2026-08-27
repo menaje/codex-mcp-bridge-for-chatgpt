@@ -8137,7 +8137,7 @@ function modelPolicyZod() {
     }),
     z.strictObject({
       mode: z.literal("automatic"),
-      preferredSelection: modelChoiceZod().optional(),
+      fallbackSelection: modelChoiceZod().optional(),
       allowedSelections: z.union([
         z.strictObject({ kind: z.literal("catalog-visible") }),
         z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelChoiceZod()).min(1).max(500) })
@@ -8234,20 +8234,28 @@ function codexTaskInputSchema(
           .describe("Optional per-turn sandbox in adaptive access mode only.")
       }
     : {};
+  const projectedModelCeiling = catalog
+    ? effectiveModelCeiling(
+        catalog,
+        config.operatorModelCeiling,
+        settings.usePriorityServiceTier
+      )
+    : config.operatorModelCeiling;
+  const exposesTaskSelections = settings.modelPolicy.mode === "automatic" && Boolean(
+    catalog && listAllowedModelSelections(
+      settings.modelPolicy,
+      catalog,
+      projectedModelCeiling
+    ).length > 0
+  );
   const publicModel = settings.modelPolicy.mode === "automatic"
     ? {
         selection: projectedSelectionZod(
           settings.modelPolicy,
           catalog,
-          catalog
-            ? effectiveModelCeiling(
-                catalog,
-                config.operatorModelCeiling,
-                settings.usePriorityServiceTier
-              )
-            : config.operatorModelCeiling
+          projectedModelCeiling
         ).optional().describe(
-          "Optional exact model and reasoningEffort selection. Priority is a private user preference applied by the bridge and is not selected by GPT. Omit this field to use the saved preference or validated upstream default."
+          "When this descriptor exposes choices, choose an exact model and reasoningEffort from it based on the task's requirements. For a new Activity, new Agent, or fresh context the public schema requires this field only while at least one valid choice is exposed. The configured automatic fallback is used only when a compatible caller omits selection; it is not a recommendation. Priority is applied privately by the bridge and is not selected by GPT."
         )
       }
     : {};
@@ -8295,7 +8303,11 @@ function codexTaskInputSchema(
             }
           ]
         },
-        then: { required: ["project"] }
+        then: {
+          required: exposesTaskSelections
+            ? ["project", "selection"]
+            : ["project"]
+        }
       }
     ];
   }
@@ -9754,6 +9766,7 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
     (backendKind !== "mcp-server" && backendKind !== "app-server") ||
     (source !== "fixed" &&
       source !== "preferred" &&
+      source !== "configured-fallback" &&
       source !== "caller" &&
       source !== "backend-default" &&
       source !== "compatibility-fallback") ||
@@ -9767,6 +9780,12 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
     const requestedSelection = value.requestedSelection === undefined
       ? undefined
       : validateModelSelection(value.requestedSelection, "persisted requested selection");
+    const normalizedSource = source === "preferred" ? "configured-fallback" : source;
+    const fallbackWarning = typeof value.fallbackWarning === "string"
+      ? value.fallbackWarning
+      : typeof value.preferenceWarning === "string"
+        ? value.preferenceWarning
+        : undefined;
     return {
       policyRevision: value.policyRevision as number,
       catalogFingerprint: value.catalogFingerprint,
@@ -9780,10 +9799,8 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
           : effectiveSelection.reasoningEffort,
       savedSelectionSupported:
         typeof value.savedSelectionSupported === "boolean" ? value.savedSelectionSupported : true,
-      ...(typeof value.preferenceWarning === "string"
-        ? { preferenceWarning: value.preferenceWarning }
-        : {}),
-      source,
+      ...(fallbackWarning ? { fallbackWarning } : {}),
+      source: normalizedSource,
       appliedAt,
       reason: value.reason
     };

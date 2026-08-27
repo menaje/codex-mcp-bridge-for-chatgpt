@@ -361,10 +361,10 @@ export class UserSettingsStore {
       validateIdentifier(candidate.legacyPreferredModel, "legacy preferred model", 200);
       if (
         candidate.modelPolicy.mode !== "automatic" ||
-        candidate.modelPolicy.preferredSelection !== undefined
+        candidate.modelPolicy.fallbackSelection !== undefined
       ) {
         throw new Error(
-          "A legacy model-only preference is valid only for an automatic policy without an exact preferred selection."
+          "A legacy model-only preference is valid only for an automatic policy without an exact configured fallback."
         );
       }
     }
@@ -592,8 +592,10 @@ function readGeneralSettings(
   const legacyEffort = typeof value.defaultReasoningEffort === "string"
     ? value.defaultReasoningEffort
     : undefined;
-  const hasCurrentPolicy = value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION && value.modelPolicy;
-  const modelPolicy = hasCurrentPolicy
+  const hasMigratablePolicy =
+    (value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION || value.schemaVersion === 2) &&
+    value.modelPolicy;
+  const modelPolicy = hasMigratablePolicy
     ? validateModelPolicy(migratedPolicy.value)
     : automaticModelPolicy(
         legacyModel && legacyEffort
@@ -704,9 +706,11 @@ function migrateModelPolicyServiceTiers(value: unknown): {
   if (value.mode === "fixed") {
     migrated.selection = withoutTier(value.selection);
   } else if (value.mode === "automatic") {
-    if (value.preferredSelection !== undefined) {
-      migrated.preferredSelection = withoutTier(value.preferredSelection);
+    const fallbackSelection = value.fallbackSelection ?? value.preferredSelection;
+    if (fallbackSelection !== undefined) {
+      migrated.fallbackSelection = withoutTier(fallbackSelection);
     }
+    delete migrated.preferredSelection;
     if (isRecord(value.allowedSelections) && Array.isArray(value.allowedSelections.selections)) {
       const seen = new Set<string>();
       migrated.allowedSelections = {

@@ -206,6 +206,13 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card controls
 
 In automatic policy's explicit mode, models and reasoning efforts are selected separately. Per-model **All** snapshots every effort currently allowed for that model into ordinary model/effort entries; no synthetic `all` value is persisted or exposed to GPT. Catalog-visible mode stays dynamic and can include later catalog additions.
 
+For automatic policy, GPT must choose one exact model/effort pair from the
+current allowed range according to the task for every new Activity, new Agent,
+or fresh context. The optional configured fallback is used only when a
+compatible caller omits that selection; it is not a recommendation or a model
+preference. Continue/fork keeps the admission-time selection unless the current
+descriptor explicitly permits an override.
+
 Priority is an independent user preference, not part of the model policy. GPT sees and selects only `model` and `reasoningEffort`. When Priority is enabled, the bridge validates that the chosen model supports the Priority/Fast tier and injects the catalog's `priority` (or `fast`) identifier only into the downstream Codex call. Existing MCP threads retain their admission-time tier when that backend cannot change tiers on continuation.
 
 `Show bridge threads in the Codex app` defaults off. With the App Server backend, newly created and forked threads are therefore ephemeral and stay out of the Codex app list unless the user enables this preference; existing threads are unchanged. Ephemeral threads live only in their App Server worker and cannot be resumed after that worker or the bridge restarts. The current MCP Server tool contract has no ephemeral-thread option, so the card saves the preference but explains that hiding requires switching the bridge backend to App Server and restarting.
@@ -247,7 +254,8 @@ If a saved effort disappears, the bridge does not silently rewrite it. The card 
 The saved `modelPolicy` is either:
 
 - `fixed`: one exact model/effort selection; or
-- `automatic`: current catalog-visible selections or an explicit exact allowlist, optionally with a preferred selection.
+- `automatic`: current catalog-visible selections or an explicit exact allowlist,
+  optionally with an omission-only configured fallback.
 
 Runtime admission always rechecks the operator ceiling, saved policy, current backend catalog, and backend capability. Model aliases are not accepted.
 
@@ -455,8 +463,8 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS` | unset | Enables danger-full-access capability |
 | `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `untrusted`, `on-request`, or `never` |
 | `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | New-thread backend: `mcp-server` or `app-server` |
-| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional preferred model seed; requires effort seed |
-| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional preferred effort seed; requires model seed |
+| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional automatic fallback model seed; requires effort seed |
+| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional automatic fallback effort seed; requires model seed |
 | `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` | unset | Immutable JSON model/effort ceiling |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Successful catalog TTL |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Catalog refresh timeout |

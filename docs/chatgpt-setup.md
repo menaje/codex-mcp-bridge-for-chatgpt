@@ -112,6 +112,13 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 
 For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved model/effort choices; it does not add an `all` value to the tool schema and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
 
+In automatic mode, GPT chooses one exact allowed model/effort pair based on the
+task for every new Activity, new Agent, or fresh context. The card labels the
+optional fallback as the default used when GPT does not choose. It is an
+omission-only compatibility fallback, not a preferred or recommended model.
+Continue/fork keeps the admission-time selection unless the current descriptor
+explicitly permits an override.
+
 The Priority checkbox is intentionally separate. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Priority, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it.
 
 The model catalog is loaded when Settings opens, using the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails.

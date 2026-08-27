@@ -45,7 +45,7 @@ const FIXED_POLICY: ModelPolicy = {
 
 const AUTOMATIC_POLICY: ModelPolicy = {
   mode: "automatic",
-  preferredSelection: TERRA_MEDIUM,
+  fallbackSelection: TERRA_MEDIUM,
   allowedSelections: { kind: "catalog-visible" },
   constraints: { allowDelegation: true }
 };
@@ -66,8 +66,8 @@ describe("model policy resolver", () => {
     );
   });
 
-  it("resolves automatic caller, preferred, and backend-default selections deterministically", () => {
-    expect(decide({ policy: AUTOMATIC_POLICY }).source).toBe("preferred");
+  it("resolves automatic caller, configured-fallback, and backend-default selections deterministically", () => {
+    expect(decide({ policy: AUTOMATIC_POLICY }).source).toBe("configured-fallback");
     expect(decide({ policy: AUTOMATIC_POLICY }).effectiveSelection).toEqual(TERRA_MEDIUM);
     expect(decide({ policy: AUTOMATIC_POLICY, requestedSelection: SOL_HIGH })).toMatchObject({
       source: "caller",
@@ -93,7 +93,7 @@ describe("model policy resolver", () => {
     expect(decide({ policy: AUTOMATIC_POLICY, catalog: withoutPreferredModel })).toMatchObject({
       source: "backend-default",
       effectiveSelection: SOL_MAX,
-      reason: expect.stringContaining("preferred selection was outside")
+      reason: expect.stringContaining("configured automatic fallback was outside")
     });
     expect(() =>
       validatePolicyAgainstCatalog(AUTOMATIC_POLICY, withoutPreferredModel, undefined, 7)
@@ -123,7 +123,7 @@ describe("model policy resolver", () => {
       constraints: { allowDelegation: true }
     };
     expect(decide({ policy, legacyPreferredModel: "gpt-5.6-terra" })).toMatchObject({
-      source: "preferred",
+      source: "configured-fallback",
       effectiveSelection: TERRA_MEDIUM
     });
     expect(decide({ policy, legacyPreferredModel: "gpt-5.6-sol" }).effectiveSelection)
@@ -239,7 +239,7 @@ describe("model policy resolver", () => {
     expect(decide({
       policy: {
         mode: "automatic",
-        preferredSelection: SOL_MAX,
+        fallbackSelection: SOL_MAX,
         allowedSelections: { kind: "catalog-visible" },
         constraints: { allowDelegation: true }
       },
@@ -257,7 +257,7 @@ describe("model policy resolver", () => {
       savedSelectionSupported: false,
       effectiveSelection: TERRA_MEDIUM,
       effectiveReasoningEffort: TERRA_MEDIUM.reasoningEffort,
-      preferenceWarning: expect.stringContaining("unsupported by the current catalog")
+      fallbackWarning: expect.stringContaining("unsupported by the current catalog")
     });
     const stale = catalog({
       stale: true,

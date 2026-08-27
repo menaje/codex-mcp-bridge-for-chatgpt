@@ -162,8 +162,10 @@ the network as the current macOS user.
   one SQLite transaction, so failed admission leaves no partial identity or policy.
 - Operator model ceiling ∩ versioned user policy ∩ backend catalog/capability ∩
   request intent is the only model execution authority. Fixed mode rejects
-  stale overrides; automatic mode accepts only exact nested selections. No
-  bridge-maintained model aliases are interpreted.
+  stale overrides; automatic mode requires a task-selected exact nested
+  selection for every new Activity, new Agent, or fresh context. Its configured
+  fallback applies only to compatible callers that omit selection and is not a
+  recommendation. No bridge-maintained model aliases are interpreted.
 - 50,000 characters per prompt.
 - Discriminated nested Activity + Agent routing with exact existing IDs and optional
   `continue`, `fork`, or `fresh` intent; ambiguous candidates and arbitrary public

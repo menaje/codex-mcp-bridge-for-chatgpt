@@ -78,6 +78,13 @@ const rawEffortSchema = z
   })
   .passthrough();
 
+const rawUpgradeSchema = z
+  .object({
+    model: z.string().trim().min(1).max(200),
+    migration_markdown: z.string().trim().min(1).optional()
+  })
+  .passthrough();
+
 const rawModelSchema = z
   .object({
     slug: z.string().trim().min(1).max(200),
@@ -96,8 +103,11 @@ const rawModelSchema = z
     ).default([]),
     input_modalities: z.array(z.string().trim().min(1).max(100)).default([]),
     visibility: z.string().optional(),
-    upgrade: z.string().trim().min(1).max(200).optional(),
-    upgrade_info: z.record(z.string(), z.unknown()).optional(),
+    upgrade: z.union([
+      z.string().trim().min(1).max(200),
+      rawUpgradeSchema
+    ]).optional().nullable(),
+    upgrade_info: z.record(z.string(), z.unknown()).optional().nullable(),
     supports_personality: z.boolean().optional(),
     supported_in_api: z.boolean().optional()
   })
@@ -295,6 +305,11 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
       seenEfforts.add(entry.effort);
       return true;
     });
+    const upgrade = typeof model.upgrade === "string"
+      ? model.upgrade
+      : model.upgrade?.model;
+    const upgradeInfo = model.upgrade_info ||
+      (model.upgrade && typeof model.upgrade === "object" ? model.upgrade : undefined);
 
     models.push({
       id: model.slug,
@@ -305,8 +320,8 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
       supportedReasoningEfforts,
       hidden: false,
       isDefault: models.length === 0,
-      upgrade: model.upgrade,
-      upgradeInfo: model.upgrade_info,
+      upgrade,
+      upgradeInfo,
       supportsPersonality: model.supports_personality,
       defaultServiceTier: model.default_service_tier || undefined,
       serviceTiers: model.service_tiers,

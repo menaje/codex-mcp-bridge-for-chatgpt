@@ -66,6 +66,46 @@ describe("Codex model catalog", () => {
     ]);
   });
 
+  it("normalizes the Codex CLI 0.145 upgrade null and object contracts", () => {
+    const models = parseCodexModelCatalog(JSON.stringify({
+      models: [
+        {
+          slug: "gpt-current",
+          display_name: "GPT Current",
+          default_reasoning_level: "medium",
+          supported_reasoning_levels: [{ effort: "medium" }],
+          visibility: "list",
+          upgrade: null
+        },
+        {
+          slug: "gpt-previous",
+          display_name: "GPT Previous",
+          default_reasoning_level: "medium",
+          supported_reasoning_levels: [{ effort: "medium" }],
+          visibility: "list",
+          upgrade: {
+            model: "gpt-current",
+            migration_markdown: "GPT Previous will be deprecated soon."
+          }
+        }
+      ]
+    }));
+
+    expect(models[0]).toMatchObject({
+      id: "gpt-current",
+      upgrade: undefined,
+      upgradeInfo: undefined
+    });
+    expect(models[1]).toMatchObject({
+      id: "gpt-previous",
+      upgrade: "gpt-current",
+      upgradeInfo: {
+        model: "gpt-current",
+        migration_markdown: "GPT Previous will be deprecated soon."
+      }
+    });
+  });
+
   it("uses a short-lived cache and supports an explicit refresh", async () => {
     let calls = 0;
     let now = Date.parse("2026-08-21T00:00:00.000Z");
@@ -158,6 +198,13 @@ describe("Codex model catalog", () => {
   it("rejects invalid or empty selectable catalogs", () => {
     expect(() => parseCodexModelCatalog("not-json")).toThrow(/invalid JSON/);
     expect(() => parseCodexModelCatalog(JSON.stringify({ models: [] }))).toThrow(/selectable models/);
+    expect(() => parseCodexModelCatalog(JSON.stringify({
+      models: [{
+        slug: "gpt-invalid-upgrade",
+        visibility: "list",
+        upgrade: { migration_markdown: "Missing target model." }
+      }]
+    }))).toThrow(/unsupported model catalog format/);
   });
 
   it("normalizes the App Server model/list contract with exact backend capabilities", () => {

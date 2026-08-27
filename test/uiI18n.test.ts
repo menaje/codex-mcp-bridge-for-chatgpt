@@ -124,8 +124,8 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["settings.allowedScope.explicit"]).toBe(
       "직접 선택한 모델·에포트만"
     );
-    expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("선호 모델");
-    expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("선호 추론 에포트");
+    expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
+    expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
     expect(UI_TRANSLATIONS.ko["settings.cardVisibility.always"]).toBe(
       "모든 Codex 작업에 자동 표시"
     );
@@ -298,6 +298,12 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('all.indeterminate?"mixed"');
     expect(SETTINGS_CARD_HTML).toContain('id="selection-count" aria-live="polite"');
     expect(SETTINGS_CARD_HTML).toContain('id="retry-models" type="button"');
+    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status" role="status"');
+    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-label"');
+    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-source"');
+    expect(SETTINGS_CARD_HTML).toContain('elements.catalogStatus.dataset.state=catalogState');
+    expect(UI_TRANSLATIONS.en["settings.catalogStatus.valid"]).toBe("Model catalog valid");
+    expect(UI_TRANSLATIONS.ko["settings.catalogStatus.valid"]).toBe("모델 카탈로그 정상");
     expect(SETTINGS_CARD_HTML).not.toContain('id="refresh"');
     expect(SETTINGS_CARD_HTML).toContain('aria-describedby="access-hint full-warning"');
     expect(SETTINGS_CARD_HTML).toContain('elements.fullWarning.classList.toggle("show",value==="always-full")');
@@ -306,6 +312,14 @@ describe("human-facing UI localization", () => {
     );
     expect(SETTINGS_CARD_HTML).toContain('elements.retryModels.hidden=!catalogProblem');
     expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
+    expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
+    expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
+    expect(ACTIVITY_CARD_HTML).toContain('return model+" · "+execution.reasoningEffort');
+    expect(ACTIVITY_CARD_HTML).toContain('text=prefix+executionText(execution)');
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      't["activity.reasoningEffort"]+" "+execution.reasoningEffort'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('prefix+label+" · "+executionText(execution)');
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
     expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
     expect(ACTIVITY_CARD_HTML).not.toContain("<details");
@@ -332,7 +346,7 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(
       "execution.reroutedModelDisplayName||execution.reroutedModel"
     );
-    expect(ACTIVITY_CARD_HTML).toContain('t["activity.reasoningEffort"]');
+    expect(ACTIVITY_CARD_HTML).not.toContain('t["activity.reasoningEffort"]');
     expect(ACTIVITY_CARD_HTML).toContain(".execution-list{");
     expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
     expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");

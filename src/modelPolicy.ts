@@ -4,7 +4,7 @@ import type {
   CodexModelDescriptor
 } from "./modelCatalog.js";
 
-export const MODEL_POLICY_SCHEMA_VERSION = 2 as const;
+export const MODEL_POLICY_SCHEMA_VERSION = 3 as const;
 
 export type ModelChoice = {
   model: string;
@@ -36,7 +36,7 @@ export type ModelPolicy =
     }
   | {
       mode: "automatic";
-      preferredSelection?: ModelChoice;
+      fallbackSelection?: ModelChoice;
       allowedSelections: AllowedSelections;
       constraints: ModelPolicyConstraints;
     };
@@ -56,7 +56,7 @@ export type CatalogValidationState =
 
 export type ExecutionDecisionSource =
   | "fixed"
-  | "preferred"
+  | "configured-fallback"
   | "caller"
   | "backend-default"
   | "compatibility-fallback";
@@ -70,7 +70,7 @@ export type ExecutionDecision = {
   effectiveSelection: ModelSelection;
   effectiveReasoningEffort: string;
   savedSelectionSupported: boolean;
-  preferenceWarning?: string;
+  fallbackWarning?: string;
   source: ExecutionDecisionSource;
   appliedAt: "thread-start" | "turn-start";
   reason: string;
@@ -111,11 +111,11 @@ export type ResolveModelPolicyInput = {
 };
 
 export function automaticModelPolicy(
-  preferredSelection?: ModelChoice
+  fallbackSelection?: ModelChoice
 ): ModelPolicy {
   return {
     mode: "automatic",
-    ...(preferredSelection ? { preferredSelection: cloneModelChoice(preferredSelection) } : {}),
+    ...(fallbackSelection ? { fallbackSelection: cloneModelChoice(fallbackSelection) } : {}),
     allowedSelections: { kind: "catalog-visible" },
     constraints: { allowDelegation: true }
   };
@@ -153,22 +153,26 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
   } else {
     throw new Error("Invalid allowed model selections.");
   }
-  const preferredSelection = value.preferredSelection === undefined
-    ? undefined
-    : readModelChoice(value.preferredSelection, "preferred model selection");
-  if (
-    preferredSelection &&
-    allowedSelections.kind === "explicit" &&
-    !allowedSelections.selections.some((entry) => sameModelChoice(entry, preferredSelection))
-  ) {
-    throw new Error("The preferred model selection must be included in the explicit allowlist.");
+  if (value.fallbackSelection !== undefined && value.preferredSelection !== undefined) {
+    throw new Error("Automatic model policy cannot contain both fallbackSelection and preferredSelection.");
   }
-  if (!constraints.allowDelegation && preferredSelection?.reasoningEffort === "ultra") {
-    throw new Error("Ultra reasoning cannot be preferred while delegation is disabled.");
+  const rawFallbackSelection = value.fallbackSelection ?? value.preferredSelection;
+  const fallbackSelection = rawFallbackSelection === undefined
+    ? undefined
+    : readModelChoice(rawFallbackSelection, "automatic fallback model selection");
+  if (
+    fallbackSelection &&
+    allowedSelections.kind === "explicit" &&
+    !allowedSelections.selections.some((entry) => sameModelChoice(entry, fallbackSelection))
+  ) {
+    throw new Error("The automatic fallback model selection must be included in the explicit allowlist.");
+  }
+  if (!constraints.allowDelegation && fallbackSelection?.reasoningEffort === "ultra") {
+    throw new Error("Ultra reasoning cannot be the automatic fallback while delegation is disabled.");
   }
   return {
     mode: "automatic",
-    ...(preferredSelection ? { preferredSelection } : {}),
+    ...(fallbackSelection ? { fallbackSelection } : {}),
     allowedSelections,
     constraints
   };
@@ -221,17 +225,17 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
 
   let effectiveSelection: ModelSelection;
   let source: ExecutionDecisionSource;
-  let preferredFallback = false;
+  let configuredFallbackUnavailable = false;
   let savedSelectionSupported = true;
-  let preferenceWarning: string | undefined;
-  const preferredSelection = policy.mode === "automatic"
-    ? policy.preferredSelection
+  let fallbackWarning: string | undefined;
+  const fallbackSelection = policy.mode === "automatic"
+    ? policy.fallbackSelection
     : undefined;
   const legacyPreferredModel = input.legacyPreferredModel === undefined
     ? undefined
     : identifier(input.legacyPreferredModel, "legacy preferred model", 200);
   const legacyPreferredSelection =
-    policy.mode === "automatic" && !preferredSelection && legacyPreferredModel
+    policy.mode === "automatic" && !fallbackSelection && legacyPreferredModel
       ? catalogDefaultSelection(
           input.catalog,
           policy,
@@ -267,25 +271,25 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
       effectiveSelection = fallback;
       source = "compatibility-fallback";
       savedSelectionSupported = false;
-      preferenceWarning =
+      fallbackWarning =
         `Saved selection ${selectionLabel(policy.selection)} is unsupported by the current catalog. ` +
-        `This turn uses ${selectionLabel(fallback)} without rewriting the saved preference.`;
+        `This turn uses ${selectionLabel(fallback)} without rewriting the saved selection.`;
     }
   } else if (input.requestedSelection) {
     effectiveSelection = readModelChoice(input.requestedSelection, "requested model selection");
     source = "caller";
   } else if (
-    preferredSelection &&
+    fallbackSelection &&
     listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
-      .some((selection) => sameModelChoice(selection, preferredSelection))
+      .some((selection) => sameModelChoice(selection, fallbackSelection))
   ) {
-    effectiveSelection = cloneSelection(preferredSelection);
-    source = "preferred";
+    effectiveSelection = cloneSelection(fallbackSelection);
+    source = "configured-fallback";
   } else if (legacyPreferredSelection) {
     effectiveSelection = legacyPreferredSelection;
-    source = "preferred";
+    source = "configured-fallback";
   } else {
-    preferredFallback = Boolean(preferredSelection || legacyPreferredModel);
+    configuredFallbackUnavailable = Boolean(fallbackSelection || legacyPreferredModel);
     const backendDefault = catalogDefaultSelection(input.catalog, policy, input.operatorCeiling);
     if (!backendDefault) {
       throw unavailable(
@@ -295,14 +299,14 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     }
     effectiveSelection = backendDefault;
     source = "backend-default";
-    if (preferredFallback) {
+    if (configuredFallbackUnavailable) {
       savedSelectionSupported = false;
-      const savedLabel = preferredSelection
-        ? selectionLabel(preferredSelection)
+      const savedLabel = fallbackSelection
+        ? selectionLabel(fallbackSelection)
         : String(legacyPreferredModel);
-      preferenceWarning =
-        `Saved preferred selection ${savedLabel} is unsupported by the current catalog. ` +
-        `This turn uses ${selectionLabel(backendDefault)} without rewriting the saved preference.`;
+      fallbackWarning =
+        `Saved automatic fallback ${savedLabel} is unsupported by the current catalog. ` +
+        `This turn uses ${selectionLabel(backendDefault)} without rewriting the configured fallback.`;
     }
   }
 
@@ -361,11 +365,11 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     effectiveSelection,
     effectiveReasoningEffort: effectiveSelection.reasoningEffort,
     savedSelectionSupported,
-    ...(preferenceWarning ? { preferenceWarning } : {}),
+    ...(fallbackWarning ? { fallbackWarning } : {}),
     source,
     appliedAt: turnOverride ? "turn-start" : "thread-start",
-    reason: `${decisionReason(source, input.operation, input.backendKind, catalogValidation)}${preferredFallback
-      ? " The saved preferred selection was outside the current allowed catalog intersection."
+    reason: `${decisionReason(source, input.operation, input.backendKind, catalogValidation)}${configuredFallbackUnavailable
+      ? " The configured automatic fallback was outside the current allowed catalog intersection."
       : ""}`
   };
 }
@@ -552,7 +556,7 @@ function modelPolicyKey(policy: ModelPolicy): string {
   }
   return JSON.stringify([
     "automatic",
-    policy.preferredSelection ? modelChoiceKey(policy.preferredSelection) : null,
+    policy.fallbackSelection ? modelChoiceKey(policy.fallbackSelection) : null,
     policy.allowedSelections.kind,
     policy.allowedSelections.kind === "explicit"
       ? policy.allowedSelections.selections.map(modelChoiceKey).sort()
@@ -679,8 +683,8 @@ function decisionReason(
 ): string {
   const sourceText = source === "fixed"
     ? "the saved fixed policy"
-    : source === "preferred"
-      ? "the saved preferred selection"
+    : source === "configured-fallback"
+      ? "the configured automatic fallback"
       : source === "caller"
         ? "the caller's exact selection"
         : source === "compatibility-fallback"

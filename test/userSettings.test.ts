@@ -27,7 +27,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -370,6 +370,37 @@ describe("user settings and project registry", () => {
     const imported = new UserSettingsStore(config, { stateFile: legacyFile });
     expect(imported.current.projects).toEqual([]);
     expect(imported.loadWarnings.join(" ")).toContain("intentionally not migrated");
+  });
+
+  it("migrates the v2 preferred selection to the v3 omission fallback", () => {
+    const stateFile = path.join(temporaryDirectory("settings-model-policy-v2-"), "settings.json");
+    const config = configFor();
+    const original = new UserSettingsStore(config, { stateFile, now: () => 4_000 });
+    original.update({ uiLocalePreference: "ko" }, 0);
+
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
+    persisted.settings.schemaVersion = 2;
+    persisted.settings.modelPolicy = {
+      mode: "automatic",
+      preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      allowedSelections: { kind: "catalog-visible" },
+      constraints: { allowDelegation: true }
+    };
+    writeFileSync(stateFile, JSON.stringify(persisted));
+
+    const restored = new UserSettingsStore(config, { stateFile, now: () => 5_000 });
+    expect(restored.current).toMatchObject({
+      schemaVersion: 3,
+      settingsRevision: 2,
+      modelPolicy: {
+        mode: "automatic",
+        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(restored.current.modelPolicy).not.toHaveProperty("preferredSelection");
+    const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
+    expect(rewritten.settings.modelPolicy).toHaveProperty("fallbackSelection");
+    expect(rewritten.settings.modelPolicy).not.toHaveProperty("preferredSelection");
   });
 
   it("safely narrows saved capability settings in one ordinary generation", () => {

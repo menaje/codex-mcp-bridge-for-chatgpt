@@ -620,7 +620,7 @@ describe("bridge tools", () => {
       required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
     expect((byName.get("codex_task")?.inputSchema as any).allOf).toEqual([
-      expect.objectContaining({ then: { required: ["project"] } })
+      expect.objectContaining({ then: { required: ["project", "selection"] } })
     ]);
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
@@ -1282,7 +1282,7 @@ describe("bridge tools", () => {
             "operation",
           ],
           "propertyCount": 3,
-          "schemaBytes": 4871,
+          "schemaBytes": 4870,
           "visibility": {
             "app": true,
             "model": false,
@@ -1309,7 +1309,7 @@ describe("bridge tools", () => {
             "selection",
           ],
           "propertyCount": 9,
-          "schemaBytes": 6407,
+          "schemaBytes": 6650,
           "visibility": {
             "app": true,
             "model": true,
@@ -1640,10 +1640,16 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/34e2eb4c94d2.html",
+            "ui://codex-mcp-bridge/settings/2350e96e107c.html",
+            "ui://codex-mcp-bridge/settings/89f54072f745.html",
             "ui://codex-mcp-bridge/settings/ad2c5a241a90.html",
             "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
+            "ui://codex-mcp-bridge/activity/17be799a4a65.html",
+            "ui://codex-mcp-bridge/activity/8f9b0c10e534.html",
             "ui://codex-mcp-bridge/activity/d7d73c496d9b.html",
             "ui://codex-mcp-bridge/activity/5804dd38e35a.html",
             "ui://codex-mcp-bridge/activity/536d28d41856.html",
@@ -2214,7 +2220,7 @@ describe("bridge tools", () => {
       projects: [{ projectName: "Test Project", available: true, archived: false }],
       modelPolicy: {
         mode: "automatic",
-        preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
         allowedSelections: { kind: "catalog-visible" }
       },
       usePriorityServiceTier: false,
@@ -2431,7 +2437,7 @@ describe("bridge tools", () => {
             kind: "explicit",
             selections: [{ model: "gpt-5.6-terra", reasoningEffort: "high" }]
           },
-          preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          fallbackSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
           constraints: { allowDelegation: true }
         }
       }
@@ -2611,7 +2617,7 @@ describe("bridge tools", () => {
         expectedRevision: 0,
         modelPolicy: {
           mode: "automatic",
-          preferredSelection: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+          fallbackSelection: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
           allowedSelections: {
             kind: "explicit",
             selections: [
@@ -2672,7 +2678,7 @@ describe("bridge tools", () => {
         savedSelectionSupported: false,
         effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
         effectiveReasoningEffort: "max",
-        preferenceWarning: expect.stringContaining("unsupported by the current catalog")
+        fallbackWarning: expect.stringContaining("unsupported by the current catalog")
       }
     });
     expect(upstream.calls).toEqual([
@@ -2693,6 +2699,14 @@ describe("bridge tools", () => {
       undefined,
       new UnavailableModelCatalog()
     );
+    const unavailableDescriptor = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    )!;
+    const unavailableSchema = unavailableDescriptor.inputSchema as Record<string, any>;
+    expect(unavailableSchema.properties?.selection).toMatchObject({ not: {} });
+    expect(unavailableSchema.allOf).toEqual([
+      expect.objectContaining({ then: { required: ["project"] } })
+    ]);
     const task = await runTask(client, { prompt: "catalog required", sessionMode: "new" });
     expect(task).toMatchObject({
       isError: true,
@@ -2759,13 +2773,13 @@ describe("bridge tools", () => {
     const opened = await client.callTool({ name: "codex_settings", arguments: {} });
     expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
       settings: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         settingsRevision: 0,
         registryRevision: 1,
         accessStrategy: "adaptive",
         modelPolicy: {
           mode: "automatic",
-          preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
           allowedSelections: { kind: "catalog-visible" }
         },
         projects: [{ name: "Test Project", available: true, archived: false }],
@@ -5163,7 +5177,7 @@ describe("bridge tools", () => {
     expect(running.executionDecision).toMatchObject({
       policyRevision: 0,
       effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      source: "preferred"
+      source: "configured-fallback"
     });
 
     await client.callTool({
@@ -5185,7 +5199,7 @@ describe("bridge tools", () => {
     expect(completed.executionDecision).toMatchObject({
       policyRevision: 0,
       effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      source: "preferred"
+      source: "configured-fallback"
     });
     await close();
   });
