@@ -101,15 +101,16 @@ import {
   type ProjectSelection,
   type ProjectTarget
 } from "./projectRegistry.js";
-import type {
-  CodexPendingInteraction,
-  CodexInteractionDecision,
-  CodexProgress,
-  CodexPublicEvent,
-  CodexThreadResumeProbe,
-  CodexUpstream,
-  ToolResult,
-  UpstreamWorkerAssignment
+import {
+  MAX_CODEX_INTERACTION_QUESTIONS,
+  type CodexPendingInteraction,
+  type CodexInteractionDecision,
+  type CodexProgress,
+  type CodexPublicEvent,
+  type CodexThreadResumeProbe,
+  type CodexUpstream,
+  type ToolResult,
+  type UpstreamWorkerAssignment
 } from "./upstream.js";
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
@@ -3775,31 +3776,59 @@ export function registerBridgeTools(
     operation
   );
 
+  const statusJobIdInput = z.string().trim().min(1).max(200)
+    .describe("Exact job id returned by codex_task.");
+  const statusJobWaitForInput = z.enum(["change", "terminal"])
+    .describe("Wait for the next change or a terminal state.");
+  const statusJobWaitMsInput = z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional()
+    .describe(`Bounded wait duration; defaults to ${DEFAULT_CODEX_STATUS_WAIT_MS} milliseconds.`);
+  const statusActivityQueryInput = z.strictObject({
+    kind: z.literal("activity"),
+    id: scopeIdSchema().describe("Exact Activity id in the current conversation scope.")
+  });
+  const statusThreadQueryInput = z.strictObject({
+    kind: z.literal("thread"),
+    id: z.string().trim().min(1).max(200)
+      .describe("Exact Codex thread id in the current conversation scope.")
+  });
+  const statusPageQueryInput = z.strictObject({
+    kind: z.literal("page"),
+    collection: z.enum(["sessions", "jobs", "activities"]),
+    limit: z.number().int().min(1).max(100).optional(),
+    cursor: z.string().trim().min(1).max(200).optional()
+  });
+  const statusJobRuntimeQueryInput = z.strictObject({
+    kind: z.literal("job"),
+    id: statusJobIdInput,
+    waitFor: statusJobWaitForInput.optional(),
+    waitMs: statusJobWaitMsInput
+  });
   const codexStatusQueryInput = z.discriminatedUnion("kind", [
-    z.strictObject({
-      kind: z.literal("job"),
-      id: z.string().trim().min(1).max(200).describe("Exact job id returned by codex_task."),
-      waitFor: z.enum(["change", "terminal"]).optional()
-        .describe("Optionally wait for the next change or a terminal state."),
-      waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional()
-        .describe(`Bounded wait duration; defaults to ${DEFAULT_CODEX_STATUS_WAIT_MS} milliseconds.`)
-    }),
-    z.strictObject({
-      kind: z.literal("activity"),
-      id: scopeIdSchema().describe("Exact Activity id in the current conversation scope.")
-    }),
-    z.strictObject({
-      kind: z.literal("thread"),
-      id: z.string().trim().min(1).max(200)
-        .describe("Exact Codex thread id in the current conversation scope.")
-    }),
-    z.strictObject({
-      kind: z.literal("page"),
-      collection: z.enum(["sessions", "jobs", "activities"]),
-      limit: z.number().int().min(1).max(100).optional(),
-      cursor: z.string().trim().min(1).max(200).optional()
-    })
+    statusJobRuntimeQueryInput,
+    statusActivityQueryInput,
+    statusThreadQueryInput,
+    statusPageQueryInput
   ]);
+  const statusPublicQueryInput = withJsonSchemaProjection(
+    codexStatusQueryInput,
+    {
+      oneOf: [
+        jsonSchemaBody(z.strictObject({
+          kind: z.literal("job"),
+          id: statusJobIdInput
+        }).describe("Read one exact Job immediately without waiting.")),
+        jsonSchemaBody(z.strictObject({
+          kind: z.literal("job"),
+          id: statusJobIdInput,
+          waitFor: statusJobWaitForInput,
+          waitMs: statusJobWaitMsInput
+        }).describe("Wait on one exact Job; waitFor is required whenever waitMs is sent.")),
+        jsonSchemaBody(statusActivityQueryInput),
+        jsonSchemaBody(statusThreadQueryInput),
+        jsonSchemaBody(statusPageQueryInput)
+      ]
+    }
+  );
   const codexStatusRuntimeInput = z.strictObject({
     query: codexStatusQueryInput.optional(),
     scopeId: scopeIdSchema()
@@ -3813,7 +3842,7 @@ export function registerBridgeTools(
       )
   });
   const codexStatusPublicInput = z.strictObject({
-    query: codexStatusQueryInput.optional().describe(
+    query: statusPublicQueryInput.optional().describe(
       "Exact detail, bounded job wait, or one cursor-paginated collection. Omit for the current scoped overview."
     )
   });
@@ -4829,7 +4858,7 @@ export function registerBridgeTools(
       title: "Recovery Detach Codex Agent",
       description:
         "Release one exact idle Agent assignment for operator-authorized recovery. This capability is disabled by default, rejects active or waiting Agents inside the same state transaction, and never stops a running job.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional()
           .describe("Exact conversation scope for compatibility/admin MCP hosts without ChatGPT session metadata."),
         requestId: scopeIdSchema().describe("Unique UUID for this exact recovery mutation and its retries."),
@@ -4837,7 +4866,7 @@ export function registerBridgeTools(
         activityId: scopeIdSchema().describe("Exact active Activity assignment to release."),
         expectedAgentVersion: z.number().int().min(1)
           .describe("Authoritative Agent version observed immediately before recovery detach.")
-      },
+      }),
       outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -4908,7 +4937,7 @@ export function registerBridgeTools(
       title: "Stop Codex Background Process",
       description:
         "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional()
           .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
@@ -4917,7 +4946,7 @@ export function registerBridgeTools(
         expectedAgentVersion: z.number().int().min(1),
         processId: z.string().trim().min(1).max(200),
         card: activityCardProofInputSchema
-      },
+      }),
       outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
@@ -5195,6 +5224,18 @@ export function registerBridgeTools(
     }
   );
 
+  const interactionAnswersBaseInput = z.record(
+    z.string().trim().min(1).max(200),
+    z.array(z.string().max(4_000)).max(20)
+  );
+  const interactionAnswersInput = withJsonSchemaProjection(
+    interactionAnswersBaseInput,
+    {
+      ...jsonSchemaBody(interactionAnswersBaseInput),
+      maxProperties: MAX_CODEX_INTERACTION_QUESTIONS
+    }
+  );
+
   server.registerTool(
     "codex_interaction_respond",
     {
@@ -5213,10 +5254,7 @@ export function registerBridgeTools(
             decision: z.enum(["accept", "acceptForSession", "decline", "cancel"])
           }),
           z.strictObject({
-            answers: z.record(
-              z.string().trim().min(1).max(200),
-              z.array(z.string().max(4_000)).max(20)
-            )
+            answers: interactionAnswersInput
           })
         ]),
         card: activityCardProofInputSchema
@@ -5236,6 +5274,14 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
+      if (
+        "answers" in args.response &&
+        Object.keys(args.response.answers).length > MAX_CODEX_INTERACTION_QUESTIONS
+      ) {
+        throw new Error(
+          `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions can be answered at once.`
+        );
+      }
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
@@ -5803,12 +5849,12 @@ export function registerBridgeTools(
       title: "List Codex Models",
       description:
         "Return the target backend's current selectable models, exact supported efforts/service tiers, and validated catalog fingerprint. App Server model/list is preferred for that backend; the installed Codex CLI is the MCP source and fallback.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         refresh: z
           .boolean()
           .optional()
           .describe("Force an immediate catalog refresh. Omit to use the short-lived cache when available.")
-      },
+      }),
       outputSchema: codexModelsOutputSchema,
       annotations: {
         readOnlyHint: true,
@@ -5858,12 +5904,12 @@ export function registerBridgeTools(
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
         "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, Codex-app thread visibility, bridge-enforced limits, and current backend-aware model catalog. Use this when the user explicitly asks where or how to configure this ChatGPT-to-Codex bridge, after an actual codex_task response returns PROJECT_SETUP_REQUIRED, or after the user explicitly requests new or fresh work when registered project entries exist but the current codex_task descriptor exposes no selectable project because those entries need recovery. Never open it merely because a conversation starts or this plugin is attached.",
-      inputSchema: {
+      inputSchema: z.strictObject({
         refreshModels: z
           .boolean()
           .optional()
           .describe("Force a fresh Codex model catalog lookup before rendering the card.")
-      },
+      }),
       outputSchema: compactSettingsOutputSchema,
       annotations: {
         readOnlyHint: true,
@@ -9439,7 +9485,7 @@ function projectedProjectZod(
           additionalProperties: false,
           required: ["name", "registryRevision"],
           properties: {
-            name: { const: project.name },
+            name: { type: "string", const: project.name },
             registryRevision: { type: "integer", const: settings.registryRevision }
           },
           title: project.name,
@@ -10481,7 +10527,7 @@ function readPendingInteraction(value: unknown): CodexPendingInteraction | undef
   const questions = Array.isArray(value.questions)
     ? value.questions
         .filter(isRecord)
-        .slice(0, 3)
+        .slice(0, MAX_CODEX_INTERACTION_QUESTIONS)
         .flatMap((question) => {
           if (typeof question.id !== "string" || typeof question.question !== "string") return [];
           return [{

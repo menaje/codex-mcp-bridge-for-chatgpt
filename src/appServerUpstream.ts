@@ -24,20 +24,21 @@ import {
   assertWorkerTerminationCorrelation,
   type WorkerTerminationCorrelation
 } from "./cancellation.js";
-import type {
-  CodexThreadContinueRequest,
-  CodexThreadForkRequest,
-  CodexThreadStartRequest,
-  CodexBackgroundTerminal,
-  CodexInteractionDecision,
-  CodexPendingInteraction,
-  CodexProgress,
-  CodexPublicEvent,
-  CodexThreadLineage,
-  CodexThreadResumeProbe,
-  CodexUpstream,
-  ToolResult,
-  UpstreamWorkerAssignment
+import {
+  MAX_CODEX_INTERACTION_QUESTIONS,
+  type CodexThreadContinueRequest,
+  type CodexThreadForkRequest,
+  type CodexThreadStartRequest,
+  type CodexBackgroundTerminal,
+  type CodexInteractionDecision,
+  type CodexPendingInteraction,
+  type CodexProgress,
+  type CodexPublicEvent,
+  type CodexThreadLineage,
+  type CodexThreadResumeProbe,
+  type CodexUpstream,
+  type ToolResult,
+  type UpstreamWorkerAssignment
 } from "./upstream.js";
 
 const REASONING_NOTIFICATIONS = [
@@ -1423,7 +1424,7 @@ class AppServerConnection {
     if (!context) throw new Error("App Server requested input for an unknown turn.");
     const interactionId = `${this.workerId}:${this.generation}:${String(requestId)}`;
     const questions = kind === "user-input" && Array.isArray(params.questions)
-      ? params.questions.filter(isRecord).slice(0, 3).map((question) => ({
+      ? params.questions.filter(isRecord).slice(0, MAX_CODEX_INTERACTION_QUESTIONS).map((question) => ({
           id: requiredString(question.id, "question id"),
           header: optionalString(question.header)?.slice(0, 80) || "Input",
           question: optionalString(question.question)?.slice(0, 1_000) || "",

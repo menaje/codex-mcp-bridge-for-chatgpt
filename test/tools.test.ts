@@ -31,15 +31,16 @@ import {
   validateActivityViewPrivateMetadata
 } from "../src/tools.js";
 import { uiResourceRevisions } from "../src/uiResources.js";
-import type {
-  CodexBackgroundTerminal,
-  CodexInteractionDecision,
-  CodexProgress,
-  CodexThreadResumeProbe,
-  CodexThreadForkRequest,
-  CodexUpstream,
-  ToolResult,
-  UpstreamWorkerAssignment
+import {
+  MAX_CODEX_INTERACTION_QUESTIONS,
+  type CodexBackgroundTerminal,
+  type CodexInteractionDecision,
+  type CodexProgress,
+  type CodexThreadResumeProbe,
+  type CodexThreadForkRequest,
+  type CodexUpstream,
+  type ToolResult,
+  type UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
@@ -524,11 +525,18 @@ describe("bridge tools", () => {
       "codex_update_settings"
     ]);
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
-    const typelessNumericLiterals: string[] = [];
-    const visitPublishedSchema = (value: unknown, pointer: string): void => {
+    const typelessModelLiterals: string[] = [];
+    const openInputObjects: string[] = [];
+    const visitPublishedSchema = (
+      value: unknown,
+      pointer: string,
+      options: { requireLiteralType: boolean; requireClosedObjects: boolean }
+    ): void => {
       if (!value || typeof value !== "object") return;
       if (Array.isArray(value)) {
-        value.forEach((entry, index) => visitPublishedSchema(entry, `${pointer}/${index}`));
+        value.forEach((entry, index) =>
+          visitPublishedSchema(entry, `${pointer}/${index}`, options)
+        );
         return;
       }
       const object = value as Record<string, unknown>;
@@ -537,13 +545,26 @@ describe("bridge tools", () => {
         : Array.isArray(object.enum)
           ? object.enum
           : [];
+      const declaredTypes = new Set(
+        Array.isArray(object.type) ? object.type : [object.type]
+      );
+      const hasLiteralType = (entry: unknown) => {
+        if (entry === null) return declaredTypes.has("null");
+        if (typeof entry === "number") {
+          return declaredTypes.has("number") || declaredTypes.has("integer");
+        }
+        return declaredTypes.has(typeof entry);
+      };
+      if (options.requireLiteralType && literals.some((entry) => !hasLiteralType(entry))) {
+        typelessModelLiterals.push(pointer);
+      }
       if (
-        literals.some((entry) => typeof entry === "number") &&
-        object.type !== "number" &&
-        object.type !== "integer"
-      ) typelessNumericLiterals.push(pointer);
+        options.requireClosedObjects &&
+        object.properties &&
+        object.additionalProperties !== false
+      ) openInputObjects.push(pointer);
       for (const [key, entry] of Object.entries(object)) {
-        visitPublishedSchema(entry, `${pointer}/${key}`);
+        visitPublishedSchema(entry, `${pointer}/${key}`, options);
       }
     };
     for (const tool of tools.tools) {
@@ -554,12 +575,24 @@ describe("bridge tools", () => {
       const modelVisible = declaredVisibility
         ? declaredVisibility.includes("model")
         : meta["openai/visibility"] !== "private";
-      if (!modelVisible) continue;
-      visitPublishedSchema(tool.inputSchema, `${tool.name}/inputSchema`);
-      visitPublishedSchema(tool.outputSchema, `${tool.name}/outputSchema`);
+      visitPublishedSchema(tool.inputSchema, `${tool.name}/inputSchema`, {
+        requireLiteralType: modelVisible,
+        requireClosedObjects: true
+      });
+      if (modelVisible) {
+        visitPublishedSchema(tool.outputSchema, `${tool.name}/outputSchema`, {
+          requireLiteralType: true,
+          requireClosedObjects: false
+        });
+      }
     }
-    expect(typelessNumericLiterals).toEqual([]);
+    expect(typelessModelLiterals).toEqual([]);
+    expect(openInputObjects).toEqual([]);
     for (const tool of tools.tools) {
+      expect(tool.inputSchema, `${tool.name} must reject unknown root inputs`).toMatchObject({
+        type: "object",
+        additionalProperties: false
+      });
       expect(tool.outputSchema, `${tool.name} must declare structuredContent`).toMatchObject({
         type: "object",
         additionalProperties: false
@@ -580,13 +613,6 @@ describe("bridge tools", () => {
           oneOf: expect.arrayContaining([
             expect.objectContaining({
               properties: expect.objectContaining({
-                kind: { type: "string", const: "job" },
-                waitFor: { type: "string", enum: ["change", "terminal"], description: expect.any(String) },
-                waitMs: expect.objectContaining({ maximum: 60000 })
-              })
-            }),
-            expect.objectContaining({
-              properties: expect.objectContaining({
                 kind: { type: "string", const: "page" },
                 collection: { type: "string", enum: ["sessions", "jobs", "activities"] }
               })
@@ -594,6 +620,36 @@ describe("bridge tools", () => {
           ])
         }
       }
+    });
+    const statusQueryVariants = (
+      byName.get("codex_status")?.inputSchema.properties?.query as {
+        oneOf?: Array<Record<string, any>>;
+      }
+    )?.oneOf || [];
+    const statusJobQueryVariants = statusQueryVariants.filter(
+      (variant) => variant.properties?.kind?.const === "job"
+    );
+    expect(statusJobQueryVariants).toHaveLength(2);
+    const immediateJobQuery = statusJobQueryVariants.find(
+      (variant) => !variant.properties?.waitFor
+    );
+    expect(Object.keys(immediateJobQuery?.properties || {}).sort()).toEqual(["id", "kind"]);
+    expect(immediateJobQuery?.required?.sort()).toEqual(["id", "kind"]);
+    const waitingJobQuery = statusJobQueryVariants.find(
+      (variant) => variant.properties?.waitFor
+    );
+    expect(waitingJobQuery).toMatchObject({
+      required: expect.arrayContaining(["kind", "id", "waitFor"]),
+      properties: {
+        kind: { type: "string", const: "job" },
+        waitFor: {
+          type: "string",
+          enum: ["change", "terminal"],
+          description: expect.any(String)
+        },
+        waitMs: expect.objectContaining({ maximum: 60000 })
+      },
+      additionalProperties: false
     });
     for (const hiddenCardField of [
       "scopeId",
@@ -746,7 +802,7 @@ describe("bridge tools", () => {
     expect(taskProperties?.project?.oneOf?.[0]).toMatchObject({
       required: ["name", "registryRevision"],
       properties: {
-        name: { const: "Test Project" },
+        name: { type: "string", const: "Test Project" },
         registryRevision: { type: "integer", const: 1 }
       }
     });
@@ -853,6 +909,18 @@ describe("bridge tools", () => {
         requestId: expect.any(Object),
         widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") }
       }
+    });
+    const interactionResponseSchema = byName.get("codex_interaction_respond")
+      ?.inputSchema.properties?.response as {
+        anyOf?: Array<Record<string, any>>;
+        oneOf?: Array<Record<string, any>>;
+      };
+    const answerResponseVariant = (
+      interactionResponseSchema.anyOf || interactionResponseSchema.oneOf || []
+    ).find((variant) => variant.properties?.answers);
+    expect(answerResponseVariant?.properties?.answers).toMatchObject({
+      type: "object",
+      maxProperties: MAX_CODEX_INTERACTION_QUESTIONS
     });
     expect(byName.get("codex_activity_handoff")?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["action", "outboxIds", "card"]),
@@ -1032,7 +1100,7 @@ describe("bridge tools", () => {
             "query",
           ],
           "propertyCount": 1,
-          "schemaBytes": 1613,
+          "schemaBytes": 1992,
           "visibility": {
             "app": false,
             "model": true,
@@ -1181,7 +1249,7 @@ describe("bridge tools", () => {
             "scopeId",
           ],
           "propertyCount": 5,
-          "schemaBytes": 1037,
+          "schemaBytes": 1066,
           "visibility": {
             "app": true,
             "model": false,
@@ -1206,7 +1274,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 7,
-          "schemaBytes": 1972,
+          "schemaBytes": 2001,
           "visibility": {
             "app": true,
             "model": false,
@@ -1279,7 +1347,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 8,
-          "schemaBytes": 2254,
+          "schemaBytes": 2272,
           "visibility": {
             "app": true,
             "model": false,
@@ -1367,7 +1435,7 @@ describe("bridge tools", () => {
             "refresh",
           ],
           "propertyCount": 1,
-          "schemaBytes": 215,
+          "schemaBytes": 244,
           "visibility": {
             "app": false,
             "model": true,
@@ -1386,7 +1454,7 @@ describe("bridge tools", () => {
             "refreshModels",
           ],
           "propertyCount": 1,
-          "schemaBytes": 203,
+          "schemaBytes": 232,
           "visibility": {
             "app": true,
             "model": true,
@@ -1434,7 +1502,7 @@ describe("bridge tools", () => {
             "selection",
           ],
           "propertyCount": 9,
-          "schemaBytes": 5578,
+          "schemaBytes": 5594,
           "visibility": {
             "app": true,
             "model": true,
@@ -1444,6 +1512,69 @@ describe("bridge tools", () => {
       ]
     `);
 
+    await close();
+  });
+
+  it("rejects unknown root inputs and oversized interaction answer maps", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const card = {
+      activityId: SCOPE_A,
+      generation: ACTIVITY_CARD_CONTRACT_GENERATION,
+      presentation: { kind: "explicit" }
+    };
+    const unknownRootCalls = [
+      { name: "codex_models", arguments: { unexpectedTypo: true } },
+      { name: "codex_settings", arguments: { unexpectedTypo: true } },
+      {
+        name: "codex_agent_recovery_detach",
+        arguments: {
+          requestId: "10101010-1010-4010-8010-101010101010",
+          agentId: "11111111-1010-4010-8010-101010101010",
+          activityId: "12121212-1010-4010-8010-101010101010",
+          expectedAgentVersion: 1,
+          unexpectedTypo: true
+        }
+      },
+      {
+        name: "codex_background_process_terminate",
+        arguments: {
+          requestId: "13131313-1010-4010-8010-101010101010",
+          agentId: "14141414-1010-4010-8010-101010101010",
+          expectedAgentVersion: 1,
+          processId: "background-process",
+          card,
+          unexpectedTypo: true
+        }
+      }
+    ];
+    for (const request of unknownRootCalls) {
+      const result = await client.callTool(request);
+      expect(result.isError, request.name).toBe(true);
+      expect(JSON.stringify(result), request.name).toContain("unexpectedTypo");
+    }
+
+    const oversizedAnswers = Object.fromEntries(
+      Array.from(
+        { length: MAX_CODEX_INTERACTION_QUESTIONS + 1 },
+        (_, index) => [`question-${index + 1}`, ["answer"]]
+      )
+    );
+    const oversized = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "15151515-1010-4010-8010-101010101010",
+        jobId: "job-input-bound",
+        expectedJobVersion: 1,
+        interactionId: "interaction-input-bound",
+        response: { answers: oversizedAnswers },
+        card
+      }
+    });
+    expect(oversized.isError).toBe(true);
+    expect(JSON.stringify(oversized)).toContain(
+      `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions`
+    );
     await close();
   });
 
@@ -9369,7 +9500,7 @@ describe("bridge tools", () => {
       expect.objectContaining({
         required: ["name", "registryRevision"],
         properties: {
-          name: { const: "First Project" },
+          name: { type: "string", const: "First Project" },
           registryRevision: { type: "integer", const: 1 }
         }
       })

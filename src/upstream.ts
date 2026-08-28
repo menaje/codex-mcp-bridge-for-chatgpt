@@ -20,6 +20,8 @@ import {
   type JsonRpcTerminationResult
 } from "./jsonRpcProcess.js";
 
+export const MAX_CODEX_INTERACTION_QUESTIONS = 3;
+
 export type ToolResult = CallToolResult;
 
 export type CodexPublicEvent = {
