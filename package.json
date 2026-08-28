@@ -24,6 +24,8 @@
     "release:check": "node scripts/release-manifest.mjs check",
     "release:sync": "node scripts/release-manifest.mjs sync",
     "release:version": "node scripts/release-manifest.mjs version",
+    "skills:package": "node scripts/build-skills-release.mjs build",
+    "skills:check": "node scripts/build-skills-release.mjs check",
     "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "bridge:local": "node scripts/start-codex-mcp-bridge.mjs --mode local",
     "bridge:secure": "node scripts/start-codex-mcp-bridge.mjs --mode secure",

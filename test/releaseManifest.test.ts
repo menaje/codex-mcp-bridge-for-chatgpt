@@ -10,13 +10,22 @@ import {
   deriveUiResourceManifest,
   loadReleaseManifest,
   setReleaseVersion,
-  syncReleaseMetadata
+  syncReleaseMetadata,
+  validateReleaseManifest
 } from "../scripts/release-manifest.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("release manifest", () => {
-  it("is the synchronized source for runtime, package, repository, and release identity", () => {
+  it("accepts the legacy manifestVersion 1 release asset contract", () => {
+    const legacyManifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+    legacyManifest.manifestVersion = 1;
+    legacyManifest.release.assets = ["npm-tarball", "sha256"];
+
+    expect(validateReleaseManifest(legacyManifest)).toBe(legacyManifest);
+  });
+
+  it("derives release metadata from the synchronized package version and manifest policy", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const metadata = checkReleaseMetadata(REPO_ROOT);
 
@@ -40,7 +49,7 @@ describe("release manifest", () => {
 
   it("detects package drift and synchronizes both npm metadata files atomically", () => {
     const root = fixtureRoot();
-    expect(() => checkReleaseMetadata(root)).toThrow(/package\.json, package-lock\.json/);
+    expect(() => checkReleaseMetadata(root)).toThrow(/package\.json version 9\.9\.9.*source of truth/);
 
     const metadata = syncReleaseMetadata(root);
     expect(metadata.packageFilename).toBe(`${metadata.packageName}-${metadata.version}.tgz`);
@@ -128,7 +137,7 @@ describe("release manifest", () => {
             content: {
               prefersBorder: true,
               csp: { connectDomains: [] },
-              "codex/uiContractGeneration": 7
+              "codex/uiContractGeneration": 11
             }
           }
         }
@@ -157,7 +166,7 @@ describe("release manifest", () => {
     expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
   });
 
-  it("retains every supported UI contract revision and prunes retired generations", () => {
+  it("retains every immutable Activity revision while pruning unsupported non-Activity generations", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const legacyPolicy = structuredClone(manifest);
     legacyPolicy.uiResources.minimumContractGeneration = { settings: 3, activity: 4 };
@@ -206,20 +215,20 @@ describe("release manifest", () => {
     expect(history.resources.activity.previous.length).toBeGreaterThan(5);
 
     const retiredSettingsGeneration6Uri = history.resources.settings.uri;
-    rendered = renderedRevision("settings-v9", "activity-v7-current", 9, 7);
+    rendered = renderedRevision("settings-v9", "activity-v11-current", 9, 11);
     const reconciled = deriveUiResourceManifest(manifest, rendered, history);
     expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredSettingsUri);
     expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredSettingsGeneration6Uri);
     expect(reconciled.resources.activity.previous.map((entry: any) => entry.uri))
-      .not.toContain(retiredActivityUri);
+      .toContain(retiredActivityUri);
     expect(reconciled.resources.settings.previous.every((entry: any) =>
       entry.metadata.content["codex/uiContractGeneration"] >= 9
     )).toBe(true);
-    expect(reconciled.resources.activity.previous.every((entry: any) =>
-      entry.metadata.content["codex/uiContractGeneration"] >= 7
-    )).toBe(true);
+    expect(reconciled.resources.activity.previous.map((entry: any) =>
+      entry.metadata.content["codex/uiContractGeneration"]
+    )).toEqual(expect.arrayContaining([4, 5, 7]));
 
     const missingGeneration = structuredClone(rendered);
     delete missingGeneration.resources.settings.metadata.content["codex/uiContractGeneration"];

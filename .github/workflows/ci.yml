@@ -93,6 +93,7 @@ jobs:
         env:
           EXPECTED_PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
           EXPECTED_CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
+          EXPECTED_SKILLS_FILE: ${{ steps.metadata.outputs.skills_archive_filename }}
         run: |
           pack_json="$(npm pack --json)"
           package_file="$(node -e 'const fs = require("node:fs"); const packed = JSON.parse(fs.readFileSync(0, "utf8")); if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0].filename !== "string") process.exit(1); process.stdout.write(packed[0].filename);' <<< "$pack_json")"
@@ -106,8 +107,15 @@ jobs:
             exit 1
           fi
           sha256sum "$package_file" > "$checksum_file"
+          skills_file="$EXPECTED_SKILLS_FILE"
+          npm run skills:package -- --output "$skills_file"
+          if [[ ! -f "$skills_file" ]]; then
+            echo "Skills release archive $skills_file was not created." >&2
+            exit 1
+          fi
           echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
           echo "checksum_file=$checksum_file" >> "$GITHUB_OUTPUT"
+          echo "skills_file=$skills_file" >> "$GITHUB_OUTPUT"
       - if: steps.release-state.outputs.exists != 'true'
         name: Create GitHub release
         env:
@@ -118,12 +126,14 @@ jobs:
           GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
           PACKAGE_FILE: ${{ steps.package.outputs.package_file }}
           CHECKSUM_FILE: ${{ steps.package.outputs.checksum_file }}
+          SKILLS_FILE: ${{ steps.package.outputs.skills_file }}
           TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
         run: |
           release_args=(
             "$RELEASE_TAG"
             "$PACKAGE_FILE#npm package"
             "$CHECKSUM_FILE#SHA-256 checksum"
+            "$SKILLS_FILE#installable Codex skills"
             --title "$RELEASE_TITLE"
           )
 

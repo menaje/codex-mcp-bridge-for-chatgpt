@@ -1,0 +1,37 @@
+[
+  {
+    "fixture": "task-completed-primary",
+    "tool": "codex_task",
+    "support": "primary-payload",
+    "cap": "retained-result-limit",
+    "content": "Implemented the requested change."
+  },
+  {
+    "fixture": "task-running",
+    "tool": "codex_task",
+    "support": "documented-support-level",
+    "cap": 1024,
+    "content": "Codex job job-running is running."
+  },
+  {
+    "fixture": "task-structured-error",
+    "tool": "codex_task",
+    "support": "documented-support-level",
+    "cap": 1536,
+    "content": "CONTEXT_WINDOW_EXCEEDED: The upstream turn exhausted its context window."
+  },
+  {
+    "fixture": "status-running",
+    "tool": "codex_status",
+    "support": "documented-support-level",
+    "cap": 1024,
+    "content": "Job job-running is running. Result: pending."
+  },
+  {
+    "fixture": "cancel-success",
+    "tool": "codex_cancel",
+    "support": "documented-support-level",
+    "cap": 768,
+    "content": "cancel-job job-cancelled: succeeded."
+  }
+]

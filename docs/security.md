@@ -353,10 +353,11 @@ identity.
   a timeout. A bounded journal in the private SQLite metadata records only
   method/outcome, timing, worker generation, numeric error code, and validated
   thread/turn identifiers; raw result/error payloads, messages, prompts, paths,
-  and command output are never copied into that journal. `/healthz` exposes only
-  identifier-free aggregate counters. Late archive/unarchive success never
-  changes logical Agent state; the journal records it as a conflict for explicit
-  upstream recovery.
+  and command output are never copied into that journal. `/healthz` is
+  intentionally minimal and exposes only `ok`, `name`, and `title`; aggregate
+  and operator counters belong to the private app-only `codex_diagnostics`
+  surface. Late archive/unarchive success never changes logical Agent state; the
+  journal records it as a conflict for explicit upstream recovery.
 - App Server continuation admission uses `thread/read`, not an optimistic local
   boolean. Missing and `systemError` are permanent orphan evidence; `active`
   and transport/timeout failures are retryable and do not mutate Agent

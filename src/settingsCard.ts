@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { serializedUiTranslations } from "./uiI18n.js";
+import { resolveHostUiLocaleTag, serializedUiTranslations } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   currentUiResourceUri,
@@ -228,6 +228,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
   <script>
     const BUNDLES = ${serializedUiTranslations()};
     ${uiBridgeErrorMessage.toString()}
+    ${resolveHostUiLocaleTag.toString()}
     const pendingRequests = new Map();
     const REQUEST_TIMEOUT_MS = 90000;
     let nextRequestId = 1;
@@ -238,7 +239,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     const explicitSelectedModels = new Set();
     const explicitSelectionMemory = new Map();
     const initialMetadata = window.openai && window.openai.toolResponseMetadata || {};
-    let hostLocaleTag = String(window.openai && window.openai.locale || initialMetadata.hostLocale || initialMetadata["openai/locale"] || initialMetadata["webplus/i18n"] || navigator.language || "en");
+    let hostLocaleTag = resolveHostUiLocaleTag(window.openai && window.openai.locale,initialMetadata,navigator.language);
     let localePreference = "auto";
     let localeTag = hostLocaleTag;
     let locale = resolveLocale(localeTag);
@@ -345,7 +346,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     async function handleMutationError(error) { const value=uiBridgeErrorMessage(error,t["common.error"]),revisionConflict=value.includes("SETTINGS_REVISION_CONFLICT")||value.includes("PROJECT_REGISTRY_REVISION_CONFLICT");if(value.includes("PROJECT_")&&!revisionConflict){setBusy(false);showProjectError(projectErrorMessage(value));elements.status.classList.add("error");elements.status.textContent=t["settings.projectError"];return;}if(!revisionConflict){setBusy(false);setError(error);return;}try{render(unwrap(await callTool("codex_settings",{})));setBusy(false);elements.status.classList.add("error");elements.status.textContent=t["settings.conflict"];}catch(refreshError){setBusy(false);setError(refreshError);} }
     function integerValue(input) { const value=Number(input.value);if(!Number.isSafeInteger(value))throw new Error(t["common.error"]);return value; }
     window.addEventListener("message",(event)=>{if(event.source!==window.parent)return;const message=event.data;if(!message||message.jsonrpc!=="2.0")return;if(message.method==="ping"&&message.id!==undefined){window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return;}if(message.method==="ui/resource-teardown"&&message.id!==undefined){for(const request of pendingRequests.values())request.reject(new Error("Settings card unmounted"));pendingRequests.clear();window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}},"*");return;}if(message.id!==undefined&&pendingRequests.has(message.id)){const pending=pendingRequests.get(message.id);pendingRequests.delete(message.id);message.error?pending.reject(new Error(uiBridgeErrorMessage(message.error,t["common.error"]))):pending.resolve(message.result);return;}if(message.method==="ui/notifications/host-context-changed"&&message.params&&message.params.locale){hostLocaleTag=String(message.params.locale);if(localePreference==="auto")setLocale(hostLocaleTag);return;}if(message.method==="ui/notifications/tool-result"){const next=privateSettingsView(message.params&&message.params._meta);if(next)render(next);}},{passive:true});
-    window.addEventListener("openai:set_globals",(event)=>{const globals=event.detail&&event.detail.globals,metadata=globals&&globals.toolResponseMetadata;const responseHostLocale=metadata&&(metadata.hostLocale||metadata["webplus/i18n"]||metadata["openai/locale"]);if(globals&&globals.locale)hostLocaleTag=String(globals.locale);else if(responseHostLocale)hostLocaleTag=String(responseHostLocale);if(localePreference==="auto"){setLocale(hostLocaleTag,false);updateAccessNotice();updateCardPolicy();updateCodexAppThreadsHint();localizeProjectRows();}const next=privateSettingsView(metadata);if(next)render(next);});
+    window.addEventListener("openai:set_globals",(event)=>{const globals=event.detail&&event.detail.globals,metadata=globals&&globals.toolResponseMetadata;hostLocaleTag=resolveHostUiLocaleTag(globals&&globals.locale,metadata,hostLocaleTag);if(localePreference==="auto"){setLocale(hostLocaleTag,false);updateAccessNotice();updateCardPolicy();updateCodexAppThreadsHint();localizeProjectRows();}const next=privateSettingsView(metadata);if(next)render(next);});
     window.addEventListener("pagehide",()=>{for(const [id,request] of pendingRequests){window.parent.postMessage({jsonrpc:"2.0",method:"notifications/cancelled",params:{requestId:id,reason:"Settings card unmounted"}},"*");request.reject(new Error("Settings card unmounted"));}pendingRequests.clear();});
     elements.access.addEventListener("change",updateAccessNotice);
     elements.cardVisibility.addEventListener("change",updateCardPolicy);

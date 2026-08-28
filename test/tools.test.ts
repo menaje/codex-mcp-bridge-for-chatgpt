@@ -15,14 +15,20 @@ import { projectNameKey } from "../src/projectRegistry.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import {
+  ACTIVITY_BOOTSTRAP_METADATA_KEY,
   ACTIVITY_CARD_CONTRACT_GENERATION,
-  ACTIVITY_CARD_URI
+  ACTIVITY_CARD_URI,
+  ACTIVITY_VIEW_METADATA_KEY
 } from "../src/activityCard.js";
 import {
   SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_URI
 } from "../src/settingsCard.js";
-import { CodexJobRegistry } from "../src/tools.js";
+import {
+  CodexJobRegistry,
+  validateActivityBootstrapPrivateMetadata,
+  validateActivityViewPrivateMetadata
+} from "../src/tools.js";
 import { uiResourceRevisions } from "../src/uiResources.js";
 import type {
   CodexBackgroundTerminal,
@@ -57,6 +63,15 @@ class FakeUpstream implements CodexUpstream {
   }
 
   async close(): Promise<void> {}
+}
+
+class FailingInventoryUpstream extends FakeUpstream {
+  public inventoryCalls = 0;
+
+  override async listTools(): Promise<unknown> {
+    this.inventoryCalls += 1;
+    throw new Error("fixture upstream inventory unavailable");
+  }
 }
 
 class DeferredUpstream extends FakeUpstream {
@@ -497,6 +512,7 @@ describe("bridge tools", () => {
       "codex_agent_recovery_detach",
       "codex_background_process_terminate",
       "codex_cancel",
+      "codex_diagnostics",
       "codex_interaction_respond",
       "codex_job_steer",
       "codex_models",
@@ -506,15 +522,55 @@ describe("bridge tools", () => {
       "codex_update_settings"
     ]);
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
+    const typelessNumericLiterals: string[] = [];
+    const visitPublishedSchema = (value: unknown, pointer: string): void => {
+      if (!value || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => visitPublishedSchema(entry, `${pointer}/${index}`));
+        return;
+      }
+      const object = value as Record<string, unknown>;
+      const literals = Object.prototype.hasOwnProperty.call(object, "const")
+        ? [object.const]
+        : Array.isArray(object.enum)
+          ? object.enum
+          : [];
+      if (
+        literals.some((entry) => typeof entry === "number") &&
+        object.type !== "number" &&
+        object.type !== "integer"
+      ) typelessNumericLiterals.push(pointer);
+      for (const [key, entry] of Object.entries(object)) {
+        visitPublishedSchema(entry, `${pointer}/${key}`);
+      }
+    };
+    for (const tool of tools.tools) {
+      const meta = (tool._meta || {}) as Record<string, any>;
+      const declaredVisibility = Array.isArray(meta.ui?.visibility)
+        ? meta.ui.visibility as string[]
+        : undefined;
+      const modelVisible = declaredVisibility
+        ? declaredVisibility.includes("model")
+        : meta["openai/visibility"] !== "private";
+      if (!modelVisible) continue;
+      visitPublishedSchema(tool.inputSchema, `${tool.name}/inputSchema`);
+      visitPublishedSchema(tool.outputSchema, `${tool.name}/outputSchema`);
+    }
+    expect(typelessNumericLiterals).toEqual([]);
     for (const tool of tools.tools) {
       expect(tool.outputSchema, `${tool.name} must declare structuredContent`).toMatchObject({
-        type: "object"
+        type: "object",
+        additionalProperties: false
       });
     }
     expect(byName.get("codex_status")?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true
+    });
+    expect(byName.get("codex_diagnostics")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private"
     });
     expect(byName.get("codex_status")?.inputSchema).toMatchObject({
       properties: {
@@ -584,29 +640,35 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.outputSchema).toMatchObject({
       type: "object",
       properties: {
-        bridgeSession: expect.any(Object),
-        bridgeActivity: expect.objectContaining({
-          properties: expect.objectContaining({
-            shouldRenderActivityCard: { type: "boolean" },
-            renderReason: {
-              type: "string",
-              enum: expect.arrayContaining(["render-retry", "render-latest"])
-            }
-          })
-        })
+        contractVersion: { type: "string", enum: ["1"] },
+        state: expect.any(Object),
+        executionMode: expect.any(Object),
+        resultAvailability: expect.any(Object),
+        error: expect.objectContaining({ type: ["object", "null"] })
       }
     });
-    for (const activityViewTool of ["codex_activity", "codex_activity_snapshot"]) {
-      expect(byName.get(activityViewTool)?.outputSchema).toMatchObject({
-        type: "object",
-        required: expect.arrayContaining(["scopeVersion", "watcherPolicy", "feed"]),
-        properties: {
-          mountedPresentation: expect.any(Object),
-          watcherPolicy: expect.any(Object),
-          feed: expect.any(Object)
-        }
-      });
+    expect((byName.get("codex_task")?.outputSchema as any).required.sort())
+      .toEqual(Object.keys((byName.get("codex_task")?.outputSchema as any).properties).sort());
+    for (const retired of ["bridgeSession", "bridgeActivity", "activityTracking"]) {
+      expect((byName.get("codex_task")?.outputSchema as any).properties)
+        .not.toHaveProperty(retired);
     }
+    expect(byName.get("codex_activity")?.outputSchema).toMatchObject({
+      type: "object",
+      required: expect.arrayContaining(["kind", "scopeVersion", "counts"]),
+      additionalProperties: false
+    });
+    expect((byName.get("codex_activity")?.outputSchema as any).properties)
+      .not.toHaveProperty("feed");
+    expect(byName.get("codex_activity_snapshot")?.outputSchema).toMatchObject({
+      type: "object",
+      required: expect.arrayContaining(["scopeVersion", "watcherPolicy", "feed"]),
+      properties: {
+        mountedPresentation: expect.any(Object),
+        watcherPolicy: expect.any(Object),
+        feed: expect.any(Object)
+      }
+    });
     for (const cardOriginTool of [
       "codex_activity_handoff",
       "codex_background_process_terminate",
@@ -619,9 +681,7 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["requestId", "activityPresentationId", "prompt"])
     });
-    expect((byName.get("codex_task")?.inputSchema as any).allOf).toEqual([
-      expect.objectContaining({ then: { required: ["project", "selection"] } })
-    ]);
+    expect((byName.get("codex_task")?.inputSchema as any)).not.toHaveProperty("allOf");
     expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
       .not.toContain("scopeId");
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
@@ -682,7 +742,7 @@ describe("bridge tools", () => {
       required: ["name", "registryRevision"],
       properties: {
         name: { const: "Test Project" },
-        registryRevision: { const: 1 }
+        registryRevision: { type: "integer", const: 1 }
       }
     });
     for (const variant of taskProperties?.project?.oneOf || []) {
@@ -933,6 +993,17 @@ describe("bridge tools", () => {
         }
       };
     });
+    const taskDescriptor = byName.get("codex_task")!;
+    const taskContractBytes = Buffer.byteLength(
+      JSON.stringify(taskDescriptor.inputSchema),
+      "utf8"
+    ) + Buffer.byteLength(JSON.stringify(taskDescriptor.outputSchema), "utf8");
+    const taskOutputBytes = Buffer.byteLength(
+      JSON.stringify(taskDescriptor.outputSchema),
+      "utf8"
+    );
+    expect(taskContractBytes).toBeLessThanOrEqual(9_500);
+    expect(taskOutputBytes).toBeLessThanOrEqual(2_500);
     expect(discoveryInventory).toMatchInlineSnapshot(`
       [
         {
@@ -951,6 +1022,23 @@ describe("bridge tools", () => {
           "visibility": {
             "app": false,
             "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_diagnostics",
+          "properties": [],
+          "propertyCount": 0,
+          "schemaBytes": 114,
+          "visibility": {
+            "app": true,
+            "model": false,
             "operatorCapability": false,
           },
         },
@@ -1309,7 +1397,7 @@ describe("bridge tools", () => {
             "selection",
           ],
           "propertyCount": 9,
-          "schemaBytes": 6650,
+          "schemaBytes": 5578,
           "visibility": {
             "app": true,
             "model": true,
@@ -1440,8 +1528,7 @@ describe("bridge tools", () => {
       }
     });
     const defaultActivityId = taskActivityId(defaulted);
-    const defaultAgentId = (defaulted as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const defaultAgentId = parseToolJson(defaulted).agentId as string;
     expect(jobs.getActivity(defaultActivityId)).toMatchObject({
       title: "Codex activity",
       kind: "other",
@@ -1465,8 +1552,7 @@ describe("bridge tools", () => {
       },
       agent: { mode: "new", name: "민아" }
     });
-    const agentId = (named as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const agentId = parseToolJson(named).agentId as string;
     expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
     expect(jobs.getActivity(taskActivityId(named))).toMatchObject({
       title: "Design review",
@@ -1491,8 +1577,7 @@ describe("bridge tools", () => {
       activity: { mode: "existing", id: taskActivityId(named) },
       agent: { mode: "new" }
     });
-    const secondAgentId = (defaultedSecondAgent as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const secondAgentId = parseToolJson(defaultedSecondAgent).agentId as string;
     expect(jobs.getAgent(secondAgentId)?.agentName)
       .toMatch(/^Codex Agent [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(3);
@@ -1547,10 +1632,8 @@ describe("bridge tools", () => {
       },
       _meta: { "codex/activityPresentationId": hostPresentationId }
     });
-    expect((hostCorrelated as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeActivity: { activityPresentationId: hostPresentationId }
-      });
+    expect(privateActivityBootstrap(hostCorrelated).correlation)
+      .toMatchObject({ activityPresentationId: hostPresentationId });
     await close();
   });
 
@@ -1629,7 +1712,10 @@ describe("bridge tools", () => {
 
   it("serves every retained Settings and Activity UI revision through MCP", async () => {
     const root = temporaryRoot();
-    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
     const listed = await client.listResources();
     const listedUris = new Set(listed.resources.map((resource) => resource.uri));
 
@@ -1640,6 +1726,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/7c3ab734ff3a.html",
             "ui://codex-mcp-bridge/settings/34e2eb4c94d2.html",
             "ui://codex-mcp-bridge/settings/2350e96e107c.html",
             "ui://codex-mcp-bridge/settings/89f54072f745.html",
@@ -1647,6 +1734,8 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/c3c3c87be464.html",
+            "ui://codex-mcp-bridge/activity/17c24231c553.html",
             "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
             "ui://codex-mcp-bridge/activity/17be799a4a65.html",
             "ui://codex-mcp-bridge/activity/8f9b0c10e534.html",
@@ -1674,13 +1763,18 @@ describe("bridge tools", () => {
           expect(html).not.toContain('id="default-project"');
           expect(html).not.toContain("defaultProjectId");
         }
-        if (name === "activity" && revision.uri === currentUri) {
-          expect(html).toContain('callTool("codex_background_process_terminate"');
-          expect(html).toContain('callTool("codex_activity_job_cancel"');
-          expect(html).not.toContain('callTool("codex_cancel"');
-          expect(html).not.toContain('callTool("codex_agent"');
+        if (name === "activity") {
           expect(html).toContain('callTool("codex_activity_snapshot"');
-          expect(html).toContain('callTool("codex_interaction_respond"');
+          expect(html).toContain("afterVersion");
+          expect(html).toContain("waitMs");
+          expect(html).toContain("consumeToolOutput");
+          if (revision.uri === currentUri) {
+            expect(html).toContain('callTool("codex_background_process_terminate"');
+            expect(html).toContain('callTool("codex_activity_job_cancel"');
+            expect(html).not.toContain('callTool("codex_cancel"');
+            expect(html).not.toContain('callTool("codex_agent"');
+            expect(html).toContain('callTool("codex_interaction_respond"');
+          }
           expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
         } else if (name === "settings" && revision.uri === currentUri) {
           expect(html).toContain('operation:{kind:"patch",settings}');
@@ -1697,6 +1791,150 @@ describe("bridge tools", () => {
           });
       }
     }
+
+    const task = parseToolJson(await runTask(client, {
+      prompt: "exercise every retained Activity snapshot client"
+    }));
+    const explicit = parseToolJson(await rawCallTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, activityId: task.activityId }
+    }));
+    const card = {
+      activityId: task.activityId,
+      generation: explicit.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
+    for (const [index, revision] of uiResourceRevisions("activity").entries()) {
+      const widgetInstanceId = `retained-activity-${index}`;
+      const initial = await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: { scopeId: SCOPE_A, card, limit: 30 },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      });
+      const initialView = parseToolJson(initial);
+      expect(initialView).toMatchObject({
+        mountedActivity: { activityId: task.activityId },
+        mountedPresentation: { kind: "explicit" }
+      });
+      expect(validateActivityViewPrivateMetadata(
+        (initial as { _meta?: Record<string, unknown> })._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+      )).toMatchObject({ source: "codex_activity_snapshot" });
+      const refreshed = parseToolJson(await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: {
+          scopeId: SCOPE_A,
+          card,
+          limit: 30,
+          afterVersion: initialView.scopeVersion,
+          waitMs: 1
+        },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      }));
+      expect(refreshed.wait).toMatchObject({ timedOut: true, changed: false });
+      expect(revision.uri).toMatch(/^ui:\/\/codex-mcp-bridge\/activity\//);
+      jobs.releaseActivityCardLease(
+        SCOPE_A,
+        card.activityId,
+        card.generation,
+        widgetInstanceId,
+        card.presentation
+      );
+    }
+
+    await close();
+  });
+
+  it("projects generation 11 private Activity metadata after retiring public fallbacks", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+
+    const taskResult = await runTask(client, { prompt: "hydrate a generation 11 Activity card" });
+    const taskStructured = parseToolJson(taskResult);
+    const publicTask = (taskResult as { structuredContent?: Record<string, unknown> }).structuredContent!;
+    const taskMeta = (taskResult as { _meta?: Record<string, unknown> })._meta || {};
+    const bootstrap = validateActivityBootstrapPrivateMetadata(
+      taskMeta[ACTIVITY_BOOTSTRAP_METADATA_KEY]
+    );
+    expect(bootstrap).toMatchObject({
+      kind: "codex/activityBootstrap",
+      version: 11,
+      purpose: "presentation-hydration-only",
+      correlation: {
+        requestId: taskStructured.requestId,
+        jobId: taskStructured.jobId
+      },
+      activity: {
+        activityId: taskStructured.activityId,
+        cardGeneration: expect.any(Number)
+      },
+      render: {
+        eligible: true,
+        reason: expect.any(String)
+      }
+    });
+    expect(bootstrap.correlation.activityPresentationId).toMatch(SCOPE_ID_PATTERN);
+    expect(Object.keys(publicTask)).not.toEqual(expect.arrayContaining([
+      "bridgeSession",
+      "bridgeActivity",
+      "activityTracking",
+      "activityPresentationId"
+    ]));
+
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, activityId: taskStructured.activityId }
+    });
+    const publicActivity = (activityResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    const activityStructured = parseToolJson(activityResult);
+    const activityMeta = (activityResult as { _meta?: Record<string, unknown> })._meta || {};
+    const privateView = validateActivityViewPrivateMetadata(
+      activityMeta[ACTIVITY_VIEW_METADATA_KEY]
+    );
+    expect(privateView).toMatchObject({
+      kind: "codex/activityView",
+      version: 11,
+      purpose: "presentation-hydration-only",
+      source: "codex_activity",
+      correlation: {
+        scopeVersion: activityStructured.scopeVersion,
+        activity: {
+          activityId: taskStructured.activityId,
+          cardGeneration: activityStructured.mountedActivity.cardGeneration
+        },
+        presentation: { kind: "explicit" }
+      }
+    });
+    expect(privateView.view).toEqual(activityStructured);
+    expect(publicActivity).toMatchObject({
+      kind: "activity",
+      scopeVersion: privateView.view.scopeVersion,
+      activityId: taskStructured.activityId,
+      counts: expect.any(Object)
+    });
+    expect(Object.keys(publicActivity)).not.toContain("feed");
+
+    const snapshotResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: taskStructured.activityId,
+          generation: activityStructured.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "generation-11-private-view" }
+    });
+    const snapshotMeta = (snapshotResult as { _meta?: Record<string, unknown> })._meta || {};
+    expect(validateActivityViewPrivateMetadata(snapshotMeta[ACTIVITY_VIEW_METADATA_KEY]))
+      .toMatchObject({ source: "codex_activity_snapshot" });
+    expect(parseToolJson(snapshotResult)).toEqual(
+      (snapshotMeta[ACTIVITY_VIEW_METADATA_KEY] as { view: Record<string, unknown> }).view
+    );
 
     await close();
   });
@@ -1810,7 +2048,7 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect(saved.isError).not.toBe(true);
+    expect(saved.isError, JSON.stringify(saved)).not.toBe(true);
     const view = privateSettingsView(saved);
     expect(view.settings).toMatchObject({
       settingsRevision: 0,
@@ -1976,16 +2214,16 @@ describe("bridge tools", () => {
     const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
     const { client, close } = await connectTestClient(config, new FakeUpstream());
 
-    const opened = (await client.callTool({
+    const opened = parseToolJson(await client.callTool({
       name: "codex_settings",
       arguments: {}
-    }) as { structuredContent?: Record<string, any> }).structuredContent!;
-    expect(opened.settings).toMatchObject({
-      settingsRevision: 0,
-      registryRevision: 0,
-      projects: []
+    }));
+    expect(opened.revisions).toMatchObject({
+      settings: 0,
+      registry: 0
     });
-    expect(opened.capabilities).not.toHaveProperty("allowedRoots");
+    expect(opened.projects).toEqual([]);
+    expect(opened).not.toHaveProperty("capabilities");
 
     const firstSave = await client.callTool({
       name: "codex_update_settings",
@@ -2037,7 +2275,7 @@ describe("bridge tools", () => {
       });
 
     const task = await runTask(client, { prompt: "work here", projectId: "first" });
-    expect(task).toMatchObject({ structuredContent: { bridgeActivity: { projectName: "First" } } });
+    expect(parseToolJson(task).projectName).toBe("First");
     await close();
   });
 
@@ -2057,7 +2295,7 @@ describe("bridge tools", () => {
     }, 0);
     const narrowConfig = configFor(first);
     const recovered = new UserSettingsStore(narrowConfig, { stateFile });
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       narrowConfig,
       new FakeUpstream(),
       undefined,
@@ -2069,13 +2307,13 @@ describe("bridge tools", () => {
       name: "codex_settings",
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
-    expect(view.capabilities.projectAvailability).toEqual([
+    expect(view.projects).toEqual([
       { name: "Active", available: true, archived: false },
       { name: "Recovery", available: false, archived: false }
     ]);
-    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
-    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
-    expect(view.settings.projects).toContainEqual({
+    expect(JSON.stringify(view.projects)).not.toContain(second);
+    expect(JSON.stringify(view.projects)).not.toContain("unavailableReason");
+    expect(view.projects).toContainEqual({
       name: "Recovery",
       available: false,
       archived: false
@@ -2125,7 +2363,7 @@ describe("bridge tools", () => {
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
     const baselineNotifications = listChanged;
-    expect(initial.capabilities.projectAvailability).toEqual([
+    expect(initial.projects).toEqual([
       { name: "Alpha Workspace", available: true, archived: false }
     ]);
     const initialDescriptor = await taskDescriptor();
@@ -2139,7 +2377,7 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(unavailable.capabilities.projectAvailability).toEqual([
+    expect(unavailable.projects).toEqual([
       { name: "Alpha Workspace", available: false, archived: false }
     ]);
     expect(listChanged).toBe(baselineNotifications + 1);
@@ -2148,11 +2386,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(unavailableSchema.properties?.project))
       .not.toContain('"const":"Alpha Workspace"');
     expect(unavailableSchema.properties?.project).toMatchObject({ not: {} });
-    expect(unavailableSchema.allOf).toEqual([
-      expect.objectContaining({
-        then: expect.objectContaining({ required: expect.arrayContaining(["project"]) })
-      })
-    ]);
+    expect(unavailableSchema).not.toHaveProperty("allOf");
     expect(unavailableDescriptor._meta).toMatchObject({
       ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": ACTIVITY_CARD_URI
@@ -2163,9 +2397,7 @@ describe("bridge tools", () => {
     const unavailableStatus = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: {} })
     );
-    expect(unavailableStatus.projects).toEqual([
-      { projectName: "Alpha Workspace", available: false, archived: false }
-    ]);
+    expect(unavailableStatus).not.toHaveProperty("projects");
     expect(JSON.stringify(unavailableStatus)).not.toContain(project);
     expect(JSON.stringify(unavailableStatus)).not.toContain(displaced);
     const staleExplicitSelection = await rawCallTool({
@@ -2194,7 +2426,7 @@ describe("bridge tools", () => {
       arguments: {}
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(recovered.capabilities.projectAvailability).toEqual([
+    expect(recovered.projects).toEqual([
       { name: "Alpha Workspace", available: true, archived: false }
     ]);
     expect(listChanged).toBe(baselineNotifications + 2);
@@ -2217,48 +2449,24 @@ describe("bridge tools", () => {
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      projects: [{ projectName: "Test Project", available: true, archived: false }],
-      modelPolicy: {
-        mode: "automatic",
-        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-        allowedSelections: { kind: "catalog-visible" }
-      },
-      usePriorityServiceTier: false,
-      codexExecutionDeadline: "none",
-      appServerPolicy: {
-        experimental: true,
-        upstreamProductionSupport: "unsupported",
-        rollout: "explicit-opt-in-canary",
-        supportedCodexCliVersion: "0.145.0",
-        resumeProbe: "thread/read"
-      },
-      modelCatalogStatus: {
-        available: true,
-        source: "codex-cli",
-        stale: false,
-        validation: "valid"
-      },
-      upstreamPoolSize: 4,
-      maxRetainedJobs: 100,
-      maxJobResultBytes: 1048576,
-      maxConcurrentJobs: 30,
-      stateStorage: { backend: "memory", transactional: false },
-      concurrencyPolicy: {
-        sameWorkingDirectory: {
-          readOnly: "allowed",
-          workspaceWrite: "allowed",
-          dangerFullAccess: "allowed"
-        },
-        sameThread: "serialized",
-        mutationCoordination: "caller-managed"
-      },
-      sessionPolicy: {
-        persistent: false,
-        selection: "activity-compatible-only-when-unambiguous",
-        implicitNewActivityBehavior: "start-new-thread",
-        exactActivityContinuationAgeLimit: "none"
-      }
+      kind: "overview",
+      scopeCounts: { sessions: 0, jobs: 0, runningJobs: 0, activities: 0, agents: 0 },
+      sessions: [],
+      jobs: [],
+      activities: [],
+      agents: [],
+      warnings: expect.any(Array)
     });
+    for (const diagnosticField of [
+      "appServerPolicy",
+      "modelCatalogStatus",
+      "upstreamPoolSize",
+      "maxRetainedJobs",
+      "maxJobResultBytes",
+      "stateStorage",
+      "concurrencyPolicy",
+      "sessionPolicy"
+    ]) expect(status).not.toHaveProperty(diagnosticField);
     expect(JSON.stringify(status)).not.toContain(realpathSync(root));
     expect(status.sessions).toEqual([]);
 
@@ -2283,9 +2491,32 @@ describe("bridge tools", () => {
     );
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status).toMatchObject({ projects: [] });
+    expect(status).not.toHaveProperty("projects");
     expect(status).not.toHaveProperty("defaultProjectId");
     expect(status).not.toHaveProperty("allowedRootCount");
+    await close();
+  });
+
+  it("keeps routine status independent from upstream inventory diagnostics", async () => {
+    const root = temporaryRoot();
+    const upstream = new FailingInventoryUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { jobs: 0 } });
+    expect(upstream.inventoryCalls).toBe(0);
+
+    const diagnostics = parseToolJson(
+      await client.callTool({ name: "codex_diagnostics", arguments: {} })
+    );
+    expect(diagnostics).toMatchObject({
+      kind: "diagnostics",
+      upstream: {
+        tools: null,
+        error: expect.stringContaining("fixture upstream inventory unavailable")
+      }
+    });
+    expect(upstream.inventoryCalls).toBe(1);
     await close();
   });
 
@@ -2299,9 +2530,16 @@ describe("bridge tools", () => {
     );
     expect(result).toMatchObject({
       source: "codex-cli",
-      validatedAt: "2026-08-21T00:00:00.000Z",
-      fingerprint: "f".repeat(64),
-      validation: "valid"
+      stale: false,
+      warning: null,
+      policy: { mode: "automatic", delegation: true },
+      priority: false
+    });
+    expect(result).not.toHaveProperty("fingerprint");
+    expect(result.models[0]).toMatchObject({
+      name: "GPT-5.6 Sol",
+      defaultEffort: "max",
+      efforts: expect.arrayContaining(["high", "max"])
     });
     expect(result.models.map((entry: { id: string }) => entry.id)).toEqual([
       "gpt-5.6-sol",
@@ -2368,15 +2606,14 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        policyActivation: {
+    expect(privateSettingsView(saved)).toMatchObject({
+      policyActivation: {
           policyRevision: 1,
           executionPolicyActive: true,
           schemaRefreshRequested: true,
           schemaRefreshGuaranteed: false
-        }
-      });
+      }
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(listChanged).toBeGreaterThan(0);
 
@@ -2396,10 +2633,9 @@ describe("bridge tools", () => {
     expect(staleOverride).toMatchObject({
       structuredContent: {
         error: {
-          code: "MODEL_SELECTION_FORBIDDEN",
-          policyRevision: 1,
-          nextActions: [expect.stringContaining("Omit selection")]
-        }
+          code: "MODEL_SELECTION_FORBIDDEN"
+        },
+        nextActions: [expect.stringContaining("Omit selection")]
       }
     });
     const staleLegacyOverride = await client.callTool({
@@ -2417,11 +2653,9 @@ describe("bridge tools", () => {
     const fixed = await runTask(client, { prompt: "fixed execution", sessionMode: "new" });
     expect((fixed as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
-        executionDecision: {
-          policyRevision: 1,
-          effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-          source: "fixed"
-        }
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max",
+        rerouted: false
       });
     expect(upstream.calls[0]).toMatchObject({
       args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
@@ -2564,8 +2798,10 @@ describe("bridge tools", () => {
     expect(JSON.stringify(unsupportedPriority)).toContain("MODEL_UNAVAILABLE");
     expect(JSON.stringify(unsupportedPriority)).toContain("Priority");
     const settings = await client.callTool({ name: "codex_settings", arguments: {} });
-    expect((settings as { structuredContent?: Record<string, any> }).structuredContent?.settings)
-      .toMatchObject({ settingsRevision: 2, usePriorityServiceTier: false });
+    expect(parseToolJson(settings)).toMatchObject({
+      revisions: { settings: 2 },
+      policy: { priority: false }
+    });
     await close();
   });
 
@@ -2592,10 +2828,9 @@ describe("bridge tools", () => {
       isError: true,
       structuredContent: {
         error: {
-          code: "MODEL_UNAVAILABLE",
-          policyRevision: 0,
-          nextActions: expect.any(Array)
-        }
+          code: "MODEL_UNAVAILABLE"
+        },
+        nextActions: expect.any(Array)
       }
     });
     expect(upstream.calls).toHaveLength(0);
@@ -2630,16 +2865,17 @@ describe("bridge tools", () => {
       }
     });
     expect(saved.isError).not.toBe(true);
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
-      .toMatchObject({ settingsRevision: 1, modelPolicy: { mode: "automatic" } });
+    expect(parseToolJson(saved)).toMatchObject({
+      revisions: { settings: 1 },
+      policy: { model: { mode: "automatic" } }
+    });
 
     const task = await runTask(client, { prompt: "use surviving selection", sessionMode: "new" });
     expect((task as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
-        executionDecision: {
-          source: "backend-default",
-          effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
-        }
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max",
+        rerouted: false
       });
     await close();
   });
@@ -2672,14 +2908,10 @@ describe("bridge tools", () => {
       contextMode: "fresh"
     });
     expect((task as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      executionDecision: {
-        policyRevision: 1,
-        source: "compatibility-fallback",
-        savedSelectionSupported: false,
-        effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-        effectiveReasoningEffort: "max",
-        fallbackWarning: expect.stringContaining("unsupported by the current catalog")
-      }
+      actualModel: "gpt-5.6-sol",
+      actualReasoningEffort: "max",
+      rerouted: false,
+      warnings: [expect.stringContaining("unsupported by the current catalog")]
     });
     expect(upstream.calls).toEqual([
       expect.objectContaining({
@@ -2704,14 +2936,12 @@ describe("bridge tools", () => {
     )!;
     const unavailableSchema = unavailableDescriptor.inputSchema as Record<string, any>;
     expect(unavailableSchema.properties?.selection).toMatchObject({ not: {} });
-    expect(unavailableSchema.allOf).toEqual([
-      expect.objectContaining({ then: { required: ["project"] } })
-    ]);
+    expect(unavailableSchema).not.toHaveProperty("allOf");
     const task = await runTask(client, { prompt: "catalog required", sessionMode: "new" });
     expect(task).toMatchObject({
       isError: true,
       structuredContent: {
-        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+        error: { code: "MODEL_UNAVAILABLE" }
       }
     });
     const staleSelection = await client.callTool({
@@ -2725,7 +2955,7 @@ describe("bridge tools", () => {
     expect(staleSelection).toMatchObject({
       isError: true,
       structuredContent: {
-        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+        error: { code: "MODEL_UNAVAILABLE" }
       }
     });
     const update = await client.callTool({
@@ -2743,10 +2973,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(update)).toContain("MODEL_UNAVAILABLE");
     expect(JSON.stringify(update)).toContain("policy revision 1");
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status).toMatchObject({
-      settingsRevision: 0,
-      modelPolicy: { mode: "automatic" }
-    });
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { jobs: 0 } });
     expect(upstream.calls).toHaveLength(0);
     await close();
   });
@@ -2772,22 +2999,23 @@ describe("bridge tools", () => {
 
     const opened = await client.callTool({ name: "codex_settings", arguments: {} });
     expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      settings: {
-        schemaVersion: 3,
-        settingsRevision: 0,
-        registryRevision: 1,
-        accessStrategy: "adaptive",
-        modelPolicy: {
+      revisions: { settings: 0, registry: 1, policy: 0 },
+      policy: {
+        access: "adaptive",
+        model: {
           mode: "automatic",
-          fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-          allowedSelections: { kind: "catalog-visible" }
+          model: "gpt-5.6-sol",
+          reasoningEffort: "max",
+          allowed: "catalog-visible"
         },
-        projects: [{ name: "Test Project", available: true, archived: false }],
-        uiLocalePreference: "auto",
         maxConcurrentJobs: 30,
-        activityCardVisibility: "always",
+        activityVisibility: "always",
         completionHandoff: "off"
       },
+      projects: [{ name: "Test Project", available: true, archived: false }],
+      catalog: { stale: false, modelCount: 3 }
+    });
+    expect(privateSettingsView(opened)).toMatchObject({
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
         availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
@@ -2821,15 +3049,22 @@ describe("bridge tools", () => {
         completionHandoff: "auto-handoff"
       }
     });
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
-      settingsRevision: 1,
-      accessStrategy: "always-full",
-      modelPolicy: {
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      revisions: { settings: 1 },
+      policy: {
+        access: "always-full",
+        model: {
         mode: "fixed",
-        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
-      },
+          model: "gpt-5.6-terra",
+          reasoningEffort: "high"
+        },
+        maxConcurrentJobs: 12,
+        activityVisibility: "background-only",
+        completionHandoff: "auto-handoff"
+      }
+    });
+    expect(privateSettingsView(saved).settings).toMatchObject({
       uiLocalePreference: "ko",
-      maxConcurrentJobs: 12,
       activityCardVisibility: "background-only",
       completionHandoff: "auto-handoff"
     });
@@ -2869,14 +3104,7 @@ describe("bridge tools", () => {
     });
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status).toMatchObject({
-      accessStrategy: "always-full",
-      defaultSandbox: "danger-full-access",
-      uiLocalePreference: "ko",
-      codexExecutionDeadline: "none",
-      maxConcurrentJobs: 12,
-      settingsPolicy: { revision: 1, scope: "shared-bridge-instance" }
-    });
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { runningJobs: 0 } });
     expect(status).not.toHaveProperty("fastReturnMs");
     await close();
   });
@@ -2975,7 +3203,7 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+    expect(privateSettingsView(saved).settings)
       .toMatchObject({
         settingsRevision: 1,
         uiLocalePreference: "ko",
@@ -3009,7 +3237,7 @@ describe("bridge tools", () => {
       name: "codex_update_settings",
       arguments: { expectedRevision: 1, operation: { kind: "reset" } }
     });
-    expect((reset as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+    expect(privateSettingsView(reset).settings)
       .toMatchObject({
         settingsRevision: 2,
         uiLocalePreference: "auto",
@@ -3103,7 +3331,7 @@ describe("bridge tools", () => {
       }
     });
     expect(saved.isError).not.toBe(true);
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings)
+    expect(privateSettingsView(saved).settings)
       .toMatchObject({ settingsRevision: 1, uiLocalePreference: "ko" });
     expect(catalog.calls.some((call) => call.refresh === true)).toBe(false);
 
@@ -3137,15 +3365,15 @@ describe("bridge tools", () => {
         executionMode: "foreground"
       }
     });
-    expect((alwaysForeground as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeActivity: {
-          executionMode: "foreground",
-          activityCardVisibility: "always",
-          shouldRenderActivityCard: true,
-          renderTiming: "after-result-or-existing-mounted-card"
-        }
-      });
+    expect(parseToolJson(alwaysForeground)).toMatchObject({
+      executionMode: "foreground"
+    });
+    expect(privateActivityBootstrap(alwaysForeground)).toMatchObject({
+      render: {
+        eligible: true,
+        timing: "after-result-or-existing-mounted-card"
+      }
+    });
 
     await client.callTool({
       name: "codex_update_settings",
@@ -3164,39 +3392,37 @@ describe("bridge tools", () => {
         activityPresentationId: groupedPresentation
       }
     });
-    expect((backgroundOnlyForeground as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeActivity: { shouldRenderActivityCard: false } });
+    expect(privateActivityBootstrap(backgroundOnlyForeground))
+      .toMatchObject({ render: { eligible: false, reason: "visibility-disabled" } });
 
-    const backgroundOnlyBackground = parseToolJson(await client.callTool({
+    const backgroundOnlyBackgroundResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "background with automatic card",
         sessionMode: "new",
         activityPresentationId: groupedPresentation
       }
-    }));
+    });
+    const backgroundOnlyBackground = parseToolJson(backgroundOnlyBackgroundResult);
     expect(backgroundOnlyBackground).toMatchObject({
       status: "running",
-      executionMode: "background",
-      bridgeActivity: {
-        activityCardVisibility: "background-only",
-        shouldRenderActivityCard: true,
-        activityPresentationId: groupedPresentation,
-        renderTiming: "immediate"
-      }
+      executionMode: "background"
     });
-    const groupedBackgroundDuplicate = parseToolJson(await client.callTool({
+    expect(privateActivityBootstrap(backgroundOnlyBackgroundResult)).toMatchObject({
+      correlation: { activityPresentationId: groupedPresentation },
+      render: { eligible: true, timing: "immediate" }
+    });
+    const groupedBackgroundDuplicateResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "same response second background call",
         sessionMode: "new",
         activityPresentationId: groupedPresentation
       }
-    }));
-    expect(groupedBackgroundDuplicate.bridgeActivity).toMatchObject({
-      activityPresentationId: groupedPresentation,
-      shouldRenderActivityCard: true,
-      renderReason: "render-latest"
+    });
+    expect(privateActivityBootstrap(groupedBackgroundDuplicateResult)).toMatchObject({
+      correlation: { activityPresentationId: groupedPresentation },
+      render: { eligible: true, reason: "render-latest" }
     });
 
     await client.callTool({
@@ -3209,20 +3435,23 @@ describe("bridge tools", () => {
     const neverTaskDescriptor = neverTools.tools.find((tool) => tool.name === "codex_task");
     expect((neverTaskDescriptor?.inputSchema as { required?: string[] }).required)
       .not.toContain("activityPresentationId");
-    const neverBackground = parseToolJson(await client.callTool({
+    const neverBackgroundResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "background without automatic card",
         sessionMode: "new",
         activityPresentationId: "24242424-0000-4000-8000-000000000011"
       }
-    }));
-    expect(neverBackground.bridgeActivity).toMatchObject({
-      activityCardVisibility: "never",
-      shouldRenderActivityCard: false,
-      explicitRenderAllowed: true
     });
-    const neverWithoutPresentation = parseToolJson(await rawCallTool({
+    expect(parseToolJson(neverBackgroundResult)).toMatchObject({
+      state: "running",
+      executionMode: "background"
+    });
+    expect(privateActivityBootstrap(neverBackgroundResult)).toMatchObject({
+      purpose: "presentation-hydration-only",
+      render: { eligible: false, reason: "visibility-disabled" }
+    });
+    const neverWithoutPresentationResult = await rawCallTool({
       name: "codex_task",
       arguments: {
         scopeId: SCOPE_A,
@@ -3236,17 +3465,15 @@ describe("bridge tools", () => {
         },
         agent: { mode: "new", name: "Never Visibility Agent" }
       }
-    }));
-    expect(neverWithoutPresentation.bridgeActivity).toMatchObject({
-      activityCardVisibility: "never",
-      shouldRenderActivityCard: false,
-      renderReason: "visibility-disabled"
     });
+    expect(parseToolJson(neverWithoutPresentationResult).state).toBe("running");
+    expect((neverWithoutPresentationResult as { _meta?: Record<string, unknown> })._meta || {})
+      .not.toHaveProperty(ACTIVITY_BOOTSTRAP_METADATA_KEY);
     const explicitCard = await client.callTool({
       name: "codex_activity",
       arguments: { scopeId: SCOPE_A }
     });
-    expect((explicitCard as { structuredContent?: Record<string, any> }).structuredContent)
+    expect(parseToolJson(explicitCard))
       .toMatchObject({ activityCardVisibility: "never", activities: expect.any(Array) });
 
     const impossible = await client.callTool({
@@ -3379,7 +3606,7 @@ describe("bridge tools", () => {
       }]
     });
     const settings = await client.callTool({ name: "codex_settings", arguments: {} });
-    expect((settings as { structuredContent?: Record<string, any> }).structuredContent)
+    expect(privateSettingsView(settings))
       .toMatchObject({
         capabilities: {
           operatorModelCeiling: [{ model: "gpt-5.6-sol", reasoningEffort: "max" }]
@@ -3476,7 +3703,7 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
 
-    const first = parseToolJson(await client.callTool({
+    const firstResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "parallel part one",
@@ -3488,10 +3715,11 @@ describe("bridge tools", () => {
         handoffPolicy: "none",
         completionTrigger: "manual"
       }
-    }));
+    });
+    const first = parseToolJson(firstResult);
     expect(first).toMatchObject({
       status: "running",
-      async: true,
+      terminal: false,
       executionMode: "background",
       activityTracking: {
         statusTool: "codex_status",
@@ -3599,13 +3827,18 @@ describe("bridge tools", () => {
         operation: { kind: "set-policy", policy: { handoff: "notify" } }
       }
     }));
-    expect(updatedPolicy.activity).toMatchObject({ handoffPolicy: "notify" });
+    expect(updatedPolicy).toMatchObject({
+      target: { type: "activity", id: first.activityId, state: "open", version: expect.any(Number) },
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
+    });
+    expect(jobs.getActivity(first.activityId)).toMatchObject({ handoffPolicy: "notify" });
 
     const completed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: first.activityId,
-        expectedVersion: updatedPolicy.activity.version,
+        expectedVersion: updatedPolicy.target.version,
         operation: {
           kind: "complete",
           reason: "The orchestrator accepted both investigation results"
@@ -3614,9 +3847,14 @@ describe("bridge tools", () => {
     }));
     expect(completed).toMatchObject({
       action: "complete",
-      activity: { lifecycle: "completed", waitingOn: "none", completionVersion: 1 },
+      target: { type: "activity", id: first.activityId, state: "completed" },
       policySource: "explicit-tool-input",
       codexOutputCanMutatePolicy: false
+    });
+    expect(jobs.getActivity(first.activityId)).toMatchObject({
+      lifecycle: "completed",
+      waitingOn: "none",
+      completionVersion: 1
     });
     await close();
   });
@@ -3636,13 +3874,11 @@ describe("bridge tools", () => {
       contextMode: "fresh",
       activityTitle: "Original Activity"
     });
-    const firstStructured = (first as { structuredContent?: Record<string, any> }).structuredContent!;
-    const sourceActivityId = firstStructured.bridgeActivity.activityId;
-    const agentId = firstStructured.bridgeActivity.agentId;
+    const firstStructured = parseToolJson(first);
+    const sourceActivityId = firstStructured.activityId;
+    const agentId = firstStructured.agentId;
     expect(firstStructured.threadId).toBe("thread-1");
-    expect(firstStructured.bridgeActivity).toMatchObject({
-      projectName: "Test Project"
-    });
+    expect(firstStructured.projectName).toBe("Test Project");
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
     expect(jobs.listActivityAgentAssignments(sourceActivityId, agentId)).toEqual([
       expect.objectContaining({ contextMode: "fresh", releasedAt: expect.any(Number) })
@@ -3663,8 +3899,8 @@ describe("bridge tools", () => {
       agentId,
       contextMode: "continue"
     });
-    const linkedStructured = (linked as { structuredContent?: Record<string, any> }).structuredContent!;
-    const linkedActivityId = linkedStructured.bridgeActivity.activityId;
+    const linkedStructured = parseToolJson(linked);
+    const linkedActivityId = linkedStructured.activityId;
     expect(linkedActivityId).not.toBe(sourceActivityId);
     expect(linkedStructured.threadId).toBe("thread-1");
     expect(jobs.getActivity(sourceActivityId)).toMatchObject({ lifecycle: "completed" });
@@ -3689,10 +3925,9 @@ describe("bridge tools", () => {
       contextMode: "fork"
     };
     const forked = await runTask(client, forkArguments);
-    expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.threadId)
-      .toBe("thread-forked");
-    expect((forked as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity)
-      .toMatchObject({ projectName: "Test Project" });
+    const forkedStructured = parseToolJson(forked);
+    expect(forkedStructured.threadId).toBe("thread-forked");
+    expect(forkedStructured.projectName).toBe("Test Project");
     expect(upstream.calls[2]).toMatchObject({
       name: "codex-fork",
       args: { threadId: "thread-1", prompt: "independently verify the approach" }
@@ -3701,15 +3936,11 @@ describe("bridge tools", () => {
       ...forkArguments,
       activityPresentationId: "36363636-3636-4636-8636-363636363636"
     });
-    expect((forkRetry as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        threadId: "thread-forked",
-        bridgeActivity: {
-          activityId: linkedActivityId,
-          jobId: (forked as { structuredContent?: Record<string, any> })
-            .structuredContent?.bridgeActivity.jobId
-        }
-      });
+    expect(parseToolJson(forkRetry)).toMatchObject({
+      threadId: "thread-forked",
+      activityId: linkedActivityId,
+      jobId: forkedStructured.jobId
+    });
     expect(upstream.calls).toHaveLength(3);
 
     const fresh = await runTask(client, {
@@ -3850,18 +4081,15 @@ describe("bridge tools", () => {
       }
     };
     const handedOff = await runTask(client, handoffArgs);
-    expect(handedOff).toMatchObject({
-      structuredContent: {
-        threadId: "thread-1",
-        bridgeSession: {
-          handoff: {
-            sourceBackend: "mcp-server",
-            targetBackend: "app-server",
-            sourceThreadId: "mcp-thread",
-            continuity: "explicit-summary-only",
-            summarySha256: expect.stringMatching(/^[0-9a-f]{64}$/)
-          }
-        }
+    const handedOffStructured = parseToolJson(handedOff);
+    expect(handedOffStructured).toMatchObject({ threadId: "thread-1" });
+    expect(jobs.get(handedOffStructured.jobId)?.sessionDecision).toMatchObject({
+      handoff: {
+        sourceBackend: "mcp-server",
+        targetBackend: "app-server",
+        sourceThreadId: "mcp-thread",
+        continuity: "explicit-summary-only",
+        summarySha256: expect.stringMatching(/^[0-9a-f]{64}$/)
       }
     });
     expect(upstream.calls[1]).toMatchObject({ name: "codex" });
@@ -3919,8 +4147,8 @@ describe("bridge tools", () => {
     expect(busy).toMatchObject({
       ok: false,
       code: "AGENT_BUSY",
-      forceStop: { tool: "codex_cancel", arguments: { jobId: started.jobId } },
-      warning: expect.stringContaining("does not roll back filesystem changes")
+      nextActions: [`codex_cancel(${started.jobId})`],
+      warnings: [expect.stringContaining("does not roll back filesystem changes")]
     });
 
     const activeDetach = await client.callTool({
@@ -3992,10 +4220,10 @@ describe("bridge tools", () => {
     expect(renamed).toMatchObject({
       ok: true,
       action: "rename",
-      agent: { agentId, agentName: "Renamed Agent", threadHistoryCount: 1 },
-      historyPreserved: true,
-      deletionPerformed: false
+      target: { type: "agent", id: agentId }
     });
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "Renamed Agent" });
+    expect(jobs.listAgentThreads(agentId)).toHaveLength(1);
     const changedRetry = await client.callTool({
       name: "codex_agent",
       arguments: {
@@ -4029,10 +4257,13 @@ describe("bridge tools", () => {
         operation: { kind: "archive" }
       }
     }));
-    expect(archived).toMatchObject({ ok: true, agent: { agentId, lifecycle: "archived" } });
+    expect(archived).toMatchObject({
+      ok: true,
+      target: { type: "agent", id: agentId, state: "archived" }
+    });
     expect(upstream.archivedThreads).toEqual([]);
     const card = await client.callTool({ name: "codex_activity", arguments: {} });
-    const cardView = (card as { structuredContent?: Record<string, any> }).structuredContent!;
+    const cardView = parseToolJson(card);
     expect(cardView.agents).not.toEqual(expect.arrayContaining([expect.objectContaining({ agentId })]));
     expect(cardView.archivedAgents).toEqual(expect.arrayContaining([
       expect.objectContaining({ agentId, canRestore: true })
@@ -4048,7 +4279,11 @@ describe("bridge tools", () => {
     }));
     expect(restored).toMatchObject({
       ok: true,
-      agent: { agentId, agentName: "Renamed Agent", lifecycle: "idle", threadHistoryCount: 1 }
+      target: { type: "agent", id: agentId, state: "idle" }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({
+      agentName: "Renamed Agent",
+      lifecycle: "idle"
     });
     expect(upstream.restoredThreads).toEqual([]);
 
@@ -4128,8 +4363,10 @@ describe("bridge tools", () => {
     }));
     expect(archived).toMatchObject({
       ok: true,
-      agent: { agentId: sourceAgent.agentId, lifecycle: "archived", threadHistoryCount: 1 }
+      target: { type: "agent", id: sourceAgent.agentId, state: "archived" }
     });
+    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({ lifecycle: "archived" });
+    expect(jobs.listAgentThreads(sourceAgent.agentId)).toHaveLength(1);
     expect(upstream.archivedThreads).toEqual([]);
     expect(jobs.getAgent(forkAgent.agentId)).toMatchObject({
       lifecycle: "idle",
@@ -4153,7 +4390,7 @@ describe("bridge tools", () => {
     }));
     expect(restored).toMatchObject({
       ok: true,
-      agent: { agentId: sourceAgent.agentId, lifecycle: "idle", threadHistoryCount: 1 }
+      target: { type: "agent", id: sourceAgent.agentId, state: "idle" }
     });
     expect(upstream.restoredThreads).toEqual([]);
     expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({
@@ -4182,10 +4419,9 @@ describe("bridge tools", () => {
         executionMode: "foreground"
       }
     });
-    const agentId = (completedResult as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
-    const activityId = (completedResult as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId as string;
+    const completed = parseToolJson(completedResult);
+    const agentId = completed.agentId as string;
+    const activityId = completed.activityId as string;
     expect(agentId).toEqual(expect.any(String));
 
     const widgetSessionId = "71717171-7171-4171-8171-717171717171";
@@ -4194,7 +4430,7 @@ describe("bridge tools", () => {
       arguments: { activityId },
       _meta: { "openai/widgetSessionId": widgetSessionId }
     });
-    const view = (card as { structuredContent?: Record<string, any> }).structuredContent!;
+    const view = parseToolJson(card);
     expect(view.agents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         agentId,
@@ -4234,11 +4470,7 @@ describe("bridge tools", () => {
     }));
     expect(archiveConflict).toMatchObject({
       ok: false,
-      code: "AGENT_BACKGROUND_PROCESS",
-      backgroundProcesses: [
-        { processId: "background-process-1" },
-        { processId: "legacy-background-process-2" }
-      ]
+      code: "AGENT_BACKGROUND_PROCESS"
     });
 
     const terminateArguments = {
@@ -4360,7 +4592,7 @@ describe("bridge tools", () => {
     ]);
 
     const after = await client.callTool({ name: "codex_activity", arguments: {} });
-    expect((after as { structuredContent?: Record<string, any> }).structuredContent?.agents)
+    expect(privateActivityView(after).agents)
       .toEqual(expect.arrayContaining([
         expect.objectContaining({
           agentId,
@@ -4379,7 +4611,7 @@ describe("bridge tools", () => {
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
-    const started = parseToolJson(await client.callTool({
+    const startedResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "wait for interactions",
@@ -4387,14 +4619,16 @@ describe("bridge tools", () => {
         contextMode: "fresh",
         executionMode: "background"
       }
-    }));
+    });
+    const started = parseToolJson(startedResult);
+    const bootstrap = privateActivityBootstrap(startedResult);
     const widgetSessionId = "widget-interaction";
     const card = {
       activityId: started.activityId,
-      generation: started.bridgeActivity.cardGeneration,
+      generation: bootstrap.activity.cardGeneration,
       presentation: {
         kind: "automatic" as const,
-        activityPresentationId: started.activityPresentationId
+        activityPresentationId: bootstrap.correlation.activityPresentationId
       }
     };
     await client.callTool({
@@ -4677,16 +4911,14 @@ describe("bridge tools", () => {
 
     upstream.resolveNext(fakeCodexResult("discussion-thread"));
     const result = await pending;
-    expect((result as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+    const structured = parseToolJson(result);
+    expect(structured).toMatchObject({
       threadId: "discussion-thread",
-      bridgeActivity: {
-        activityId: expect.stringMatching(SCOPE_ID_PATTERN),
-        jobId: expect.stringMatching(SCOPE_ID_PATTERN),
-        executionMode: "foreground"
-      }
+      activityId: expect.stringMatching(SCOPE_ID_PATTERN),
+      jobId: expect.stringMatching(SCOPE_ID_PATTERN),
+      executionMode: "foreground"
     });
-    const activityId = (result as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId;
+    const activityId = structured.activityId;
     expect(jobs.getActivity(activityId)).toMatchObject({
       kind: "discussion",
       lifecycle: "open",
@@ -4712,10 +4944,9 @@ describe("bridge tools", () => {
         completionTrigger: "sealed-jobs-terminal"
       }
     });
-    const activityId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId;
-    const jobId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.jobId;
+    const startedStructured = parseToolJson(started);
+    const activityId = startedStructured.activityId;
+    const jobId = startedStructured.jobId;
     expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "not-required" });
     const initialVersion = jobs.getActivity(activityId)?.version as number;
 
@@ -4739,7 +4970,12 @@ describe("bridge tools", () => {
         operation: { kind: "seal" }
       }
     }));
-    expect(sealed.activity).toMatchObject({
+    expect(sealed.target).toMatchObject({
+      type: "activity",
+      id: activityId,
+      state: "sealed"
+    });
+    expect(jobs.getActivity(activityId)).toMatchObject({
       lifecycle: "sealed",
       waitingOn: "verification",
       verification: "pending",
@@ -4749,8 +4985,7 @@ describe("bridge tools", () => {
       name: "codex_activity",
       arguments: { activityId }
     });
-    expect((pendingVerificationView as { structuredContent?: Record<string, any> })
-      .structuredContent?.feed).toMatchObject({
+    expect(parseToolJson(pendingVerificationView).feed).toMatchObject({
         activeCount: 1,
         active: [expect.objectContaining({ activityId, displayState: "verification" })],
         completed: { agentCount: 0, activityCount: 0 }
@@ -4759,7 +4994,7 @@ describe("bridge tools", () => {
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: sealed.activity.version,
+        expectedVersion: sealed.target.version,
         operation: { kind: "complete" }
       }
     });
@@ -4770,7 +5005,7 @@ describe("bridge tools", () => {
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: sealed.activity.version,
+        expectedVersion: sealed.target.version,
         operation: { kind: "verification-failed" }
       }
     });
@@ -4779,7 +5014,7 @@ describe("bridge tools", () => {
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: sealed.activity.version,
+        expectedVersion: sealed.target.version,
         operation: { kind: "verification-passed" }
       }
     });
@@ -4788,29 +5023,30 @@ describe("bridge tools", () => {
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: sealed.activity.version,
+        expectedVersion: sealed.target.version,
         operation: {
           kind: "verification-failed",
           reason: "The first independent review found a gap"
         }
       }
     }));
-    expect(failed.activity).toMatchObject({ lifecycle: "open", verification: "failed" });
+    expect(failed.target).toMatchObject({ type: "activity", id: activityId, state: "open" });
+    expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "failed" });
 
     const verifying = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: failed.activity.version,
+        expectedVersion: failed.target.version,
         operation: { kind: "start-verification" }
       }
     }));
-    expect(verifying.activity).toMatchObject({ verification: "verifying" });
+    expect(jobs.getActivity(activityId)).toMatchObject({ verification: "verifying" });
     const passed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId,
-        expectedVersion: verifying.activity.version,
+        expectedVersion: verifying.target.version,
         operation: {
           kind: "verification-passed",
           evidence: {
@@ -4821,7 +5057,8 @@ describe("bridge tools", () => {
         }
       }
     }));
-    expect(passed.activity).toMatchObject({
+    expect(passed.target).toMatchObject({ type: "activity", id: activityId, state: "completed" });
+    expect(jobs.getActivity(activityId)).toMatchObject({
       lifecycle: "completed",
       verification: "verified",
       waitingOn: "none"
@@ -4830,8 +5067,7 @@ describe("bridge tools", () => {
       name: "codex_activity",
       arguments: { activityId }
     });
-    expect((verifiedView as { structuredContent?: Record<string, any> })
-      .structuredContent?.feed).toMatchObject({
+    expect(parseToolJson(verifiedView).feed).toMatchObject({
         activeCount: 0,
         completed: {
           agentCount: 1,
@@ -4854,7 +5090,11 @@ describe("bridge tools", () => {
         operation: { kind: "abandon", reason: "No longer needed" }
       }
     }));
-    expect(abandoned.activity).toMatchObject({ lifecycle: "abandoned" });
+    expect(abandoned.target).toMatchObject({
+      type: "activity",
+      id: abandonedActivityId,
+      state: "abandoned"
+    });
     await close();
   });
 
@@ -4925,19 +5165,21 @@ describe("bridge tools", () => {
     expect(cancellationReplay).toEqual(cancelled);
     expect(cancelled).toMatchObject({
       action: "cancel",
-      activity: {
-        lifecycle: "cancelled",
-        waitingOn: "none",
-        counts: { running: 0, cancelled: 1, terminal: 1 }
-      },
-      cancelledJobIds: [running.jobId]
+      target: { type: "activity", id: running.activityId, state: "cancelled" },
+      affectedJobIds: [running.jobId],
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
     });
-    expect(cancelled.warning).toContain("not rolled back");
+    expect(cancelled.warnings).toEqual([expect.stringContaining("not rolled back")]);
     expect(upstream.aborts).toBe(1);
     expect(jobs.get(running.jobId)).toMatchObject({
       status: "cancelled",
       terminalOrigin: "explicit-cancellation",
       cancellationIntentId: expect.any(String)
+    });
+    expect(jobs.getActivity(running.activityId)).toMatchObject({
+      lifecycle: "cancelled",
+      waitingOn: "none"
     });
     const cascadeIntents = jobs.listCancellationIntents({
       requestId: cancellationArguments.requestId
@@ -5044,8 +5286,15 @@ describe("bridge tools", () => {
       arguments: { threadId: "app-thread-1" }
     }));
     expect(turnDetail).toMatchObject({
-      session: { threadId: "app-thread-1", backendKind: "app-server" },
-      turns: [expect.objectContaining({ jobId: first.jobId, turnId: "app-turn-1", status: "running" })]
+      kind: "thread",
+      items: expect.arrayContaining([
+        expect.objectContaining({ type: "thread", id: "app-thread-1" }),
+        expect.objectContaining({ type: "job", id: first.jobId, state: "running" })
+      ])
+    });
+    expect(jobs.get(first.jobId)).toMatchObject({
+      backendKind: "app-server",
+      upstreamRequestId: "app-turn-1"
     });
 
     const stopped = parseToolJson(await client.callTool({
@@ -5065,9 +5314,8 @@ describe("bridge tools", () => {
     expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled" });
     expect(jobs.get(second.jobId)).toMatchObject({ status: "cancelled" });
     expect(stopped).toMatchObject({
-      activity: { lifecycle: "cancelled", counts: { cancelled: 2, running: 0 } },
-      cancelledJobIds: expect.arrayContaining(affected),
-      collateralJobIds: []
+      target: { type: "activity", id: first.activityId, state: "cancelled" },
+      affectedJobIds: expect.arrayContaining(affected)
     });
     await close();
   });
@@ -5121,7 +5369,7 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, jobs, close } = await connectTestClient(config, upstream);
 
     await client.callTool({
       name: "codex_task",
@@ -5153,7 +5401,7 @@ describe("bridge tools", () => {
     expect(rejected).toMatchObject({
       isError: true,
       structuredContent: {
-        error: { code: "MODEL_UNAVAILABLE", policyRevision: 0 }
+        error: { code: "MODEL_UNAVAILABLE" }
       }
     });
     expect(upstream.calls).toHaveLength(2);
@@ -5168,16 +5416,16 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, jobs, close } = await connectTestClient(config, upstream);
 
     const running = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: { prompt: "hold admission decision", sessionMode: "new" }
     }));
-    expect(running.executionDecision).toMatchObject({
-      policyRevision: 0,
-      effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      source: "configured-fallback"
+    expect(running).toMatchObject({
+      actualModel: "gpt-5.6-sol",
+      actualReasoningEffort: "max",
+      rerouted: false
     });
 
     await client.callTool({
@@ -5195,9 +5443,8 @@ describe("bridge tools", () => {
       args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
     upstream.resolveNext(fakeCodexResult("admission-thread"));
-    const completed = await waitForJobStatus(client, running.jobId, "completed");
-    expect(completed.executionDecision).toMatchObject({
-      policyRevision: 0,
+    await waitForJobStatus(client, running.jobId, "completed");
+    expect(jobs.get(running.jobId)?.executionDecision).toMatchObject({
       effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       source: "configured-fallback"
     });
@@ -5207,7 +5454,7 @@ describe("bridge tools", () => {
   it("records requested, effective, accepted, and rerouted execution metadata without prompt text", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
     const running = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
@@ -5256,22 +5503,23 @@ describe("bridge tools", () => {
       name: "codex_status",
       arguments: { jobId: running.jobId }
     }));
-    expect(status.executionAudit).toMatchObject({
-      requested: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-      effective: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-      actual: { model: "gpt-5.6-sol", reasoningEffort: "high" },
-      evidence: {
-        model: "model/rerouted",
-        reasoningEffort: "turn/start-accepted",
-        actualEffortRuntimeOverrideReported: false
-      },
-      reroute: {
-        fromModel: "gpt-5.6-terra",
-        toModel: "gpt-5.6-sol",
-        reason: "fixture-policy"
-      }
+    expect(status).toMatchObject({ kind: "job", status: "running" });
+    expect(jobs.get(running.jobId)?.executionDecision).toMatchObject({
+      requestedSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      effectiveSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
     });
-    expect(JSON.stringify(status.executionAudit)).not.toContain("PRIVATE_AUDIT_PROMPT");
+    expect(jobs.get(running.jobId)?.publicEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "model",
+        details: expect.objectContaining({
+          kind: "rerouted",
+          fromModel: "gpt-5.6-terra",
+          toModel: "gpt-5.6-sol",
+          reason: "fixture-policy"
+        })
+      })
+    ]));
+    expect(JSON.stringify(status)).not.toContain("PRIVATE_AUDIT_PROMPT");
     upstream.resolveNext(fakeCodexResult("audit-thread"));
     await waitForJobStatus(client, running.jobId, "completed");
     await close();
@@ -5318,10 +5566,9 @@ describe("bridge tools", () => {
     expect(failed).toMatchObject({
       status: "failed",
       threadId: "context-thread",
-      upstreamError: {
+      error: {
         code: "CONTEXT_WINDOW_EXCEEDED",
-        retryable: true,
-        upstreamKind: "contextWindowExceeded"
+        retryable: true
       }
     });
     expect(sessions.get("context-thread")).toMatchObject({
@@ -5337,7 +5584,7 @@ describe("bridge tools", () => {
       isError: true,
       structuredContent: {
         error: { code: "CONTEXT_WINDOW_EXCEEDED", retryable: true },
-        executionAudit: expect.any(Object)
+        actualModel: expect.any(String)
       }
     });
     expect(upstream.calls).toHaveLength(1);
@@ -5365,7 +5612,7 @@ describe("bridge tools", () => {
     const failed = await waitForJobStatus(client, first.jobId, "failed");
     expect(failed).toMatchObject({
       threadId: "bridge-crash-thread",
-      error: expect.stringContaining("worker crashed")
+      error: { message: expect.stringContaining("worker crashed") }
     });
     expect(sessions.get("bridge-crash-thread")).toMatchObject({
       threadId: "bridge-crash-thread",
@@ -5381,11 +5628,9 @@ describe("bridge tools", () => {
       activity: { mode: "existing", id: first.activityId },
       agent: { mode: "existing", id: first.agentId, context: "continue" }
     });
-    expect(resumed).toMatchObject({
-      structuredContent: {
-        threadId: "bridge-crash-thread",
-        bridgeActivity: { agentId: first.agentId }
-      }
+    expect(parseToolJson(resumed)).toMatchObject({
+      threadId: "bridge-crash-thread",
+      agentId: first.agentId
     });
     expect(sessions.get("bridge-crash-thread")).toMatchObject({
       sessionId: "bridge-crash-session"
@@ -5404,8 +5649,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(config, upstream);
     const started = await runTask(client, { prompt: "start MCP thread", sessionMode: "new" });
     const activityId = taskActivityId(started);
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
 
     await client.callTool({
       name: "codex_update_settings",
@@ -5426,7 +5670,7 @@ describe("bridge tools", () => {
       expect(rejected).toMatchObject({
         isError: true,
         structuredContent: {
-          error: { code: "THREAD_OVERRIDE_UNSUPPORTED", policyRevision: 1 }
+          error: { code: "THREAD_OVERRIDE_UNSUPPORTED" }
         }
       });
     }
@@ -5458,8 +5702,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(config, upstream, sessions);
 
     const started = await runTask(client, { prompt: "start app thread", sessionMode: "new" });
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
     await client.callTool({
       name: "codex_update_settings",
       arguments: {
@@ -5489,23 +5732,14 @@ describe("bridge tools", () => {
     expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
         threadId: "thread-1",
-        executionDecision: {
-          policyRevision: 1,
-          effectiveSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-          appliedAt: "turn-start"
-        },
-        executionAudit: {
-          effective: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-          actual: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-          evidence: { model: "bridge-dispatch", reasoningEffort: "bridge-dispatch" }
-        }
+        actualModel: "gpt-5.6-terra",
+        actualReasoningEffort: "high",
+        rerouted: false
       });
     expect((started as { structuredContent?: Record<string, any> }).structuredContent)
       .toMatchObject({
-        executionAudit: {
-          effective: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-          actual: { model: "gpt-5.6-sol", reasoningEffort: "max" }
-        }
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max"
       });
     expect(sessions.get("thread-1")).toMatchObject({
       threadId: "thread-1",
@@ -5519,7 +5753,7 @@ describe("bridge tools", () => {
   it("auto mode continues the only compatible session attached to an Activity", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
 
     const first = await runTask(client, { prompt: "first" });
     const activityId = taskActivityId(first);
@@ -5529,7 +5763,10 @@ describe("bridge tools", () => {
       name: "codex-reply",
       args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "mcp-server" }
     });
-    expect(taskSession(first)).toMatchObject({ action: "start", reason: "activity-new" });
+    expect(jobs.get(parseToolJson(first).jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-new"
+    });
     await close();
   });
 
@@ -5568,7 +5805,7 @@ describe("bridge tools", () => {
   it("derives and isolates ChatGPT scopes from host metadata without a model-provided scopeId", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const metadataA = {
       "openai/organization": "anonymous-org",
       "openai/subject": "anonymous-user",
@@ -5588,8 +5825,8 @@ describe("bridge tools", () => {
       },
       _meta: { ...metadataA, "codex/activityPresentationId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }
     });
-    const derivedScope = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeSession?.scopeId;
+    const startedStructured = parseToolJson(started);
+    const derivedScope = jobs.get(startedStructured.jobId)?.scopeId;
     expect(derivedScope).toMatch(SCOPE_ID_PATTERN);
     expect(derivedScope).not.toBe(SCOPE_A);
 
@@ -5606,19 +5843,21 @@ describe("bridge tools", () => {
       },
       _meta: { ...metadataA, "codex/activityPresentationId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }
     });
-    const startedStructured = (started as { structuredContent?: Record<string, any> }).structuredContent!;
-    const retriedStructured = (retriedWithIgnoredInput as { structuredContent?: Record<string, any> }).structuredContent!;
+    const retriedStructured = parseToolJson(retriedWithIgnoredInput);
     expect(retriedStructured).toMatchObject({
       threadId: startedStructured.threadId,
-      bridgeActivity: {
-        activityId: startedStructured.bridgeActivity.activityId,
-        jobId: startedStructured.bridgeActivity.jobId,
-        agentId: startedStructured.bridgeActivity.agentId,
-        cardGeneration: 1,
-        shouldRenderActivityCard: true,
-        renderReason: "render-retry"
+      activityId: startedStructured.activityId,
+      jobId: startedStructured.jobId,
+      agentId: startedStructured.agentId,
+      replay: true
+    });
+    expect(privateActivityBootstrap(retriedWithIgnoredInput)).toMatchObject({
+      correlation: {
+        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        jobId: startedStructured.jobId
       },
-      bridgeSession: startedStructured.bridgeSession,
+      activity: { activityId: startedStructured.activityId, cardGeneration: 1 },
+      render: { eligible: true, reason: "render-retry" }
     });
     expect(upstream.calls).toHaveLength(1);
 
@@ -5630,20 +5869,20 @@ describe("bridge tools", () => {
         executionMode: "foreground",
         activity: {
           mode: "existing",
-          id: (started as { structuredContent?: Record<string, any> }).structuredContent
-            ?.bridgeActivity?.activityId
+          id: startedStructured.activityId
         }
       },
       _meta: { ...metadataA, "codex/activityPresentationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }
     });
-    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeSession: {
-          scopeId: derivedScope,
-          action: "continue",
-          threadId: "thread-1"
-        }
-      });
+    const continuedStructured = parseToolJson(continued);
+    expect(continuedStructured).toMatchObject({
+      activityId: startedStructured.activityId,
+      threadId: "thread-1"
+    });
+    expect(jobs.get(continuedStructured.jobId)?.sessionDecision).toMatchObject({
+      action: "continue",
+      threadId: "thread-1"
+    });
 
     const statusA = parseToolJson(
       await rawCallTool({ name: "codex_status", arguments: {}, _meta: metadataA })
@@ -5664,20 +5903,10 @@ describe("bridge tools", () => {
       _meta: metadataA
     });
 
-    expect(statusA.scopeView).toEqual({
-      mode: "scoped",
-      scopeId: derivedScope,
-      source: "host-metadata",
-      keyVersion: 1,
-      explicitInputIgnored: false
-    });
+    expect(statusA.scope).toEqual({ mode: "scoped", source: "host-metadata" });
     expect(statusA.scopeCounts).toMatchObject({ sessions: 1, jobs: 2 });
     expect(statusB.scopeCounts).toMatchObject({ sessions: 0, jobs: 0 });
-    expect(explicitIgnored.scopeView).toMatchObject({
-      scopeId: derivedScope,
-      source: "host-metadata",
-      explicitInputIgnored: true
-    });
+    expect(explicitIgnored.scope).toEqual({ mode: "scoped", source: "host-metadata" });
     expect(deniedAudit.isError).toBe(true);
     expect(JSON.stringify(deniedAudit)).toContain("cannot request the bridge-wide audit view");
     expect(JSON.stringify(statusA)).not.toContain("chat-session-a");
@@ -5689,7 +5918,7 @@ describe("bridge tools", () => {
   it("requires an explicit compatibility scope only when host metadata is absent", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
 
     const missing = await rawCallTool({
       name: "codex_task",
@@ -5714,8 +5943,7 @@ describe("bridge tools", () => {
         agent: { mode: "new", name: "Compatibility Agent" }
       }
     });
-    expect((compatible as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeSession: { scopeId: SCOPE_A } });
+    expect(jobs.get(parseToolJson(compatible).jobId)?.scopeId).toBe(SCOPE_A);
     await close();
   });
 
@@ -5766,14 +5994,14 @@ describe("bridge tools", () => {
         _meta: metadata
       })
     );
-    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.job.status).toBe("cancelled");
     await close();
   });
 
   it("normalizes UUID casing before routing sessions", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
 
     const started = await client.callTool({
       name: "codex_task",
@@ -5783,16 +6011,14 @@ describe("bridge tools", () => {
         sessionMode: "new"
       }
     });
-    expect((started as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      bridgeSession: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
-    });
+    expect(jobs.get(parseToolJson(started).jobId)?.scopeId).toBe(UPPERCASE_SCOPE.toLowerCase());
     const status = parseToolJson(
       await client.callTool({
         name: "codex_status",
         arguments: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
       })
     );
-    expect(status.sessions).toHaveLength(1);
+    expect(status.counts.sessions).toBe(1);
     await close();
   });
 
@@ -5807,16 +6033,14 @@ describe("bridge tools", () => {
       contextMode: "fresh"
     });
     const activityId = taskActivityId(plan);
-    const planAgentId = (plan as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const planAgentId = parseToolJson(plan).agentId;
     const build = await runTask(client, {
       prompt: "build",
       agentName: "Builder",
       contextMode: "fresh",
       activityId
     });
-    const buildAgentId = (build as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const buildAgentId = parseToolJson(build).agentId;
     const ambiguous = await client.callTool({
       name: "codex_task",
       arguments: { prompt: "which thread?", activityId }
@@ -5881,24 +6105,26 @@ describe("bridge tools", () => {
       executionMode: "background" as const
     };
 
-    const first = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: arguments_ })
-    );
-    const retry = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: arguments_ })
-    );
+    const firstResult = await client.callTool({ name: "codex_task", arguments: arguments_ });
+    const retryResult = await client.callTool({ name: "codex_task", arguments: arguments_ });
+    const first = parseToolJson(firstResult);
+    const retry = parseToolJson(retryResult);
     expect(retry.jobId).toBe(first.jobId);
     expect(retry.activityId).toBe(first.activityId);
-    expect(first.bridgeActivity).toMatchObject({
-      activityPresentationId: requestId,
-      shouldRenderActivityCard: true,
-      renderReason: "new-presentation"
+    expect(privateActivityBootstrap(firstResult)).toMatchObject({
+      correlation: { activityPresentationId: requestId },
+      render: { eligible: true, reason: "new-presentation" }
     });
-    expect(retry.bridgeActivity).toMatchObject({
-      activityPresentationId: requestId,
-      shouldRenderActivityCard: true,
-      renderReason: "render-retry"
+    expect(privateActivityBootstrap(retryResult)).toMatchObject({
+      correlation: { activityPresentationId: requestId },
+      render: { eligible: true, reason: "render-retry" }
     });
+    expect(validateActivityBootstrapPrivateMetadata(
+      (firstResult as { _meta?: Record<string, unknown> })._meta?.[ACTIVITY_BOOTSTRAP_METADATA_KEY]
+    ).render).toMatchObject({ eligible: true, reason: "new-presentation" });
+    expect(validateActivityBootstrapPrivateMetadata(
+      (retryResult as { _meta?: Record<string, unknown> })._meta?.[ACTIVITY_BOOTSTRAP_METADATA_KEY]
+    ).render).toMatchObject({ eligible: true, reason: "render-retry" });
     expect(upstream.calls).toHaveLength(1);
 
     const changed = await client.callTool({
@@ -5939,18 +6165,20 @@ describe("bridge tools", () => {
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
     const completedRetry = await client.callTool({ name: "codex_task", arguments: arguments_ });
-    expect(
-      (completedRetry as { structuredContent?: Record<string, any> }).structuredContent
-    ).toMatchObject({
+    expect(parseToolJson(completedRetry)).toMatchObject({
       threadId: "deduped-thread",
-      bridgeSession: { scopeId: SCOPE_A, requestId },
-      bridgeActivity: {
-        activityId: first.activityId,
-        jobId: first.jobId,
-        executionMode: "background",
-        shouldRenderActivityCard: true,
-        renderReason: "render-retry"
-      }
+      requestId,
+      activityId: first.activityId,
+      jobId: first.jobId,
+      executionMode: "background",
+      replay: true
+    });
+    expect(validateActivityBootstrapPrivateMetadata(
+      (completedRetry as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_BOOTSTRAP_METADATA_KEY]
+    )).toMatchObject({
+      correlation: { requestId, jobId: first.jobId },
+      render: { eligible: true, reason: "render-retry" }
     });
     expect(upstream.calls).toHaveLength(1);
     await close();
@@ -6083,14 +6311,11 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect((retry as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeActivity: {
-          activityId: (first as { structuredContent?: Record<string, any> })
-            .structuredContent?.bridgeActivity.activityId,
-          jobId: admitted!.jobId
-        }
-      });
+    expect(parseToolJson(retry)).toMatchObject({
+      activityId: parseToolJson(first).activityId,
+      jobId: admitted!.jobId,
+      replay: true
+    });
     expect(upstream.calls).toHaveLength(1);
 
     const differentSelection = effectiveSelection.model === "gpt-5.6-terra"
@@ -6148,16 +6373,14 @@ describe("bridge tools", () => {
     }, 0);
     const retry = await rawCallTool({ name: "codex_task", arguments: arguments_ });
 
-    const firstStructured = (first as { structuredContent?: Record<string, any> }).structuredContent!;
-    const retryStructured = (retry as { structuredContent?: Record<string, any> }).structuredContent!;
-    expect(retryStructured.bridgeActivity).toMatchObject({
-      activityId: firstStructured.bridgeActivity.activityId,
-      jobId: firstStructured.bridgeActivity.jobId,
-      executionMode: "background"
-    });
-    expect(retryStructured.bridgeSession).toMatchObject({
-      scopeId: SCOPE_A,
-      requestId: arguments_.requestId
+    const firstStructured = parseToolJson(first);
+    const retryStructured = parseToolJson(retry);
+    expect(retryStructured).toMatchObject({
+      activityId: firstStructured.activityId,
+      jobId: firstStructured.jobId,
+      executionMode: "background",
+      requestId: arguments_.requestId,
+      replay: true
     });
     expect(upstream.calls).toHaveLength(1);
     await close();
@@ -6166,7 +6389,7 @@ describe("bridge tools", () => {
   it("retires low-level thread adoption and preserves scope-local Agent ownership", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
     await runTask(client, {
       prompt: "start",
       scopeId: SCOPE_A,
@@ -6205,10 +6428,10 @@ describe("bridge tools", () => {
     const statusB = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_B } })
     );
-    expect(statusA.sessions).toEqual([
-      expect.objectContaining({ threadId: "thread-1", scopeId: SCOPE_A })
-    ]);
-    expect(statusB.sessions).toEqual([]);
+    expect(statusA.counts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(statusB.counts).toMatchObject({ sessions: 0, jobs: 0 });
+    expect(jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    expect(jobs.listForScope(SCOPE_B)).toHaveLength(0);
     await close();
   });
 
@@ -6232,22 +6455,18 @@ describe("bridge tools", () => {
       await rawCallTool({ name: "codex_status", arguments: { includeAllScopes: true } })
     );
 
-    expect(statusA.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
-      "thread-1"
-    ]);
-    expect(statusB.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
-      "thread-2"
-    ]);
+    expect(statusA.counts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(statusB.counts).toMatchObject({ sessions: 1, jobs: 1 });
     expect(policyOnly).toMatchObject({
-      scopeView: {
-        mode: "policy-only",
-        hostMetadataOrCompatibilityScopeRequiredForDetails: true
-      },
-      sessions: [],
-      jobs: []
+      scope: { mode: "policy-only" },
+      counts: { sessions: 0, jobs: 0 },
+      items: []
     });
-    expect(audit.sessions).toHaveLength(2);
-    expect(audit.jobs).toHaveLength(2);
+    expect(audit).toMatchObject({
+      scope: { mode: "all" },
+      counts: { sessions: 2, jobs: 2 }
+    });
+    expect(audit.items.filter((entry: { type: string }) => entry.type === "job")).toHaveLength(2);
     await close();
   });
 
@@ -6322,39 +6541,43 @@ describe("bridge tools", () => {
       runningJobs: 0
     });
     expect(firstSessions.items).toHaveLength(10);
-    expect(firstSessions.pagination).toMatchObject({
-      offset: 0, returned: 10, total: 14, hasMore: true, nextOffset: 10
+    expect(firstSessions.page).toMatchObject({
+      offset: 0, returned: 10, total: 14, hasMore: true,
+      nextCursor: expect.any(String)
     });
     expect(secondSessions.items).toHaveLength(4);
-    expect(secondSessions.pagination).toMatchObject({
-      offset: 10, returned: 4, total: 14, hasMore: false, nextOffset: null
+    expect(secondSessions.page).toMatchObject({
+      offset: 10, returned: 4, total: 14, hasMore: false
     });
+    expect(secondSessions.page).not.toHaveProperty("nextCursor");
     expect(firstJobs.items).toHaveLength(2);
-    expect(firstJobs.pagination).toMatchObject({
-      offset: 0, returned: 2, total: 3, hasMore: true, nextOffset: 2
+    expect(firstJobs.page).toMatchObject({
+      offset: 0, returned: 2, total: 3, hasMore: true,
+      nextCursor: expect.any(String)
     });
     expect(secondJobs.items).toHaveLength(1);
-    expect(secondJobs.pagination).toMatchObject({
-      offset: 2, returned: 1, total: 3, hasMore: false, nextOffset: null
+    expect(secondJobs.page).toMatchObject({
+      offset: 2, returned: 1, total: 3, hasMore: false
     });
+    expect(secondJobs.page).not.toHaveProperty("nextCursor");
     const compactJobs = parseToolJson(
       await client.callTool({
         name: "codex_status",
         arguments: { query: { kind: "page", collection: "jobs", limit: 2 } }
       })
     );
-    expect(Object.keys(compactJobs).sort()).toEqual([
-      "items",
-      "pagination",
-      "query",
-      "scopeCounts",
-      "scopeView"
-    ]);
     expect(compactJobs).toMatchObject({
-      query: { kind: "page", collection: "jobs" },
-      pagination: { offset: 0, returned: 2, total: 3, hasMore: true },
-      items: [expect.objectContaining({ scopeId: SCOPE_A }), expect.objectContaining({ scopeId: SCOPE_A })]
+      kind: "page",
+      scope: { mode: "scoped" },
+      counts: { jobs: 3 },
+      page: { collection: "jobs", offset: 0, returned: 2, total: 3, hasMore: true },
+      items: [
+        expect.objectContaining({ type: "job" }),
+        expect.objectContaining({ type: "job" })
+      ]
     });
+    expect(compactJobs.items.every((entry: Record<string, unknown>) => !("scopeId" in entry)))
+      .toBe(true);
     const compactNext = parseToolJson(
       await client.callTool({
         name: "codex_status",
@@ -6369,8 +6592,8 @@ describe("bridge tools", () => {
       })
     );
     expect(compactNext).toMatchObject({
-      pagination: { offset: 2, returned: 1, total: 3, hasMore: false },
-      items: [expect.objectContaining({ scopeId: SCOPE_A })]
+      page: { offset: 2, returned: 1, total: 3, hasMore: false },
+      items: [expect.objectContaining({ type: "job" })]
     });
     const malformed = await client.callTool({
       name: "codex_status",
@@ -6392,8 +6615,7 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "first intent", sessionMode: "new", activityTitle: "First Activity" }
     });
-    const first = (firstResult as { structuredContent?: Record<string, any> }).structuredContent
-      ?.bridgeActivity;
+    const first = parseToolJson(firstResult);
     const agentId = first.agentId;
     const secondResult = await client.callTool({
       name: "codex_task",
@@ -6403,8 +6625,7 @@ describe("bridge tools", () => {
         agent: { mode: "existing", id: agentId, context: "continue" }
       }
     });
-    const second = (secondResult as { structuredContent?: Record<string, any> }).structuredContent
-      ?.bridgeActivity;
+    const second = parseToolJson(secondResult);
     expect(first.activityId).not.toBe(second.activityId);
 
     const detail = parseToolJson(await client.callTool({
@@ -6421,17 +6642,17 @@ describe("bridge tools", () => {
     }));
     expect(firstJobDetail).toMatchObject({
       jobId: first.jobId,
-      threadId: "thread-1",
-      session: { threadId: "thread-1" }
+      threadId: "thread-1"
     });
     const firstActivityDetail = parseToolJson(await client.callTool({
       name: "codex_status",
       arguments: { query: { kind: "activity", id: first.activityId } }
     }));
-    expect(firstActivityDetail).toMatchObject({
-      activity: { activityId: first.activityId },
-      jobs: [expect.objectContaining({ jobId: first.jobId })]
-    });
+    expect(firstActivityDetail).toMatchObject({ kind: "activity" });
+    expect(firstActivityDetail.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "activity", id: first.activityId }),
+      expect.objectContaining({ type: "job", id: first.jobId })
+    ]));
     const mixedContract = await client.callTool({
       name: "codex_status",
       arguments: {
@@ -6441,10 +6662,10 @@ describe("bridge tools", () => {
     });
     expect(mixedContract.isError).toBe(true);
     expect(JSON.stringify(mixedContract)).toContain("Unrecognized key");
-    expect(detail.turns).toEqual([
-      expect.objectContaining({ jobId: first.jobId, turnId: null, status: "completed" }),
-      expect.objectContaining({ jobId: second.jobId, turnId: null, status: "completed" })
-    ]);
+    expect(detail.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: first.jobId, status: "completed" }),
+      expect.objectContaining({ jobId: second.jobId, status: "completed" })
+    ]));
     await close();
   });
 
@@ -6469,7 +6690,7 @@ describe("bridge tools", () => {
       arguments: { scopeId: SCOPE_A },
       _meta: { "openai/locale": "ko-KR", "openai/widgetSessionId": "widget-render" }
     });
-    const initial = (rendered as { structuredContent?: Record<string, any> }).structuredContent!;
+    const initial = privateActivityView(rendered);
     expect(initial.activities).toEqual([
       expect.objectContaining({ activityId: started.activityId, lifecycle: "open" })
     ]);
@@ -6542,8 +6763,7 @@ describe("bridge tools", () => {
     upstream.resolveNext(fakeCodexResult("watched-thread"));
     await waitForJobStatus(client, started.jobId, "completed");
     const completed = await client.callTool({ name: "codex_activity", arguments: {} });
-    expect((completed as { structuredContent?: Record<string, any> })
-      .structuredContent?.feed.active[0].agents[0].execution).toEqual({
+    expect(privateActivityView(completed).feed.active[0].agents[0].execution).toEqual({
       model: "gpt-5.6-sol",
       modelDisplayName: "GPT-5.6 Sol",
       reasoningEffort: "max",
@@ -6666,7 +6886,7 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const activityPresentationId = "24242424-2424-4424-8424-242424242424";
-    const first = parseToolJson(await client.callTool({
+    const firstResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "first Agent",
@@ -6675,12 +6895,12 @@ describe("bridge tools", () => {
         contextMode: "fresh",
         executionMode: "background"
       }
-    }));
-    expect(first.bridgeActivity).toMatchObject({
-      shouldRenderActivityCard: true,
-      renderReason: "new-presentation",
-      cardGeneration: 1,
-      activityPresentationId
+    });
+    const first = parseToolJson(firstResult);
+    expect(privateActivityBootstrap(firstResult)).toMatchObject({
+      correlation: { activityPresentationId },
+      activity: { cardGeneration: 1 },
+      render: { eligible: true, reason: "new-presentation" }
     });
 
     const automaticCard = {
@@ -6724,7 +6944,7 @@ describe("bridge tools", () => {
     expect(retainedGenerationSnapshot.isError).toBe(true);
     expect(JSON.stringify(retainedGenerationSnapshot)).toContain("Unrecognized keys");
 
-    const parallel = parseToolJson(await client.callTool({
+    const parallelResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "parallel Agent",
@@ -6734,15 +6954,21 @@ describe("bridge tools", () => {
         contextMode: "fresh",
         executionMode: "background"
       }
-    }));
-    expect(parallel.bridgeActivity).toMatchObject({
-      activityId: first.activityId,
-      cardGeneration: 1,
-      shouldRenderActivityCard: true,
-      renderReason: "render-latest"
+    });
+    const parallel = parseToolJson(parallelResult);
+    expect(privateActivityBootstrap(parallelResult)).toMatchObject({
+      activity: { activityId: first.activityId, cardGeneration: 1 },
+      render: { eligible: true, reason: "render-latest" }
+    });
+    expect(validateActivityBootstrapPrivateMetadata(
+      (parallelResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_BOOTSTRAP_METADATA_KEY]
+    )).toMatchObject({
+      correlation: { activityPresentationId, jobId: parallel.jobId },
+      render: { eligible: true, reason: "render-latest" }
     });
 
-    const differentActivity = parseToolJson(await client.callTool({
+    const differentActivityResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "different Activity in the same assistant response",
@@ -6751,12 +6977,12 @@ describe("bridge tools", () => {
         contextMode: "fresh",
         executionMode: "background"
       }
-    }));
+    });
+    const differentActivity = parseToolJson(differentActivityResult);
     expect(differentActivity.activityId).not.toBe(first.activityId);
-    expect(differentActivity.bridgeActivity).toMatchObject({
-      activityPresentationId,
-      shouldRenderActivityCard: true,
-      renderReason: "render-latest"
+    expect(privateActivityBootstrap(differentActivityResult)).toMatchObject({
+      correlation: { activityPresentationId },
+      render: { eligible: true, reason: "render-latest" }
     });
 
     const explicit = await rawCallTool({
@@ -6767,13 +6993,13 @@ describe("bridge tools", () => {
       },
       _meta: { "openai/widgetSessionId": "explicit-card" }
     });
-    expect((explicit as { structuredContent?: Record<string, any> }).structuredContent?.presentation)
+    expect(privateActivityView(explicit).presentation)
       .toMatchObject({
         shouldRenderActivityCard: true,
         renderReason: "explicit",
         presentationKind: "explicit"
       });
-    expect((explicit as { structuredContent?: Record<string, any> }).structuredContent?.watcherPolicy)
+    expect(privateActivityView(explicit).watcherPolicy)
       .toMatchObject({ live: true, ownsCompletionHandoff: false, maxExplicitPerScope: 3 });
 
     upstream.resolveNext(fakeCodexResult("card-thread-1"));
@@ -6785,7 +7011,7 @@ describe("bridge tools", () => {
       waitForJobStatus(client, differentActivity.jobId, "completed")
     ]);
     const nextPresentationId = "24242424-2424-4424-8424-242424242425";
-    const nextResponse = parseToolJson(await client.callTool({
+    const nextResponseResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "same Activity in the next assistant response",
@@ -6795,13 +7021,13 @@ describe("bridge tools", () => {
         executionMode: "background",
         activityPresentationId: nextPresentationId
       }
-    }));
-    expect(nextResponse.bridgeActivity).toMatchObject({
-      activityId: first.activityId,
-      cardGeneration: 1,
-      activityPresentationId: nextPresentationId,
-      shouldRenderActivityCard: true,
-      renderReason: "new-presentation"
+    });
+    const nextResponse = parseToolJson(nextResponseResult);
+    const nextBootstrap = privateActivityBootstrap(nextResponseResult);
+    expect(nextBootstrap).toMatchObject({
+      activity: { activityId: first.activityId, cardGeneration: 1 },
+      correlation: { activityPresentationId: nextPresentationId },
+      render: { eligible: true, reason: "new-presentation" }
     });
     await rawCallTool({
       name: "codex_activity_snapshot",
@@ -6809,7 +7035,7 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         card: {
           activityId: nextResponse.activityId,
-          generation: nextResponse.bridgeActivity.cardGeneration,
+          generation: nextBootstrap.activity.cardGeneration,
           presentation: {
             kind: "automatic",
             activityPresentationId: nextPresentationId,
@@ -6910,21 +7136,25 @@ describe("bridge tools", () => {
       _meta: { "openai/widgetSessionId": widgetInstanceId }
     }));
     expect(cancelled).toMatchObject({
-      status: "cancelled",
-      terminalOrigin: "explicit-cancellation",
-      cancellation: {
-        logicalRequestId: cancellationRequestId,
-        source: "widget-control",
-        tool: "codex_activity_job_cancel",
-        callerPresentation: {
-          kind: "automatic",
-          activityPresentationId: callerPresentationId
-        },
-        target: {
-          jobId: started.jobId,
-          presentationId: targetPresentationId
-        },
-        widgetProof: { present: true, cardGeneration: card.generation }
+      kind: "mutation",
+      action: "cancel-card-job",
+      job: {
+        status: "cancelled",
+        terminalOrigin: "explicit-cancellation",
+        cancellation: {
+          logicalRequestId: cancellationRequestId,
+          source: "widget-control",
+          tool: "codex_activity_job_cancel",
+          callerPresentation: {
+            kind: "automatic",
+            activityPresentationId: callerPresentationId
+          },
+          target: {
+            jobId: started.jobId,
+            presentationId: targetPresentationId
+          },
+          widgetProof: { present: true, cardGeneration: card.generation }
+        }
       }
     });
     const replay = parseToolJson(await rawCallTool({
@@ -7002,8 +7232,13 @@ describe("bridge tools", () => {
           completionTrigger: "sealed-jobs-terminal"
         }
       });
-      const activity = (result as { structuredContent?: Record<string, any> }).structuredContent
-        ?.bridgeActivity;
+      const task = parseToolJson(result);
+      const bootstrap = privateActivityBootstrap(result);
+      const activity = {
+        ...task,
+        cardGeneration: bootstrap.activity.cardGeneration,
+        activityPresentationId: bootstrap.correlation.activityPresentationId
+      };
       await client.callTool({
         name: "codex_activity_update",
         arguments: {
@@ -7023,8 +7258,7 @@ describe("bridge tools", () => {
       name: "codex_activity",
       arguments: { scopeId: SCOPE_A }
     });
-    expect((explicitView as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
+    expect(privateActivityView(explicitView)).toMatchObject({
         pendingHandoffs: [],
         watcherPolicy: { presentationKind: "explicit", ownsCompletionHandoff: false }
       });
@@ -7219,7 +7453,7 @@ describe("bridge tools", () => {
     ]);
     expect(upstream.calls[2]?.args.sandbox).toBe("workspace-write");
     const card = await client.callTool({ name: "codex_activity", arguments: {} });
-    const cardView = (card as { structuredContent?: Record<string, any> }).structuredContent!;
+    const cardView = privateActivityView(card);
     expect(new Set(cardView.feed.active.flatMap(
       (activity: { workspaceLabels: string[] }) => activity.workspaceLabels
     ))).toEqual(new Set(["First", "Second"]));
@@ -7238,8 +7472,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(card)).not.toContain(realpathSync(second));
 
     for (const result of [firstResult, secondResult]) {
-      const activityId = (result as { structuredContent?: Record<string, any> })
-        .structuredContent?.bridgeActivity?.activityId;
+      const activityId = parseToolJson(result).activityId;
       await client.callTool({
         name: "codex_activity_update",
         arguments: {
@@ -7250,7 +7483,7 @@ describe("bridge tools", () => {
       });
     }
     const historyCard = await client.callTool({ name: "codex_activity", arguments: {} });
-    const historyView = (historyCard as { structuredContent?: Record<string, any> }).structuredContent!;
+    const historyView = privateActivityView(historyCard);
     expect(historyView.feed.showWorkspaceLabels).toBe(true);
     expect(new Set(historyView.feed.completed.rows.flatMap(
       (row: { workspaceLabels: string[] }) => row.workspaceLabels
@@ -7300,11 +7533,10 @@ describe("bridge tools", () => {
         executionMode: "foreground"
       }
     });
-    const startedView = (started as { structuredContent?: Record<string, any> })
-      .structuredContent!;
-    const activityId = startedView.bridgeActivity.activityId as string;
-    const agentId = startedView.bridgeActivity.agentId as string;
-    expect(startedView.bridgeActivity).toMatchObject({ projectName: "Test Project" });
+    const startedView = parseToolJson(started);
+    const activityId = startedView.activityId as string;
+    const agentId = startedView.agentId as string;
+    expect(startedView.projectName).toBe("Test Project");
 
     const continued = await rawCallTool({
       name: "codex_task",
@@ -7318,8 +7550,7 @@ describe("bridge tools", () => {
         executionMode: "foreground"
       }
     });
-    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeActivity: { projectName: "Test Project" } });
+    expect(parseToolJson(continued).projectName).toBe("Test Project");
 
     const freshOmitted = await rawCallTool({
       name: "codex_task",
@@ -7458,8 +7689,7 @@ describe("bridge tools", () => {
         executionMode: "foreground"
       }
     });
-    const agentId = (seeded as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const agentId = parseToolJson(seeded).agentId as string;
     const project = settings.current.projects[0]!;
     catalog.beforeGet = () => settings.updateWithProjectOperations(
       {},
@@ -7521,7 +7751,7 @@ describe("bridge tools", () => {
     const taskDescriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task");
     const descriptorJson = JSON.stringify(taskDescriptor?.inputSchema);
     expect(descriptorJson).toContain('"const":"알파 저장소"');
-    expect(descriptorJson).toContain('"registryRevision":{"const":1}');
+    expect(descriptorJson).toContain('"registryRevision":{"type":"integer","const":1}');
     expect(descriptorJson).toContain('"const":"Beta Workspace"');
     expect(descriptorJson).toContain('"title":"Beta Workspace"');
     expect(descriptorJson).not.toContain(firstCwd);
@@ -7548,14 +7778,11 @@ describe("bridge tools", () => {
       agentName: "Alpha Agent",
       contextMode: "fresh"
     });
-    const alphaStructured = (alpha as { structuredContent?: Record<string, any> }).structuredContent!;
-    const alphaActivityId = alphaStructured.bridgeActivity.activityId as string;
-    const alphaAgentId = alphaStructured.bridgeActivity.agentId as string;
+    const alphaStructured = parseToolJson(alpha);
+    const alphaActivityId = alphaStructured.activityId as string;
+    const alphaAgentId = alphaStructured.agentId as string;
     const alphaProject = settings.current.projects.find((project) => project.name === "알파 저장소")!;
-    expect(alphaStructured).toMatchObject({
-      bridgeActivity: { projectName: "알파 저장소" },
-      bridgeSession: { projectName: "알파 저장소" }
-    });
+    expect(alphaStructured.projectName).toBe("알파 저장소");
     expect(jobs.getActivity(alphaActivityId)).toMatchObject({
       projectId: alphaProject.id,
       projectLabel: "알파 저장소"
@@ -7573,8 +7800,7 @@ describe("bridge tools", () => {
       agentName: "Second Alpha Agent",
       contextMode: "fresh"
     });
-    expect((inherited as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeActivity: { projectName: "알파 저장소" } });
+    expect(parseToolJson(inherited).projectName).toBe("알파 저장소");
     expect(upstream.calls[1]?.args.cwd).toBe(firstCwd);
 
     const conflict = await client.callTool({
@@ -7597,22 +7823,22 @@ describe("bridge tools", () => {
       agentName: "Linked Beta Agent",
       contextMode: "fresh"
     });
-    expect((linkedBeta as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeActivity: { projectName: "Beta Workspace" },
-        bridgeSession: { projectName: "Beta Workspace" }
-      });
+    expect(parseToolJson(linkedBeta).projectName).toBe("Beta Workspace");
     expect(upstream.calls[2]?.args.cwd).toBe(secondCwd);
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.projects).toEqual([
-      { projectName: "알파 저장소", available: true, archived: false },
-      { projectName: "Beta Workspace", available: true, archived: false }
+    expect(status).not.toHaveProperty("projects");
+    const settingsView = parseToolJson(
+      await client.callTool({ name: "codex_settings", arguments: {} })
+    );
+    expect(settingsView.projects).toEqual([
+      { name: "알파 저장소", available: true, archived: false },
+      { name: "Beta Workspace", available: true, archived: false }
     ]);
     expect(JSON.stringify(status)).not.toContain(firstCwd);
     expect(JSON.stringify(status)).not.toContain(secondCwd);
     const activityCard = await client.callTool({ name: "codex_activity", arguments: {} });
     expect(new Set(
-      ((activityCard as { structuredContent?: Record<string, any> }).structuredContent?.feed.active || [])
+      (privateActivityView(activityCard).feed.active || [])
         .flatMap((row: { workspaceLabels: string[] }) => row.workspaceLabels)
     )).toEqual(new Set(["알파 저장소", "Beta Workspace"]));
     expect(JSON.stringify(activityCard)).not.toContain(firstCwd);
@@ -7627,8 +7853,7 @@ describe("bridge tools", () => {
       agentId: alphaAgentId,
       contextMode: "continue"
     });
-    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeSession: { projectName: "알파 저장소" } });
+    expect(parseToolJson(continued).projectName).toBe("알파 저장소");
     expect(upstream.calls[3]).toMatchObject({
       name: "codex-reply",
       args: { threadId: "thread-1" }
@@ -7675,8 +7900,7 @@ describe("bridge tools", () => {
         agentName: `Unavailable ${contextMode} Agent`,
         contextMode: "fresh"
       });
-      const agentId = (started as { structuredContent?: Record<string, any> })
-        .structuredContent?.bridgeActivity?.agentId as string;
+      const agentId = parseToolJson(started).agentId as string;
 
       renameSync(root, movedRoot);
       try {
@@ -7755,15 +7979,13 @@ describe("bridge tools", () => {
       1
     );
     const replay = await rawCallTool({ name: "codex_task", arguments: args });
-    expect((replay as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        threadId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.threadId,
-        bridgeActivity: {
-          activityId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.activityId,
-          jobId: (firstResult as { structuredContent?: Record<string, any> }).structuredContent?.bridgeActivity.jobId,
-          projectName: "Alpha"
-        }
-      });
+    expect(parseToolJson(replay)).toMatchObject({
+      threadId: parseToolJson(firstResult).threadId,
+      activityId: parseToolJson(firstResult).activityId,
+      jobId: parseToolJson(firstResult).jobId,
+      projectName: "Alpha",
+      replay: true
+    });
     expect(JSON.stringify(replay)).not.toContain(alphaProject.id);
     expect(JSON.stringify(replay)).not.toContain(realpathSync(first));
     expect(upstream.calls).toHaveLength(1);
@@ -7817,10 +8039,9 @@ describe("bridge tools", () => {
       agentName: "Pinned Cwd Agent",
       contextMode: "fresh"
     });
-    const startedStructured = (started as { structuredContent?: Record<string, any> })
-      .structuredContent!;
-    const activityId = startedStructured.bridgeActivity.activityId as string;
-    const agentId = startedStructured.bridgeActivity.agentId as string;
+    const startedStructured = parseToolJson(started);
+    const activityId = startedStructured.activityId as string;
+    const agentId = startedStructured.agentId as string;
     const firstProject = settings.current.projects.find((project) => project.name === "First")!;
     settings.updateWithProjectOperations(
       {},
@@ -7842,8 +8063,7 @@ describe("bridge tools", () => {
       agentId,
       contextMode: "continue"
     });
-    const linkedActivityId = (linked as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId as string;
+    const linkedActivityId = parseToolJson(linked).activityId as string;
 
     expect(sessions.get("thread-1")?.cwd).toBe(realpathSync(first));
     expect(jobs.listForAgent(agentId).map((job) => job.cwd)).toEqual([
@@ -7896,15 +8116,14 @@ describe("bridge tools", () => {
       activityTitle: "Render summary",
       contextMode: "fresh"
     });
-    const startedStructured = (started as { structuredContent?: Record<string, any> })
-      .structuredContent!;
-    const activityId = startedStructured.bridgeActivity.activityId as string;
+    const startedTask = parseToolJson(started);
+    const activityId = startedTask.activityId as string;
 
     const summaryResult = await client.callTool({
       name: "codex_activity",
       arguments: { activityId }
     });
-    const summary = (summaryResult as { structuredContent?: Record<string, any> }).structuredContent!;
+    const summary = privateActivityView(summaryResult);
     expect(summary).toMatchObject({
       feed: {
         activeCount: 1,
@@ -7931,7 +8150,7 @@ describe("bridge tools", () => {
       name: "codex_activity",
       arguments: { activityId }
     });
-    const agents = (agentsResult as { structuredContent?: Record<string, any> }).structuredContent!;
+    const agents = privateActivityView(agentsResult);
     expect(agents).not.toHaveProperty("viewMode");
     expect(agents.feed).toMatchObject({
       activeCount: 0,
@@ -7947,18 +8166,16 @@ describe("bridge tools", () => {
       }
     });
 
-    const agentId = startedStructured.bridgeActivity.agentId as string;
+    const agentId = startedTask.agentId as string;
     const resumed = await runTask(client, {
       prompt: "start the next scoped activity",
       agentId,
       contextMode: "continue",
       activityTitle: "Next activity"
     });
-    const resumedActivityId = (resumed as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId as string;
+    const resumedActivityId = parseToolJson(resumed).activityId as string;
     const resumedResult = await client.callTool({ name: "codex_activity", arguments: {} });
-    const resumedFeed = (resumedResult as { structuredContent?: Record<string, any> })
-      .structuredContent?.feed;
+    const resumedFeed = privateActivityView(resumedResult).feed;
     expect(resumedFeed).toMatchObject({
       activeCount: 1,
       active: [expect.objectContaining({
@@ -7990,8 +8207,7 @@ describe("bridge tools", () => {
       prompt: "first",
       agent: { mode: "new", name: "Tracked Agent" }
     });
-    const agentId = (first as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const agentId = parseToolJson(first).agentId as string;
 
     await runTask(client, {
       prompt: "continue",
@@ -8042,8 +8258,7 @@ describe("bridge tools", () => {
       contextMode: "fresh",
       sandbox: "workspace-write"
     });
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
 
     await runTask(client, {
       prompt: "more",
@@ -8075,8 +8290,7 @@ describe("bridge tools", () => {
       contextMode: "fresh",
       sandbox: "danger-full-access"
     });
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
 
     await runTask(client, {
       prompt: "more",
@@ -8101,13 +8315,11 @@ describe("bridge tools", () => {
     await runTask(client, { prompt: "first", sessionMode: "new" });
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.sessions).toHaveLength(1);
-    expect(status.sessions[0]).toMatchObject({
-      threadId: "thread-1",
-      sandbox: "read-only",
-      resumeAvailability: "unknown"
-    });
-    expect(JSON.stringify(status.sessions[0])).not.toContain(realpathSync(root));
+    expect(status.counts.sessions).toBe(1);
+    expect(status.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "job", threadId: "thread-1" })
+    ]));
+    expect(JSON.stringify(status)).not.toContain(realpathSync(root));
 
     await close();
   });
@@ -8133,20 +8345,17 @@ describe("bridge tools", () => {
     );
     expect(started).toMatchObject({
       status: "running",
-      operation: "start",
-      executionMode: "background",
-      bridgeActivity: {
-        automaticRenderTool: "codex_task",
-        followUpRenderRequired: false,
-        shouldRenderActivityCard: true
-      }
+      executionMode: "background"
     });
+    expect(started.activityId).toMatch(SCOPE_ID_PATTERN);
     expect(started).not.toHaveProperty("nextAction");
     upstream.resolveNext();
 
     const completed = await waitForJobStatus(client, started.jobId, "completed");
-    expect(completed.operation).toBe("start");
-    expect(JSON.stringify(completed.result)).toContain("thread-1");
+    expect(completed).toMatchObject({
+      threadId: "thread-1",
+      result: { availability: "delivered", omitted: false }
+    });
     await close();
   });
 
@@ -8202,9 +8411,7 @@ describe("bridge tools", () => {
     expect(changed).toMatchObject({
       status: "running",
       terminal: false,
-      version: 3,
-      progressObserved: true,
-      lastProgress: { progress: 3, total: 10, message: "editing files" },
+      versions: { job: 3 },
       wait: { waitFor: "change", timedOut: false, changed: true }
     });
     upstream.resolveNext();
@@ -8233,9 +8440,11 @@ describe("bridge tools", () => {
 
     expect(status).toMatchObject({
       status: "running",
-      health: "no-progress-observed",
       wait: { waitFor: "terminal", timedOut: true, changed: false }
     });
+    expect(status.warnings).toEqual([
+      expect.stringContaining("No progress event has been observed")
+    ]);
     upstream.resolveNext();
     await waitForJobStatus(client, started.jobId, "completed");
     await close();
@@ -8279,26 +8488,15 @@ describe("bridge tools", () => {
     const cancelled = parseToolJson(cancelledResult);
     expect(parseToolJson(concurrentReplayResult)).toEqual(cancelled);
     expect(cancelled).toMatchObject({
-      status: "cancelled",
-      terminal: true,
-      terminalOrigin: "explicit-cancellation",
-      cancellation: {
-        logicalRequestId: cancellationArguments.requestId,
-        source: "model-tool",
-        tool: "codex_cancel",
-        action: "cancel-job",
-        reasonCode: "public-job-cancel",
-        status: "succeeded",
-        expectedVersion: currentVersion,
-        target: {
-          jobId: started.jobId,
-          activityId: started.activityId,
-          presentationId: started.activityPresentationId
-        },
-        durableDetailsAvailable: true
-      }
+      kind: "mutation",
+      action: "cancel-job",
+      target: { type: "job", id: started.jobId, state: "cancelled" }
     });
-    expect(cancelled.error).toContain("Partial filesystem changes may remain");
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      error: expect.stringContaining("Partial filesystem changes may remain")
+    });
     expect(upstream.aborts).toBe(1);
 
     const durableReplay = parseToolJson(
@@ -8312,7 +8510,11 @@ describe("bridge tools", () => {
     expect(jobs.listCancellationIntents({ requestId: cancellationArguments.requestId }))
       .toHaveLength(1);
     expect(jobs.getCancellationOperation(SCOPE_A, cancellationArguments.requestId))
-      .toMatchObject({ status: "completed", source: "model-tool", result: cancelled });
+      .toMatchObject({
+        status: "completed",
+        source: "model-tool",
+        result: { status: "cancelled", jobId: started.jobId }
+      });
     const conflictingReplay = await client.callTool({
       name: "codex_cancel",
       arguments: { ...cancellationArguments, expectedVersion: currentVersion + 1 }
@@ -8381,7 +8583,10 @@ describe("bridge tools", () => {
         acknowledgeAffectedJobIds: affected
       }
     }));
-    expect(stopped).toMatchObject({ status: "cancelled", processLiveness: "worker-lost" });
+    expect(stopped).toMatchObject({
+      action: "cancel-job",
+      target: { type: "job", id: first.jobId, state: "cancelled" }
+    });
     expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled", trackingState: "worker-lost" });
     expect(jobs.get(second.jobId)).toMatchObject({
       status: "interrupted",
@@ -8469,7 +8674,7 @@ describe("bridge tools", () => {
     upstream.rejectNext(new Error("boom"));
 
     const failed = await waitForJobStatus(client, started.jobId, "failed");
-    expect(failed.error).toContain("boom");
+    expect(failed.error.message).toContain("boom");
     await close();
   });
 
@@ -8488,13 +8693,14 @@ describe("bridge tools", () => {
     );
     expect(result).toMatchObject({
       status: "completed",
+      delivery: "omitted",
+      resultAvailability: "omitted",
       resultOmitted: true,
-      maxRetainedBytes: 200,
       threadId: "large-thread"
     });
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.sessions[0]).toMatchObject({ threadId: "large-thread" });
+    expect(status.counts.sessions).toBe(1);
     expect(status.jobs[0]).toMatchObject({ status: "completed", resultOmitted: true });
     await close();
   });
@@ -8509,8 +8715,7 @@ describe("bridge tools", () => {
       agentName: "Recovery Agent",
       contextMode: "fresh"
     });
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
     unavailable.add("thread-1");
 
     const explicit = await client.callTool({
@@ -8527,8 +8732,13 @@ describe("bridge tools", () => {
       arguments: { prompt: "start after restart", agentId, contextMode: "fresh", executionMode: "foreground" }
     });
     expect(restarted.isError).not.toBe(true);
-    expect((restarted as { structuredContent?: Record<string, any> }).structuredContent?.bridgeSession)
-      .toMatchObject({ action: "start", reason: "activity-new", threadId: "thread-2" });
+    const restartedStructured = parseToolJson(restarted);
+    expect(restartedStructured.threadId).toBe("thread-2");
+    expect(jobs.get(restartedStructured.jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-new",
+      threadId: "thread-2"
+    });
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex"]);
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-2" });
     await close();
@@ -8543,8 +8753,7 @@ describe("bridge tools", () => {
       agentName: "Probe Agent",
       contextMode: "fresh"
     });
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
+    const agentId = parseToolJson(started).agentId;
 
     upstream.probe = {
       state: "busy",
@@ -8597,8 +8806,7 @@ describe("bridge tools", () => {
       structuredContent: {
         error: {
           code: "AGENT_ORPHANED",
-          retryable: false,
-          probe: { reason: "system-error" }
+          retryable: false
         }
       }
     });
@@ -8630,11 +8838,9 @@ describe("bridge tools", () => {
         action: "restore"
       }
     });
-    expect(restored).toMatchObject({
-      structuredContent: {
-        ok: true,
-        agent: { lifecycle: "idle" }
-      }
+    expect(parseToolJson(restored)).toMatchObject({
+      ok: true,
+      target: { type: "agent", id: agentId, state: "idle" }
     });
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
     await close();
@@ -8686,9 +8892,9 @@ describe("bridge tools", () => {
       isError: true,
       structuredContent: {
         error: {
-          code: "PROJECT_SETUP_REQUIRED",
-          nextAction: { tool: "codex_settings", arguments: {} }
-        }
+          code: "PROJECT_SETUP_REQUIRED"
+        },
+        nextActions: [expect.stringContaining("Open settings")]
       }
     });
     const setupContent = (setupProbe as { structuredContent?: Record<string, unknown> })
@@ -8721,17 +8927,13 @@ describe("bridge tools", () => {
       (tool) => tool.name === "codex_task"
     );
     const registeredSchema = registeredTask?.inputSchema as Record<string, any>;
-    expect(registeredSchema.allOf).toEqual([
-      expect.objectContaining({
-        then: expect.objectContaining({ required: expect.arrayContaining(["project"]) })
-      })
-    ]);
+    expect(registeredSchema).not.toHaveProperty("allOf");
     expect(registeredSchema.properties.project.oneOf).toEqual([
       expect.objectContaining({
         required: ["name", "registryRevision"],
         properties: {
           name: { const: "First Project" },
-          registryRevision: { const: 1 }
+          registryRevision: { type: "integer", const: 1 }
         }
       })
     ]);
@@ -8789,9 +8991,9 @@ describe("bridge tools", () => {
       isError: true,
       structuredContent: {
         error: {
-          code: "PROJECT_SETUP_REQUIRED",
-          nextAction: { tool: "codex_settings", arguments: {} }
-        }
+          code: "PROJECT_SETUP_REQUIRED"
+        },
+        nextActions: [expect.stringContaining("Open settings")]
       }
     });
     expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
@@ -8850,8 +9052,7 @@ describe("bridge tools", () => {
       prompt: "first",
       agent: { mode: "new", name: "Sensitive-file Agent" }
     });
-    const agentId = (first as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId as string;
+    const agentId = parseToolJson(first).agentId as string;
     writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
 
     const continued = await client.callTool({
@@ -9131,7 +9332,7 @@ describe("bridge tools", () => {
   it("can add a parallel Agent while one Agent in the Activity is busy", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
@@ -9181,7 +9382,10 @@ describe("bridge tools", () => {
     );
 
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply", "codex"]);
-    expect(parallel.session).toMatchObject({ action: "start", reason: "activity-no-compatible" });
+    expect(jobs.get(parallel.jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-no-compatible"
+    });
     upstream.resolveNext(fakeCodexResult("thread-1"));
     upstream.resolveNext(fakeCodexResult("thread-2"));
     await Promise.all([
@@ -9368,7 +9572,8 @@ async function connectTestClient(
   const client = new Client({ name: "test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  const rawCallTool = client.callTool.bind(client);
+  const baseCallTool = client.callTool.bind(client);
+  const rawCallTool = (...args: Parameters<typeof baseCallTool>) => baseCallTool(...args);
   Object.defineProperty(client, "callTool", {
     value: (
       request: {
@@ -9761,13 +9966,13 @@ function currentToolTestArguments(
 
 function taskActivityId(result: unknown): string {
   const activityId = (result as { structuredContent?: Record<string, any> }).structuredContent
-    ?.bridgeActivity?.activityId;
+    ?.activityId;
   if (typeof activityId !== "string") throw new Error("Task result did not include an Activity id.");
   return activityId;
 }
 
 function taskSession(result: unknown): Record<string, unknown> {
-  return (result as { structuredContent?: Record<string, any> }).structuredContent?.bridgeSession || {};
+  return parseToolJson(result).bridgeSession || {};
 }
 
 function nextRequestId(): string {
@@ -9802,17 +10007,169 @@ function model(
 }
 
 function parseToolJson(result: unknown): Record<string, any> {
-  const content = (result as { content?: Array<{ text?: string }> }).content;
-  return JSON.parse(content?.[0]?.text || "{}");
+  const structured = (result as { structuredContent?: unknown }).structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) {
+    throw new Error(`Tool result did not include authoritative structuredContent: ${JSON.stringify(result)}`);
+  }
+  const output = structured as Record<string, any>;
+  const metadata = (result as { _meta?: Record<string, any> })._meta || {};
+  const privateActivityView = metadata["codex/activityView@11"]?.view;
+  // Activity lifecycle tests inspect the app-hydration projection. W3 keeps
+  // the model projection compact, so read the validated private view instead
+  // of recreating the retired public fallback.
+  const testAliases: Record<string, unknown> = {};
+  const alias = (key: string, value: unknown) => {
+    if (value === undefined || Object.prototype.hasOwnProperty.call(output, key)) return;
+    testAliases[key] = value;
+  };
+  if (output.kind === "activity" && privateActivityView) {
+    for (const [key, value] of Object.entries(privateActivityView)) alias(key, value);
+    return privateActivityView;
+  }
+  if (output.kind === "task") {
+    alias("status", output.state);
+    const bootstrap = metadata["codex/activityBootstrap@11"];
+    if (bootstrap) {
+      const bridgeActivity = {
+        activityId: bootstrap.activity?.activityId,
+        jobId: bootstrap.correlation?.jobId,
+        agentId: output.agentId,
+        projectName: output.projectName,
+        executionMode: output.execution?.mode,
+        cardGeneration: bootstrap.activity?.cardGeneration,
+        presentationKind: bootstrap.presentation?.kind,
+        activityPresentationId: bootstrap.correlation?.activityPresentationId,
+        shouldRenderActivityCard: bootstrap.render?.eligible,
+        renderReason: bootstrap.render?.reason,
+        renderTiming: bootstrap.render?.timing,
+        statusTool: "codex_status",
+        automaticRenderTool: "codex_task",
+        explicitRenderTool: "codex_activity",
+        followUpRenderRequired: false,
+        renderToolAvailable: true,
+        explicitRenderAllowed: true
+      };
+      alias("bridgeActivity", bridgeActivity);
+      alias("activityTracking", bridgeActivity);
+      alias("bridgeSession", {
+        requestId: output.requestId,
+        projectName: output.projectName,
+        scopeId: SCOPE_A,
+        threadId: output.threadId
+      });
+    }
+  }
+  if (output.kind === "overview" || output.kind === "page" ||
+      output.kind === "activity" || output.kind === "thread" || output.kind === "job") {
+    const items = Array.isArray(output.items) ? output.items : [];
+    const statusItemView = (entry: Record<string, any>) => {
+      if (entry.type === "job") {
+        return {
+          ...entry,
+          jobId: entry.id,
+          status: entry.state,
+          executionMode: entry.execution?.mode,
+          backendKind: entry.execution?.backend,
+          sandbox: entry.execution?.sandbox,
+          resultOmitted: entry.result?.omitted
+        };
+      }
+      if (entry.type === "activity") {
+        return { ...entry, activityId: entry.id, lifecycle: entry.state };
+      }
+      if (entry.type === "agent") {
+        return { ...entry, agentId: entry.id, lifecycle: entry.state };
+      }
+      if (entry.type === "thread") {
+        return { ...entry, threadId: entry.id };
+      }
+      return entry;
+    };
+    const statusItems = items.map(statusItemView);
+    alias("scopeView", output.scope);
+    alias("scopeCounts", output.counts);
+    alias("sessions", statusItems.filter((entry: any) => entry.type === "thread"));
+    alias("jobs", statusItems.filter((entry: any) => entry.type === "job"));
+    alias("activities", statusItems.filter((entry: any) => entry.type === "activity"));
+    alias("agents", statusItems.filter((entry: any) => entry.type === "agent"));
+    if (output.kind === "page") {
+      alias("query", { kind: "page", collection: output.page?.collection });
+      alias("pagination", output.page);
+    } else if (output.kind === "job") {
+      const job = statusItems.find((entry: any) => entry.type === "job") || {};
+      for (const [key, value] of Object.entries({
+        jobId: job.id,
+        status: job.state,
+        terminal: job.terminal,
+        delivery: job.delivery,
+        replay: job.replay,
+        activityId: job.activityId,
+        agentId: job.agentId,
+        threadId: job.threadId,
+        versions: job.versions,
+        executionMode: job.execution?.mode,
+        backendKind: job.execution?.backend,
+        sandbox: job.execution?.sandbox,
+        result: job.result,
+        error: job.error,
+        wait: job.wait,
+        message: job.message
+      })) alias(key, value);
+    }
+  }
+  if (output.kind === "mutation" && output.target) {
+    const target = output.target;
+    alias(target.type, {
+      [`${target.type}Id`]: target.id,
+      status: target.state,
+      lifecycle: target.state,
+      version: target.version,
+      terminal: target.state === "completed" || target.state === "failed" ||
+        target.state === "cancelled"
+    });
+  }
+  const privateSettings = metadata["codex/settingsView"];
+  if (privateSettings) {
+    alias("settings", privateSettings.settings);
+    alias("policyActivation", privateSettings.policyActivation);
+  }
+  if (Array.isArray(output.models)) {
+    alias("activePolicy", output.policy);
+    alias("usePriorityServiceTier", output.priority);
+    testAliases.models = output.models.map((model: Record<string, any>) =>
+      Object.prototype.hasOwnProperty.call(model, "displayName")
+        ? model
+        : { ...model, displayName: model.name }
+    );
+  }
+  return { ...output, ...testAliases };
 }
 
 function privateSettingsView(result: unknown): Record<string, any> {
   const candidate = (result as { _meta?: Record<string, any> } | undefined)
     ?._meta?.["codex/settingsView"];
   if (!candidate || typeof candidate !== "object") {
-    throw new Error("Missing private Settings-card view metadata.");
+    throw new Error(`Missing private Settings-card view metadata: ${JSON.stringify(result)}`);
   }
   return candidate;
+}
+
+function privateActivityBootstrap(result: unknown): Record<string, any> {
+  const candidate = (result as { _meta?: Record<string, any> } | undefined)
+    ?._meta?.[ACTIVITY_BOOTSTRAP_METADATA_KEY];
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error(`Missing private Activity bootstrap metadata: ${JSON.stringify(result)}`);
+  }
+  return candidate;
+}
+
+function privateActivityView(result: unknown): Record<string, any> {
+  const candidate = (result as { _meta?: Record<string, any> } | undefined)
+    ?._meta?.[ACTIVITY_VIEW_METADATA_KEY];
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error(`Missing private Activity view metadata: ${JSON.stringify(result)}`);
+  }
+  return (candidate as { view: Record<string, any> }).view;
 }
 
 async function waitForJobStatus(client: Client, jobId: string, expected: string): Promise<Record<string, any>> {

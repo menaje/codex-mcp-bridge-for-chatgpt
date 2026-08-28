@@ -9,6 +9,7 @@ import {
   isUiLocalePreference,
   missingReasoningEffortTranslations,
   reasoningEffortPresentation,
+  resolveHostUiLocaleTag,
   resolvePreferredUiLocale,
   resolveUiLocale,
   serializedUiTranslations,
@@ -157,6 +158,25 @@ describe("human-facing UI localization", () => {
     }
   });
 
+  it("does not treat a synthesized effective locale as the automatic host locale", () => {
+    expect(resolveHostUiLocaleTag.toString()).not.toContain("__name");
+    expect(resolveHostUiLocaleTag(undefined, {
+      hostLocale: null,
+      "openai/locale": "en"
+    }, "ko-KR")).toBe("ko-KR");
+    expect(resolveHostUiLocaleTag(undefined, {
+      hostLocale: "ko-KR",
+      "openai/locale": "ko"
+    }, "en-US")).toBe("ko-KR");
+    expect(resolveHostUiLocaleTag("ja-JP", {
+      hostLocale: "ko-KR"
+    }, "en-US")).toBe("ja-JP");
+    expect(resolveHostUiLocaleTag(undefined, {
+      "openai/locale": "fr-FR"
+    }, "ko-KR")).toBe("fr-FR");
+    expect(resolveHostUiLocaleTag(undefined, {}, "")).toBe("en");
+  });
+
   it("resolves BCP 47 language/script fallbacks without location inference", () => {
     expect(resolveUiLocale("ko-KR")).toBe("ko");
     expect(resolveUiLocale("ja_JP")).toBe("ja");
@@ -244,9 +264,11 @@ describe("human-facing UI localization", () => {
   it("supports host locale updates, accessible controls, and standard/fallback app messaging", () => {
     for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
-      expect(html).toContain('initialMetadata["openai/locale"]');
-      expect(html).toContain('initialMetadata["webplus/i18n"]');
+      expect(html).toContain('"openai/locale"');
+      expect(html).toContain('"webplus/i18n"');
       expect(html).toContain('window.openai.locale');
+      expect(html).toContain("resolveHostUiLocaleTag(");
+      expect(html).toContain("initialMetadata,navigator.language)");
       expect(html).toContain('openai:set_globals');
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
@@ -363,6 +385,15 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_status",Object.assign({activityView:true');
     expect(ACTIVITY_CARD_HTML).toContain("consumeToolOutput");
+    expect(ACTIVITY_CARD_HTML).toContain("codex/activityBootstrap@11");
+    expect(ACTIVITY_CARD_HTML).toContain("codex/activityView@11");
+    expect(ACTIVITY_CARD_HTML).toContain('bootstrap.kind!=="codex/activityBootstrap"');
+    expect(ACTIVITY_CARD_HTML).toContain('view.kind==="codex/activityView"');
+    expect(ACTIVITY_CARD_HTML).toContain("return{requestId:correlation.requestId,bridgeActivity:");
+    expect(ACTIVITY_CARD_HTML).toContain("privateOutput||result&&result.structuredContent||result");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "if(initialPrivateOutput)consumeToolOutput(initialPrivateOutput);else if"
+    );
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/initialize"');
     expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
     expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed",{width,height})');

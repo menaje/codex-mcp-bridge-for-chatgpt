@@ -1582,6 +1582,59 @@ export function resolvePreferredUiLocale(
   return preference === "auto" ? resolveUiLocale(hostLocale) : preference;
 }
 
+/**
+ * Select the host locale exposed to an embedded card without mistaking the
+ * bridge's computed `openai/locale` fallback for host-provided context.
+ *
+ * Current bridge results always include `hostLocale`, using null when the
+ * initiating tool call did not carry a host locale. In that case the card
+ * must fall back to its navigator locale instead of the computed English
+ * presentation locale. Results from older bridge versions may omit the
+ * marker, so their `openai/locale` remains a compatibility fallback.
+ *
+ * This function is self-contained because its JavaScript source is embedded
+ * directly in both card resources.
+ */
+export function resolveHostUiLocaleTag(
+  exposedLocale: unknown,
+  metadata: unknown,
+  fallbackLocale: unknown
+): string {
+  const record = metadata && typeof metadata === "object"
+    ? metadata as Record<string, unknown>
+    : null;
+
+  const exposed = typeof exposedLocale === "string" && exposedLocale.trim()
+    ? exposedLocale.trim()
+    : null;
+  if (exposed) return exposed;
+
+  const hostValue = record?.hostLocale;
+  const host = typeof hostValue === "string" && hostValue.trim()
+    ? hostValue.trim()
+    : null;
+  if (host) return host;
+
+  const legacyHostValue = record?.["webplus/i18n"];
+  const legacyHost = typeof legacyHostValue === "string" && legacyHostValue.trim()
+    ? legacyHostValue.trim()
+    : null;
+  if (legacyHost) return legacyHost;
+
+  if (record && !Object.prototype.hasOwnProperty.call(record, "hostLocale")) {
+    const legacyOpenAiLocaleValue = record["openai/locale"];
+    const legacyOpenAiLocale = typeof legacyOpenAiLocaleValue === "string" &&
+      legacyOpenAiLocaleValue.trim()
+      ? legacyOpenAiLocaleValue.trim()
+      : null;
+    if (legacyOpenAiLocale) return legacyOpenAiLocale;
+  }
+
+  return typeof fallbackLocale === "string" && fallbackLocale.trim()
+    ? fallbackLocale.trim()
+    : "en";
+}
+
 export function serializedUiTranslations(): string {
   return JSON.stringify(UI_TRANSLATIONS).replaceAll("<", "\\u003c");
 }

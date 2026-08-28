@@ -33,7 +33,7 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
 export type BridgeHttpRuntimeOptions = {
   /** Shared production store; when supplied, its lifecycle remains caller-owned. */
   stateStore?: BridgeStateStore;
-  /** Sanitized, identifier-free operational counters exposed by /healthz. */
+  /** Deprecated compatibility hook; routine health never invokes or exposes diagnostics. */
   healthDiagnostics?: () => Record<string, unknown>;
 };
 
@@ -163,13 +163,10 @@ export function createHttpServer(
   );
 
   app.get("/healthz", (_req: Request, res: Response) => {
-    const diagnostics = runtimeOptions.healthDiagnostics?.();
     res.json({
       ok: true,
       name: PRODUCT_INFO.runtimeName,
-      title: PRODUCT_INFO.displayName,
-      build: BRIDGE_BUILD_INFO,
-      ...(diagnostics ? { diagnostics } : {})
+      title: PRODUCT_INFO.displayName
     });
   });
 

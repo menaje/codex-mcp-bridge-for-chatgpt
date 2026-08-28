@@ -1,7 +1,10 @@
 # Release manifest and main-branch release flow
 
-`release-manifest.json` is the only file that should be edited to change public
-product or release identity. Its shape is fixed by
+`package.json` is the source of truth for the bridge/runtime and release
+SemVer. `release-manifest.json` is authoritative for the remaining release
+identity and policy, and its `release.version` is a synchronized mirror.
+`npm run release:sync` copies the package version into the manifest;
+`npm run release:check` rejects a mismatch. Its shape is fixed by
 `release-manifest.schema.json` and validated again by the built-in-only
 `scripts/release-manifest.mjs` command, so release checks do not depend on a
 globally installed schema utility.
@@ -29,8 +32,43 @@ The manifest controls:
   capabilities, starter prompts, and registered ChatGPT app connection;
 - immutable Settings and Activity UI cache-key policy, hash algorithm and
   prefix length, retained-generation count, and required logical resources;
-- SemVer version, tag prefix, stable/prerelease channel, and release title;
-- generated release-note policy and the required npm tarball/checksum assets.
+- the synchronized SemVer mirror, tag prefix, stable/prerelease channel, and release title;
+- generated release-note policy and the v1 npm tarball/checksum asset contract.
+
+## Skills distribution
+
+Repository `skills/` is the source of truth. GitHub Release publishes
+`codex-mcp-bridge-skills-<bridgeVersion>.zip` as the install/deployment
+artifact, while the npm package is runtime-only and deliberately excludes
+`skills/`.
+
+For manifestVersion 1 compatibility, `release.assets` remains exactly
+`["npm-tarball", "sha256"]`. The workflow derives the skills ZIP name from the
+synchronized package version and uploads it as an additional release asset;
+the v1 manifest contract is not widened.
+
+Build an installable ZIP explicitly (the output file is intentionally chosen by
+the caller):
+
+```bash
+npm run skills:package -- --output /tmp/codex-mcp-bridge-skills-0.3.0.zip
+```
+
+The archive has one predictable root directory and contains
+`codex-mcp-bridge-skills-<bridgeVersion>/manifest.json` plus every source file
+under `skills/`. The manifest records `bridgeVersion` from `package.json` and,
+for each skill, its frontmatter `name`, explicit SemVer `version` as
+`skillVersion`, and `skills/<name>/SKILL.md` path. Explicit frontmatter versions
+are the minimal compatibility rule: they let skills evolve independently of the
+runtime without embedding model, project, or live schema values.
+
+`npm run skills:check` builds and inspects the archive in a temporary directory,
+checks manifest paths and frontmatter, compares every ZIP entry with source,
+and runs `npm pack --dry-run --json` to prove `skills/` is absent from the npm
+tarball. ZIP file order, permissions, compression settings, and timestamp
+(1980-01-01) are fixed for reproducible output from identical inputs. This check
+is intentionally independent of `npm run release:check` and `npm run build`;
+the GitHub release asset step invokes the skills packager explicitly.
 
 ## Personal/local plugin package identity
 
@@ -64,13 +102,13 @@ The command is the only supported writer for:
 - `src/uiManifest.generated.ts`, which gives the server the same identities;
 - build-time `dist/ui-manifest.json` and packaged snapshots.
 
-The server registers the current URI and every historical revision at or above
-the configured minimum contract generation for that resource. This lets a
-ChatGPT descriptor cached across process restarts or releases resolve while the
-new descriptor is being refreshed. Raising the minimum contract generation is
-the explicit compatibility-retirement operation. The resource descriptor,
-`_meta.ui.resourceUri`, and compatibility `openai/outputTemplate` must all name
-the same current URI.
+The server registers each current URI. Non-Activity history is filtered by its
+configured minimum contract generation. Activity resources are immutable mount
+targets, so every retained Activity revision remains registered even after the
+minimum advances; generation 11 is the minimum for new descriptors while the
+generation 7–10 assets continue to resolve and refresh through app-only tools.
+The resource descriptor, `_meta.ui.resourceUri`, and compatibility
+`openai/outputTemplate` must all name the same current URI.
 
 `npm run release:check` reproduces the render and fails on content, digest,
 metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
@@ -180,7 +218,7 @@ npm run check
 npm run release:version -- 0.4.0-beta.1
 ```
 
-The command changes the manifest and synchronizes `package.json`,
+The command changes `package.json` first, then synchronizes the manifest,
 `package-lock.json`, `.codex-plugin/plugin.json`, and `.app.json` in one
 operation. An exact prerelease version automatically sets the prerelease
 channel; a normal version sets the stable channel.
@@ -193,7 +231,7 @@ npm run release:check
 ```
 
 Do not use `npm version` directly. `npm run build` and the main workflow reject
-derived npm metadata that has drifted from the manifest.
+derived metadata that has drifted from the runtime package version.
 
 ## ChatGPT rollout and smoke test
 
@@ -205,7 +243,13 @@ For a UI or tool-contract change, use this order:
 4. verify the registered `codex_settings` output template equals the current
    Settings URI in `dist/ui-manifest.json`;
 5. test Settings open, save, model-list refresh, and default restore in a new
-   conversation, then check an existing conversation for cached metadata.
+   conversation;
+6. for the issue-36 M2 smoke, run a generation-11 `codex_task`, confirm its
+   private bootstrap renders and snapshot refreshes; verify Settings,
+   foreground/background, same-response sibling election, and next-response
+   supersession; then confirm an existing retained generation-7–10 Activity
+   mount still resolves and refreshes. Record the results in the output-contract
+   audit before declaring M2 complete.
 
 The bridge cannot force ChatGPT to replace a tool list already cached by a
 conversation. If rediscovery is unavailable or retains the former descriptor,
@@ -219,12 +263,14 @@ Only a push to `main` starts `.github/workflows/ci.yml`. The workflow:
 1. installs locked dependencies and the manifest-pinned Codex CLI, checks both
    App Server schema fingerprints, then runs the build, full test suite, and
    production dependency audit;
-2. derives repository, tag, title, channel, and asset names from the manifest;
+2. derives repository, tag, title, channel, and asset names from synchronized metadata;
 3. refuses to release when the manifest repository differs from
    `GITHUB_REPOSITORY`;
 4. skips an already published tag instead of replacing the release;
-5. verifies npm produced the exact manifest-derived archive name;
-6. creates that GitHub Release with the archive and its SHA-256 checksum.
+5. verifies npm produced the exact metadata-derived archive name and creates a
+   deterministic skills ZIP from repository `skills/`;
+6. creates that GitHub Release with the npm archive, its SHA-256 checksum, and
+   `codex-mcp-bridge-skills-<bridgeVersion>.zip`.
 
 Development pushes stay on `dev`. Never merge, fast-forward, cherry-pick, or
 push development work to `main` unless the user explicitly instructs that

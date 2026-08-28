@@ -8,6 +8,7 @@ import {
   ACTIVITY_COMPLETION_TRIGGERS,
   ACTIVITY_EXECUTION_MODES,
   ACTIVITY_HANDOFF_POLICIES,
+  ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
   isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
@@ -28,7 +29,6 @@ import {
 } from "./agent.js";
 import type { BridgeConfig, CodexBackendKind, SandboxMode } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
-import { SUPPORTED_CODEX_CLI_VERSION } from "./appServerCompatibility.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
   enforceSandbox,
@@ -73,7 +73,10 @@ import {
   SETTINGS_CARD_URI
 } from "./settingsCard.js";
 import {
+  ACTIVITY_BOOTSTRAP_METADATA_KEY,
   ACTIVITY_CARD_CONTRACT_GENERATION,
+  ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
+  ACTIVITY_VIEW_METADATA_KEY,
   registerActivityCardResource,
   ACTIVITY_CARD_URI
 } from "./activityCard.js";
@@ -133,6 +136,14 @@ import {
   type CreateCancellationIntentInput,
   type JobTerminalOrigin
 } from "./cancellation.js";
+import {
+  TOOL_CONTENT_BYTE_CAPS,
+  TOOL_STRUCTURED_BYTE_CAPS,
+  defineToolResultContract,
+  projectToolResult,
+  type AuthoritativeProjectionChannel,
+  type ToolResultContract
+} from "./toolResultContracts.js";
 
 type CodexJobStatus =
   | "running"
@@ -176,9 +187,101 @@ const ACTIVITY_CARD_RENDER_REASONS = [
 type ActivityCardRenderReason = (typeof ACTIVITY_CARD_RENDER_REASONS)[number];
 type ActivityCardLeaseStopReason = "presentation-superseded" | "presentation-duplicate";
 
-const openStructuredObjectOutputSchema = z.object({}).passthrough();
+/**
+ * Explicit escape hatch for protocol-owned or upstream-owned JSON leaves. The
+ * containing result envelope is always strict; see docs/output-contracts.md.
+ */
+const opaqueJsonObjectOutputSchema = z.record(z.string(), z.unknown());
 
-const activityCardTrackingOutputSchema = z.object({
+const modelChoiceOutputSchema = z.strictObject({
+  model: z.string(),
+  reasoningEffort: z.string(),
+  serviceTier: z.string().optional()
+});
+
+const compactExecutionAuditOutputSchema = z.strictObject({
+  requested: modelChoiceOutputSchema.omit({ serviceTier: true }).nullable(),
+  actual: modelChoiceOutputSchema,
+  source: z.enum([
+    "fixed",
+    "configured-fallback",
+    "caller",
+    "backend-default",
+    "compatibility-fallback"
+  ]),
+  evidence: z.enum(["model/rerouted", "turn/start-accepted", "bridge-dispatch"]),
+  reroute: z.strictObject({
+    fromModel: z.string(),
+    toModel: z.string(),
+    reason: z.string()
+  }).optional()
+});
+
+const resultAvailabilityOutputSchema = z.strictObject({
+  availability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
+  bytes: z.number().int().min(-1).nullable(),
+  omitted: z.boolean()
+});
+
+const modelResultAvailabilityOutputSchema = z.strictObject({
+  availability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
+  omitted: z.boolean()
+});
+
+const nextToolActionOutputSchema = z.strictObject({
+  tool: z.string(),
+  arguments: opaqueJsonObjectOutputSchema,
+  userPrompt: z.string().optional()
+});
+
+const modelNextActionOutputSchema = z.string();
+
+const structuredErrorOutputSchema = z.strictObject({
+  code: z.string(),
+  message: z.string(),
+  retryable: z.boolean().optional(),
+  missingFields: z.array(z.string()).optional(),
+  contextContinuity: z.literal("not-migrated").optional()
+});
+
+const taskStructuredErrorOutputSchema = z.strictObject({
+  code: z.string(),
+  message: z.string(),
+  retryable: z.boolean().nullable(),
+  missingFields: z.array(z.string()).nullable(),
+  contextContinuity: z.enum(["not-migrated"]).nullable()
+});
+
+const backendHandoffAuditOutputSchema = z.strictObject({
+  sourceBackend: z.enum(["mcp-server", "app-server"]),
+  targetBackend: z.enum(["mcp-server", "app-server"]),
+  sourceThreadId: z.string(),
+  continuity: z.literal("explicit-summary-only"),
+  summarySha256: z.string()
+});
+
+const bridgeSessionOutputSchema = z.strictObject({
+  requestedMode: z.enum(["auto", "new", "continue"]),
+  action: z.enum(["start", "continue"]),
+  reason: z.enum([
+    "explicit-new",
+    "explicit-thread",
+    "activity-new",
+    "activity-compatible",
+    "activity-no-compatible",
+    "recent-compatible",
+    "compatible-session-busy",
+    "no-compatible-session"
+  ]),
+  threadId: z.string().optional(),
+  handoff: backendHandoffAuditOutputSchema.optional(),
+  scopeId: z.string(),
+  requestId: z.string(),
+  projectName: z.string().nullable(),
+  activityPresentationId: z.string().nullable()
+});
+
+const activityCardTrackingOutputSchema = z.strictObject({
   statusTool: z.literal("codex_status"),
   automaticRenderTool: z.literal("codex_task"),
   explicitRenderTool: z.literal("codex_activity"),
@@ -193,116 +296,252 @@ const activityCardTrackingOutputSchema = z.object({
   shouldRenderActivityCard: z.boolean(),
   renderReason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
   renderTiming: z.enum(["immediate", "after-result-or-existing-mounted-card"])
-}).passthrough();
+});
 
-const codexTaskOutputSchema = z.object({
-  bridgeSession: z.object({
-    scopeId: z.string(),
-    requestId: z.string(),
-    projectName: z.string().nullable(),
-    activityPresentationId: z.string().nullable()
-  }).passthrough().optional(),
-  bridgeActivity: activityCardTrackingOutputSchema.extend({
-    jobId: z.string(),
-    agentId: z.string().nullable(),
-    projectName: z.string().nullable(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
-  }).passthrough().optional(),
-  error: openStructuredObjectOutputSchema.optional()
-}).passthrough();
+const codexTaskOutputSchema = z.strictObject({
+  contractVersion: z.enum(["1"]),
+  kind: z.enum(["task"]),
+  state: z.enum([...ACTIVITY_JOB_STATUSES, "setup-required"]),
+  terminal: z.boolean(),
+  delivery: z.enum(["status", "primary-content", "omitted", "none"]),
+  replay: z.boolean(),
+  jobId: z.string().nullable(),
+  activityId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  threadId: z.string().nullable(),
+  projectName: z.string().nullable(),
+  requestId: z.string().nullable(),
+  jobVersion: z.number().int().min(1).nullable(),
+  activityVersion: z.number().int().min(1).nullable(),
+  executionMode: z.enum(ACTIVITY_EXECUTION_MODES).nullable(),
+  backend: z.enum(["mcp-server", "app-server"]).nullable(),
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
+  requestedModel: z.string().nullable(),
+  requestedReasoningEffort: z.string().nullable(),
+  actualModel: z.string().nullable(),
+  actualReasoningEffort: z.string().nullable(),
+  rerouted: z.boolean(),
+  rerouteReason: z.string().nullable(),
+  resultAvailability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
+  resultOmitted: z.boolean(),
+  error: taskStructuredErrorOutputSchema.nullable(),
+  warnings: z.array(z.string()),
+  nextActions: z.array(modelNextActionOutputSchema)
+});
 
-const activityViewOutputSchema = z.object({
+const activityModelOutputSchema = z.strictObject({
+  kind: z.literal("activity"),
+  scopeVersion: z.number().int().min(0),
+  activityId: z.string().optional(),
+  activityVersion: z.number().int().min(1).optional(),
+  counts: z.strictObject({
+    activities: z.number().int().min(0),
+    agents: z.number().int().min(0),
+    active: z.number().int().min(0),
+    needsAttention: z.number().int().min(0)
+  })
+});
+
+const activityViewOutputSchema = z.strictObject({
   scopeVersion: z.number().int().min(0),
   generatedAt: z.string(),
-  aggregates: z.object({
-    running: z.number().int().min(0),
-    needsAttention: z.number().int().min(0),
-    readyForVerification: z.number().int().min(0),
-    failed: z.number().int().min(0),
-    idle: z.number().int().min(0),
-    archived: z.number().int().min(0)
+  aggregates: opaqueJsonObjectOutputSchema,
+  agents: z.array(opaqueJsonObjectOutputSchema),
+  archivedAgents: z.array(opaqueJsonObjectOutputSchema),
+  agentPagination: z.strictObject({
+    limit: z.number().int().positive(),
+    returned: z.number().int().min(0),
+    total: z.number().int().min(0),
+    hasMore: z.boolean(),
+    archivedReturned: z.number().int().min(0),
+    archivedTotal: z.number().int().min(0),
+    archivedHasMore: z.boolean()
   }),
-  agents: z.array(openStructuredObjectOutputSchema),
-  archivedAgents: z.array(openStructuredObjectOutputSchema),
-  unassignedJobs: z.array(openStructuredObjectOutputSchema),
-  activities: z.array(openStructuredObjectOutputSchema),
-  pendingHandoffs: z.array(openStructuredObjectOutputSchema),
+  unassignedJobs: z.array(opaqueJsonObjectOutputSchema),
+  activities: z.array(opaqueJsonObjectOutputSchema),
+  activityPagination: z.strictObject({
+    limit: z.number().int().positive(),
+    returned: z.number().int().min(0),
+    hasMore: z.boolean()
+  }),
+  pendingHandoffs: z.array(opaqueJsonObjectOutputSchema),
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES),
   activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  mountedActivity: z.object({
-    activityId: z.string(),
-    cardGeneration: z.number().int().min(1)
-  }).nullable(),
-  mountedPresentation: z.object({
-    kind: z.enum(["automatic", "explicit"]),
-    activityPresentationId: z.string().optional(),
-    reservationOwnerId: z.string().optional()
-  }),
+  mountedActivity: opaqueJsonObjectOutputSchema.nullable(),
+  mountedPresentation: opaqueJsonObjectOutputSchema,
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
-  watcherPolicy: z.object({
-    mode: z.literal("scope-version-long-poll"),
-    maxWaitMs: z.number().int().positive(),
-    suggestedWaitMs: z.number().int().positive(),
-    separateFromJobLimit: z.boolean(),
-    presentationKind: z.enum(["automatic", "explicit"]),
-    activityPresentationId: z.string().optional(),
-    reservationOwnerId: z.string().optional(),
-    live: z.boolean(),
-    stopped: z.boolean(),
-    stopReason: z.enum(["presentation-superseded", "presentation-duplicate"]).optional(),
-    ownsCompletionHandoff: z.boolean(),
-    maxAutomaticPerScope: z.number().int().positive(),
-    maxExplicitPerScope: z.number().int().positive()
-  }),
-  feed: z.object({
-    showWorkspaceLabels: z.boolean(),
-    activeCount: z.number().int().min(0),
-    active: z.array(openStructuredObjectOutputSchema),
-    completed: z.object({
-      agentCount: z.number().int().min(0),
-      activityCount: z.number().int().min(0),
-      rows: z.array(openStructuredObjectOutputSchema),
-      hasMore: z.boolean()
-    }),
-    idle: z.object({
-      agentCount: z.number().int().min(0),
-      rows: z.array(openStructuredObjectOutputSchema),
-      hasMore: z.boolean()
-    }),
-    ended: z.object({
-      agentCount: z.number().int().min(0),
-      rows: z.array(openStructuredObjectOutputSchema),
-      hasMore: z.boolean()
-    }),
-    pagination: z.object({
-      limit: z.number().int().positive(),
-      hasMore: z.boolean()
-    })
-  }),
-  presentation: activityCardTrackingOutputSchema.optional(),
-  wait: z.object({
-    scopeVersion: z.number().int().min(0),
-    changed: z.boolean(),
-    timedOut: z.boolean(),
-    waitedMs: z.number().int().min(0),
-    stopped: z.boolean(),
-    stopReason: z.enum(["presentation-superseded", "presentation-duplicate"]).optional()
-  }).optional()
-}).passthrough();
+  watcherPolicy: opaqueJsonObjectOutputSchema,
+  feed: opaqueJsonObjectOutputSchema,
+  presentation: opaqueJsonObjectOutputSchema.optional(),
+  wait: opaqueJsonObjectOutputSchema.optional()
+});
 
-const bridgeUserSettingsOutputSchema = z.object({
+export const ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES = 8 * 1_024;
+export const ACTIVITY_VIEW_PRIVATE_MAX_BYTES = 768 * 1_024;
+const privateActivityIdentitySchema = z.string().trim().min(1).max(200);
+const activityPrivatePresentationSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("automatic"),
+    activityPresentationId: privateActivityIdentitySchema,
+    reservationOwnerId: privateActivityIdentitySchema.optional()
+  }),
+  z.strictObject({ kind: z.literal("explicit") })
+]);
+
+export const activityBootstrapPrivateMetadataSchema = z.strictObject({
+  kind: z.literal("codex/activityBootstrap"),
+  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
+  purpose: z.literal("presentation-hydration-only"),
+  correlation: z.strictObject({
+    requestId: privateActivityIdentitySchema,
+    activityPresentationId: privateActivityIdentitySchema,
+    jobId: privateActivityIdentitySchema
+  }),
+  activity: z.strictObject({
+    activityId: privateActivityIdentitySchema,
+    cardGeneration: z.number().int().min(1)
+  }),
+  presentation: z.strictObject({
+    kind: z.literal("automatic"),
+    reservationOwnerId: privateActivityIdentitySchema.optional()
+  }),
+  render: z.strictObject({
+    eligible: z.boolean(),
+    reason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
+    timing: z.enum(["immediate", "after-result-or-existing-mounted-card"])
+  })
+}).superRefine((value, context) => {
+  if (
+    value.presentation.reservationOwnerId !== undefined &&
+    value.presentation.reservationOwnerId !== value.correlation.jobId
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["presentation", "reservationOwnerId"],
+      message: "Activity bootstrap reservation owner must match its correlated Job."
+    });
+  }
+});
+
+export const activityViewPrivateMetadataSchema = z.strictObject({
+  kind: z.literal("codex/activityView"),
+  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
+  purpose: z.literal("presentation-hydration-only"),
+  source: z.enum(["codex_activity", "codex_activity_snapshot"]),
+  correlation: z.strictObject({
+    scopeVersion: z.number().int().min(0),
+    activity: z.strictObject({
+      activityId: privateActivityIdentitySchema,
+      cardGeneration: z.number().int().min(1)
+    }).nullable(),
+    presentation: activityPrivatePresentationSchema
+  }),
+  view: activityViewOutputSchema
+}).superRefine((value, context) => {
+  if (value.correlation.scopeVersion !== value.view.scopeVersion) {
+    context.addIssue({
+      code: "custom",
+      path: ["correlation", "scopeVersion"],
+      message: "Activity view scope versions must match."
+    });
+  }
+  const mountedActivity = isRecord(value.view.mountedActivity)
+    ? value.view.mountedActivity
+    : null;
+  if (
+    (value.correlation.activity === null) !== (mountedActivity === null) ||
+    (
+      value.correlation.activity !== null &&
+      mountedActivity !== null &&
+      (
+        mountedActivity.activityId !== value.correlation.activity.activityId ||
+        mountedActivity.cardGeneration !== value.correlation.activity.cardGeneration
+      )
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["correlation", "activity"],
+      message: "Activity view mounted Activity identity must match its correlation envelope."
+    });
+  }
+  const mountedPresentation = value.view.mountedPresentation;
+  if (
+    !isRecord(mountedPresentation) ||
+    mountedPresentation.kind !== value.correlation.presentation.kind ||
+    (
+      value.correlation.presentation.kind === "automatic" &&
+      (
+        mountedPresentation.activityPresentationId !==
+          value.correlation.presentation.activityPresentationId ||
+        mountedPresentation.reservationOwnerId !==
+          value.correlation.presentation.reservationOwnerId
+      )
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["correlation", "presentation"],
+      message: "Activity view mounted presentation must match its correlation envelope."
+    });
+  }
+});
+
+export function validateActivityBootstrapPrivateMetadata(
+  value: unknown
+): z.infer<typeof activityBootstrapPrivateMetadataSchema> {
+  return validateBoundedPrivateActivityMetadata(
+    activityBootstrapPrivateMetadataSchema,
+    value,
+    ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
+    ACTIVITY_BOOTSTRAP_METADATA_KEY
+  );
+}
+
+export function validateActivityViewPrivateMetadata(
+  value: unknown
+): z.infer<typeof activityViewPrivateMetadataSchema> {
+  return validateBoundedPrivateActivityMetadata(
+    activityViewPrivateMetadataSchema,
+    value,
+    ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
+    ACTIVITY_VIEW_METADATA_KEY
+  );
+}
+
+function validateBoundedPrivateActivityMetadata<Schema extends z.ZodType>(
+  schema: Schema,
+  value: unknown,
+  maxBytes: number,
+  contractName: string
+): z.output<Schema> {
+  const parsed = schema.parse(value);
+  const bytes = Buffer.byteLength(JSON.stringify(parsed), "utf8");
+  if (bytes > maxBytes) {
+    throw new Error(`${contractName} is ${bytes} bytes, above its ${maxBytes}-byte contract.`);
+  }
+  return parsed;
+}
+
+const bridgeUserSettingsOutputSchema = z.strictObject({
   schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
   settingsRevision: z.number().int().min(0),
   registryRevision: z.number().int().min(0),
+  revision: z.number().int().min(0),
   updatedAt: z.string().nullable(),
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
   modelPolicy: modelPolicyZod(),
   usePriorityServiceTier: z.boolean(),
   legacyPreferredModel: z.string().optional(),
-  projects: z.array(z.object({
+  projects: z.array(z.strictObject({
     id: z.string(),
     name: z.string(),
+    label: z.string(),
+    nameKey: z.string(),
     cwd: z.string(),
+    sortOrder: z.number().int(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
     archivedAt: z.number().optional()
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
@@ -312,24 +551,14 @@ const bridgeUserSettingsOutputSchema = z.object({
   completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
 });
 
-const publicBridgeUserSettingsOutputSchema = bridgeUserSettingsOutputSchema
-  .omit({ projects: true })
-  .extend({
-    projects: z.array(z.object({
-      name: z.string(),
-      available: z.boolean(),
-      archived: z.boolean()
-    }))
-  });
-
-const catalogModelOutputSchema = z.object({
+const catalogModelOutputSchema = z.strictObject({
   id: z.string(),
   catalogId: z.string().optional(),
   displayName: z.string(),
   description: z.string().optional(),
   defaultReasoningEffort: z.string().optional(),
   supportedReasoningEfforts: z.array(
-    z.object({
+    z.strictObject({
       effort: z.string(),
       description: z.string().optional(),
       label: z.string().optional(),
@@ -343,7 +572,7 @@ const catalogModelOutputSchema = z.object({
   upgradeInfo: z.record(z.string(), z.unknown()).optional(),
   supportsPersonality: z.boolean().optional(),
   defaultServiceTier: z.string().optional(),
-  serviceTiers: z.array(z.object({
+  serviceTiers: z.array(z.strictObject({
     id: z.string(),
     name: z.string(),
     description: z.string().optional()
@@ -352,15 +581,16 @@ const catalogModelOutputSchema = z.object({
   supportedInApi: z.boolean().optional()
 });
 
-const settingsViewOutputSchema = z.object({
-  settings: publicBridgeUserSettingsOutputSchema,
-  operatorDefaults: publicBridgeUserSettingsOutputSchema,
-  capabilities: z.object({
+const settingsViewOutputSchema = z.strictObject({
+  settings: bridgeUserSettingsOutputSchema,
+  operatorDefaults: bridgeUserSettingsOutputSchema,
+  capabilities: z.strictObject({
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
     availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     projectAvailability: z.array(z.strictObject({
+      projectId: z.string(),
       name: z.string(),
       available: z.boolean(),
       archived: z.boolean()
@@ -372,7 +602,7 @@ const settingsViewOutputSchema = z.object({
     operatorModelCeiling: z.array(modelChoiceZod()).nullable(),
     persistent: z.boolean()
   }),
-  catalog: z.object({
+  catalog: z.strictObject({
     source: z.string().nullable(),
     fetchedAt: z.string().nullable(),
     validatedAt: z.string().nullable(),
@@ -382,12 +612,12 @@ const settingsViewOutputSchema = z.object({
     lastKnownGood: z.boolean(),
     validation: z.enum(["valid", "temporarily-unverified-with-last-known-good", "invalid"]),
     warning: z.string().nullable(),
-    translationCoverage: z.object({ missingEffortIds: z.array(z.string()) }),
+    translationCoverage: z.strictObject({ missingEffortIds: z.array(z.string()) }),
     models: z.array(catalogModelOutputSchema)
   }),
   warnings: z.array(z.string()),
   scopeNotice: z.string(),
-  policyActivation: z.object({
+  policyActivation: z.strictObject({
     policyRevision: z.number().int().min(0),
     executionPolicyActive: z.boolean(),
     schemaRefreshRequested: z.boolean(),
@@ -395,19 +625,533 @@ const settingsViewOutputSchema = z.object({
   })
 });
 
-type PublicSettingsView = z.infer<typeof settingsViewOutputSchema>;
-type SettingsView = Omit<PublicSettingsView, "settings" | "operatorDefaults" | "capabilities"> & {
-  settings: BridgeUserSettings;
-  operatorDefaults: BridgeUserSettings;
-  capabilities: Omit<PublicSettingsView["capabilities"], "projectAvailability"> & {
-    projectAvailability: Array<{
-      projectId: string;
-      name: string;
-      available: boolean;
-      archived: boolean;
-    }>;
-  };
+const modelPolicySummaryOutputSchema = z.strictObject({
+  mode: z.enum(["fixed", "automatic"]),
+  model: z.string().optional(),
+  reasoningEffort: z.string().optional(),
+  allowed: z.enum(["catalog-visible", "explicit"]).optional(),
+  allowedCount: z.number().int().min(0).optional(),
+  delegation: z.boolean()
+});
+
+const compactSettingsOutputSchema = z.strictObject({
+  revisions: z.strictObject({
+    settings: z.number().int().min(0),
+    registry: z.number().int().min(0),
+    policy: z.number().int().min(0)
+  }),
+  policy: z.strictObject({
+    access: z.enum(["read-only", "adaptive", "always-full"]),
+    model: modelPolicySummaryOutputSchema,
+    priority: z.boolean(),
+    maxConcurrentJobs: z.number().int().positive(),
+    activityVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
+    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
+  }),
+  projects: z.array(z.strictObject({
+    name: z.string(),
+    available: z.boolean(),
+    archived: z.boolean()
+  })),
+  catalog: z.strictObject({
+    stale: z.boolean(),
+    modelCount: z.number().int().min(0)
+  }),
+  warnings: z.array(z.string()),
+  nextActions: z.array(modelNextActionOutputSchema)
+});
+
+type SettingsView = z.infer<typeof settingsViewOutputSchema>;
+
+const jobWaitOutputSchema = z.strictObject({
+  waitFor: z.enum(["change", "terminal"]),
+  waitedMs: z.number().int().min(0),
+  timedOut: z.boolean(),
+  changed: z.boolean()
+});
+
+const jobSemanticOutputSchema = z.strictObject({
+  status: z.enum(ACTIVITY_JOB_STATUSES),
+  terminal: z.boolean(),
+  async: z.boolean(),
+  delivery: z.enum(["status", "primary-content", "omitted", "none"]),
+  replay: z.boolean(),
+  jobId: z.string(),
+  activityId: z.string(),
+  agentId: z.string().nullable(),
+  contextMode: z.enum(AGENT_CONTEXT_MODES).nullable(),
+  executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
+  backendKind: z.enum(["mcp-server", "app-server"]),
+  threadId: z.string().nullable(),
+  turnId: z.string().nullable(),
+  versions: z.strictObject({
+    job: z.number().int().min(1),
+    activity: z.number().int().min(1).optional()
+  }),
+  operation: z.enum(["start", "continue"]),
+  projectName: z.string().nullable(),
+  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  executionAudit: compactExecutionAuditOutputSchema.nullable(),
+  scopeId: z.string(),
+  requestId: z.string(),
+  activityPresentationId: z.string().nullable(),
+  bridgeSession: bridgeSessionOutputSchema,
+  bridgeActivity: activityCardTrackingOutputSchema.extend({
+    jobId: z.string(),
+    agentId: z.string().nullable(),
+    projectName: z.string().nullable(),
+    executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
+  }).strict(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  cancelRequestedAt: z.string().nullable(),
+  terminalOrigin: z.enum(JOB_TERMINAL_ORIGINS).nullable(),
+  cancellation: opaqueJsonObjectOutputSchema.nullable(),
+  health: z.enum([
+    "running",
+    "no-progress-observed",
+    "terminating",
+    "termination-failed",
+    "terminal",
+    "worker-lost",
+    "orphaned"
+  ]),
+  processLiveness: z.enum([
+    "connected",
+    "liveness-unknown",
+    "worker-lost",
+    "orphaned",
+    "terminating",
+    "termination-unconfirmed"
+  ]),
+  lastProgressAt: z.string(),
+  idleMs: z.number().min(0),
+  progressObserved: z.boolean(),
+  lastProgress: z.strictObject({
+    progress: z.number(),
+    total: z.number().optional(),
+    message: z.string().optional()
+  }).optional(),
+  staleAfterMs: z.number().int().positive(),
+  wait: jobWaitOutputSchema.optional(),
+  result: resultAvailabilityOutputSchema,
+  error: structuredErrorOutputSchema.optional(),
+  warnings: z.array(z.string()),
+  nextActions: z.array(nextToolActionOutputSchema),
+  message: z.string()
+});
+
+const statusCountsOutputSchema = z.strictObject({
+  sessions: z.number().int().min(0),
+  jobs: z.number().int().min(0),
+  runningJobs: z.number().int().min(0),
+  activities: z.number().int().min(0),
+  agents: z.number().int().min(0),
+  orphanedAgents: z.number().int().min(0)
+});
+
+const statusItemOutputSchema = z.strictObject({
+  type: z.enum(["session", "job", "activity", "agent", "thread"]),
+  id: z.string(),
+  label: z.string().optional(),
+  state: z.string().optional(),
+  version: z.number().int().min(1).optional(),
+  activityId: z.string().optional(),
+  agentId: z.string().optional(),
+  threadId: z.string().optional(),
+  terminal: z.boolean().optional(),
+  delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
+  replay: z.boolean().optional(),
+  versions: z.strictObject({
+    job: z.number().int().min(1),
+    activity: z.number().int().min(1).nullable()
+  }).optional(),
+  execution: z.strictObject({
+    mode: z.enum(ACTIVITY_EXECUTION_MODES),
+    backend: z.enum(["mcp-server", "app-server"]),
+    sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"])
+  }).optional(),
+  result: modelResultAvailabilityOutputSchema.optional(),
+  error: structuredErrorOutputSchema.optional(),
+  wait: jobWaitOutputSchema.optional(),
+  nextActions: z.array(modelNextActionOutputSchema).optional(),
+  message: z.string().optional()
+});
+
+const codexStatusOutputSchema = z.strictObject({
+  kind: z.enum(["overview", "page", "activity", "thread", "job"]),
+  scope: z.strictObject({
+    mode: z.enum(["all", "scoped", "policy-only"]),
+    source: z.enum(["host-metadata", "explicit-compatibility"]).optional()
+  }),
+  counts: statusCountsOutputSchema,
+  page: z.strictObject({
+    collection: z.enum(["sessions", "jobs", "activities"]),
+    offset: z.number().int().min(0),
+    limit: z.number().int().positive(),
+    returned: z.number().int().min(0),
+    total: z.number().int().min(0),
+    hasMore: z.boolean(),
+    nextCursor: z.string().optional()
+  }).optional(),
+  items: z.array(statusItemOutputSchema),
+  warnings: z.array(z.string())
+});
+
+const mutationOutputSchema = z.strictObject({
+  kind: z.literal("mutation"),
+  ok: z.boolean(),
+  action: z.string(),
+  code: z.string().optional(),
+  agent: opaqueJsonObjectOutputSchema.optional(),
+  activity: opaqueJsonObjectOutputSchema.optional(),
+  job: opaqueJsonObjectOutputSchema.optional(),
+  cancelledJobIds: z.array(z.string()).optional(),
+  affectedJobIds: z.array(z.string()).optional(),
+  collateralJobIds: z.array(z.string()).optional(),
+  backgroundProcesses: z.array(z.strictObject({ processId: z.string() })).optional(),
+  forceStop: nextToolActionOutputSchema.nullable().optional(),
+  threadId: z.string().optional(),
+  processId: z.string().optional(),
+  activityId: z.string().optional(),
+  agentId: z.string().optional(),
+  terminated: z.boolean().optional(),
+  alreadyReleased: z.boolean().optional(),
+  detachedAssignment: opaqueJsonObjectOutputSchema.optional(),
+  historyPreserved: z.boolean().optional(),
+  deletionPerformed: z.boolean().optional(),
+  policySource: z.literal("explicit-tool-input").optional(),
+  codexOutputCanMutatePolicy: z.literal(false).optional(),
+  promptOrAnswersPersisted: z.literal(false).optional(),
+  promptPersistedByBridge: z.literal(false).optional(),
+  steeringScope: z.literal("active-codex-turn-only").optional(),
+  warning: z.string().optional(),
+  warnings: z.array(z.string()),
+  nextActions: z.array(nextToolActionOutputSchema)
+});
+
+const mutationTargetOutputSchema = z.strictObject({
+  type: z.enum(["agent", "job", "activity"]),
+  id: z.string(),
+  state: z.string().optional(),
+  version: z.number().int().min(1).optional()
+});
+
+const modelMutationBaseShape = {
+  kind: z.literal("mutation"),
+  ok: z.boolean(),
+  action: z.string(),
+  code: z.string().optional(),
+  target: mutationTargetOutputSchema.optional(),
+  warnings: z.array(z.string()),
+  nextActions: z.array(modelNextActionOutputSchema)
 };
+
+const agentMutationOutputSchema = z.strictObject(modelMutationBaseShape);
+const cancelMutationOutputSchema = z.strictObject(modelMutationBaseShape);
+const activityUpdateMutationOutputSchema = z.strictObject({
+  ...modelMutationBaseShape,
+  affectedJobIds: z.array(z.string()),
+  policySource: z.literal("explicit-tool-input"),
+  codexOutputCanMutatePolicy: z.literal(false)
+});
+const activityCancelMutationOutputSchema = z.strictObject({
+  ...modelMutationBaseShape,
+  affectedJobIds: z.array(z.string()),
+  policySource: z.literal("explicit-tool-input"),
+  codexOutputCanMutatePolicy: z.literal(false)
+});
+
+const handoffOutputSchema = z.strictObject({
+  kind: z.literal("handoff"),
+  action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
+  claimed: z.boolean().optional(),
+  delivered: z.boolean().optional(),
+  released: z.boolean().optional(),
+  handoffBatchId: z.string().nullable().optional(),
+  origin: z.literal("activity-handoff").optional(),
+  handoffDepth: z.number().int().min(0).optional(),
+  events: z.array(opaqueJsonObjectOutputSchema).optional(),
+  outboxIds: z.array(z.number().int().positive()).optional(),
+  stopped: z.boolean().optional(),
+  stopReason: z.enum([
+    "explicit-presentation-does-not-own-handoff",
+    "presentation-superseded"
+  ]).optional()
+});
+
+const compactCatalogModelOutputSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  defaultEffort: z.string().nullable(),
+  efforts: z.array(z.string()),
+  serviceTiers: z.array(z.string()),
+  isDefault: z.boolean()
+});
+
+const codexModelsOutputSchema = z.strictObject({
+  source: z.string(),
+  stale: z.boolean(),
+  warning: z.string().nullable(),
+  policy: modelPolicySummaryOutputSchema,
+  priority: z.boolean(),
+  models: z.array(compactCatalogModelOutputSchema)
+});
+
+const diagnosticsOutputSchema = z.strictObject({
+  kind: z.literal("diagnostics"),
+  bridge: z.strictObject({
+    runtimeName: z.string(),
+    product: z.string(),
+    build: opaqueJsonObjectOutputSchema,
+    auth: z.enum(["bearer-token", "none"]),
+    backend: z.enum(["mcp-server", "app-server"])
+  }),
+  storage: z.strictObject({
+    backend: z.enum(["sqlite", "memory", "split-json"]),
+    transactional: z.boolean(),
+    schemaVersion: z.number().int().positive(),
+    activityPersistent: z.boolean(),
+    sessionPersistent: z.boolean(),
+    settingsPersistent: z.boolean()
+  }),
+  scopeSecurity: z.strictObject({
+    hmacKeyVersion: z.number().int().min(1),
+    hmacRotation: z.string(),
+    rawHostIdentifiersPersisted: z.literal(false),
+    scopeIsAuthentication: z.literal(false)
+  }),
+  pool: z.strictObject({
+    upstreamPoolSize: z.number().int().positive(),
+    maxConcurrentJobs: z.number().int().positive(),
+    hardLimit: z.number().int().positive(),
+    retainedJobs: z.number().int().positive(),
+    resultBytes: z.number().int().positive()
+  }),
+  upstream: z.strictObject({
+    tools: z.unknown().nullable(),
+    error: z.string().nullable()
+  }),
+  forensics: z.strictObject({
+    bridgeInstanceId: z.string(),
+    startupWarnings: z.array(z.string()),
+    settingsLoadWarnings: z.array(z.string())
+  })
+});
+
+// Keep runtime validation stronger than the discovery encoding while avoiding
+// redundant JSON Schema bytes. JavaScript-safe integer ceilings add no model
+// guidance, and runtime Zod validation retains every numeric bound. Preserve
+// explicit primitive types on every literal: ChatGPT can omit an otherwise
+// valid tool from its callable inventory when an output const/enum leaf has no
+// type. Repeated status rows use local draft-07 definitions; every object
+// remains closed.
+for (const [schema, reuse] of [
+  [activityModelOutputSchema, false],
+  [activityCancelMutationOutputSchema, false],
+  [activityUpdateMutationOutputSchema, false],
+  [agentMutationOutputSchema, false],
+  [cancelMutationOutputSchema, false],
+  [codexModelsOutputSchema, false],
+  [compactSettingsOutputSchema, false],
+  [codexStatusOutputSchema, false],
+  [codexTaskOutputSchema, false]
+] as const) {
+  installCompactPublishedOutputSchema(schema, reuse);
+}
+
+function toolOutputContract<Schema extends z.ZodType>(
+  toolName: string,
+  channel: AuthoritativeProjectionChannel,
+  outputSchema: Schema,
+  maxBytes: number,
+  completeness: "summary-only" | "documented-support-level" | "primary-payload" = "summary-only"
+): ToolResultContract<Schema> {
+  const structuredMaxBytes = structuredByteCapFor(toolName);
+  return defineToolResultContract({
+    toolName,
+    channel,
+    outputSchema,
+    structured: { maxBytes: structuredMaxBytes },
+    privateMeta: { maxBytes: TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration },
+    compatibility: {
+      channel: "text-protocol-compatibility",
+      format: "plain-text",
+      maxBytes,
+      completeness
+    }
+  });
+}
+
+function structuredByteCapFor(toolName: string): number {
+  if (toolName in TOOL_STRUCTURED_BYTE_CAPS) {
+    return TOOL_STRUCTURED_BYTE_CAPS[
+      toolName as keyof typeof TOOL_STRUCTURED_BYTE_CAPS
+    ];
+  }
+  if (
+    toolName === "mutation" ||
+    toolName === "app-only-mutation" ||
+    toolName === "codex_activity_handoff"
+  ) return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
+  if (toolName === "codex_activity_snapshot" || toolName === "codex_update_settings") {
+    return TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration;
+  }
+  throw new Error(`No structured-content byte cap is registered for ${toolName}.`);
+}
+
+const statusResultContract = toolOutputContract(
+  "codex_status",
+  "model-orchestrator-semantic",
+  codexStatusOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_status,
+  "documented-support-level"
+);
+const modelsResultContract = toolOutputContract(
+  "codex_models",
+  "model-orchestrator-semantic",
+  codexModelsOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_models
+);
+const compactSettingsResultContract = toolOutputContract(
+  "codex_settings",
+  "model-orchestrator-semantic",
+  compactSettingsOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_settings
+);
+const settingsEditorResultContract = toolOutputContract(
+  "codex_update_settings",
+  "app-hydration",
+  compactSettingsOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
+);
+const activityModelResultContract = toolOutputContract(
+  "codex_activity",
+  "model-orchestrator-semantic",
+  activityModelOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_activity
+);
+const activityAppResultContract = toolOutputContract(
+  "codex_activity_snapshot",
+  "app-hydration",
+  activityViewOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
+);
+const modelMutationResultContracts = Object.freeze({
+  codex_agent: toolOutputContract(
+    "codex_agent",
+    "model-orchestrator-semantic",
+    agentMutationOutputSchema,
+    TOOL_CONTENT_BYTE_CAPS.codex_agent,
+    "documented-support-level"
+  ),
+  codex_cancel: toolOutputContract(
+    "codex_cancel",
+    "model-orchestrator-semantic",
+    cancelMutationOutputSchema,
+    TOOL_CONTENT_BYTE_CAPS.codex_cancel,
+    "documented-support-level"
+  ),
+  codex_activity_update: toolOutputContract(
+    "codex_activity_update",
+    "model-orchestrator-semantic",
+    activityUpdateMutationOutputSchema,
+    TOOL_CONTENT_BYTE_CAPS.codex_activity_update,
+    "documented-support-level"
+  ),
+  codex_activity_cancel: toolOutputContract(
+    "codex_activity_cancel",
+    "model-orchestrator-semantic",
+    activityCancelMutationOutputSchema,
+    TOOL_CONTENT_BYTE_CAPS.codex_activity_cancel,
+    "documented-support-level"
+  )
+});
+const appMutationResultContract = toolOutputContract(
+  "app-only-mutation",
+  "app-hydration",
+  mutationOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_mutation
+);
+const handoffResultContract = toolOutputContract(
+  "codex_activity_handoff",
+  "app-hydration",
+  handoffOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_mutation
+);
+const taskStateResultContract = toolOutputContract(
+  "codex_task",
+  "model-orchestrator-semantic",
+  codexTaskOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_task_state,
+  "documented-support-level"
+);
+const taskErrorResultContract = toolOutputContract(
+  "codex_task",
+  "model-orchestrator-semantic",
+  codexTaskOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_task_error,
+  "documented-support-level"
+);
+const diagnosticsResultContract = toolOutputContract(
+  "codex_diagnostics",
+  "operator-diagnostic",
+  diagnosticsOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_diagnostics
+);
+
+export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
+  codex_activity: activityModelOutputSchema,
+  codex_activity_cancel: activityCancelMutationOutputSchema,
+  codex_activity_update: activityUpdateMutationOutputSchema,
+  codex_agent: agentMutationOutputSchema,
+  codex_cancel: cancelMutationOutputSchema,
+  codex_models: codexModelsOutputSchema,
+  codex_settings: compactSettingsOutputSchema,
+  codex_status: codexStatusOutputSchema,
+  codex_task: codexTaskOutputSchema
+});
+
+export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
+  codex_activity_handoff: handoffOutputSchema,
+  codex_activity_job_cancel: mutationOutputSchema,
+  codex_activity_snapshot: activityViewOutputSchema,
+  codex_agent_recovery_detach: mutationOutputSchema,
+  codex_background_process_terminate: mutationOutputSchema,
+  codex_diagnostics: diagnosticsOutputSchema,
+  codex_interaction_respond: mutationOutputSchema,
+  codex_job_steer: mutationOutputSchema,
+  codex_update_settings: compactSettingsOutputSchema
+});
+
+export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS;
+export type AppOnlyOutputToolName = keyof typeof APP_ONLY_OUTPUT_SCHEMAS;
+
+export function validateModelVisibleStructuredOutput(
+  toolName: ModelVisibleOutputToolName,
+  value: unknown
+): unknown {
+  if (toolName === "codex_task") return validateTaskOutput(value);
+  return MODEL_VISIBLE_OUTPUT_SCHEMAS[toolName].parse(value);
+}
+
+function validateTaskOutput(value: unknown): z.infer<typeof codexTaskOutputSchema> {
+  const parsed = codexTaskOutputSchema.parse(value);
+  if (parsed.resultOmitted !== (parsed.resultAvailability === "omitted")) {
+    throw new Error("Task result omission flag must match result availability.");
+  }
+  if (parsed.delivery === "primary-content" && parsed.resultAvailability !== "delivered") {
+    throw new Error("Primary-content delivery requires a delivered result.");
+  }
+  return parsed;
+}
+
+export function validateAppOnlyStructuredOutput(
+  toolName: AppOnlyOutputToolName,
+  value: unknown
+): unknown {
+  return APP_ONLY_OUTPUT_SCHEMAS[toolName].parse(value);
+}
 
 type SessionDecision = {
   requestedMode: SessionMode;
@@ -2922,7 +3666,7 @@ export function registerBridgeTools(
       description:
         "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: codexStatusOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2993,7 +3737,15 @@ export function registerBridgeTools(
           }
         }
         const job = wait?.job || initial;
-        return textResult(formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs));
+        const structured = {
+          kind: "job" as const,
+          ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs)
+        };
+        return statusToolResult(
+          compactStatusProjection(structured),
+          job,
+          config.maxJobResultBytes
+        );
       }
       if (activityQuery) {
         if (!scopeId && !args.includeAllScopes) {
@@ -3004,7 +3756,8 @@ export function registerBridgeTools(
           throw new Error("The requested Activity belongs to another conversation scope or does not exist.");
         }
         const childJobs = jobs.listForActivity(activity.activityId);
-        return textResult({
+        const structured = {
+          kind: "activity" as const,
           activity: formatActivitySummary(activity),
           agents: [...new Set(
             jobs.listActivityAgentAssignments(activity.activityId).map((assignment) => assignment.agentId)
@@ -3017,7 +3770,13 @@ export function registerBridgeTools(
           jobs: childJobs.map((job) => formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current, jobs)),
           events: jobs.listActivityEvents(activity.activityId).slice(-100),
           uiRequired: false
-        });
+        };
+        return contractedToolResult(
+          statusResultContract,
+          { activity, childJobs },
+          compactStatusProjection(structured),
+          { text: statusCompatibilityText(structured) }
+        );
       }
       if (threadQuery) {
         if (!scopeId && !args.includeAllScopes) {
@@ -3032,7 +3791,8 @@ export function registerBridgeTools(
         const activities = [...new Set(relatedJobs.map((job) => job.activityId))]
           .map((activityId) => jobs.getActivity(activityId))
           .filter((activity): activity is BridgeActivity => Boolean(activity));
-        return textResult({
+        const structured = {
+          kind: "thread" as const,
           threadId: threadQuery.id,
           agent: jobs.getAgentForThread(threadQuery.id)
             ? formatAgentSummary(jobs.getAgentForThread(threadQuery.id) as BridgeAgent, jobs)
@@ -3062,7 +3822,13 @@ export function registerBridgeTools(
             updatedAt: new Date(job.updatedAt).toISOString()
           })),
           uiRequired: false
-        });
+        };
+        return contractedToolResult(
+          statusResultContract,
+          { trackedSession, relatedJobs },
+          compactStatusProjection(structured),
+          { text: statusCompatibilityText(structured) }
+        );
       }
 
       const preferences = userSettings.current;
@@ -3169,7 +3935,8 @@ export function registerBridgeTools(
       }));
       if (pageQuery) {
         const collection = pageQuery.collection;
-        return textResult({
+        const structured = {
+          kind: "page" as const,
           query: { kind: "page", collection },
           scopeView: statusScopeView,
           scopeCounts,
@@ -3179,143 +3946,20 @@ export function registerBridgeTools(
             : collection === "jobs"
               ? jobRows
               : activityRows
-        });
+        };
+        return contractedToolResult(
+          statusResultContract,
+          { collection, visibleSessions, visibleJobs, visibleActivities },
+          compactStatusProjection(structured),
+          { text: statusCompatibilityText(structured) }
+        );
       }
-      let upstreamTools: unknown = null;
-      let upstreamError: string | null = null;
-      try {
-        upstreamTools = await upstream.listTools();
-      } catch (error) {
-        upstreamError = error instanceof Error ? error.message : String(error);
-      }
-      const cachedCatalog = modelCatalog.getCachedCatalog?.({
-        backendKind: config.defaultBackend
-      });
-      const persistencePaths = [sessions.persistencePath, jobs.persistencePath, userSettings.persistencePath];
-      const sharedPersistencePath =
-        persistencePaths[0] && persistencePaths.every((entry) => entry === persistencePaths[0])
-          ? persistencePaths[0]
-          : null;
-      const persistenceBackend = sharedPersistencePath === config.stateDatabaseFile
-        ? "sqlite"
-        : persistencePaths.every((entry) => entry === null)
-          ? "memory"
-          : "split-json";
-      return textResult({
-        bridge: PRODUCT_INFO.runtimeName,
-        product: PRODUCT_INFO.displayName,
-        build: BRIDGE_BUILD_INFO,
-        auth: config.token && !config.noAuth ? "bearer-token" : "none",
-        projects: userSettings.projectRegistry.availability.map(({ project, available }) => ({
-          projectName: project.name,
-          available,
-          archived: project.archivedAt !== undefined
-        })),
-        defaultSandbox: userSettings.resolveSandbox(),
-        accessStrategy: preferences.accessStrategy,
-        allowWorkspaceWrite: config.allowWorkspaceWrite,
-        allowDangerFullAccess: config.allowDangerFullAccess,
-        defaultApprovalPolicy: config.defaultApprovalPolicy,
-        settingsSchemaVersion: preferences.schemaVersion,
-        settingsRevision: preferences.settingsRevision,
-        registryRevision: preferences.registryRevision,
-        modelPolicy: preferences.modelPolicy,
-        usePriorityServiceTier: preferences.usePriorityServiceTier,
-        showBridgeThreadsInCodexApp: preferences.showBridgeThreadsInCodexApp,
-        operatorModelCeiling: config.operatorModelCeiling || null,
-        uiLocalePreference: preferences.uiLocalePreference,
-        dynamicModelCatalog: true,
-        modelCatalogCacheTtlMs: config.modelCatalogCacheTtlMs,
-        codexExecutionDeadline: "none",
-        activityCardVisibility: preferences.activityCardVisibility,
-        completionHandoff: preferences.completionHandoff,
-        defaultBackend: config.defaultBackend,
-        appServerPolicy: {
-          experimental: true,
-          upstreamProductionSupport: "unsupported",
-          rollout: "explicit-opt-in-canary",
-          riskAcceptanceRequiredForDefaultSwitch: true,
-          transport: "local-stdio",
-          supportedCodexCliVersion: SUPPORTED_CODEX_CLI_VERSION,
-          resumeProbe: "thread/read",
-          interactionResolution: "serverRequest/resolved-with-local-expiry-guard",
-          backendHandoff: "fresh-thread-with-explicit-summary-only"
-        },
-        modelCatalogStatus: cachedCatalog
-          ? {
-              available: true,
-              backendKind: config.defaultBackend,
-              source: cachedCatalog.source,
-              fetchedAt: cachedCatalog.fetchedAt,
-              validatedAt: cachedCatalog.validatedAt,
-              fingerprint: cachedCatalog.fingerprint,
-              stale: cachedCatalog.stale,
-              validation: cachedCatalog.validation,
-              modelCount: cachedCatalog.models.length
-            }
-          : {
-              available: false,
-              backendKind: config.defaultBackend
-            },
-        upstreamPoolSize: config.upstreamPoolSize,
-        maxConcurrentJobs: preferences.maxConcurrentJobs,
-        maxConcurrentJobsHardLimit: config.maxConcurrentJobs,
-        maxRetainedJobs: config.maxRetainedJobs,
-        maxJobResultBytes: config.maxJobResultBytes,
-        stateStorage: {
-          backend: persistenceBackend,
-          transactional: persistenceBackend === "sqlite",
-          schemaVersion: jobs.persistenceSchemaVersion,
-          bridgeInstanceId: jobs.bridgeInstanceId,
-          activityFoundation: "schema-v8-project-registry-atomic-admission",
-          activityPersistent: jobs.activityPersistent
-        },
-        jobPolicy: {
-          persistent: jobs.persistent,
-          retentionMs: config.jobTtlMs,
-          staleAfterMs: jobs.staleThresholdMs,
-          maxStatusWaitMs: MAX_CODEX_STATUS_WAIT_MS,
-          defaultStatusWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS
-        },
-        concurrencyPolicy: {
-          sameWorkingDirectory: {
-            readOnly: "allowed",
-            workspaceWrite: "allowed",
-            dangerFullAccess: "allowed"
-          },
-          sameThread: "serialized",
-          sameAgent: "serialized",
-          sameScopeDifferentThreads: "allowed",
-          parallelism: "dynamic-per-agent-thread",
-          mutationCoordination: "caller-managed"
-        },
-        maxPromptChars: config.maxPromptChars,
-        sessionPolicy: {
-          persistent: sessions.persistent,
-          selection: "activity-compatible-only-when-unambiguous",
-          implicitNewActivityBehavior: "start-new-thread",
-          exactActivityContinuationAgeLimit: "none",
-          scopeIdInput: "host-derived-or-explicit-compatibility",
-          hostMetadataKeys: ["openai/organization", "openai/subject", "openai/session"],
-          scopeHmacKeyVersion: scopeResolver.keyVersion,
-          scopeHmacRotation: scopeResolver.rotationPolicy,
-          rawHostIdentifiersPersisted: false,
-          legacyScopeId: LEGACY_SCOPE_ID,
-          legacyAutoResume: false,
-          scopeIsAuthentication: false,
-          mcpThreadLifetime: "active-upstream-worker-generation",
-          restartBehavior: "resume-an-exact-available-activity-thread-or-start-new"
-        },
+      const structured = {
+        kind: "overview" as const,
         scopeView: statusScopeView,
         scopeCounts,
         pagination,
-        settingsPolicy: {
-          persistent: userSettings.persistent,
-          revision: preferences.revision,
-          scope: "shared-bridge-instance",
-          warnings: userSettings.loadWarnings
-        },
-        operatorWarnings: config.startupWarnings,
+        warnings: [...config.startupWarnings, ...userSettings.loadWarnings],
         sessions: sessionRows,
         jobs: jobRows,
         activities: activityRows,
@@ -3326,10 +3970,101 @@ export function registerBridgeTools(
           ),
           threadHistory: jobs.listAgentThreads(agent.agentId).map(formatAgentThreadSummary),
           activityAssignments: jobs.listActivityAgentAssignments(undefined, agent.agentId)
-        })),
-        upstreamTools,
-        upstreamError
-      });
+        }))
+      };
+      return contractedToolResult(
+        statusResultContract,
+        { visibleSessions, visibleJobs, visibleActivities, visibleAgents },
+        compactStatusProjection(structured),
+        { text: statusCompatibilityText(structured) }
+      );
+    }
+  );
+
+  server.registerTool(
+    "codex_diagnostics",
+    {
+      title: `${PRODUCT_INFO.displayName} Operator Diagnostics`,
+      description:
+        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, and bounded forensic warnings. Routine model status and unauthenticated health checks intentionally exclude this data.",
+      inputSchema: z.strictObject({}),
+      outputSchema: diagnosticsOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private"
+      }
+    },
+    async () => {
+      let upstreamTools: unknown = null;
+      let upstreamError: string | null = null;
+      try {
+        upstreamTools = await upstream.listTools();
+      } catch (error) {
+        upstreamError = error instanceof Error ? error.message : String(error);
+      }
+      const persistencePaths = [sessions.persistencePath, jobs.persistencePath, userSettings.persistencePath];
+      const sharedPersistencePath =
+        persistencePaths[0] && persistencePaths.every((entry) => entry === persistencePaths[0])
+          ? persistencePaths[0]
+          : null;
+      const persistenceBackend = sharedPersistencePath === config.stateDatabaseFile
+        ? "sqlite" as const
+        : persistencePaths.every((entry) => entry === null)
+          ? "memory" as const
+          : "split-json" as const;
+      const structured = {
+        kind: "diagnostics" as const,
+        bridge: {
+          runtimeName: PRODUCT_INFO.runtimeName,
+          product: PRODUCT_INFO.displayName,
+          build: BRIDGE_BUILD_INFO,
+          auth: config.token && !config.noAuth ? "bearer-token" as const : "none" as const,
+          backend: config.defaultBackend
+        },
+        storage: {
+          backend: persistenceBackend,
+          transactional: persistenceBackend === "sqlite",
+          schemaVersion: jobs.persistenceSchemaVersion,
+          activityPersistent: jobs.activityPersistent,
+          sessionPersistent: sessions.persistent,
+          settingsPersistent: userSettings.persistent
+        },
+        scopeSecurity: {
+          hmacKeyVersion: scopeResolver.keyVersion,
+          hmacRotation: scopeResolver.rotationPolicy,
+          rawHostIdentifiersPersisted: false as const,
+          scopeIsAuthentication: false as const
+        },
+        pool: {
+          upstreamPoolSize: config.upstreamPoolSize,
+          maxConcurrentJobs: userSettings.current.maxConcurrentJobs,
+          hardLimit: config.maxConcurrentJobs,
+          retainedJobs: config.maxRetainedJobs,
+          resultBytes: config.maxJobResultBytes
+        },
+        upstream: { tools: upstreamTools, error: upstreamError },
+        forensics: {
+          bridgeInstanceId: jobs.bridgeInstanceId,
+          startupWarnings: config.startupWarnings,
+          settingsLoadWarnings: userSettings.loadWarnings
+        }
+      };
+      return contractedToolResult(
+        diagnosticsResultContract,
+        structured,
+        structured,
+        {
+          text: upstreamError
+            ? `Diagnostics collected; upstream inventory failed: ${upstreamError}`
+            : "Diagnostics collected, including upstream inventory."
+        }
+      );
     }
   );
 
@@ -3352,7 +4087,7 @@ export function registerBridgeTools(
       description:
         "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic response presentation and must not be followed by codex_activity. Explicit cards use up to three separate scope watcher slots and never compete for automatic completion handoff; this tool never changes execution, visibility, or lifecycle policy.",
       inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
-      outputSchema: activityViewOutputSchema,
+      outputSchema: activityModelOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3397,7 +4132,8 @@ export function registerBridgeTools(
       }
       return activityViewResult(
         view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        activityModelResultContract
       );
     }
   );
@@ -3521,7 +4257,8 @@ export function registerBridgeTools(
           presentation,
           lease
         ),
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        activityAppResultContract
       );
     }
   );
@@ -3549,7 +4286,7 @@ export function registerBridgeTools(
         codexActivityHandoffRuntimeInput,
         codexActivityHandoffInput
       ),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: handoffOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3581,7 +4318,9 @@ export function registerBridgeTools(
       );
       const claimAction = args.action === "claim-batch";
       if (claimAction && !jobs.canClaimCompletionHandoff(scope.scopeId, presentation)) {
-        return textResult({
+        const structured = {
+          kind: "handoff" as const,
+          action: args.action,
           claimed: false,
           handoffBatchId: null,
           handoffDepth: 0,
@@ -3590,7 +4329,13 @@ export function registerBridgeTools(
           stopReason: presentation.kind === "explicit"
             ? "explicit-presentation-does-not-own-handoff"
             : "presentation-superseded"
-        });
+        };
+        return contractedToolResult(
+          handoffResultContract,
+          structured,
+          structured,
+          { text: "Completion handoff was not claimed because this presentation does not own it." }
+        );
       }
       if (args.action === "delivered-batch") {
         const records = jobs.markCompletionOutboxBatchDelivered(
@@ -3598,14 +4343,33 @@ export function registerBridgeTools(
           scope.scopeId,
           leaseOwner
         );
-        return textResult({
+        const structured = {
+          kind: "handoff" as const,
+          action: args.action,
           delivered: true,
           outboxIds: records.map((record) => record.outboxId)
-        });
+        };
+        return contractedToolResult(
+          handoffResultContract,
+          records,
+          structured,
+          { text: `Delivered ${records.length} completion handoff record(s).` }
+        );
       }
       if (args.action === "release-batch") {
         jobs.releaseCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-        return textResult({ released: true, outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b) });
+        const structured = {
+          kind: "handoff" as const,
+          action: args.action,
+          released: true,
+          outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b)
+        };
+        return contractedToolResult(
+          handoffResultContract,
+          structured,
+          structured,
+          { text: `Released ${structured.outboxIds.length} completion handoff record(s).` }
+        );
       }
       const records = jobs.claimCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
       const batchMaterial = records
@@ -3614,7 +4378,9 @@ export function registerBridgeTools(
       const handoffBatchId = batchMaterial
         ? `handoff-${createHash("sha256").update(scope.scopeId).update("\0").update(batchMaterial).digest("hex").slice(0, 24)}`
         : null;
-      return textResult({
+      const structured = {
+        kind: "handoff" as const,
+        action: args.action,
         claimed: records.length > 0,
         handoffBatchId,
         origin: "activity-handoff",
@@ -3625,7 +4391,13 @@ export function registerBridgeTools(
           completionVersion: record.completionVersion,
           channel: record.channel
         }))
-      });
+      };
+      return contractedToolResult(
+        handoffResultContract,
+        records,
+        structured,
+        { text: `Claimed ${records.length} completion handoff record(s).` }
+      );
     }
   );
 
@@ -3659,7 +4431,7 @@ export function registerBridgeTools(
       description:
         "Apply one idempotent scope-local operation to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. ChatGPT scope is host-derived. Recovery detach and destructive background-process control use separate restricted tools.",
       inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: agentMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3692,7 +4464,7 @@ export function registerBridgeTools(
         if (replay.actionHash !== actionHash) {
           throw new Error("requestId was already used for a different Agent mutation in this scope.");
         }
-        return textResult(replay.result);
+        return mutationToolResult(replay.result, "model", "codex_agent");
       }
       if (
         action === "archive" &&
@@ -3700,6 +4472,7 @@ export function registerBridgeTools(
       ) {
         const conflictResult = {
           ok: false,
+          action,
           code: "AGENT_BUSY",
           agent: formatAgentSummary(agent, jobs),
           forceStop: agent.currentJobId
@@ -3715,7 +4488,7 @@ export function registerBridgeTools(
           warning: "Force-stop interrupts execution but does not roll back filesystem changes."
         };
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, conflictResult);
-        return textResult(conflictResult);
+        return mutationToolResult(conflictResult, "model", "codex_agent");
       }
 
       const currentThread = jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent);
@@ -3734,13 +4507,14 @@ export function registerBridgeTools(
         if (backgroundTerminals.length > 0) {
           const conflictResult = {
             ok: false,
+            action,
             code: "AGENT_BACKGROUND_PROCESS",
             agent: formatAgentSummary(agent, jobs),
             backgroundProcesses: backgroundTerminals.map((terminal) => ({ processId: terminal.processId })),
             warning: "Stop remaining background processes before archiving. Stopping does not roll back filesystem changes."
           };
           jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, conflictResult);
-          return textResult(conflictResult);
+          return mutationToolResult(conflictResult, "model", "codex_agent");
         }
       }
       let updated: BridgeAgent = agent;
@@ -3779,7 +4553,7 @@ export function registerBridgeTools(
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
         return mutationResult;
       });
-      return textResult(result);
+      return mutationToolResult(result, "model", "codex_agent");
     }
   );
 
@@ -3798,7 +4572,7 @@ export function registerBridgeTools(
         expectedAgentVersion: z.number().int().min(1)
           .describe("Authoritative Agent version observed immediately before recovery detach.")
       },
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3858,7 +4632,7 @@ export function registerBridgeTools(
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
         return mutationResult;
       });
-      return textResult(result);
+      return mutationToolResult(result, "app");
     }
   );
 
@@ -3878,7 +4652,7 @@ export function registerBridgeTools(
         processId: z.string().trim().min(1).max(200),
         card: activityCardProofInputSchema
       },
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3924,7 +4698,7 @@ export function registerBridgeTools(
         if (replay.actionHash !== actionHash) {
           throw new Error("requestId was already used for a different Agent mutation in this scope.");
         }
-        return textResult(replay.result);
+        return mutationToolResult(replay.result, "app");
       }
       const mutationResult = await terminateAgentBackgroundProcess({
         jobs,
@@ -3935,7 +4709,7 @@ export function registerBridgeTools(
         processId: args.processId
       });
       jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
-      return textResult(mutationResult);
+      return mutationToolResult(mutationResult, "app");
     }
   );
 
@@ -3965,7 +4739,7 @@ export function registerBridgeTools(
       description:
         "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
       inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: cancelMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4032,7 +4806,11 @@ export function registerBridgeTools(
           return formatted;
         }
       );
-      return textResult(result);
+      return mutationToolResult(
+        { ok: true, action: "cancel-job", job: result },
+        "model",
+        "codex_cancel"
+      );
     }
   );
 
@@ -4054,7 +4832,7 @@ export function registerBridgeTools(
           .max(HARD_MAX_CONCURRENT_JOBS)
           .optional()
       }),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4147,7 +4925,7 @@ export function registerBridgeTools(
           return formatted;
         }
       );
-      return textResult(result);
+      return mutationToolResult({ ok: true, action: "cancel-card-job", job: result }, "app");
     }
   );
 
@@ -4177,7 +4955,7 @@ export function registerBridgeTools(
         ]),
         card: activityCardProofInputSchema
       }),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4290,7 +5068,7 @@ export function registerBridgeTools(
           };
         }
       );
-      return textResult(result);
+      return mutationToolResult(result, "app");
     }
   );
 
@@ -4309,7 +5087,7 @@ export function registerBridgeTools(
         prompt: z.string().trim().min(1).max(config.maxPromptChars),
         card: activityCardProofInputSchema
       }),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: mutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4392,7 +5170,7 @@ export function registerBridgeTools(
           };
         }
       );
-      return textResult(result);
+      return mutationToolResult(result, "app");
     }
   );
 
@@ -4491,7 +5269,7 @@ export function registerBridgeTools(
         codexActivityUpdateRuntimeInput,
         codexActivityUpdatePublicInput
       ),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: activityUpdateMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -4564,13 +5342,14 @@ export function registerBridgeTools(
         }
       });
 
-      return textResult({
+      return mutationToolResult({
+        ok: true,
         action: operation.kind,
         activity: formatActivitySummary(activity),
         cancelledJobIds,
         policySource: "explicit-tool-input",
         codexOutputCanMutatePolicy: false
-      });
+      }, "model", "codex_activity_update");
     }
   );
 
@@ -4584,7 +5363,7 @@ export function registerBridgeTools(
         codexActivityCancelRuntimeInput,
         codexActivityCancelPublicInput
       ),
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: activityCancelMutationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -4748,7 +5527,7 @@ export function registerBridgeTools(
           return cancellationResult;
         }
       );
-      return textResult(result);
+      return mutationToolResult(result, "model", "codex_activity_cancel");
     }
   );
 
@@ -4764,7 +5543,7 @@ export function registerBridgeTools(
           .optional()
           .describe("Force an immediate catalog refresh. Omit to use the short-lived cache when available.")
       },
-      outputSchema: openStructuredObjectOutputSchema,
+      outputSchema: codexModelsOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -4779,20 +5558,31 @@ export function registerBridgeTools(
       });
       publishTaskProjection(catalog);
       const preferences = userSettings.current;
-      return textResult({
+      const structured = {
         source: catalog.source,
-        fetchedAt: catalog.fetchedAt,
-        validatedAt: catalog.validatedAt,
-        fingerprint: catalog.fingerprint,
-        cached: catalog.cached,
         stale: catalog.stale,
-        validation: catalog.validation,
-        warning: catalog.warning,
-        modelPolicy: preferences.modelPolicy,
-        usePriorityServiceTier: preferences.usePriorityServiceTier,
-        operatorModelCeiling: config.operatorModelCeiling || null,
-        models: catalog.models
-      });
+        warning: catalog.warning || null,
+        policy: modelPolicySummary(preferences.modelPolicy),
+        priority: preferences.usePriorityServiceTier,
+        models: catalog.models.map((model) => ({
+          id: model.id,
+          name: model.displayName,
+          defaultEffort: model.defaultReasoningEffort || null,
+          efforts: model.supportedReasoningEfforts.map(({ effort }) => effort),
+          serviceTiers: model.serviceTiers.map(({ id }) => id),
+          isDefault: model.isDefault === true
+        }))
+      };
+      return contractedToolResult(
+        modelsResultContract,
+        catalog,
+        structured,
+        {
+          text:
+            `${catalog.models.length} Codex model(s) available from ${catalog.source}; ` +
+            `catalog ${catalog.stale ? "is stale" : "is current"}.`
+        }
+      );
     }
   );
 
@@ -4808,7 +5598,7 @@ export function registerBridgeTools(
           .optional()
           .describe("Force a fresh Codex model catalog lookup before rendering the card.")
       },
-      outputSchema: settingsViewOutputSchema,
+      outputSchema: compactSettingsOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -4832,7 +5622,8 @@ export function registerBridgeTools(
       );
       return settingsViewResult(
         view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        "model"
       );
     }
   );
@@ -4925,7 +5716,7 @@ export function registerBridgeTools(
       description:
         "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, and restore operations; add UUIDs are server-generated. Reset restores general preferences only and preserves the registry.",
       inputSchema: settingsInput,
-      outputSchema: settingsViewOutputSchema,
+      outputSchema: compactSettingsOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -5084,7 +5875,8 @@ export function registerBridgeTools(
           false,
           projectionStatus.schemaRefreshRequested
         ),
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        "app"
       );
     }
   );
@@ -5403,7 +6195,7 @@ export function registerBridgeTools(
         ) {
           return projectSetupRequiredResult(error.message);
         }
-        throw error;
+        return taskPreflightErrorResult(errorFromException(error));
       } finally {
         removeTaskAbortObserver?.();
       }
@@ -6697,14 +7489,21 @@ async function runCodex(input: {
     admit();
   }
   if (job.executionMode === "background") {
-    return textResult(formatJobStatus(job, input.config.jobStaleAfterMs, undefined, input.preferences, input.jobs, true));
+    return taskResultForJob(
+      job,
+      input.config.jobStaleAfterMs,
+      input.preferences,
+      input.jobs,
+      false,
+      true
+    );
   }
   await job.promise;
   if (job.status === "completed" && job.result) {
-    return forwardResult(job.result, job, input.preferences, input.jobs);
+    return forwardResult(job.result, job, input.preferences, input.jobs, false);
   }
   if (job.status === "failed" && job.result?.isError) {
-    return forwardResult(job.result, job, input.preferences, input.jobs);
+    return forwardResult(job.result, job, input.preferences, input.jobs, false);
   }
   throw new Error(job.error || "Codex job failed.");
 }
@@ -6719,9 +7518,9 @@ function resultForJob(
     job.result &&
     (job.status === "completed" || (job.status === "failed" && job.result.isError))
   ) {
-    return forwardResult(job.result, job, preferences, jobs);
+    return forwardResult(job.result, job, preferences, jobs, true);
   }
-  return textResult(formatJobStatus(job, staleAfterMs, undefined, preferences, jobs, true));
+  return taskResultForJob(job, staleAfterMs, preferences, jobs, true, true);
 }
 
 type PageCursorKind = "sessions" | "jobs" | "activities";
@@ -6774,7 +7573,8 @@ function formatJobStatus(
   wait?: CodexJobWaitResult,
   preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
   registry?: CodexJobRegistry,
-  reserveActivityCard = false
+  reserveActivityCard = false,
+  replay = false
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
   const activityTracking = registry
@@ -6789,10 +7589,74 @@ function formatJobStatus(
       }
     )
     : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId);
-  const common = {
+  const active = isActiveActivityJobStatus(job.status);
+  const terminal = isTerminalActivityJobStatus(job.status);
+  const resultOmitted = job.resultOmitted || false;
+  const resultAvailability = active
+    ? "pending"
+    : job.status === "completed"
+      ? resultOmitted
+        ? "omitted"
+        : job.result
+          ? "delivered"
+          : "unavailable"
+      : "unavailable";
+  const delivery = active
+    ? "status"
+    : resultAvailability === "delivered"
+      ? "primary-content"
+      : resultAvailability === "omitted"
+        ? "omitted"
+        : "none";
+  const retainedError = retainedStructuredError(job.result);
+  const error = job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
+    ? normalizeStructuredError(
+        retainedError || {
+          code: job.status === "cancelled"
+            ? "JOB_CANCELLED"
+            : job.status === "interrupted"
+              ? "JOB_INTERRUPTED"
+              : "JOB_FAILED",
+          message:
+            job.error ||
+            (job.status === "interrupted"
+              ? "The Codex job was interrupted before completion."
+              : job.status === "cancelled"
+                ? "The Codex job was cancelled. Partial filesystem changes may remain."
+                : "Codex job failed.")
+        }
+      )
+    : undefined;
+  const warnings = [
+    ...(job.executionDecision?.fallbackWarning
+      ? [job.executionDecision.fallbackWarning]
+      : []),
+    ...(activity.health === "no-progress-observed"
+      ? ["No progress event has been observed within the configured window; process liveness is unknown."]
+      : []),
+    ...(job.status === "cancelled"
+      ? ["Cancellation does not roll back partial filesystem changes."]
+      : [])
+  ];
+  const nextActions = active && !activityTracking.shouldRenderActivityCard
+    ? [{
+        tool: "codex_status",
+        arguments: {
+          query: {
+            kind: "job",
+            id: job.jobId,
+            waitFor: "terminal",
+            waitMs: DEFAULT_CODEX_STATUS_WAIT_MS
+          }
+        }
+      }]
+    : [];
+  return {
     status: job.status,
-    terminal: isTerminalActivityJobStatus(job.status),
-    async: isActiveActivityJobStatus(job.status),
+    terminal,
+    async: active,
+    delivery,
+    replay,
     jobId: job.jobId,
     activityId: job.activityId,
     agentId: job.agentId || null,
@@ -6801,18 +7665,17 @@ function formatJobStatus(
     backendKind: job.backendKind,
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
-    version: job.version,
+    versions: {
+      job: job.version,
+      activity: registry?.getActivity(job.activityId)?.version || null
+    },
     operation: job.operation,
     projectName: job.projectLabel || null,
-    workspaceLabel: job.projectLabel || "Pinned workspace",
     sandbox: job.sandbox,
-    executionDecision: job.executionDecision || null,
     executionAudit: formatExecutionAudit(job),
-    upstreamError: retainedStructuredError(job.result) || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
     activityPresentationId: job.activityPresentationId || null,
-    session: job.sessionDecision,
     bridgeSession: {
       ...job.sessionDecision,
       scopeId: job.scopeId,
@@ -6833,16 +7696,6 @@ function formatJobStatus(
     cancelRequestedAt: job.cancelRequestedAt ? new Date(job.cancelRequestedAt).toISOString() : null,
     terminalOrigin: job.terminalOrigin || null,
     cancellation: formatCancellationAudit(job, registry),
-    worker: job.workerId
-      ? {
-          workerId: job.workerId,
-          generation: job.workerGeneration,
-          pid: job.workerPid,
-          processGroupId: job.processGroupId
-        }
-      : null,
-    ageMs: Math.max(0, Date.now() - job.createdAt),
-    activityTracking,
     ...activity,
     ...(wait
       ? {
@@ -6853,60 +7706,27 @@ function formatJobStatus(
             changed: wait.changed
           }
         }
-      : {})
-  };
-  if (isActiveActivityJobStatus(job.status)) {
-    const trackingAction = activityTracking.shouldRenderActivityCard
-      ? {}
-      : {
-          nextCheck: {
-            tool: "codex_status",
-            arguments: {
-              scopeId: job.scopeId,
-              jobId: job.jobId,
-              waitFor: "terminal",
-              waitMs: DEFAULT_CODEX_STATUS_WAIT_MS
-            }
-          }
-        };
-    return {
-      ...common,
-      ...trackingAction,
-      message:
-        job.status === "terminating"
-          ? "The bridge is force-stopping the exact Codex worker process group. The job remains active until process exit is confirmed."
-          : job.status === "termination-failed"
-            ? "The bridge could not confirm worker-process termination. Refresh authoritative state and retry force-stop; the job is not marked cancelled."
-            : activity.health === "no-progress-observed"
-          ? "No MCP progress event has been observed within the configured window. Process liveness is unknown; inspect actual work evidence, wait, or explicitly cancel the job."
-          : activityTracking.shouldRenderActivityCard
-            ? "Codex is running in the background. The Activity card is attached to this codex_task result and its mounted watcher tracks progress without a GPT follow-up call."
-            : activityTracking.renderReason === "active-lease" ||
-                activityTracking.renderReason === "render-reserved" ||
-                activityTracking.renderReason === "render-confirmed"
-              ? "Codex is running in the background. This result will not create a duplicate Activity card because one is already mounted or reserved."
-              : "Codex is running in the background. Automatic card display is disabled for this turn; use one bounded codex_status wait when authoritative follow-up is needed."
-    };
-  }
-  if (job.status === "failed" || job.status === "interrupted" || job.status === "cancelled") {
-    return {
-      ...common,
-      error:
-        job.error ||
-        (job.status === "interrupted"
-          ? "The Codex job was interrupted before completion."
-          : job.status === "cancelled"
-            ? "The Codex job was cancelled. Partial filesystem changes may remain."
-          : "Codex job failed.")
-    };
-  }
-  return {
-    ...common,
-    result: job.result,
-    resultBytes: job.resultBytes,
-    resultOmitted: job.resultOmitted || false,
+      : {}),
+    result: {
+      availability: resultAvailability,
+      bytes: job.resultBytes ?? null,
+      omitted: resultOmitted
+    },
+    ...(error ? { error } : {}),
+    warnings,
+    nextActions,
     message:
-      "Codex reached a completed state. Inspect the result and verify the requested outcome and relevant artifacts before reporting completion."
+      active
+        ? job.status === "terminating"
+          ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
+          : job.status === "termination-failed"
+            ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
+            : "Codex is running. Use the Activity card or one bounded status wait for an authoritative update."
+        : job.status === "completed"
+          ? resultOmitted
+            ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
+            : "Codex completed; the primary answer is delivered once in tool content."
+          : error?.message || "Codex reached a terminal state."
   };
 }
 
@@ -7078,23 +7898,18 @@ function formatExecutionAudit(job: CodexJob): Record<string, unknown> | null {
     ? acceptedSelection.serviceTier
     : decision.effectiveSelection.serviceTier;
   return {
-    privacy: "selection-metadata-only; prompt and private reasoning excluded",
     requested: decision.requestedSelection || null,
-    effective: decision.effectiveSelection,
     actual: {
       model: reroutedModel || acceptedModel,
       reasoningEffort: acceptedEffort,
       ...(acceptedServiceTier ? { serviceTier: acceptedServiceTier } : {})
     },
-    evidence: {
-      model: reroutedModel
-        ? "model/rerouted"
-        : acceptedTurn
-          ? "turn/start-accepted"
-          : "bridge-dispatch",
-      reasoningEffort: acceptedTurn ? "turn/start-accepted" : "bridge-dispatch",
-      actualEffortRuntimeOverrideReported: false
-    },
+    source: decision.source,
+    evidence: reroutedModel
+      ? "model/rerouted"
+      : acceptedTurn
+        ? "turn/start-accepted"
+        : "bridge-dispatch",
     ...(reroute
       ? {
           reroute: {
@@ -7104,12 +7919,10 @@ function formatExecutionAudit(job: CodexJob): Record<string, unknown> | null {
             toModel: reroutedModel,
             reason: typeof reroute.details?.reason === "string"
               ? reroute.details.reason
-              : "unspecified",
-            eventId: reroute.eventId,
-            createdAt: new Date(reroute.createdAt).toISOString()
+              : "unspecified"
           }
         }
-      : { reroute: null })
+      : {})
   };
 }
 
@@ -7917,70 +8730,97 @@ async function buildActivityView(
 
 function activityViewResult(
   view: Awaited<ReturnType<typeof buildActivityView>>,
-  locale?: string
+  locale: string | undefined,
+  contract: typeof activityModelResultContract | typeof activityAppResultContract
 ): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
-  return {
-    structuredContent: view.structured,
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          {
-            scopeVersion: view.structured.scopeVersion,
-            feed: {
-              activeCount: view.structured.feed.activeCount,
-              active: view.structured.feed.active.map((row) => ({
-                activityId: row.activityId,
-                title: row.title,
-                kind: row.kind,
-                displayState: row.displayState,
-                agentNames: row.agents.map((agent) => agent.agentName),
-                counts: row.counts
-              })),
-              completed: {
-                agentCount: view.structured.feed.completed.agentCount,
-                activityCount: view.structured.feed.completed.activityCount
-              },
-              idleAgentCount: view.structured.feed.idle.agentCount,
-              endedAgentCount: view.structured.feed.ended.agentCount
-            },
-            aggregates: view.structured.aggregates,
-            agents: view.structured.agents.map((agent) => ({
-              agentId: agent.agentId,
-              agentName: agent.agentName,
-              lifecycle: agent.lifecycle,
-              displayState: agent.displayState,
-              backgroundProcessState: agent.backgroundProcessState,
-              backgroundProcessCount: agent.backgroundProcessCount,
-              activityId: agent.activityId,
-              activityTitle: agent.activityTitle
-            })),
-            activities: view.structured.activities.map((activity) => ({
-              activityId: activity.activityId,
-              title: activity.title,
-              lifecycle: activity.lifecycle,
-              waitingOn: activity.waitingOn,
-              verification: activity.verification,
-              counts: activity.counts
-            })),
-            pendingHandoffs: view.structured.pendingHandoffs.map((handoff) => ({
-              outboxId: handoff.outboxId,
-              activityId: handoff.activityId,
-              channel: handoff.channel
-            }))
-          },
-          null,
-          2
-        )
+  const mountedActivity = isRecord(view.structured.mountedActivity)
+    ? {
+        activityId: view.structured.mountedActivity.activityId,
+        cardGeneration: view.structured.mountedActivity.cardGeneration
       }
-    ],
-    _meta: {
-      interactionControls: view.interactionControls,
-      "openai/locale": effectiveLocale,
-      hostLocale: locale || null
-    }
+    : null;
+  const mountedPresentation = isRecord(view.structured.mountedPresentation) &&
+    view.structured.mountedPresentation.kind === "automatic"
+    ? {
+        kind: "automatic" as const,
+        activityPresentationId: view.structured.mountedPresentation.activityPresentationId,
+        ...(typeof view.structured.mountedPresentation.reservationOwnerId === "string"
+          ? { reservationOwnerId: view.structured.mountedPresentation.reservationOwnerId }
+          : {})
+      }
+    : { kind: "explicit" as const };
+  const privateView = validateActivityViewPrivateMetadata({
+    kind: "codex/activityView",
+    version: ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
+    purpose: "presentation-hydration-only",
+    source: contract === activityModelResultContract
+      ? "codex_activity"
+      : "codex_activity_snapshot",
+    correlation: {
+      scopeVersion: view.structured.scopeVersion,
+      activity: mountedActivity,
+      presentation: mountedPresentation
+    },
+    view: view.structured
+  });
+  const summary = {
+    scopeVersion: view.structured.scopeVersion,
+    active: view.structured.feed.activeCount,
+    completedActivities: view.structured.feed.completed.activityCount,
+    idleAgents: view.structured.feed.idle.agentCount,
+    endedAgents: view.structured.feed.ended.agentCount,
+    attention: view.structured.aggregates.needsAttention
   };
+  const appHydration = {
+    [ACTIVITY_VIEW_METADATA_KEY]: privateView,
+    interactionControls: view.interactionControls,
+    "openai/locale": effectiveLocale,
+    hostLocale: locale || null
+  };
+  if (contract === activityModelResultContract) {
+    const selected = mountedActivity
+      ? view.structured.activities.find((entry) =>
+          isRecord(entry) && entry.activityId === mountedActivity.activityId
+        )
+      : undefined;
+    const selectedRecord: Record<string, unknown> | undefined = selected
+      ? { ...selected }
+      : undefined;
+    const structured = activityModelOutputSchema.parse({
+      kind: "activity",
+      scopeVersion: view.structured.scopeVersion,
+      ...(mountedActivity ? { activityId: mountedActivity.activityId } : {}),
+      ...(selectedRecord && Number.isInteger(selectedRecord.version)
+        ? { activityVersion: selectedRecord.version }
+        : {}),
+      counts: {
+        activities: view.structured.activities.length,
+        agents: view.structured.agentPagination.total +
+          view.structured.agentPagination.archivedTotal,
+        active: view.structured.feed.activeCount,
+        needsAttention: view.structured.aggregates.needsAttention
+      }
+    });
+    return contractedToolResult(
+      activityModelResultContract,
+      view,
+      structured,
+      {
+        text:
+          `Activity view opened at scope version ${structured.scopeVersion}: ` +
+          `${structured.counts.active} active, ${structured.counts.needsAttention} needing attention.`
+      },
+      { appHydration }
+    );
+  }
+  return contractedToolResult(
+    activityAppResultContract,
+    view,
+    view.structured,
+    { text: JSON.stringify(summary) },
+    { appHydration }
+  );
 }
 
 function appServerTurnId(job: CodexJob): string | undefined {
@@ -8201,14 +9041,14 @@ function codexTaskInputSchema(
     "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
   );
   const requestId = scopeIdSchema().describe(
-    "Unique idempotency UUID for one logical Codex task. Reuse the exact value only when retrying an identical task. Never reuse it to group different tasks or multiple calls in one GPT response."
+    "Unique idempotency UUID for one logical Codex call. Reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
   const activityPresentationId = scopeIdSchema().describe(
-    "UUID for automatic Activity-card grouping across the current ChatGPT assistant response. Generate it once for the response, reuse it for every codex_task in that response even across different Activities or Agents, and generate a new value for the next response. Reuse it on exact retries. requestId deduplicates one Codex execution while activityPresentationId deduplicates one response card and is excluded from execution replay identity."
+    "UUID shared by every codex_task in this assistant response. Generate a new value for the next response and reuse it on exact retries. It groups Activity-card presentation and never changes execution replay identity."
   );
   const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
   const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
-    .describe("Controls Codex execution timing, not Activity-card visibility. Choose background when Codex should return a tracked job immediately and continue asynchronously. Choose foreground only when this tool call should wait for the final Codex result before GPT continues. Omit it to keep an existing Activity's mode or default a new Activity to background.");
+    .describe("Controls Codex execution timing, not Activity-card visibility. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
   const runtimeCommon = {
     scopeId: scopeIdSchema()
       .optional()
@@ -8241,13 +9081,6 @@ function codexTaskInputSchema(
         settings.usePriorityServiceTier
       )
     : config.operatorModelCeiling;
-  const exposesTaskSelections = settings.modelPolicy.mode === "automatic" && Boolean(
-    catalog && listAllowedModelSelections(
-      settings.modelPolicy,
-      catalog,
-      projectedModelCeiling
-    ).length > 0
-  );
   const publicModel = settings.modelPolicy.mode === "automatic"
     ? {
         selection: projectedSelectionZod(
@@ -8255,7 +9088,7 @@ function codexTaskInputSchema(
           catalog,
           projectedModelCeiling
         ).optional().describe(
-          "When this descriptor exposes choices, choose an exact model and reasoningEffort from it based on the task's requirements. For a new Activity, new Agent, or fresh context the public schema requires this field only while at least one valid choice is exposed. The configured automatic fallback is used only when a compatible caller omits selection; it is not a recommendation. Priority is applied privately by the bridge and is not selected by GPT."
+          "Choose an exact exposed model and reasoningEffort. New Activities, new Agents, and fresh contexts require it when choices are present. The bridge validates current policy; Priority is private."
         )
       }
     : {};
@@ -8265,52 +9098,11 @@ function codexTaskInputSchema(
     ...publicModel
   });
   const projectedJsonSchema = jsonSchemaBody(projected);
-  if (!allowsProjectlessSetupProbe) {
-    projectedJsonSchema.allOf = [
-      {
-        if: {
-          anyOf: [
-            { not: { required: ["activity"] } },
-            {
-              required: ["activity"],
-              properties: {
-                activity: {
-                  required: ["mode"],
-                  properties: { mode: { const: "new" } }
-                }
-              }
-            },
-            {
-              required: ["agent"],
-              properties: {
-                agent: {
-                  required: ["mode"],
-                  properties: { mode: { const: "new" } }
-                }
-              }
-            },
-            {
-              required: ["agent"],
-              properties: {
-                agent: {
-                  required: ["mode", "context"],
-                  properties: {
-                    mode: { const: "existing" },
-                    context: { const: "fresh" }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        then: {
-          required: exposesTaskSelections
-            ? ["project", "selection"]
-            : ["project"]
-        }
-      }
-    ];
-  }
+  // Keep discovery within ChatGPT's reliably callable schema subset. Project
+  // and selection stay optional here because existing Activity continue/fork
+  // calls may omit them. The serialized admission boundary authoritatively
+  // requires both for new or fresh work and returns structured errors when
+  // either value is missing or stale.
   // Runtime parsing stays broader only where current policy/catalog/project
   // state is the execution authority and can change between tool listings.
   const runtime = z.strictObject({
@@ -8350,7 +9142,7 @@ function projectedProjectZod(
           required: ["name", "registryRevision"],
           properties: {
             name: { const: project.name },
-            registryRevision: { const: settings.registryRevision }
+            registryRevision: { type: "integer", const: settings.registryRevision }
           },
           title: project.name,
           description: project.name
@@ -8447,6 +9239,63 @@ function withJsonSchemaProjection<T extends z.ZodType>(
   // a projection that was mutated by an earlier response.
   internals.toJSONSchema = () => structuredClone(jsonSchema) as Record<string, unknown>;
   return runtime;
+}
+
+function installCompactPublishedOutputSchema<T extends z.ZodType>(
+  runtime: T,
+  reuseDefinitions: boolean
+): T {
+  const projected = z.toJSONSchema(runtime, {
+    target: "draft-07",
+    io: "output",
+    reused: reuseDefinitions ? "ref" : "inline"
+  });
+  const projectionTarget = (runtime._zod.parent || runtime) as T;
+  withJsonSchemaProjection(
+    projectionTarget,
+    compactPublishedJsonSchema(projected) as Record<string, unknown>
+  );
+  return runtime;
+}
+
+function compactPublishedJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(compactPublishedJsonSchema);
+  if (!isRecord(value)) return value;
+  if (Array.isArray(value.anyOf) && value.anyOf.length === 2) {
+    const nullBranch = value.anyOf.find(
+      (entry) => isRecord(entry) && entry.type === "null" && Object.keys(entry).length === 1
+    );
+    const valueBranch = value.anyOf.find((entry) => entry !== nullBranch);
+    if (
+      nullBranch &&
+      isRecord(valueBranch) &&
+      typeof valueBranch.type === "string" &&
+      valueBranch.type !== "null" &&
+      !Object.prototype.hasOwnProperty.call(valueBranch, "const")
+    ) {
+      const compacted = compactPublishedJsonSchema(valueBranch) as Record<string, unknown>;
+      const nullable: Record<string, unknown> = {
+        ...compacted,
+        type: [valueBranch.type, "null"]
+      };
+      if (Array.isArray(compacted.enum)) nullable.enum = [...compacted.enum, null];
+      for (const [key, entry] of Object.entries(value)) {
+        if (key !== "anyOf") nullable[key] = compactPublishedJsonSchema(entry);
+      }
+      return nullable;
+    }
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      key === "$schema" ||
+      key === "maximum" && entry === Number.MAX_SAFE_INTEGER ||
+      key === "minimum" ||
+      key === "exclusiveMinimum"
+    ) continue;
+    output[key] = compactPublishedJsonSchema(entry);
+  }
+  return output;
 }
 
 function jsonSchemaBody(schema: z.ZodType): Record<string, unknown> {
@@ -8877,7 +9726,11 @@ async function freshCatalogForPolicy(
   return catalog;
 }
 
-function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
+function settingsViewResult(
+  view: SettingsView,
+  locale: string | undefined,
+  audience: "model" | "app"
+): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
   const localizedView: SettingsView = {
     ...view,
@@ -8901,62 +9754,105 @@ function settingsViewResult(view: SettingsView, locale?: string): ToolResult {
       }))
     }
   };
-  const publicProjectAvailability = localizedView.capabilities.projectAvailability.map(
-    ({ name, available, archived }) => ({ name, available, archived })
-  );
-  const publicView = settingsViewOutputSchema.parse({
-    ...localizedView,
-    capabilities: {
-      ...localizedView.capabilities,
-      projectAvailability: publicProjectAvailability
+  const validatedEditorView = settingsViewOutputSchema.parse(localizedView);
+  const unavailableProjectWarnings = localizedView.capabilities.projectAvailability
+    .filter(({ available, archived }) => !available && !archived)
+    .map(({ name }) => `Project '${name}' is unavailable. Relocate, restore, or archive it in Settings.`);
+  const actionableWarnings = [...new Set([
+    ...(localizedView.catalog.warning ? [localizedView.catalog.warning] : []),
+    ...localizedView.warnings.filter((warning) =>
+      /MODEL_|model policy|Legacy model-only|Priority|Existing Agent threads remain pinned|handoffSummary/i
+        .test(warning)
+    ),
+    ...unavailableProjectWarnings
+  ])]
+    .slice(0, 8)
+    .map((warning) => warning.slice(0, 1_000));
+  const compactView = {
+    revisions: {
+      settings: localizedView.settings.settingsRevision,
+      registry: localizedView.settings.registryRevision,
+      policy: localizedView.policyActivation.policyRevision
     },
-    settings: publicUserSettings(localizedView.settings, localizedView.capabilities.projectAvailability),
-    operatorDefaults: publicUserSettings(
-      localizedView.operatorDefaults,
-      localizedView.capabilities.projectAvailability
+    policy: {
+      access: localizedView.settings.accessStrategy,
+      model: modelPolicySummary(localizedView.settings.modelPolicy),
+      priority: localizedView.settings.usePriorityServiceTier,
+      maxConcurrentJobs: localizedView.settings.maxConcurrentJobs,
+      activityVisibility: localizedView.settings.activityCardVisibility,
+      completionHandoff: localizedView.settings.completionHandoff
+    },
+    projects: localizedView.capabilities.projectAvailability.map(
+      ({ name, available, archived }) => ({ name, available, archived })
+    ),
+    catalog: {
+      stale: localizedView.catalog.stale,
+      modelCount: localizedView.catalog.models.length
+    },
+    warnings: actionableWarnings,
+    nextActions: (
+      localizedView.catalog.stale ||
+      localizedView.catalog.validation !== "valid" ||
+      actionableWarnings.some((warning) => /MODEL_|model policy|catalog/i.test(warning))
     )
-  });
-  return {
-    structuredContent: publicView,
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          {
-            settings: publicView.settings,
-            capabilities: publicView.capabilities,
-            catalog: publicView.catalog,
-            warnings: publicView.warnings,
-            scopeNotice: publicView.scopeNotice
-          },
-          null,
-          2
-        )
-      }
-    ],
-    _meta: {
-      // MCP result metadata is delivered to the mounted app but not the model.
-      // Paths are required for editing in Settings and stay private here.
-      "codex/settingsView": localizedView,
-      "openai/locale": effectiveLocale,
-      hostLocale: locale || null
-    }
+      ? ["codex_models"]
+      : []
   };
+  const appHydration = {
+    // The full localized editor is validated before entering model-hidden metadata.
+    "codex/settingsView": validatedEditorView,
+    "openai/locale": effectiveLocale,
+    hostLocale: locale || null
+  };
+  if (audience === "app") {
+    return contractedToolResult(
+      settingsEditorResultContract,
+      view,
+      compactView,
+      {
+        text: `Settings saved at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
+      },
+      { appHydration }
+    );
+  }
+  return contractedToolResult(
+    compactSettingsResultContract,
+    view,
+    compactView,
+    {
+      text:
+        `Settings opened: revision ${localizedView.settings.settingsRevision}, registry ${localizedView.settings.registryRevision}, ` +
+        `${compactView.projects.length} project(s), ${compactView.warnings.length} warning(s).`
+    },
+    { appHydration }
+  );
 }
 
-function publicUserSettings(
-  settings: BridgeUserSettings,
-  availability: SettingsView["capabilities"]["projectAvailability"]
-): z.infer<typeof publicBridgeUserSettingsOutputSchema> {
-  const byId = new Map(availability.map((entry) => [entry.projectId, entry]));
-  return publicBridgeUserSettingsOutputSchema.parse({
-    ...settings,
-    projects: settings.projects.map((project) => ({
-      name: project.name,
-      available: byId.get(project.id)?.available || false,
-      archived: project.archivedAt !== undefined
-    }))
-  });
+function modelPolicySummary(
+  policy: ModelPolicy
+): z.infer<typeof modelPolicySummaryOutputSchema> {
+  if (policy.mode === "fixed") {
+    return {
+      mode: "fixed",
+      model: policy.selection.model,
+      reasoningEffort: policy.selection.reasoningEffort,
+      delegation: policy.constraints.allowDelegation
+    };
+  }
+  return {
+    mode: "automatic",
+    ...(policy.fallbackSelection
+      ? {
+          model: policy.fallbackSelection.model,
+          reasoningEffort: policy.fallbackSelection.reasoningEffort
+        }
+      : {}),
+    allowed: policy.allowedSelections.kind,
+    ...(policy.allowedSelections.kind === "explicit"
+      ? { allowedCount: policy.allowedSelections.selections.length }
+      : {}),
+    delegation: policy.constraints.allowDelegation
+  };
 }
 
 function resolveTaskSandbox(
@@ -9963,7 +10859,12 @@ function sanitizeRetainedToolResult(
     );
   };
   const sanitized = sanitize(result, 0);
-  return isRecord(sanitized) ? (sanitized as ToolResult) : textResult({ message: "Codex returned no retainable result." });
+  return isRecord(sanitized)
+    ? (sanitized as ToolResult)
+    : {
+        content: [{ type: "text", text: "Codex returned no retainable result." }],
+        structuredContent: { message: "Codex returned no retainable result." }
+      };
 }
 
 function sanitizeTextForJob(value: string, cwd: string, allowedRoots: string[]): string {
@@ -10018,43 +10919,713 @@ function forwardResult(
   result: ToolResult,
   job: CodexJob,
   preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
-  registry?: CodexJobRegistry
+  registry?: CodexJobRegistry,
+  replay = false
 ): ToolResult {
-  const forwarded = Array.isArray(result.content) ? result : textResult(result);
-  const structured = isRecord((forwarded as { structuredContent?: unknown }).structuredContent)
-    ? (forwarded as { structuredContent: Record<string, unknown> }).structuredContent
-    : {};
-  const publicStructured = stripInternalProjectData({
-    ...structured,
-    threadId: extractThreadId(forwarded) || job.sessionDecision.threadId,
-    bridgeSession: {
-      ...job.sessionDecision,
-      scopeId: job.scopeId,
-      requestId: job.requestId,
-      projectName: job.projectLabel || null,
-      activityPresentationId: job.activityPresentationId || null
+  const projection = taskProjectionForJob(job, preferences, registry, replay, true);
+  const semantic = projection.structured;
+  const appHydration = projection.appHydration;
+  if (result.isError || job.status === "failed") {
+    const error = normalizeStructuredError(
+      retainedStructuredError(result) || {
+        code: "UPSTREAM_TOOL_ERROR",
+        message: toolResultErrorMessage(result)
+      }
+    );
+    const structured = {
+      ...semantic,
+      state: "failed" as const,
+      terminal: true,
+      delivery: "none" as const,
+      resultAvailability: "unavailable" as const,
+      resultOmitted: false,
+      error: taskStructuredErrorProjection(error)
+    };
+    return contractedToolResult(
+      taskErrorResultContract,
+      result,
+      structured,
+      { text: taskCompatibilityText(structured) },
+      { isError: true, ...(appHydration ? { appHydration } : {}) }
+    );
+  }
+  if (semantic.resultAvailability !== "delivered") {
+    return contractedToolResult(
+      taskStateResultContract,
+      result,
+      semantic,
+      { text: taskCompatibilityText(semantic) },
+      appHydration ? { appHydration } : {}
+    );
+  }
+  const primaryContent = primaryResultContent(result);
+  const primaryBytes = primaryContent.reduce(
+    (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
+    0
+  );
+  const primaryContract = toolOutputContract(
+    "codex_task",
+    "model-orchestrator-semantic",
+    codexTaskOutputSchema,
+    Math.max(1, primaryBytes, job.resultBytes || 0),
+    "primary-payload"
+  );
+  return contractedToolResult(
+    primaryContract,
+    result,
+    semantic,
+    { content: primaryContent },
+    appHydration ? { appHydration } : {}
+  );
+}
+
+function taskResultForJob(
+  job: CodexJob,
+  staleAfterMs: number,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  registry: CodexJobRegistry | undefined,
+  replay: boolean,
+  reserveActivityCard: boolean
+): ToolResult {
+  const projection = taskProjectionForJob(
+    job,
+    preferences,
+    registry,
+    replay,
+    reserveActivityCard,
+    staleAfterMs
+  );
+  const structured = projection.structured;
+  const appHydration = projection.appHydration;
+  return contractedToolResult(
+    structured.error ? taskErrorResultContract : taskStateResultContract,
+    job,
+    structured,
+    { text: taskCompatibilityText(structured) },
+    {
+      ...(structured.error ? { isError: true } : {}),
+      ...(appHydration ? { appHydration } : {})
+    }
+  );
+}
+
+function taskProjectionForJob(
+  job: CodexJob,
+  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  registry: CodexJobRegistry | undefined,
+  replay: boolean,
+  reserveActivityCard: boolean,
+  staleAfterMs = registry?.staleThresholdMs || 1
+): {
+  structured: z.infer<typeof codexTaskOutputSchema>;
+  appHydration?: Record<string, unknown>;
+} {
+  const semantic = jobSemanticOutputSchema.parse(
+    formatJobStatus(
+      job,
+      staleAfterMs,
+      undefined,
+      preferences,
+      registry,
+      reserveActivityCard,
+      replay
+    )
+  );
+  const structured = codexTaskOutputSchema.parse({
+    contractVersion: "1",
+    kind: "task",
+    state: semantic.status,
+    terminal: semantic.terminal,
+    delivery: semantic.delivery,
+    replay: semantic.replay,
+    jobId: semantic.jobId,
+    activityId: semantic.activityId,
+    agentId: semantic.agentId,
+    threadId: semantic.threadId,
+    projectName: semantic.projectName,
+    requestId: semantic.requestId,
+    jobVersion: semantic.versions.job,
+    activityVersion: semantic.versions.activity ?? null,
+    executionMode: semantic.executionMode,
+    backend: semantic.backendKind,
+    sandbox: semantic.sandbox,
+    requestedModel: semantic.executionAudit?.requested?.model ?? null,
+    requestedReasoningEffort: semantic.executionAudit?.requested?.reasoningEffort ?? null,
+    actualModel: semantic.executionAudit?.actual.model ?? null,
+    actualReasoningEffort: semantic.executionAudit?.actual.reasoningEffort ?? null,
+    rerouted: Boolean(semantic.executionAudit?.reroute),
+    rerouteReason: semantic.executionAudit?.reroute?.reason ?? null,
+    resultAvailability: semantic.result.availability,
+    resultOmitted: semantic.result.omitted,
+    error: semantic.error ? taskStructuredErrorProjection(semantic.error) : null,
+    warnings: semantic.warnings,
+    nextActions: semantic.nextActions.map(modelNextActionProjection)
+  });
+  const appHydration = taskActivityBootstrapHydration(semantic);
+  return { structured, ...(appHydration ? { appHydration } : {}) };
+}
+
+function taskActivityBootstrapHydration(
+  semantic: z.infer<typeof jobSemanticOutputSchema>
+): Record<string, unknown> | undefined {
+  const presentation = semantic.bridgeActivity;
+  if (
+    presentation.presentationKind !== "automatic" ||
+    typeof presentation.activityPresentationId !== "string" ||
+    (
+      presentation.renderTiming !== "immediate" &&
+      presentation.renderTiming !== "after-result-or-existing-mounted-card"
+    )
+  ) {
+    return undefined;
+  }
+  const renderReason = presentation.renderReason as ActivityCardRenderReason;
+  const eligible = presentation.shouldRenderActivityCard === true ||
+    [
+      "new-presentation",
+      "render-retry",
+      "render-latest",
+      "render-reserved",
+      "render-confirmed",
+      "active-lease"
+    ].includes(renderReason);
+  const bootstrap = validateActivityBootstrapPrivateMetadata({
+    kind: "codex/activityBootstrap",
+    version: ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
+    purpose: "presentation-hydration-only",
+    correlation: {
+      requestId: semantic.requestId,
+      activityPresentationId: presentation.activityPresentationId,
+      jobId: presentation.jobId
     },
-    bridgeActivity: {
-      activityId: job.activityId,
-      jobId: job.jobId,
-      agentId: job.agentId || null,
-      projectName: job.projectLabel || null,
-      executionMode: job.executionMode,
-      ...(registry
-        ? registry.activityCardRenderHint(job.activityId, job.executionMode, preferences, {
-            reserve: true,
-            activityPresentationId: job.activityPresentationId,
-            reservationOwnerId: job.jobId
-          })
-        : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId))
+    activity: {
+      activityId: presentation.activityId,
+      cardGeneration: presentation.cardGeneration
     },
-    executionDecision: job.executionDecision || null,
-    executionAudit: formatExecutionAudit(job)
-  }) as Record<string, unknown>;
+    presentation: {
+      kind: "automatic",
+      reservationOwnerId: presentation.jobId
+    },
+    render: {
+      eligible,
+      reason: renderReason,
+      timing: presentation.renderTiming
+    }
+  });
+  return { [ACTIVITY_BOOTSTRAP_METADATA_KEY]: bootstrap };
+}
+
+function statusToolResult(
+  structured: z.infer<typeof codexStatusOutputSchema>,
+  job: CodexJob,
+  maxPrimaryBytes: number
+): ToolResult {
+  const detailResult = structured.items.find((item) => item.type === "job")?.result;
+  if (
+    job.status === "completed" &&
+    !job.resultOmitted &&
+    job.result &&
+    detailResult?.availability === "delivered"
+  ) {
+    const primaryContent = primaryResultContent(job.result);
+    const contentBytes = primaryContent.reduce(
+      (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
+      0
+    );
+    const contract = toolOutputContract(
+      "codex_status",
+      "model-orchestrator-semantic",
+      codexStatusOutputSchema,
+      Math.max(1, contentBytes, maxPrimaryBytes),
+      "primary-payload"
+    );
+    return contractedToolResult(contract, job, structured, { content: primaryContent });
+  }
+  return contractedToolResult(
+    statusResultContract,
+    job,
+    structured,
+    { text: statusCompatibilityText(structured) }
+  );
+}
+
+function compactStatusProjection(
+  value: Record<string, unknown>
+): z.infer<typeof codexStatusOutputSchema> {
+  const kind = value.kind;
+  if (!["overview", "page", "activity", "thread", "job"].includes(String(kind))) {
+    throw new Error("Status projection requires a recognized result kind.");
+  }
+  const scopeView = isRecord(value.scopeView) ? value.scopeView : {};
+  const mode = scopeView.mode === "all" || scopeView.mode === "policy-only"
+    ? scopeView.mode
+    : "scoped";
+  const source = scopeView.source === "host-metadata" ||
+    scopeView.source === "explicit-compatibility"
+    ? scopeView.source
+    : undefined;
+  const scope = { mode, ...(source ? { source } : {}) };
+  const counts = statusCountsOutputSchema.parse(
+    isRecord(value.scopeCounts) ? value.scopeCounts : statusDetailCounts(value)
+  );
+  let page: z.infer<typeof codexStatusOutputSchema>["page"];
+  let detail: z.infer<typeof statusItemOutputSchema> | undefined;
+  let items: z.infer<typeof statusItemOutputSchema>[] = [];
+  if (kind === "overview") {
+    items = [
+      ...statusRows(value.sessions, "session"),
+      ...statusRows(value.jobs, "job"),
+      ...statusRows(value.activities, "activity"),
+      ...statusRows(value.agents, "agent")
+    ];
+  } else if (kind === "page") {
+    const query = isRecord(value.query) ? value.query : {};
+    const collection = query.collection;
+    if (collection !== "sessions" && collection !== "jobs" && collection !== "activities") {
+      throw new Error("Status page projection requires its collection discriminator.");
+    }
+    const pagination = isRecord(value.pagination) ? value.pagination : {};
+    page = {
+      collection,
+      offset: integerAtLeast(pagination.offset, 0),
+      limit: integerAtLeast(pagination.limit, 1),
+      returned: integerAtLeast(pagination.returned, 0),
+      total: integerAtLeast(pagination.total, 0),
+      hasMore: pagination.hasMore === true,
+      ...(typeof pagination.nextCursor === "string"
+        ? { nextCursor: pagination.nextCursor }
+        : {})
+    };
+    const type = collection === "sessions"
+      ? "session" as const
+      : collection === "jobs"
+        ? "job" as const
+        : "activity" as const;
+    items = statusRows(value.items, type);
+  } else if (kind === "activity") {
+    detail = statusItemProjection(value.activity, "activity");
+    items = [
+      ...statusRows(value.agents, "agent"),
+      ...statusRows(value.jobs, "job"),
+      ...stringArray(value.threads).map((threadId) =>
+        statusItemOutputSchema.parse({ type: "thread", id: threadId, threadId })
+      )
+    ];
+  } else if (kind === "thread") {
+    const threadId = typeof value.threadId === "string" ? value.threadId : "unknown-thread";
+    detail = statusItemOutputSchema.parse({ type: "thread", id: threadId, threadId });
+    items = [
+      ...(isRecord(value.agent) ? [statusItemProjection(value.agent, "agent")] : []),
+      ...statusRows(value.activities, "activity"),
+      ...statusRows(value.jobs, "job")
+    ];
+  } else {
+    detail = statusItemProjection(value, "job");
+  }
+  return codexStatusOutputSchema.parse({
+    kind,
+    scope,
+    counts,
+    ...(page ? { page } : {}),
+    items: detail ? [detail, ...items] : items,
+    warnings: stringArray(value.warnings).slice(0, 20)
+  });
+}
+
+function integerAtLeast(value: unknown, minimum: number): number {
+  return Number.isInteger(value) && Number(value) >= minimum ? Number(value) : minimum;
+}
+
+function statusRows(
+  value: unknown,
+  type: z.infer<typeof statusItemOutputSchema>["type"]
+): z.infer<typeof statusItemOutputSchema>[] {
+  return Array.isArray(value)
+    ? value.filter(isRecord).map((entry) => statusItemProjection(entry, type))
+    : [];
+}
+
+function statusItemProjection(
+  value: unknown,
+  type: z.infer<typeof statusItemOutputSchema>["type"]
+): z.infer<typeof statusItemOutputSchema> {
+  const input = isRecord(value) ? value : {};
+  const idKey = type === "session" || type === "thread" ? "threadId" : `${type}Id`;
+  const id = typeof input[idKey] === "string" && input[idKey]
+    ? input[idKey]
+    : `unknown-${type}`;
+  const state = [input.status, input.lifecycle, input.resumeAvailability]
+    .find((entry): entry is string => typeof entry === "string");
+  const label = [input.agentName, input.title, input.projectName]
+    .find((entry): entry is string => typeof entry === "string");
+  const versions = isRecord(input.versions) &&
+    Number.isInteger(input.versions.job) && Number(input.versions.job) > 0
+    ? {
+        job: Number(input.versions.job),
+        activity: Number.isInteger(input.versions.activity) && Number(input.versions.activity) > 0
+          ? Number(input.versions.activity)
+          : undefined
+      }
+    : undefined;
+  const execution = typeof input.executionMode === "string" &&
+    typeof input.backendKind === "string" &&
+    typeof input.sandbox === "string"
+    ? {
+        mode: input.executionMode,
+        backend: input.backendKind,
+        sandbox: input.sandbox
+      }
+    : undefined;
+  const parsedResult = resultAvailabilityOutputSchema.safeParse(input.result);
+  const inferredResult = !parsedResult.success && type === "job" && typeof input.status === "string"
+    ? {
+        availability: isActiveActivityJobStatus(input.status as CodexJobStatus)
+          ? "pending" as const
+          : input.status === "completed"
+            ? input.resultOmitted === true
+              ? "omitted" as const
+              : "delivered" as const
+            : "unavailable" as const,
+        omitted: input.resultOmitted === true
+      }
+    : undefined;
+  const error = isRecord(input.error)
+    ? normalizeStructuredError(input.error)
+    : typeof input.error === "string" && input.error
+      ? normalizeStructuredError({ code: "JOB_FAILED", message: input.error })
+      : undefined;
+  const wait = jobWaitOutputSchema.safeParse(input.wait);
+  return statusItemOutputSchema.parse({
+    type,
+    id,
+    ...(label ? { label } : {}),
+    ...(state ? { state } : {}),
+    ...(Number.isInteger(input.version) && Number(input.version) > 0
+      ? { version: input.version }
+      : {}),
+    ...(typeof input.activityId === "string" ? { activityId: input.activityId } : {}),
+    ...(typeof input.agentId === "string" ? { agentId: input.agentId } : {}),
+    ...(typeof input.threadId === "string" ? { threadId: input.threadId } : {}),
+    ...(typeof input.terminal === "boolean" ? { terminal: input.terminal } : {}),
+    ...(typeof input.delivery === "string" ? { delivery: input.delivery } : {}),
+    ...(typeof input.replay === "boolean" ? { replay: input.replay } : {}),
+    ...(versions ? { versions } : {}),
+    ...(execution ? { execution } : {}),
+    ...(parsedResult.success
+      ? { result: modelResultAvailabilityProjection(parsedResult.data) }
+      : inferredResult
+        ? { result: inferredResult }
+        : {}),
+    ...(error ? { error } : {}),
+    ...(wait.success ? { wait: wait.data } : {}),
+    ...(() => {
+      const actions = Array.isArray(input.nextActions)
+        ? input.nextActions.map(modelNextActionProjection)
+        : structuredErrorNextActions(input.error);
+      return actions.length ? { nextActions: actions } : {};
+    })(),
+    ...(typeof input.message === "string" ? { message: input.message } : {})
+  });
+}
+
+function statusDetailCounts(value: Record<string, unknown>): z.infer<typeof statusCountsOutputSchema> {
+  const jobs = Array.isArray(value.jobs)
+    ? value.jobs.filter(isRecord)
+    : value.kind === "job"
+      ? [value]
+      : [];
+  const activities = Array.isArray(value.activities)
+    ? value.activities.filter(isRecord)
+    : isRecord(value.activity)
+      ? [value.activity]
+      : value.kind === "job" && typeof value.activityId === "string"
+        ? [{ activityId: value.activityId }]
+        : [];
+  const agents = Array.isArray(value.agents)
+    ? value.agents.filter(isRecord)
+    : isRecord(value.agent)
+      ? [value.agent]
+      : value.kind === "job" && typeof value.agentId === "string"
+        ? [{ agentId: value.agentId }]
+        : [];
+  const sessions = Array.isArray(value.sessions)
+    ? value.sessions.filter(isRecord)
+    : typeof value.threadId === "string" || stringArray(value.threads).length > 0
+      ? Array.from({ length: Math.max(1, stringArray(value.threads).length) }, () => ({}))
+      : [];
   return {
-    ...forwarded,
-    structuredContent: publicStructured
+    sessions: sessions.length,
+    jobs: jobs.length,
+    runningJobs: jobs.filter((entry) =>
+      typeof entry.status === "string" &&
+      isActiveActivityJobStatus(entry.status as CodexJobStatus)
+    ).length,
+    activities: activities.length,
+    agents: agents.length,
+    orphanedAgents: agents.filter((entry) => entry.lifecycle === "orphaned").length
   };
+}
+
+function primaryResultContent(result: ToolResult): ToolResult["content"] {
+  if (Array.isArray(result.content) && result.content.length > 0) return result.content;
+  return [{ type: "text", text: "Codex completed without a model-readable text payload." }];
+}
+
+function statusCompatibilityText(value: Record<string, unknown>): string {
+  if (value.kind === "job") {
+    const detail = Array.isArray(value.items) && isRecord(value.items[0])
+      ? value.items[0]
+      : value;
+    const error = isRecord(detail.error) && typeof detail.error.message === "string"
+      ? ` Error: ${detail.error.message}`
+      : "";
+    const availability = isRecord(detail.result) && typeof detail.result.availability === "string"
+      ? ` Result: ${detail.result.availability}.`
+      : "";
+    return `Job ${String(detail.id || detail.jobId)} is ${String(detail.state || detail.status)}.${availability}${error}`;
+  }
+  if (value.kind === "overview" && isRecord(value.counts)) {
+    return (
+      `Status: ${String(value.counts.activities)} Activity(s), ` +
+      `${String(value.counts.agents)} Agent(s), ${String(value.counts.runningJobs)} running job(s).`
+    );
+  }
+  if (value.kind === "overview" && isRecord(value.scopeCounts)) {
+    return (
+      `Status: ${String(value.scopeCounts.activities)} Activity(s), ` +
+      `${String(value.scopeCounts.agents)} Agent(s), ${String(value.scopeCounts.runningJobs)} running job(s).`
+    );
+  }
+  if (value.kind === "activity" && isRecord(value.activity)) {
+    return `Activity ${String(value.activity.activityId)} is ${String(value.activity.lifecycle)} with ${Array.isArray(value.jobs) ? value.jobs.length : 0} job(s).`;
+  }
+  if (value.kind === "thread") {
+    return `Thread ${String(value.threadId)} has ${Array.isArray(value.jobs) ? value.jobs.length : 0} tracked job(s).`;
+  }
+  if (value.kind === "page" && isRecord(value.query)) {
+    return `${Array.isArray(value.items) ? value.items.length : 0} ${String(value.query.collection)} item(s) returned.`;
+  }
+  return "Authoritative Codex status returned in structured content.";
+}
+
+function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): string {
+  if (value.error) {
+    const actions = value.nextActions.length
+      ? ` Next: ${value.nextActions.join(" ")}`
+      : "";
+    return `${value.error.code}: ${value.error.message}${actions}`;
+  }
+  if (value.state === "completed") {
+    return value.resultOmitted
+      ? "Codex completed, but the result was omitted by the retention limit."
+      : "Codex completed; its primary answer is the content of this result.";
+  }
+  if (value.state === "cancelled") {
+    return "Codex was cancelled. Partial filesystem changes may remain.";
+  }
+  return `Codex job ${value.jobId || "unassigned"} is ${value.state}.`;
+}
+
+function modelNextActionProjection(
+  value: unknown
+): z.infer<typeof modelNextActionOutputSchema> {
+  const input = isRecord(value) ? value : {};
+  const argumentsValue = isRecord(input.arguments) ? input.arguments : {};
+  const query = isRecord(argumentsValue.query) ? argumentsValue.query : {};
+  const targetId = [
+    input.targetId,
+    query.id,
+    argumentsValue.jobId,
+    argumentsValue.activityId,
+    argumentsValue.agentId
+  ].find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  const tool = typeof input.tool === "string" && input.tool ? input.tool : "codex_status";
+  const prompt = typeof input.userPrompt === "string" && input.userPrompt
+    ? input.userPrompt.slice(0, 1_000)
+    : undefined;
+  return modelNextActionOutputSchema.parse(
+    prompt || (targetId ? `${tool}(${targetId})` : tool)
+  );
+}
+
+function modelResultAvailabilityProjection(
+  value: z.infer<typeof resultAvailabilityOutputSchema>
+): z.infer<typeof modelResultAvailabilityOutputSchema> {
+  return modelResultAvailabilityOutputSchema.parse({
+    availability: value.availability,
+    omitted: value.omitted
+  });
+}
+
+function structuredErrorNextActions(value: unknown): string[] {
+  const input = isRecord(value) ? value : {};
+  const nextAction = isRecord(input.nextAction) && typeof input.nextAction.tool === "string"
+    ? modelNextActionProjection(input.nextAction)
+    : undefined;
+  const nextActions = Array.isArray(input.nextActions)
+    ? input.nextActions
+        .filter((entry): entry is string => typeof entry === "string")
+        .slice(0, 10)
+    : [];
+  return [...nextActions, ...(nextAction ? [nextAction] : [])].slice(0, 10);
+}
+
+function normalizeStructuredError(value: unknown): z.infer<typeof structuredErrorOutputSchema> {
+  const input = isRecord(value) ? value : {};
+  const code = typeof input.code === "string" && input.code.trim()
+    ? input.code.trim().slice(0, 200)
+    : "CODEX_ERROR";
+  const message = typeof input.message === "string" && input.message.trim()
+    ? input.message.trim().slice(0, 4_000)
+    : "Codex returned an error without a message.";
+  return structuredErrorOutputSchema.parse({
+    code,
+    message,
+    ...(typeof input.retryable === "boolean" ? { retryable: input.retryable } : {}),
+    ...(Array.isArray(input.missingFields)
+      ? {
+          missingFields: input.missingFields
+            .filter((entry): entry is string => typeof entry === "string")
+            .slice(0, 20)
+        }
+      : {}),
+    ...(input.contextContinuity === "not-migrated"
+      ? { contextContinuity: "not-migrated" as const }
+      : {})
+  });
+}
+
+function taskStructuredErrorProjection(
+  value: unknown
+): z.infer<typeof taskStructuredErrorOutputSchema> {
+  const error = normalizeStructuredError(value);
+  return taskStructuredErrorOutputSchema.parse({
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable ?? null,
+    missingFields: error.missingFields ?? null,
+    contextContinuity: error.contextContinuity ?? null
+  });
+}
+
+function errorFromException(error: unknown): z.infer<typeof structuredErrorOutputSchema> {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const codeMatch = /^([A-Z][A-Z0-9_]{2,100}):\s*/.exec(rawMessage);
+  const code = codeMatch?.[1] || "CODEX_TASK_FAILED";
+  return normalizeStructuredError({
+    code,
+    message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage
+  });
+}
+
+type ModelMutationToolName = keyof typeof modelMutationResultContracts;
+
+function mutationToolResult(
+  value: unknown,
+  audience: "model" | "app",
+  modelToolName?: ModelMutationToolName
+): ToolResult {
+  const publicValue = stripInternalProjectData(value);
+  if (!isRecord(publicValue)) {
+    throw new Error("A mutation result must be an object.");
+  }
+  const {
+    warning,
+    warnings: suppliedWarnings,
+    forceStop,
+    nextActions: suppliedNextActions,
+    ...fields
+  } = publicValue;
+  const warnings = [
+    ...(Array.isArray(suppliedWarnings)
+      ? suppliedWarnings.filter((entry): entry is string => typeof entry === "string")
+      : []),
+    ...(typeof warning === "string" ? [warning] : [])
+  ];
+  const nextActions = [
+    ...(Array.isArray(suppliedNextActions)
+      ? suppliedNextActions.filter((entry) => isRecord(entry))
+      : []),
+    ...(isRecord(forceStop) ? [forceStop] : [])
+  ];
+  if (audience === "model" && !modelToolName) {
+    throw new Error("A model-visible mutation projection requires its exact tool contract.");
+  }
+  const structured = audience === "model"
+    ? (() => {
+        const target = modelMutationTarget(fields, modelToolName as ModelMutationToolName);
+        return modelMutationResultContracts[modelToolName as ModelMutationToolName].outputSchema.parse({
+        kind: "mutation",
+        ok: typeof fields.ok === "boolean" ? fields.ok : true,
+        action: typeof fields.action === "string" ? fields.action : "mutation",
+        ...(typeof fields.code === "string" ? { code: fields.code } : {}),
+        ...(target ? { target } : {}),
+        ...(
+          modelToolName === "codex_activity_update" ||
+          modelToolName === "codex_activity_cancel"
+            ? {
+                affectedJobIds: [...new Set([
+                  ...stringArray(fields.cancelledJobIds),
+                  ...stringArray(fields.affectedJobIds),
+                  ...stringArray(fields.collateralJobIds)
+                ])],
+                policySource: "explicit-tool-input" as const,
+                codexOutputCanMutatePolicy: false as const
+              }
+            : {}
+        ),
+        warnings,
+        nextActions: nextActions.map(modelNextActionProjection)
+      }) as Record<string, unknown>;
+      })()
+    : mutationOutputSchema.parse({
+        kind: "mutation",
+        ok: typeof fields.ok === "boolean" ? fields.ok : true,
+        ...fields,
+        warnings,
+        nextActions
+      }) as Record<string, unknown>;
+  const contract: ToolResultContract<z.ZodType> = audience === "model"
+    ? modelMutationResultContracts[modelToolName as ModelMutationToolName]
+    : appMutationResultContract;
+  const targetValue = isRecord(structured.target) ? structured.target.id : undefined;
+  const job = isRecord(structured.job) ? structured.job : undefined;
+  const agent = isRecord(structured.agent) ? structured.agent : undefined;
+  const activity = isRecord(structured.activity) ? structured.activity : undefined;
+  const target = targetValue || job?.jobId || agent?.agentId || activity?.activityId;
+  const text = `${String(structured.action)}${target ? ` ${String(target)}` : ""}: ${structured.ok ? "succeeded" : structured.code || "not applied"}.`;
+  return contractedToolResult(contract, value, structured, { text });
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function modelMutationTarget(
+  fields: Record<string, unknown>,
+  toolName: ModelMutationToolName
+): z.infer<typeof mutationTargetOutputSchema> | null {
+  const type = toolName === "codex_agent"
+    ? "agent" as const
+    : toolName === "codex_cancel"
+      ? "job" as const
+      : "activity" as const;
+  const value = isRecord(fields[type]) ? fields[type] : undefined;
+  const idKey = `${type}Id`;
+  const id = value?.[idKey];
+  if (typeof id !== "string" || !id) return null;
+  const state = [value.status, value.lifecycle, value.state]
+    .find((entry): entry is string => typeof entry === "string");
+  return mutationTargetOutputSchema.parse({
+    type,
+    id,
+    ...(state ? { state } : {}),
+    ...(Number.isInteger(value.version) && Number(value.version) > 0
+      ? { version: value.version }
+      : {})
+  });
 }
 
 function retainedStructuredError(result: ToolResult | undefined): Record<string, unknown> | undefined {
@@ -10064,12 +11635,32 @@ function retainedStructuredError(result: ToolResult | undefined): Record<string,
   return result.structuredContent.error;
 }
 
-function textResult(value: unknown): ToolResult {
-  const publicValue = stripInternalProjectData(value);
-  return {
-    content: [{ type: "text", text: JSON.stringify(publicValue, null, 2) }],
-    ...(isRecord(publicValue) ? { structuredContent: publicValue } : {})
-  };
+function contractedToolResult<Schema extends z.ZodType>(
+  contract: ToolResultContract<Schema>,
+  canonical: unknown,
+  structured: unknown,
+  compatibility: { text?: string; content?: ToolResult["content"] },
+  options: {
+    isError?: boolean;
+    appHydration?: Record<string, unknown>;
+    protocolMeta?: Record<string, unknown>;
+  } = {}
+): ToolResult {
+  if (contract.toolName === "codex_task") validateTaskOutput(structured);
+  return projectToolResult(contract, {
+    canonical,
+    authoritative: {
+      channel: contract.channel,
+      value: structured as z.input<Schema>
+    },
+    compatibility: {
+      channel: "text-protocol-compatibility",
+      ...compatibility
+    },
+    ...(options.isError ? { isError: true } : {}),
+    ...(options.appHydration ? { appHydration: options.appHydration } : {}),
+    ...(options.protocolMeta ? { protocolMeta: options.protocolMeta } : {})
+  });
 }
 
 function stripInternalProjectData(value: unknown, depth = 0): unknown {
@@ -10101,69 +11692,48 @@ function stripInternalProjectData(value: unknown, depth = 0): unknown {
 }
 
 function modelPolicyErrorResult(error: ModelPolicyError): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      policyRevision: error.policyRevision,
-      nextActions: error.nextActions
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
+  return taskPreflightErrorResult({
+    code: error.code,
+    message: error.message.replace(`${error.code}: `, ""),
+    policyRevision: error.policyRevision,
+    nextActions: error.nextActions
+  });
 }
 
 function activityPresentationContractErrorResult(
   error: ActivityPresentationContractError
 ): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      retryable: true,
-      missingFields: ["activityPresentationId"],
-      nextActions: [
-        "Refresh the codex_task descriptor.",
-        "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
-        "For an exact logical-call retry, reuse both requestId and activityPresentationId."
-      ]
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
+  return taskPreflightErrorResult({
+    code: error.code,
+    message: error.message.replace(`${error.code}: `, ""),
+    retryable: true,
+    missingFields: ["activityPresentationId"],
+    nextActions: [
+      "Refresh the codex_task descriptor.",
+      "Generate one UUID for the current assistant response and reuse it for every codex_task in that response.",
+      "For an exact logical-call retry, reuse both requestId and activityPresentationId."
+    ]
+  });
 }
 
 function backendHandoffContractErrorResult(error: BackendHandoffContractError): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      retryable: true,
-      contextContinuity: "not-migrated",
-      nextActions: error.code === "BACKEND_HANDOFF_SUMMARY_REQUIRED"
-        ? [
-            "Retry the existing Agent with context='fresh' and a concise explicit handoffSummary.",
-            "State clearly that only the summary is transferred; the original transcript, approvals, and backend state remain on the pinned Agent thread."
-          ]
-        : ["Remove handoffSummary unless this is an explicit existing-Agent backend change."]
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
+  return taskPreflightErrorResult({
+    code: error.code,
+    message: error.message.replace(`${error.code}: `, ""),
+    retryable: true,
+    contextContinuity: "not-migrated",
+    nextActions: error.code === "BACKEND_HANDOFF_SUMMARY_REQUIRED"
+      ? [
+          "Retry the existing Agent with context='fresh' and a concise explicit handoffSummary.",
+          "State clearly that only the summary is transferred; the original transcript, approvals, and backend state remain on the pinned Agent thread."
+        ]
+      : ["Remove handoffSummary unless this is an explicit existing-Agent backend change."]
+  });
 }
 
 function projectSetupRequiredResult(message: string): ToolResult {
-  const structuredContent = {
-    error: {
+  return taskPreflightErrorResult(
+    {
       code: PROJECT_SETUP_REQUIRED,
       message: message.replace(`${PROJECT_SETUP_REQUIRED}: `, ""),
       nextAction: {
@@ -10171,34 +11741,68 @@ function projectSetupRequiredResult(message: string): ToolResult {
         arguments: {},
         userPrompt: "Open settings and register the folder where Codex should work."
       }
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
+    },
+    "setup-required"
+  );
 }
 
 function agentThreadResumeErrorResult(error: AgentThreadResumeError): ToolResult {
-  const structuredContent = {
-    error: {
-      code: error.code,
-      message: error.message.replace(`${error.code}: `, ""),
-      retryable: error.retryable,
-      probe: error.probe,
-      nextActions: error.code === "AGENT_ORPHANED"
-        ? ["Start an explicit fresh context for this Agent after reviewing the lost thread continuity."]
-        : error.code === "AGENT_THREAD_BUSY"
-          ? ["Wait for the active turn to finish and retry the same logical request."]
-          : ["Retry the same logical request; do not replace or detach the Agent thread."]
-    }
-  };
-  return {
-    isError: true,
-    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-    structuredContent
-  };
+  return taskPreflightErrorResult({
+    code: error.code,
+    message: error.message.replace(`${error.code}: `, ""),
+    retryable: error.retryable,
+    probe: error.probe,
+    nextActions: error.code === "AGENT_ORPHANED"
+      ? ["Start an explicit fresh context for this Agent after reviewing the lost thread continuity."]
+      : error.code === "AGENT_THREAD_BUSY"
+        ? ["Wait for the active turn to finish and retry the same logical request."]
+        : ["Retry the same logical request; do not replace or detach the Agent thread."]
+  });
+}
+
+function taskPreflightErrorResult(
+  errorValue: unknown,
+  status: "failed" | "setup-required" = "failed"
+): ToolResult {
+  const nextActions = structuredErrorNextActions(errorValue);
+  const error = normalizeStructuredError(errorValue);
+  const structured = codexTaskOutputSchema.parse({
+    contractVersion: "1",
+    kind: "task",
+    state: status,
+    terminal: true,
+    delivery: "none",
+    replay: false,
+    jobId: null,
+    activityId: null,
+    agentId: null,
+    threadId: null,
+    projectName: null,
+    requestId: null,
+    jobVersion: null,
+    activityVersion: null,
+    executionMode: null,
+    backend: null,
+    sandbox: null,
+    requestedModel: null,
+    requestedReasoningEffort: null,
+    actualModel: null,
+    actualReasoningEffort: null,
+    rerouted: false,
+    rerouteReason: null,
+    resultAvailability: "unavailable",
+    resultOmitted: false,
+    error: taskStructuredErrorProjection(error),
+    warnings: [],
+    nextActions
+  });
+  return contractedToolResult(
+    taskErrorResultContract,
+    errorValue,
+    structured,
+    { text: taskCompatibilityText(structured) },
+    { isError: true }
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

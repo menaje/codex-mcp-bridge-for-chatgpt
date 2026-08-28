@@ -16,6 +16,8 @@ import type {
 } from "../src/modelCatalog.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { ACTIVITY_VIEW_METADATA_KEY } from "../src/activityCard.js";
+import { validateActivityViewPrivateMetadata } from "../src/tools.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
@@ -167,15 +169,14 @@ describe("http server", () => {
 
     const response = await fetch(`${baseUrl}/healthz`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    expect(await response.json()).toEqual({
       ok: true,
       name: PRODUCT_INFO.runtimeName,
-      title: PRODUCT_INFO.displayName,
-      build: { version: PRODUCT_INFO.version, id: expect.any(String), sourceHash: expect.any(String) }
+      title: PRODUCT_INFO.displayName
     });
   });
 
-  it("exposes only the supplied aggregate runtime diagnostics through health", async () => {
+  it("does not expose supplied operator diagnostics through health", async () => {
     const baseUrl = await start(
       { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
       new FakeUpstream(),
@@ -192,10 +193,10 @@ describe("http server", () => {
     );
 
     const body = await (await fetch(`${baseUrl}/healthz`)).json() as Record<string, any>;
-    expect(body.diagnostics.appServerLateResponses).toEqual({
-      retained: 2,
-      totals: { observed: 7, success: 5, error: 2 },
-      latest: { method: "turn/start", outcome: "success", reconciliation: "identifier-recorded" }
+    expect(body).toEqual({
+      ok: true,
+      name: PRODUCT_INFO.runtimeName,
+      title: PRODUCT_INFO.displayName
     });
   });
 
@@ -269,7 +270,13 @@ describe("http server", () => {
         }
       }
     });
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent)
+    expect(parseToolJson(saved)).toMatchObject({
+      revisions: { policy: 1, settings: 1 },
+      policy: {
+        model: { mode: "fixed", model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect((saved as { _meta?: Record<string, any> })._meta?.["codex/settingsView"])
       .toMatchObject({
         policyActivation: {
           policyRevision: 1,
@@ -301,17 +308,18 @@ describe("http server", () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
     await registerProject(client, mkdtempSync(path.join(tmpdir(), "bridge-http-project-")));
 
-    const policy = parseToolJson(
-      await client.callTool({ name: "codex_status", arguments: {} })
+    const diagnostics = parseToolJson(
+      await client.callTool({ name: "codex_diagnostics", arguments: {} })
     );
-    expect(policy.stateStorage).toMatchObject({
+    expect(diagnostics.storage).toMatchObject({
       backend: "sqlite",
       transactional: true,
       schemaVersion: 8,
-      bridgeInstanceId: expect.any(String),
-      activityFoundation: "schema-v8-project-registry-atomic-admission",
-      activityPersistent: true
+      activityPersistent: true,
+      sessionPersistent: true,
+      settingsPersistent: true
     });
+    expect(diagnostics.forensics.bridgeInstanceId).toEqual(expect.any(String));
 
     const started = parseToolJson(
       await client.callTool({
@@ -331,13 +339,17 @@ describe("http server", () => {
         }
       })
     );
-    expect(started.status).toBe("running");
+    expect(started.state).toBe("running");
     expect(typeof started.jobId).toBe("string");
 
     upstream.resolveNext();
     const completed = await waitForJobStatus(client, started.jobId, "completed");
-    expect(completed.status).toBe("completed");
-    expect(JSON.stringify(completed.result)).toContain("thread-1");
+    expect(completed.state).toBe("completed");
+    expect(completed.result).toMatchObject({
+      availability: "delivered",
+      omitted: false
+    });
+    expect(JSON.stringify(completed.result)).not.toContain("done");
 
     await client.close();
   });
@@ -525,11 +537,8 @@ describe("http server", () => {
       },
       _meta: metadata
     });
-    const scopeId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeSession?.scopeId;
-    const agentId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.agentId;
-    expect(scopeId).toMatch(/^[0-9a-f-]{36}$/);
+    const startedStructured = parseToolJson(started);
+    const agentId = startedStructured.agentId;
     expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
     await firstClient.close();
     await stopLastServer();
@@ -544,21 +553,15 @@ describe("http server", () => {
     const restored = parseToolJson(
       await secondClient.callTool({ name: "codex_status", arguments: {}, _meta: metadata })
     );
-    expect(restored.scopeView).toMatchObject({
+    expect(restored.scope).toMatchObject({
       mode: "scoped",
-      scopeId,
       source: "host-metadata"
     });
-    expect(restored.scopeCounts).toMatchObject({ sessions: 1, jobs: 1 });
-    expect(restored.agents).toEqual([
-      expect.objectContaining({
-        agentId,
-        lifecycle: "idle",
-        hasCurrentThread: true,
-        threadHistoryCount: 1,
-        currentThread: expect.objectContaining({ threadId: "http-thread-1" })
-      })
-    ]);
+    expect(restored.counts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(restored.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "agent", id: agentId, state: "idle" }),
+      expect.objectContaining({ type: "job", agentId, threadId: "http-thread-1" })
+    ]));
     expect(JSON.stringify(restored)).not.toContain("http-session");
     expect(JSON.stringify(restored)).not.toContain("http-subject");
     expect(JSON.stringify(restored)).not.toContain("http-org");
@@ -595,8 +598,7 @@ describe("http server", () => {
         }
       }
     });
-    const activityId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId;
+    const activityId = parseToolJson(started).activityId;
     expect(activityId).toMatch(/^[0-9a-f-]{36}$/);
     await firstClient.close();
     await stopLastServer();
@@ -617,30 +619,52 @@ describe("http server", () => {
       arguments: {
         scopeId: SCOPE_A,
         activityId,
-        expectedVersion: beforeUpdate.activity.version,
+        expectedVersion: statusItem(beforeUpdate, "activity", activityId).version,
         operation: { kind: "set-policy", policy: { handoff: "notify" } }
       }
     }));
-    expect(updated.activity).toMatchObject({
-      activityId,
-      title: "Persistent Activity",
-      kind: "review",
-      handoffPolicy: "notify",
-      lifecycle: "open",
-      counts: { completed: 1 }
+    expect(updated).toMatchObject({
+      target: { type: "activity", id: activityId, state: "open" },
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
     });
+    const updatedView = privateActivityView(await secondClient.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, activityId }
+    }));
+    expect(updatedView.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        activityId,
+        title: "Persistent Activity",
+        lifecycle: "open",
+        counts: expect.objectContaining({ completed: 1 })
+      })
+    ]));
     const completed = parseToolJson(await secondClient.callTool({
       name: "codex_activity_update",
       arguments: {
         scopeId: SCOPE_A,
         activityId,
-        expectedVersion: updated.activity.version,
+        expectedVersion: updated.target.version,
         operation: { kind: "complete" }
       }
     }));
-    expect(completed.activity).toMatchObject({ lifecycle: "completed", completionVersion: 1 });
+    expect(completed.target).toMatchObject({
+      type: "activity",
+      id: activityId,
+      state: "completed"
+    });
     await secondClient.close();
     await stopLastServer();
+    const persistedStore = new BridgeStateStore({
+      file: path.join(stateDirectory, "state.sqlite")
+    });
+    expect(persistedStore.getActivity(activityId)).toMatchObject({
+      lifecycle: "completed",
+      handoffPolicy: "notify",
+      completionVersion: 1
+    });
+    persistedStore.close();
 
     const thirdUrl = await start(
       { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
@@ -649,6 +673,13 @@ describe("http server", () => {
     );
     const thirdClient = new Client({ name: "http-activity-client", version: "0.0.0" });
     await thirdClient.connect(new StreamableHTTPClientTransport(new URL(`${thirdUrl}/mcp`)));
+    const completedView = privateActivityView(await thirdClient.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, activityId }
+    }));
+    expect(completedView.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ activityId, lifecycle: "completed" })
+    ]));
     const deniedAttachment = await thirdClient.callTool({
       name: "codex_task",
       arguments: {
@@ -702,8 +733,7 @@ async function stopLastServer(): Promise<void> {
 
 async function registerProject(client: Client, cwd: string): Promise<void> {
   const opened = await client.callTool({ name: "codex_settings", arguments: {} });
-  const revision = (opened as { structuredContent?: Record<string, any> })
-    .structuredContent?.settings?.registryRevision;
+  const revision = parseToolJson(opened).revisions?.registry;
   if (!Number.isInteger(revision)) throw new Error("Expected project registry revision.");
   const saved = await client.callTool({
     name: "codex_update_settings",
@@ -723,8 +753,24 @@ async function registerProject(client: Client, cwd: string): Promise<void> {
 }
 
 function parseToolJson(result: unknown): Record<string, any> {
-  const content = (result as { content?: Array<{ text?: string }> }).content;
-  return JSON.parse(content?.[0]?.text || "{}");
+  return (result as { structuredContent?: Record<string, any> }).structuredContent || {};
+}
+
+function statusItem(
+  status: Record<string, any>,
+  type: "activity" | "agent" | "job" | "thread",
+  id?: string
+): Record<string, any> {
+  const item = status.items?.find((entry: Record<string, any>) =>
+    entry.type === type && (id === undefined || entry.id === id)
+  );
+  if (!item) throw new Error(`Expected ${type} status item${id ? ` ${id}` : ""}.`);
+  return item;
+}
+
+function privateActivityView(result: unknown): Record<string, any> {
+  const metadata = (result as { _meta?: Record<string, unknown> })._meta;
+  return validateActivityViewPrivateMetadata(metadata?.[ACTIVITY_VIEW_METADATA_KEY]).view;
 }
 
 function rawToolCall(
@@ -765,8 +811,9 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
         }
       })
     );
-    if (status.status === expected) {
-      return status;
+    const job = statusItem(status, "job", jobId);
+    if (job.state === expected) {
+      return job;
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

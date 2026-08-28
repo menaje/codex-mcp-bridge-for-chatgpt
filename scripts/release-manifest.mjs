@@ -231,6 +231,7 @@ export function deriveReleaseMetadata(manifest) {
     generateNotes: manifest.release.generateNotes,
     packageFilename,
     checksumFilename: `${packageFilename}.sha256`,
+    skillsArchiveFilename: `codex-mcp-bridge-skills-${version}.zip`,
     repositorySlug,
     repositoryUrl,
     pluginName: manifest.plugin.name,
@@ -283,6 +284,13 @@ export function derivePluginManifests(manifest) {
 
 export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
+  const packageVersion = packageVersionFromSource(repoRoot);
+  if (manifest.release.version !== packageVersion) {
+    throw new Error(
+      `Release version ${manifest.release.version} does not match package.json version ${packageVersion}. ` +
+      "package.json is the bridge/runtime version source of truth; run npm run release:sync."
+    );
+  }
   const prepared = preparePackageMetadata(repoRoot, manifest);
   const drift = [];
   if (!sameJson(prepared.packageJson, prepared.nextPackageJson)) drift.push("package.json");
@@ -329,14 +337,16 @@ export function validateAppServerSchemaLockMetadata(value, expectedCodexCliVersi
 
 export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
-  const prepared = preparePackageMetadata(repoRoot, manifest);
+  const synchronizedManifest = manifestForPackageVersion(manifest, packageVersionFromSource(repoRoot));
+  const prepared = preparePackageMetadata(repoRoot, synchronizedManifest);
+  writeJsonIfChanged(path.join(repoRoot, MANIFEST_FILENAME), manifest, synchronizedManifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
   writeJsonIfChanged(path.join(repoRoot, "package-lock.json"), prepared.packageLock, prepared.nextPackageLock);
-  writePluginManifests(repoRoot, manifest);
+  writePluginManifests(repoRoot, synchronizedManifest);
   if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
-    syncUiResources(repoRoot, manifest);
+    syncUiResources(repoRoot, synchronizedManifest);
   }
-  return deriveReleaseMetadata(manifest);
+  return deriveReleaseMetadata(synchronizedManifest);
 }
 
 export function deriveUiResourceManifest(manifest, rendered, previous) {
@@ -377,7 +387,13 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
     for (const entry of candidates) {
       if (!validUiRevision(entry) || seenDigests.has(entry.digest)) continue;
       const contractGeneration = uiContractGeneration(entry);
-      if (contractGeneration === undefined || contractGeneration < minimumContractGeneration) continue;
+      // Activity resources are immutable mount targets. Keep every historical
+      // revision registered so an already-mounted ChatGPT conversation can
+      // refresh through app-only tools after the minimum generation advances.
+      if (
+        contractGeneration === undefined ||
+        (name !== "activity" && contractGeneration < minimumContractGeneration)
+      ) continue;
       seenDigests.add(entry.digest);
       previousRevisions.push({
         digest: entry.digest,
@@ -479,11 +495,12 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
 
 export function setReleaseVersion(requested, repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
-  const version = resolveVersion(manifest.release.version, requested);
-  const nextManifest = structuredClone(manifest);
-  nextManifest.release.version = version;
-  nextManifest.release.channel = SEMVER_PATTERN.exec(version)?.[4] ? "prerelease" : "stable";
-  validateReleaseManifest(nextManifest);
+  const packageJson = readJson(path.join(repoRoot, "package.json"));
+  const version = resolveVersion(packageVersionFromSource(repoRoot), requested);
+  const nextPackageJson = structuredClone(packageJson);
+  nextPackageJson.version = version;
+  writeJsonIfChanged(path.join(repoRoot, "package.json"), packageJson, nextPackageJson);
+  const nextManifest = manifestForPackageVersion(manifest, version);
   const prepared = preparePackageMetadata(repoRoot, nextManifest);
   writeJsonAtomically(path.join(repoRoot, MANIFEST_FILENAME), nextManifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
@@ -528,6 +545,22 @@ function preparePackageMetadata(repoRoot, manifest) {
   nextPackageLock.packages[""].name = metadata.packageName;
   nextPackageLock.packages[""].version = metadata.version;
   return { packageJson, nextPackageJson, packageLock, nextPackageLock };
+}
+
+function packageVersionFromSource(repoRoot) {
+  const packageJson = readJson(path.join(repoRoot, "package.json"));
+  if (typeof packageJson.version !== "string" || !SEMVER_PATTERN.test(packageJson.version)) {
+    throw new Error("package.json version must be a valid SemVer value.");
+  }
+  return packageJson.version;
+}
+
+function manifestForPackageVersion(manifest, version) {
+  const nextManifest = structuredClone(manifest);
+  nextManifest.release.version = version;
+  nextManifest.release.channel = SEMVER_PATTERN.exec(version)?.[4] ? "prerelease" : "stable";
+  validateReleaseManifest(nextManifest);
+  return nextManifest;
 }
 
 function resolveVersion(current, requested) {
@@ -733,6 +766,7 @@ function printGithubOutput(metadata) {
     generate_notes: metadata.generateNotes,
     package_filename: metadata.packageFilename,
     checksum_filename: metadata.checksumFilename,
+    skills_archive_filename: metadata.skillsArchiveFilename,
     repository: metadata.repositorySlug,
     repository_url: metadata.repositoryUrl
   };

@@ -1,0 +1,267 @@
+{
+  "auditVersion": 1,
+  "issue": 36,
+  "basis": {
+    "commit": "2b077a4",
+    "normativeClient": "ChatGPT",
+    "measurement": "Buffer.byteLength(JSON.stringify(value), 'utf8')",
+    "fixtureProfile": "bounded deterministic final W0/W1/W2/W3 contract fixtures",
+    "phasesIncluded": [
+      "W0",
+      "W1",
+      "W2",
+      "M1",
+      "W3",
+      "M2"
+    ],
+    "phasesDeferred": [],
+    "m1Evidence": {
+      "status": "passed",
+      "source": "authoritative real ChatGPT Work conversation",
+      "activityResourceUri": "ui://codex-mcp-bridge/activity/17c24231c553.html",
+      "generation11InitialHydration": true,
+      "generation11SnapshotRefresh": true,
+      "retainedGeneration10Resolved": true
+    },
+    "m2Evidence": {
+      "status": "passed",
+      "source": "authoritative real ChatGPT Work conversation",
+      "currentActivityResourceUri": "ui://codex-mcp-bridge/activity/17c24231c553.html",
+      "foregroundResult": "ISSUE36_M2_OK",
+      "backgroundResult": "ISSUE36_BG_OK",
+      "settingsHydrated": true,
+      "generation11InitialHydration": true,
+      "generation11SnapshotRefresh": true,
+      "sameResponseSiblingWinner": true,
+      "nextResponseSupersession": true,
+      "retainedActivityResourceUri": "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
+      "retainedGeneration10Hydrated": true,
+      "retainedGeneration10SnapshotRefresh": true
+    }
+  },
+  "issueBaseline": {
+    "modelVisibleSchemaBytes": 20128,
+    "byTool": {
+      "codex_activity": 6720,
+      "codex_settings": 10664,
+      "codex_task": 2078,
+      "otherSixToolsEach": 111
+    },
+    "representativeResultBytes": {
+      "codex_activity_one_activity": {
+        "structuredContent": 3625,
+        "content": 1666,
+        "total": 5291
+      },
+      "codex_models_three_models": {
+        "structuredContent": 2061,
+        "content": 3143,
+        "total": 5204
+      },
+      "codex_settings": {
+        "structuredContent": 5805,
+        "content": 7618,
+        "total": 13423
+      },
+      "codex_status_empty_overview": {
+        "structuredContent": 4077,
+        "content": 5129,
+        "total": 9206
+      },
+      "codex_task_foreground_completed": {
+        "structuredContent": 2075,
+        "content": 28,
+        "total": 2103
+      }
+    }
+  },
+  "current": {
+    "schemaBytes": {
+      "modelVisible": {
+        "byTool": {
+          "codex_activity": 564,
+          "codex_activity_cancel": 887,
+          "codex_activity_update": 887,
+          "codex_agent": 641,
+          "codex_cancel": 641,
+          "codex_models": 1067,
+          "codex_settings": 1724,
+          "codex_status": 3167,
+          "codex_task": 2359
+        },
+        "totalBytes": 11937
+      },
+      "appOnly": {
+        "byTool": {
+          "codex_activity_handoff": 910,
+          "codex_activity_job_cancel": 2218,
+          "codex_activity_snapshot": 2954,
+          "codex_agent_recovery_detach": 2218,
+          "codex_background_process_terminate": 2218,
+          "codex_diagnostics": 2630,
+          "codex_interaction_respond": 2218,
+          "codex_job_steer": 2218,
+          "codex_update_settings": 1724
+        },
+        "totalBytes": 19308
+      }
+    },
+    "resultBytes": {
+      "structuredContent": {
+        "codex_activity": {
+          "byFixture": {
+            "empty-activity-view": 103
+          },
+          "maxBytes": 103,
+          "minBytes": 103
+        },
+        "codex_activity_cancel": {
+          "byFixture": {
+            "activity-cancelled": 322
+          },
+          "maxBytes": 322,
+          "minBytes": 322
+        },
+        "codex_activity_update": {
+          "byFixture": {
+            "activity-updated": 250
+          },
+          "maxBytes": 250,
+          "minBytes": 250
+        },
+        "codex_agent": {
+          "byFixture": {
+            "agent-busy": 234,
+            "agent-renamed": 137
+          },
+          "maxBytes": 234,
+          "minBytes": 137
+        },
+        "codex_cancel": {
+          "byFixture": {
+            "job-cancelled": 208
+          },
+          "maxBytes": 208,
+          "minBytes": 208
+        },
+        "codex_models": {
+          "byFixture": {
+            "current-model-catalog": 320
+          },
+          "maxBytes": 320,
+          "minBytes": 320
+        },
+        "codex_settings": {
+          "byFixture": {
+            "compact-settings": 437
+          },
+          "maxBytes": 437,
+          "minBytes": 437
+        },
+        "codex_status": {
+          "byFixture": {
+            "failed-job": 636,
+            "overview": 455,
+            "running-job": 532
+          },
+          "maxBytes": 636,
+          "minBytes": 455
+        },
+        "codex_task": {
+          "byFixture": {
+            "cancelled": 849,
+            "completed": 637,
+            "failed": 824,
+            "replay": 655,
+            "running": 621,
+            "setup": 754
+          },
+          "maxBytes": 849,
+          "minBytes": 621
+        }
+      },
+      "content": {
+        "cancel-success": {
+          "tool": "codex_cancel",
+          "support": "documented-support-level",
+          "cap": 768,
+          "bytes": 36
+        },
+        "status-running": {
+          "tool": "codex_status",
+          "support": "documented-support-level",
+          "cap": 1024,
+          "bytes": 44
+        },
+        "task-completed-primary": {
+          "tool": "codex_task",
+          "support": "primary-payload",
+          "cap": "retained-result-limit",
+          "bytes": 33
+        },
+        "task-running": {
+          "tool": "codex_task",
+          "support": "documented-support-level",
+          "cap": 1024,
+          "bytes": 33
+        },
+        "task-structured-error": {
+          "tool": "codex_task",
+          "support": "documented-support-level",
+          "cap": 1536,
+          "bytes": 72
+        }
+      },
+      "privateMeta": {
+        "deterministicFixtures": {
+          "codex/activityBootstrap@11": 478,
+          "codex/activityView@11": 1189
+        },
+        "realHostCapture": {
+          "measured": false,
+          "functionalEvidence": "M1 and M2 passed",
+          "reason": "Exact raw ChatGPT metadata bytes were not supplied; deterministic fixture bytes are reported without fabricating a host capture."
+        }
+      }
+    },
+    "contentByteCaps": {
+      "codex_status": 1024,
+      "codex_models": 512,
+      "codex_settings": 768,
+      "codex_activity": 1024,
+      "codex_agent": 512,
+      "codex_cancel": 768,
+      "codex_activity_update": 512,
+      "codex_activity_cancel": 768,
+      "codex_task_state": 1024,
+      "codex_task_error": 1536,
+      "codex_diagnostics": 512,
+      "app_only_mutation": 512,
+      "app_only_hydration": 1024
+    },
+    "structuredContentByteCaps": {
+      "codex_status": 524288,
+      "codex_models": 262144,
+      "codex_settings": 32768,
+      "codex_activity": 524288,
+      "codex_agent": 131072,
+      "codex_cancel": 131072,
+      "codex_activity_update": 131072,
+      "codex_activity_cancel": 262144,
+      "codex_task": 32768,
+      "codex_diagnostics": 131072,
+      "app_only_mutation": 262144,
+      "app_only_hydration": 1048576
+    }
+  },
+  "finalGenerationBudget": {
+    "targetReductionPercent": 40,
+    "targetModelVisibleSchemaBytes": 12077,
+    "actualModelVisibleSchemaBytes": 11937,
+    "reductionBytes": 8191,
+    "reductionPercent": 40.695,
+    "headroomBytes": 140,
+    "enforcedAt": "W3",
+    "passed": true
+  }
+}

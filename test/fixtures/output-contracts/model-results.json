@@ -1,0 +1,225 @@
+{
+  "codex_activity": [
+    {
+      "fixture": "empty-activity-view",
+      "structuredContent": {
+        "kind": "activity",
+        "scopeVersion": 0,
+        "counts": { "activities": 0, "agents": 0, "active": 0, "needsAttention": 0 }
+      }
+    }
+  ],
+  "codex_activity_cancel": [
+    {
+      "fixture": "activity-cancelled",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "cancel",
+        "target": { "type": "activity", "id": "activity-cancelled", "state": "cancelled", "version": 4 },
+        "affectedJobIds": ["job-cancelled"],
+        "policySource": "explicit-tool-input",
+        "codexOutputCanMutatePolicy": false,
+        "warnings": ["Partial filesystem changes were not rolled back."],
+        "nextActions": []
+      }
+    }
+  ],
+  "codex_activity_update": [
+    {
+      "fixture": "activity-updated",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "seal",
+        "target": { "type": "activity", "id": "activity-updated", "state": "sealed", "version": 3 },
+        "affectedJobIds": [],
+        "policySource": "explicit-tool-input",
+        "codexOutputCanMutatePolicy": false,
+        "warnings": [],
+        "nextActions": []
+      }
+    }
+  ],
+  "codex_agent": [
+    {
+      "fixture": "agent-renamed",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "rename",
+        "target": { "type": "agent", "id": "agent-renamed", "version": 2 },
+        "warnings": [],
+        "nextActions": []
+      }
+    },
+    {
+      "fixture": "agent-busy",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": false,
+        "action": "archive",
+        "code": "AGENT_BUSY",
+        "target": { "type": "agent", "id": "agent-busy", "version": 3 },
+        "warnings": ["Force-stop does not roll back filesystem changes."],
+        "nextActions": ["codex_cancel(job-running)"]
+      }
+    }
+  ],
+  "codex_cancel": [
+    {
+      "fixture": "job-cancelled",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "cancel-job",
+        "target": { "type": "job", "id": "job-cancelled", "state": "cancelled" },
+        "warnings": ["Cancellation does not roll back partial filesystem changes."],
+        "nextActions": []
+      }
+    }
+  ],
+  "codex_models": [
+    {
+      "fixture": "current-model-catalog",
+      "structuredContent": {
+        "source": "codex-cli",
+        "stale": false,
+        "warning": null,
+        "policy": {
+          "mode": "automatic",
+          "model": "gpt-5.6-sol",
+          "reasoningEffort": "max",
+          "allowed": "catalog-visible",
+          "delegation": true
+        },
+        "priority": false,
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6 Codex",
+            "defaultEffort": "max",
+            "efforts": ["max"],
+            "serviceTiers": [],
+            "isDefault": true
+          }
+        ]
+      }
+    }
+  ],
+  "codex_settings": [
+    {
+      "fixture": "compact-settings",
+      "structuredContent": {
+        "revisions": { "settings": 4, "registry": 2, "policy": 4 },
+        "policy": {
+          "access": "adaptive",
+          "model": {
+            "mode": "automatic",
+            "model": "gpt-5.6-sol",
+            "reasoningEffort": "max",
+            "allowed": "catalog-visible",
+            "delegation": true
+          },
+          "priority": false,
+          "maxConcurrentJobs": 30,
+          "activityVisibility": "always",
+          "completionHandoff": "off"
+        },
+        "projects": [{ "name": "Bridge", "available": true, "archived": false }],
+        "catalog": { "stale": false, "modelCount": 1 },
+        "warnings": [],
+        "nextActions": []
+      }
+    }
+  ],
+  "codex_status": [
+    {
+      "fixture": "overview",
+      "structuredContent": {
+        "kind": "overview",
+        "scope": { "mode": "scoped", "source": "host-metadata" },
+        "counts": {
+          "sessions": 1,
+          "jobs": 1,
+          "runningJobs": 1,
+          "activities": 1,
+          "agents": 1,
+          "orphanedAgents": 0
+        },
+        "items": [
+          { "type": "session", "id": "thread-running", "threadId": "thread-running" },
+          { "type": "job", "id": "job-running", "state": "running", "activityId": "activity-running" },
+          { "type": "activity", "id": "activity-running", "state": "open" },
+          { "type": "agent", "id": "agent-running", "state": "active" }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "fixture": "running-job",
+      "structuredContent": {
+        "kind": "job",
+        "scope": { "mode": "scoped" },
+        "counts": {
+          "sessions": 0,
+          "jobs": 1,
+          "runningJobs": 1,
+          "activities": 1,
+          "agents": 1,
+          "orphanedAgents": 0
+        },
+        "items": [{
+          "type": "job",
+          "id": "job-running",
+          "state": "running",
+          "activityId": "activity-running",
+          "agentId": "agent-running",
+          "terminal": false,
+          "delivery": "status",
+          "replay": false,
+          "versions": { "job": 2, "activity": 1 },
+          "execution": { "mode": "background", "backend": "mcp-server", "sandbox": "read-only" },
+          "result": { "availability": "pending", "omitted": false },
+          "nextActions": [],
+          "message": "Codex is running."
+        }],
+        "warnings": []
+      }
+    },
+    {
+      "fixture": "failed-job",
+      "structuredContent": {
+        "kind": "job",
+        "scope": { "mode": "scoped" },
+        "counts": {
+          "sessions": 1,
+          "jobs": 1,
+          "runningJobs": 0,
+          "activities": 1,
+          "agents": 1,
+          "orphanedAgents": 0
+        },
+        "items": [{
+          "type": "job",
+          "id": "job-failed",
+          "state": "failed",
+          "activityId": "activity-failed",
+          "agentId": "agent-failed",
+          "threadId": "thread-failed",
+          "terminal": true,
+          "delivery": "none",
+          "replay": false,
+          "versions": { "job": 4, "activity": 2 },
+          "execution": { "mode": "background", "backend": "app-server", "sandbox": "read-only" },
+          "result": { "availability": "unavailable", "omitted": false },
+          "error": { "code": "JOB_FAILED", "message": "The upstream worker failed." },
+          "nextActions": [],
+          "message": "The upstream worker failed."
+        }],
+        "warnings": []
+      }
+    }
+  ],
+  "codex_task": []
+}
