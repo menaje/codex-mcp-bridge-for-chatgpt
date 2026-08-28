@@ -42,7 +42,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, own automatic Activity-card presentation, and return a completed foreground Job's bounded structured `answer`.
 - `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state through one optional discriminated `query`; only an exact completed Job query returns its bounded `answer`.
 - `codex_steer`: add bounded guidance to one exact same-scope active App Server Job without creating or queuing another turn.
-- `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
+- `codex_activity`: explicitly open or reopen the localized, scoped, paginated full Activity card on user request.
 - `codex_activity_update`: apply one exact-version, non-cancelling lifecycle, verification, or policy operation.
 - `codex_activity_cancel`: idempotently force-stop every active job in one Activity and mark it cancelled.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.

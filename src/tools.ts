@@ -4564,7 +4564,10 @@ export function registerBridgeTools(
         30,
         selected?.activityId,
         undefined,
-        presentation
+        presentation,
+        undefined,
+        undefined,
+        Boolean(args.activityId)
       );
       if (selected) {
         (view.structured as Record<string, unknown>).presentation = jobs.activityCardRenderHint(
@@ -9353,7 +9356,8 @@ async function buildActivityView(
   wait?: ActivityScopeWatchResult,
   presentation: ActivityViewPresentationContext = { kind: "explicit" },
   lease?: ActivityCardLeaseTouchResult,
-  historyCursor?: string
+  historyCursor?: string,
+  focusSelectedActivityPage = true
 ) {
   const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
   const legacy = await buildLegacyActivityView(
@@ -9615,6 +9619,7 @@ async function buildActivityView(
     updatedAt: string;
   }> = [];
   const idleAgentRows: Array<Record<string, unknown>> = [];
+  const legacyIdleAgentRows: Array<Record<string, unknown>> = [];
   const endedAgentRows: Array<Record<string, unknown>> = [];
 
   for (const agent of allAgents) {
@@ -9634,8 +9639,22 @@ async function buildActivityView(
           .find((job) => job.agentId === agent.agentId)
       : jobs.listForAgent(agent.agentId).at(-1);
     const execution = activityCardExecution(latestActivityJob, modelCatalog);
+    const assignment = latestActivity
+      ? assignmentFor(latestActivity.activityId, agent.agentId)
+      : undefined;
+    const idleAgentRow = {
+      agentId: agent.agentId,
+      agentName: agent.agentName,
+      role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+      latestActivityTitle: latestActivity?.title || null,
+      workspaceLabels: hasMultipleWorkspaces && latestActivity
+        ? workspacesFor(latestActivity.activityId)
+        : [],
+      ...(execution ? { execution } : {}),
+      updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
+    };
+    if (agent.lifecycle === "idle") idleAgentRows.push(idleAgentRow);
     if (latestActivity && completedActivityRows.has(latestActivity.activityId)) {
-      const assignment = assignmentFor(latestActivity.activityId, agent.agentId);
       completedAgentRows.push({
         agentId: agent.agentId,
         agentName: agent.agentName,
@@ -9656,9 +9675,6 @@ async function buildActivityView(
       (latestActivity && endedActivityRows.has(latestActivity.activityId)) ||
       agent.lifecycle === "archived"
     ) {
-      const assignment = latestActivity
-        ? assignmentFor(latestActivity.activityId, agent.agentId)
-        : undefined;
       endedAgentRows.push({
         agentId: agent.agentId,
         agentName: agent.agentName,
@@ -9673,20 +9689,7 @@ async function buildActivityView(
       });
       continue;
     }
-    const assignment = latestActivity
-      ? assignmentFor(latestActivity.activityId, agent.agentId)
-      : undefined;
-    idleAgentRows.push({
-      agentId: agent.agentId,
-      agentName: agent.agentName,
-      role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-      latestActivityTitle: latestActivity?.title || null,
-      workspaceLabels: hasMultipleWorkspaces && latestActivity
-        ? workspacesFor(latestActivity.activityId)
-        : [],
-      ...(execution ? { execution } : {}),
-      updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
-    });
+    if (agent.lifecycle === "idle") legacyIdleAgentRows.push(idleAgentRow);
   }
 
   completedAgentRows.sort((left, right) =>
@@ -9706,7 +9709,9 @@ async function buildActivityView(
     ? completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row)
     : [];
   const fullActivityRows = [...activeRows, ...historyRows];
-  const visibleLegacyIdleAgents = feedMode === "full" ? idleAgentRows.slice(0, limit) : [];
+  const visibleLegacyIdleAgents = feedMode === "full"
+    ? legacyIdleAgentRows.slice(0, limit)
+    : [];
   const visibleEndedAgents = feedMode === "full" ? endedAgentRows.slice(0, limit) : [];
 
   let pageOffset = 0;
@@ -9718,7 +9723,7 @@ async function buildActivityView(
     } else {
       pageReset = true;
     }
-  } else if (feedMode === "full" && selectedActivityId) {
+  } else if (feedMode === "full" && focusSelectedActivityPage && selectedActivityId) {
     const selectedActivityIndex = fullActivityRows.findIndex(
       (row) => row.activityId === selectedActivityId
     );
@@ -9838,9 +9843,10 @@ async function buildActivityView(
           hasMore: feedMode === "full" && completedAgentRows.length > visibleCompletedAgents.length
         },
         idle: {
-          agentCount: feedMode === "full" ? idleAgentRows.length : 0,
+          agentCount: feedMode === "full" ? legacyIdleAgentRows.length : 0,
           rows: visibleLegacyIdleAgents,
-          hasMore: feedMode === "full" && idleAgentRows.length > visibleLegacyIdleAgents.length
+          hasMore: feedMode === "full" &&
+            legacyIdleAgentRows.length > visibleLegacyIdleAgents.length
         },
         ended: {
           agentCount: feedMode === "full" ? endedAgentRows.length : 0,

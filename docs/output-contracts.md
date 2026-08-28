@@ -1,8 +1,9 @@
 # Output projection contracts
 
 This document defines the output profile established by issue 36, corrected by
-issue 38, and extended with the issue-40 active-turn steering contract. ChatGPT
-is the normative client. Public `structuredContent` is authoritative for
+issue 38, extended with the issue-40 active-turn steering contract, and refined
+by issue 41's compact/explicit Activity projections. ChatGPT is the normative
+client. Public `structuredContent` is authoritative for
 model/orchestrator decisions and carries a bounded final `answer`; `content`
 remains a compatibility copy because some MCP clients consume only that channel.
 
@@ -28,7 +29,7 @@ The channels are independent consumer contracts. Private `_meta` is presentation
 | `codex_task` | Contract kind/version, state, terminal/delivery/replay, semantic request/project/Activity/Agent/Job/thread IDs, distinct Job/Activity versions, execution mode/backend/sandbox, compact requested/actual selection audit, conditional reroute, result availability, bounded nullable `answer`, strict error, warnings, and next actions | Generation 11 automatic mount data is only `_meta["codex/activityBootstrap@11"]`; no public `bridgeSession`, `bridgeActivity`, `activityTracking`, or presentation-hydration leaf remains |
 | `codex_settings` | Revisions, compact active policy summary, path-free project availability, catalog availability/count, warnings, and next actions | Full localized editor view is validated at `_meta["codex/settingsView"]` |
 | `codex_status` | One compact closed envelope containing query kind, scope mode/source, counts, optional page data, strict typed items, wait outcome, result/error availability, warnings, and next actions. Only an exact completed Job item carries `answer`; summary queries expose an exact-Job retrieval action instead of bodies | Activity components refresh through `codex_activity_snapshot`; routine status is not a hydration or diagnostic API |
-| `codex_activity` | Activity identity/version and aggregate counts only | The full validated view is `_meta["codex/activityView@11"]`; `codex_activity_snapshot` owns live refresh, while `codex_activity_rehydrate` reconstructs only a one-shot historical view from an exact retained Task correlation |
+| `codex_activity` | Activity identity/version and exact scoped aggregate counts only | The explicit paginated full view is `_meta["codex/activityView@11"]`; automatic snapshots use compact current rows plus exact history counts, and `codex_activity_rehydrate` reconstructs only a compact one-shot historical view from an exact retained Task correlation |
 | `codex_models` | Compact selectable model descriptors, active policy summary, and Priority state | None |
 | `codex_steer` | Closed mutation result with exact compact Job/version, `active-codex-turn-only` scope, prompt-persistence assertion, `delivered | not-delivered | uncertain` delivery state, structured error, warnings, and next actions | None; the existing card-only `codex_job_steer` retains its separate lease-bound contract |
 | `codex_agent`, `codex_cancel`, `codex_activity_update`, `codex_activity_cancel` | Closed mutation envelope with action/outcome, strict typed target, bounded warnings/next actions, and affected IDs where relevant | Full lifecycle, cancellation provenance, process controls, and recovery data stay in bridge state or model-hidden app-only tools |

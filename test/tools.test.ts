@@ -8,7 +8,7 @@ import {
   ToolListChangedNotificationSchema,
   type Progress
 } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HARD_MAX_CONCURRENT_JOBS, loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
@@ -9372,6 +9372,32 @@ describe("bridge tools", () => {
       }
     });
 
+    const completedBootstrap = privateActivityBootstrap(started);
+    const completedAutomaticResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId,
+          generation: completedBootstrap.activity.cardGeneration,
+          presentation: {
+            kind: "automatic",
+            activityPresentationId: completedBootstrap.correlation.activityPresentationId,
+            reservationOwnerId: startedTask.jobId
+          }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "completed-idle-agent-summary" }
+    });
+    expect((completedAutomaticResult as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed).toMatchObject({
+        mode: "compact",
+        active: [],
+        historySummary: { completedActivities: 1, endedActivities: 0, idleAgents: 1 },
+        history: { rows: [] },
+        idleAgents: { rows: [] }
+      });
+
     const agentId = startedTask.agentId as string;
     const resumed = await runTask(client, {
       prompt: "start the next scoped activity",
@@ -9432,6 +9458,44 @@ describe("bridge tools", () => {
     expect(compact.archivedAgents).toEqual([]);
     expect(compact.activities).toEqual([]);
     expect(compact.unassignedJobs).toEqual([]);
+
+    const endedWithAgent = jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: "Ended history with idle Agent"
+    });
+    const endedIdleAgent = jobs.createAgent({
+      scopeId: SCOPE_A,
+      agentName: "Ended idle Agent"
+    });
+    jobs.assignAgent({
+      activityId: endedWithAgent.activityId,
+      agentId: endedIdleAgent.agentId,
+      contextMode: "fresh"
+    });
+    jobs.releaseAgentAssignment(endedWithAgent.activityId, endedIdleAgent.agentId);
+    jobs.cancelActivity(endedWithAgent.activityId, "Terminal idle Agent regression");
+    const endedAutomatic = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: resumedActivityId,
+          generation: bootstrap.activity.cardGeneration,
+          presentation: {
+            kind: "automatic",
+            activityPresentationId: bootstrap.correlation.activityPresentationId,
+            reservationOwnerId: parseToolJson(resumed).jobId
+          }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "compact-history-summary" }
+    });
+    expect((endedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed.historySummary).toEqual({
+        completedActivities: 1,
+        endedActivities: 2,
+        idleAgents: 2
+      });
     await close();
   });
 
@@ -9568,6 +9632,75 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("opens an unselected explicit Activity view at the priority-first page", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    for (let index = 0; index < 30; index += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Waiting Activity ${index + 1}`
+      });
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Waiting Agent ${index + 1}`
+      });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const newestIdle = jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: "Newest idle history"
+    });
+
+    const opened = privateActivityView(await client.callTool({
+      name: "codex_activity",
+      arguments: {}
+    }));
+    expect(opened.mountedActivity.activityId).toBe(newestIdle.activityId);
+    expect(opened.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(opened.feed.active).toHaveLength(30);
+    expect(opened.feed.active.every((row: Record<string, unknown>) =>
+      row.displayState === "waiting-gpt"
+    )).toBe(true);
+
+    const refreshedResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: opened.mountedActivity.activityId,
+          generation: opened.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        cursor: opened.feed.history.pagination.currentCursor
+      },
+      _meta: { "openai/widgetSessionId": "priority-first-explicit-view" }
+    });
+    const refreshed = (refreshedResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(refreshed.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(refreshed.feed.active).toHaveLength(30);
+    await close();
+  });
+
   it("orders Activity rows by user block, recovery, result review, and running state", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
@@ -9662,6 +9795,19 @@ describe("bridge tools", () => {
         executionMode: "background"
       }
     }));
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const terminating = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "show terminating within the progress group",
+        agentName: "Terminating ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const terminatingJob = jobs.get(terminating.jobId);
+    if (!terminatingJob) throw new Error("Expected terminating ordering Job.");
+    terminatingJob.status = "terminating";
 
     const card = privateActivityView(await client.callTool({ name: "codex_activity", arguments: {} }));
     expect(card.feed.active.map((row: { activityId: string; displayState: string }) => ({
@@ -9672,17 +9818,71 @@ describe("bridge tools", () => {
       { activityId: failed.activityId, displayState: "failed" },
       { activityId: waiting.activityId, displayState: "waiting-gpt" },
       { activityId: verification.activityId, displayState: "verification" },
+      { activityId: terminating.activityId, displayState: "terminating" },
       { activityId: newerRunning.activityId, displayState: "running" },
       { activityId: running.activityId, displayState: "running" }
     ]);
 
+    terminatingJob.status = "running";
     upstream.resolveNext(fakeCodexResult("approval-ordering-thread"));
     upstream.resolveNext(fakeCodexResult("running-ordering-thread"));
     upstream.resolveNext(fakeCodexResult("newer-running-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("terminating-ordering-thread"));
     await Promise.all([
       waitForJobStatus(client, approval.jobId, "completed"),
       waitForJobStatus(client, running.jobId, "completed"),
-      waitForJobStatus(client, newerRunning.jobId, "completed")
+      waitForJobStatus(client, newerRunning.jobId, "completed"),
+      waitForJobStatus(client, terminating.jobId, "completed")
+    ]);
+    await close();
+  });
+
+  it("uses Activity identity as the stable tiebreaker within one state group", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const [first, second] = await (async () => {
+      const frozenNow = Date.now();
+      const now = vi.spyOn(Date, "now").mockReturnValue(frozenNow);
+      try {
+        const firstResult = parseToolJson(await client.callTool({
+          name: "codex_task",
+          arguments: {
+            prompt: "first stable tie",
+            agentName: "Stable tie Agent One",
+            contextMode: "fresh",
+            executionMode: "background"
+          }
+        }));
+        const secondResult = parseToolJson(await client.callTool({
+          name: "codex_task",
+          arguments: {
+            prompt: "second stable tie",
+            agentName: "Stable tie Agent Two",
+            contextMode: "fresh",
+            executionMode: "background"
+          }
+        }));
+        return [firstResult, secondResult] as const;
+      } finally {
+        now.mockRestore();
+      }
+    })();
+
+    const card = privateActivityView(await client.callTool({
+      name: "codex_activity",
+      arguments: {}
+    }));
+    const tiedIds = card.feed.active
+      .map((row: { activityId: string }) => row.activityId)
+      .filter((activityId: string) => [first.activityId, second.activityId].includes(activityId));
+    expect(tiedIds).toEqual([first.activityId, second.activityId].sort());
+
+    upstream.resolveNext(fakeCodexResult("stable-tie-thread-one"));
+    upstream.resolveNext(fakeCodexResult("stable-tie-thread-two"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
     ]);
     await close();
   });

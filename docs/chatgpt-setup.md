@@ -450,48 +450,49 @@ In a new ChatGPT conversation:
 7. confirm `codex_task` has no `cwd`/UUID, projects only exact names plus `registryRevision`, and fixed access modes have no `sandbox`;
 8. start narrow foreground read-only Activities in each project, then omit `project` for a new Activity and confirm `PROJECT_REQUIRED`; continue an existing Activity without it and confirm the pinned project is inherited;
 9. retain an old descriptor, mutate the registry, and confirm its stale generation fails without an Activity, Agent, Job, or Codex call even if no `tools/list_changed` notification is consumed;
-10. open the flat Activity feed and verify project labels appear only when useful and there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
+10. mount an automatic Activity card and verify it shows only current/action-needed rows plus one exact past-record summary, with no completed/ended/idle disclosure payload;
 11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm one card is reused for the Activity;
-12. complete work and confirm **Completed Codex** is collapsed with distinct Agent and Activity counts, then reuse that Agent and confirm it returns to the current feed;
-13. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
-14. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source; use `fresh` plus another project to verify an explicit linked-project switch.
-15. in an App Server canary, verify command/file/permission/input prompts expose
+12. explicitly ask for all Activities, confirm `codex_activity` opens bounded previous/next pages in the same conversation only, and verify an exact old Activity opens on its containing page while an unselected view starts at the priority-first page;
+13. complete work, confirm the automatic summary's completed-Activity and actual idle-Agent counts remain exact after Agent reuse, and verify there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
+14. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
+15. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source; use `fresh` plus another project to verify an explicit linked-project switch;
+16. in an App Server canary, verify command/file/permission/input prompts expose
     only their advertised decisions, including session approval when offered;
     confirm cancel/decline, automatic resolution, and expiry all remove the
     control without stopping the turn;
-16. run two turns on the same App Server Agent with different allowed exact
+17. run two turns on the same App Server Agent with different allowed exact
     model/effort selections; confirm each `turn/start` admission and Job
     `executionAudit`, including reroute evidence if present;
-17. restart between those App Server turns and confirm `thread/read` resumes the
+18. restart between those App Server turns and confirm `thread/read` resumes the
     exact thread with the same session ID; fork once and verify direct ancestry;
     separately exercise busy, missing, and transient probe paths and verify only
     missing/system-error becomes orphaned;
-18. change the configured default backend, confirm the existing Agent still
+19. change the configured default backend, confirm the existing Agent still
     continues on its pinned backend, then perform an explicit fresh handoff and
     confirm the UI/result says summary-only continuity;
-19. trigger a context-window failure and confirm it remains a structured,
+20. trigger a context-window failure and confirm it remains a structured,
     replay-safe error with no silent model/effort downgrade;
-20. inspect `codex_status` for the experimental policy, exact CLI, catalog
+21. inspect `codex_status` for the experimental policy, exact CLI, catalog
     freshness, aggregate RSS/FD, startup/crash/config/MCP health, and orphaned
     count; verify no worker identifier, full path, raw reasoning, MCP payload,
     or collaboration prompt appears;
-21. start a long App Server Job, read its exact version, call `codex_steer`, and
+22. start a long App Server Job, read its exact version, call `codex_steer`, and
     confirm the same active turn consumes the delta without another
     `turn/started` event or a resolved pending interaction;
-22. retry that exact steering request and confirm one upstream `turn/steer`, then
+23. retry that exact steering request and confirm one upstream `turn/steer`, then
     change the prompt under the same request UUID and confirm
     `STEERING_REQUEST_CONFLICT` with no second dispatch;
-23. exercise stale version, inactive/terminal turn, active MCP Server Job, and
+24. exercise stale version, inactive/terminal turn, active MCP Server Job, and
     explicit cancellation races; confirm `STALE_JOB_VERSION`,
     `JOB_NOT_ACTIVE`, and `STEERING_UNSUPPORTED` remain distinct and no future
     turn is queued;
-24. interrupt the bridge after durable steering dispatch but before result
+25. interrupt the bridge after durable steering dispatch but before result
     recording, restart, and confirm the exact replay returns
     `DELIVERY_UNCERTAIN` without resending and that SQLite contains only the
     prompt digest, not the raw prompt;
-25. invoke public `codex_steer` with only its four fields plus ChatGPT host
+26. invoke public `codex_steer` with only its four fields plus ChatGPT host
     metadata, confirm the same host scope succeeds and another session fails;
-26. make Codex repeat the exact steering text in progress and its final answer,
+27. make Codex repeat the exact steering text in progress and its final answer,
     then confirm the exact Job result, public status output, Activity events, and
     a byte scan of Bridge SQLite contain only the redaction marker.
 
