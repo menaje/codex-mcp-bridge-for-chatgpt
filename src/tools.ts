@@ -1139,6 +1139,7 @@ export function validateModelVisibleStructuredOutput(
   value: unknown
 ): unknown {
   if (toolName === "codex_task") return validateTaskOutput(value);
+  if (toolName === "codex_status") return validateStatusOutput(value);
   return MODEL_VISIBLE_OUTPUT_SCHEMAS[toolName].parse(value);
 }
 
@@ -1150,10 +1151,62 @@ function validateTaskOutput(value: unknown): z.infer<typeof codexTaskOutputSchem
   if (parsed.delivery === "primary-content" && parsed.resultAvailability !== "delivered") {
     throw new Error("Primary-content delivery requires a delivered result.");
   }
-  if ((parsed.resultAvailability === "delivered") !== (parsed.answer !== null)) {
+  const delivered = parsed.resultAvailability === "delivered";
+  if (delivered !== (typeof parsed.answer === "string" && parsed.answer.length > 0)) {
     throw new Error("A delivered task result requires one model-authoritative answer.");
   }
+  if (!delivered && parsed.answer !== null) {
+    throw new Error("A non-delivered task result cannot expose a model-authoritative answer.");
+  }
+  if (parsed.answer !== null) validateModelPrimaryAnswerBytes(parsed.answer, "Task");
   return parsed;
+}
+
+function validateStatusOutput(value: unknown): z.infer<typeof codexStatusOutputSchema> {
+  const parsed = codexStatusOutputSchema.parse(value);
+  const jobs = parsed.items.filter((item) => item.type === "job");
+  if (parsed.kind === "job") {
+    if (parsed.items.length !== 1 || jobs.length !== 1) {
+      throw new Error("An exact Job status result must contain exactly one Job item.");
+    }
+    const job = jobs[0]!;
+    const delivered = job.result?.availability === "delivered";
+    const hasAnswer = typeof job.answer === "string" && job.answer.length > 0;
+    if (delivered !== hasAnswer) {
+      throw new Error(
+        "An exact delivered Job status requires one model-authoritative answer."
+      );
+    }
+    if (!delivered && job.answer !== undefined) {
+      throw new Error("A non-delivered exact Job status cannot expose an answer.");
+    }
+    if (job.answer !== undefined) validateModelPrimaryAnswerBytes(job.answer, "Exact Job status");
+    return parsed;
+  }
+
+  for (const job of jobs) {
+    if (job.answer !== undefined) {
+      throw new Error("Summary status results cannot embed Job answer bodies.");
+    }
+    if (
+      job.result?.availability === "delivered" &&
+      !job.nextActions?.includes(exactJobAnswerRetrievalAction(job.id))
+    ) {
+      throw new Error(
+        "A summary with a delivered Job must include its exact-Job answer retrieval action."
+      );
+    }
+  }
+  return parsed;
+}
+
+function validateModelPrimaryAnswerBytes(answer: string, context: string): void {
+  const bytes = Buffer.byteLength(JSON.stringify(answer), "utf8") - 2;
+  if (bytes > MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES) {
+    throw new Error(
+      `${context} answer is ${bytes} JSON-encoded bytes, above its ${MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES}-byte contract.`
+    );
+  }
 }
 
 export function validateAppOnlyStructuredOutput(
@@ -11263,9 +11316,7 @@ function compactStatusProjection(
       item.type === "job" && item.result?.availability === "delivered"
         ? statusItemOutputSchema.parse({
             ...item,
-            nextActions: [
-              `Call codex_status with query {kind:\"job\",id:\"${item.id}\"} to retrieve this Job's answer.`
-            ],
+            nextActions: [exactJobAnswerRetrievalAction(item.id)],
             message:
               "This summary does not include the Job answer; retrieve the exact Job before reporting its result."
           })
@@ -11280,6 +11331,10 @@ function compactStatusProjection(
     items: detail ? [detail, ...items] : items,
     warnings: stringArray(value.warnings).slice(0, 20)
   });
+}
+
+function exactJobAnswerRetrievalAction(jobId: string): string {
+  return `Call codex_status with query {kind:\"job\",id:\"${jobId}\"} to retrieve this Job's answer.`;
 }
 
 function integerAtLeast(value: unknown, minimum: number): number {
@@ -11425,8 +11480,9 @@ function modelPrimaryAnswer(result: ToolResult): { text: string; truncated: bool
   const textBlocks = primaryResultContent(result).flatMap((item) =>
     item.type === "text" ? [item.text] : []
   );
-  const source = textBlocks.length > 0
-    ? textBlocks.join("\n\n")
+  const joined = textBlocks.join("\n\n");
+  const source = joined.length > 0
+    ? joined
     : "Codex completed without a model-readable text payload.";
   const text = boundedUtf8JsonString(source, MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES);
   return { text, truncated: text !== source };
@@ -11708,6 +11764,7 @@ function contractedToolResult<Schema extends z.ZodType>(
   } = {}
 ): ToolResult {
   if (contract.toolName === "codex_task") validateTaskOutput(structured);
+  if (contract.toolName === "codex_status") validateStatusOutput(structured);
   return projectToolResult(contract, {
     canonical,
     authoritative: {

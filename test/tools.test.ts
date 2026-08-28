@@ -4934,18 +4934,22 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
-    const report = [
-      "ISSUE38_E2E_SENTINEL",
-      "",
-      "## Files",
-      "- src/tools.ts",
-      "",
-      "## Tests",
-      "- output contract passed",
-      "",
-      "## Remaining",
-      "- none"
-    ].join("\n");
+    const reportSections = [
+      [
+        "ISSUE38_E2E_SENTINEL",
+        "",
+        "## Files",
+        "- src/tools.ts"
+      ].join("\n"),
+      [
+        "## Tests",
+        "- output contract passed",
+        "",
+        "## Remaining",
+        "- none"
+      ].join("\n")
+    ];
+    const report = reportSections.join("\n\n");
     const pending = client.callTool({
       name: "codex_task",
       arguments: {
@@ -4957,7 +4961,7 @@ describe("bridge tools", () => {
     await expect.poll(() => upstream.calls.length).toBe(1);
     upstream.resolveNext({
       structuredContent: { threadId: "issue-38-thread" },
-      content: [{ type: "text", text: report }]
+      content: reportSections.map((text) => ({ type: "text" as const, text }))
     });
 
     const foreground = await pending as { structuredContent?: Record<string, any> };

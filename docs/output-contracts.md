@@ -74,6 +74,14 @@ The corrected retrieval rules are:
 - `omitted` and `unavailable`: keep `answer` absent and report the corresponding state;
 - `delivered` without `answer`: treat as an output-contract or host-delivery failure and never create a re-report Job merely to reconstruct retained output.
 
+The runtime projection enforces the corresponding cross-field invariants even
+though the shared compact status item schema keeps `answer` optional for summary
+rows: an exact delivered Job must have one non-empty bounded `answer`; an exact
+non-delivered Job cannot have one; and Activity, thread, page, or overview
+summaries cannot embed answer bodies and must attach the exact-Job retrieval
+action to every delivered Job. This prevents a future projection refactor from
+recreating the issue-38 channel loss while still keeping summary payloads small.
+
 ## Generation 11 private Activity contracts
 
 Generation 11 defines two versioned, closed component-private payloads:

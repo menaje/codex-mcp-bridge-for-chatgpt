@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
   ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
+  MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
   validateActivityBootstrapPrivateMetadata,
   validateActivityViewPrivateMetadata,
@@ -194,6 +195,20 @@ describe("model-visible output contracts", () => {
     unexpectedPendingAnswer.answer = "not terminal";
     expect(() => validateModelVisibleStructuredOutput("codex_task", unexpectedPendingAnswer))
       .toThrow(/model-authoritative answer/);
+
+    const emptyDeliveredAnswer = structuredClone(
+      taskForms.find(({ fixture }) => fixture === "completed")!.structuredContent
+    );
+    emptyDeliveredAnswer.answer = "";
+    expect(() => validateModelVisibleStructuredOutput("codex_task", emptyDeliveredAnswer))
+      .toThrow(/model-authoritative answer/);
+
+    const oversizedDeliveredAnswer = structuredClone(
+      taskForms.find(({ fixture }) => fixture === "completed")!.structuredContent
+    );
+    oversizedDeliveredAnswer.answer = "x".repeat(MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES + 1);
+    expect(() => validateModelVisibleStructuredOutput("codex_task", oversizedDeliveredAnswer))
+      .toThrow(/JSON-encoded bytes/);
   });
 
   it("enforces the final model-visible schema budget", () => {
@@ -283,6 +298,32 @@ describe("model-visible output contracts", () => {
       result: { availability: "delivered", omitted: false },
       answer: expect.stringContaining("background report recovered")
     });
+
+    const missingExactAnswer = structuredClone(completedStatus) as Record<string, any>;
+    delete missingExactAnswer.items[0].answer;
+    expect(() => validateModelVisibleStructuredOutput("codex_status", missingExactAnswer))
+      .toThrow(/exact delivered Job status requires/);
+
+    const oversizedExactAnswer = structuredClone(completedStatus) as Record<string, any>;
+    oversizedExactAnswer.items[0].answer = "x".repeat(MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES + 1);
+    expect(() => validateModelVisibleStructuredOutput("codex_status", oversizedExactAnswer))
+      .toThrow(/JSON-encoded bytes/);
+
+    const unexpectedSummaryAnswer = structuredClone(
+      modelResults.codex_status.find(({ fixture }) => fixture === "overview")!.structuredContent
+    ) as Record<string, any>;
+    unexpectedSummaryAnswer.items.find((item: Record<string, unknown>) => item.type === "job").answer =
+      "summary must not carry a body";
+    expect(() => validateModelVisibleStructuredOutput("codex_status", unexpectedSummaryAnswer))
+      .toThrow(/Summary status results cannot embed/);
+
+    const deliveredSummaryWithoutRetrieval = structuredClone(completedStatus) as Record<string, any>;
+    deliveredSummaryWithoutRetrieval.kind = "activity";
+    delete deliveredSummaryWithoutRetrieval.items[0].answer;
+    deliveredSummaryWithoutRetrieval.items[0].nextActions = [];
+    expect(() =>
+      validateModelVisibleStructuredOutput("codex_status", deliveredSummaryWithoutRetrieval)
+    ).toThrow(/exact-Job answer retrieval action/);
   });
 
   it("enforces the typed projection boundary before results cross MCP", () => {
