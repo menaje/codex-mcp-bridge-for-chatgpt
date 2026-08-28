@@ -381,6 +381,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_snapshot",{card:cardProof(),limit:viewLimit}');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'callTool("codex_activity_rehydrate",{jobId:correlation.jobId'
+    );
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_interaction_respond"');
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
     expect(ACTIVITY_CARD_HTML).toContain("For every listed Job ID");
@@ -407,6 +410,11 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
     expect(ACTIVITY_CARD_HTML).toContain("rememberToolInput");
     expect(ACTIVITY_CARD_HTML).toContain("taskInputRequestId!==outputRequestId");
+    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="task"');
+    expect(ACTIVITY_CARD_HTML).toContain('const key="historical\\u0000"+next.jobId');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'historicalCorrelation={jobId:next.jobId,requestId:next.requestId}'
+    );
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeSession.requestId");
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
     expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
@@ -423,11 +431,20 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(
       'next.watcherPolicy.stopReason==="presentation-duplicate"'
     );
-    expect(ACTIVITY_CARD_HTML).toContain("snapshot=null;setCardVisible(false);return");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "snapshot=null;historicalCorrelation=null;setCardVisible(false);return"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
+    expect(ACTIVITY_CARD_HTML).toContain('readOnly=historicalView()');
+    expect(ACTIVITY_CARD_HTML).toContain('message.textContent=historicalView()?t["activity.historicalSnapshot"]');
+    expect(ACTIVITY_CARD_HTML).toContain('const action=historicalView()?promoteHistorical():reload()');
+    expect(ACTIVITY_CARD_HTML).toContain('presentation:{kind:"explicit"}');
     expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
+    expect(UI_TRANSLATIONS.en["activity.historicalSnapshot"]).toContain("Historical snapshot");
+    expect(UI_TRANSLATIONS.ko["activity.openLive"]).toBe("실시간 Activity 열기");
   });
 
   it("preserves nested host and project errors instead of rendering object coercions", () => {

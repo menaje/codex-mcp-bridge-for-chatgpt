@@ -507,6 +507,7 @@ describe("bridge tools", () => {
       "codex_activity_cancel",
       "codex_activity_handoff",
       "codex_activity_job_cancel",
+      "codex_activity_rehydrate",
       "codex_activity_snapshot",
       "codex_activity_update",
       "codex_agent",
@@ -670,6 +671,9 @@ describe("bridge tools", () => {
         feed: expect.any(Object)
       }
     });
+    expect(byName.get("codex_activity_rehydrate")?.outputSchema).toEqual(
+      byName.get("codex_activity_snapshot")?.outputSchema
+    );
     for (const cardOriginTool of [
       "codex_activity_handoff",
       "codex_background_process_terminate",
@@ -821,6 +825,7 @@ describe("bridge tools", () => {
       "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
     });
     for (const appTool of [
+      "codex_activity_rehydrate",
       "codex_activity_snapshot",
       "codex_interaction_respond",
       "codex_job_steer"
@@ -839,6 +844,14 @@ describe("bridge tools", () => {
         waitMs: { maximum: 60000 },
         widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") },
         card: expect.any(Object)
+      }
+    });
+    expect(byName.get("codex_activity_rehydrate")?.inputSchema).toMatchObject({
+      required: expect.arrayContaining(["jobId", "requestId"]),
+      properties: {
+        jobId: expect.any(Object),
+        requestId: expect.any(Object),
+        widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") }
       }
     });
     expect(byName.get("codex_activity_handoff")?.inputSchema).toMatchObject({
@@ -1059,6 +1072,29 @@ describe("bridge tools", () => {
           "visibility": {
             "app": true,
             "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_activity_rehydrate",
+          "properties": [
+            "jobId",
+            "limit",
+            "requestId",
+            "scopeId",
+            "widgetInstanceId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 930,
+          "visibility": {
+            "app": true,
+            "model": false,
             "operatorCapability": false,
           },
         },
@@ -1727,6 +1763,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/c0afef77c90b.html",
             "ui://codex-mcp-bridge/settings/7c3ab734ff3a.html",
             "ui://codex-mcp-bridge/settings/34e2eb4c94d2.html",
             "ui://codex-mcp-bridge/settings/2350e96e107c.html",
@@ -1735,6 +1772,7 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/e381833d1c75.html",
             "ui://codex-mcp-bridge/activity/5e4acb22f165.html",
             "ui://codex-mcp-bridge/activity/c3c3c87be464.html",
             "ui://codex-mcp-bridge/activity/17c24231c553.html",
@@ -1771,6 +1809,8 @@ describe("bridge tools", () => {
           expect(html).toContain("waitMs");
           expect(html).toContain("consumeToolOutput");
           if (revision.uri === currentUri) {
+            expect(html).toContain('callTool("codex_activity_rehydrate"');
+            expect(html).toContain('mountedPresentation.kind==="historical"');
             expect(html).toContain('callTool("codex_background_process_terminate"');
             expect(html).toContain('callTool("codex_activity_job_cancel"');
             expect(html).not.toContain('callTool("codex_cancel"');
@@ -1938,6 +1978,258 @@ describe("bridge tools", () => {
       (snapshotMeta[ACTIVITY_VIEW_METADATA_KEY] as { view: Record<string, unknown> }).view
     );
 
+    await close();
+  });
+
+  it("rehydrates a cold task shell as a one-shot read-only historical Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const activityPresentationId = "37373737-3737-4737-8737-373737373737";
+    const taskResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "retain this Activity for a cold historical remount",
+        executionMode: "background",
+        activityPresentationId
+      }
+    });
+    const task = parseToolJson(taskResult);
+    const publicTask = (taskResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    expect(publicTask).toMatchObject({
+      kind: "task",
+      jobId: task.jobId,
+      requestId: task.requestId,
+      activityId: task.activityId
+    });
+    expect(publicTask).not.toHaveProperty("bridgeActivity");
+
+    const presentationState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+      activityCardReservations: Map<string, unknown>;
+      latestAutomaticPresentationByScope: Map<string, unknown>;
+    };
+    const before = {
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    };
+    const rehydrateRequest = {
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId,
+        limit: 30
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    } as const;
+    const historicalResult = await rawCallTool(rehydrateRequest);
+    expect(historicalResult.isError).not.toBe(true);
+    const historical = parseToolJson(historicalResult);
+    expect(historical).toMatchObject({
+      mountedActivity: {
+        activityId: task.activityId,
+        cardGeneration: expect.any(Number)
+      },
+      mountedPresentation: {
+        kind: "historical",
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      watcherPolicy: {
+        presentationKind: "historical",
+        mode: "one-shot",
+        live: false,
+        stopped: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
+    });
+    expect((historicalResult as { _meta?: Record<string, any> })._meta)
+      .toMatchObject({ interactionControls: { agents: [] } });
+    expect(validateActivityViewPrivateMetadata(
+      (historicalResult as { _meta?: Record<string, any> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    )).toMatchObject({
+      source: "codex_activity_rehydrate",
+      correlation: {
+        activity: { activityId: task.activityId },
+        presentation: {
+          kind: "historical",
+          jobId: task.jobId,
+          requestId: task.requestId
+        }
+      }
+    });
+
+    const repeated = parseToolJson(await rawCallTool(rehydrateRequest));
+    expect(repeated).toMatchObject({
+      scopeVersion: historical.scopeVersion,
+      mountedPresentation: historical.mountedPresentation,
+      watcherPolicy: { mode: "one-shot", live: false }
+    });
+    expect({
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    }).toEqual(before);
+
+    const noLeaseMutation = await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "37373737-3737-4737-8737-373737373738",
+        jobId: task.jobId,
+        expectedJobVersion: task.jobVersion,
+        acknowledgeAffectedJobIds: [task.jobId],
+        card: {
+          activityId: task.activityId,
+          generation: historical.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    });
+    expect(noLeaseMutation.isError).toBe(true);
+    expect(JSON.stringify(noLeaseMutation)).toContain("CARD_LEASE_REQUIRED");
+
+    for (const unavailable of [
+      {
+        scopeId: SCOPE_B,
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: "37373737-3737-4737-8737-373737373739"
+      },
+      {
+        scopeId: SCOPE_A,
+        jobId: "37373737-3737-4737-8737-373737373740",
+        requestId: task.requestId
+      }
+    ]) {
+      const rejected = await rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: unavailable,
+        _meta: { "openai/widgetSessionId": "historical-invalid-widget" }
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain("ACTIVITY_REHYDRATE_UNAVAILABLE");
+    }
+    const unmounted = await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId
+      }
+    });
+    expect(unmounted.isError).toBe(true);
+    expect(JSON.stringify(unmounted)).toContain("CARD_REHYDRATE_WIDGET_REQUIRED");
+
+    const promoted = parseToolJson(await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: task.activityId,
+          generation: historical.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    }));
+    expect(promoted).toMatchObject({
+      mountedPresentation: { kind: "explicit" },
+      watcherPolicy: { live: true, ownsCompletionHandoff: false }
+    });
+    expect(() => jobs.requireActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      historical.mountedActivity.cardGeneration,
+      "historical-widget",
+      { kind: "explicit" }
+    )).not.toThrow();
+    jobs.releaseActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      historical.mountedActivity.cardGeneration,
+      "historical-widget",
+      { kind: "explicit" }
+    );
+
+    upstream.resolveNext(fakeCodexResult("historical-thread"));
+    await waitForJobStatus(client, task.jobId, "completed");
+    await close();
+  });
+
+  it("elects only one historical shell for sibling tasks in an assistant response", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const activityPresentationId = "37373737-3737-4737-8737-373737373741";
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "first historical sibling",
+        executionMode: "background",
+        activityPresentationId
+      }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "second historical sibling",
+        executionMode: "background",
+        activityPresentationId
+      }
+    }));
+    const results = await Promise.all([first, second].map((task, index) => rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      _meta: { "openai/widgetSessionId": `historical-sibling-${index}` }
+    })));
+    expect(results.filter((result) => result.isError !== true)).toHaveLength(1);
+    const duplicate = results.find((result) => result.isError === true);
+    expect(JSON.stringify(duplicate)).toContain("ACTIVITY_REHYDRATE_DUPLICATE");
+    const elected = results.find((result) => result.isError !== true)!;
+    expect(parseToolJson(elected)).toMatchObject({
+      mountedPresentation: {
+        kind: "historical",
+        jobId: expect.stringMatching(SCOPE_ID_PATTERN)
+      },
+      watcherPolicy: {
+        mode: "one-shot",
+        live: false,
+        ownsCompletionHandoff: false
+      }
+    });
+
+    upstream.resolveNext(fakeCodexResult("historical-sibling-thread-1"));
+    upstream.resolveNext(fakeCodexResult("historical-sibling-thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
     await close();
   });
 
@@ -3396,6 +3688,19 @@ describe("bridge tools", () => {
     });
     expect(privateActivityBootstrap(backgroundOnlyForeground))
       .toMatchObject({ render: { eligible: false, reason: "visibility-disabled" } });
+    const backgroundOnlyForegroundTask = parseToolJson(backgroundOnlyForeground);
+    const foregroundRehydrate = await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: backgroundOnlyForegroundTask.jobId,
+        requestId: backgroundOnlyForegroundTask.requestId
+      },
+      _meta: { "openai/widgetSessionId": "background-only-foreground-history" }
+    });
+    expect(foregroundRehydrate.isError).toBe(true);
+    expect(JSON.stringify(foregroundRehydrate))
+      .toContain("ACTIVITY_REHYDRATE_VISIBILITY_DISABLED");
 
     const backgroundOnlyBackgroundResult = await client.callTool({
       name: "codex_task",
@@ -3413,6 +3718,20 @@ describe("bridge tools", () => {
     expect(privateActivityBootstrap(backgroundOnlyBackgroundResult)).toMatchObject({
       correlation: { activityPresentationId: groupedPresentation },
       render: { eligible: true, timing: "immediate" }
+    });
+    const backgroundRehydrate = await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: backgroundOnlyBackground.jobId,
+        requestId: backgroundOnlyBackground.requestId
+      },
+      _meta: { "openai/widgetSessionId": "background-only-background-history" }
+    });
+    expect(backgroundRehydrate.isError).not.toBe(true);
+    expect(parseToolJson(backgroundRehydrate)).toMatchObject({
+      mountedPresentation: { kind: "historical" },
+      watcherPolicy: { mode: "one-shot", live: false }
     });
     const groupedBackgroundDuplicateResult = await client.callTool({
       name: "codex_task",
@@ -3453,6 +3772,19 @@ describe("bridge tools", () => {
       purpose: "presentation-hydration-only",
       render: { eligible: false, reason: "visibility-disabled" }
     });
+    const neverBackground = parseToolJson(neverBackgroundResult);
+    const neverRehydrate = await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: neverBackground.jobId,
+        requestId: neverBackground.requestId
+      },
+      _meta: { "openai/widgetSessionId": "never-history" }
+    });
+    expect(neverRehydrate.isError).toBe(true);
+    expect(JSON.stringify(neverRehydrate))
+      .toContain("ACTIVITY_REHYDRATE_VISIBILITY_DISABLED");
     const neverWithoutPresentationResult = await rawCallTool({
       name: "codex_task",
       arguments: {
@@ -9744,6 +10076,7 @@ async function connectTestClient(
         (
           request.name === "codex_status" ||
           request.name === "codex_activity" ||
+          request.name === "codex_activity_rehydrate" ||
           request.name === "codex_activity_snapshot" ||
           request.name === "codex_activity_handoff" ||
           request.name === "codex_activity_job_cancel" ||

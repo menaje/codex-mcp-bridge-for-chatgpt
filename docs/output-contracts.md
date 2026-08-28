@@ -24,7 +24,7 @@ The channels are independent consumer contracts. Private `_meta` is presentation
 | `codex_task` | Contract kind/version, state, terminal/delivery/replay, semantic request/project/Activity/Agent/Job/thread IDs, distinct Job/Activity versions, execution mode/backend/sandbox, compact requested/actual selection audit, conditional reroute, result availability, bounded nullable `answer`, strict error, warnings, and next actions | Generation 11 automatic mount data is only `_meta["codex/activityBootstrap@11"]`; no public `bridgeSession`, `bridgeActivity`, `activityTracking`, or presentation-hydration leaf remains |
 | `codex_settings` | Revisions, compact active policy summary, path-free project availability, catalog availability/count, warnings, and next actions | Full localized editor view is validated at `_meta["codex/settingsView"]` |
 | `codex_status` | One compact closed envelope containing query kind, scope mode/source, counts, optional page data, strict typed items, wait outcome, result/error availability, warnings, and next actions. Only an exact completed Job item carries `answer`; summary queries expose an exact-Job retrieval action instead of bodies | Activity components refresh through `codex_activity_snapshot`; routine status is not a hydration or diagnostic API |
-| `codex_activity` | Activity identity/version and aggregate counts only | The full validated view is `_meta["codex/activityView@11"]`; snapshot/watch tools remain full app-only refresh surfaces |
+| `codex_activity` | Activity identity/version and aggregate counts only | The full validated view is `_meta["codex/activityView@11"]`; `codex_activity_snapshot` owns live refresh, while `codex_activity_rehydrate` reconstructs only a one-shot historical view from an exact retained Task correlation |
 | `codex_models` | Compact selectable model descriptors, active policy summary, and Priority state | None |
 | `codex_agent`, `codex_cancel`, `codex_activity_update`, `codex_activity_cancel` | Closed mutation envelope with action/outcome, strict typed target, bounded warnings/next actions, and affected IDs where relevant | Full lifecycle, cancellation provenance, process controls, and recovery data stay in bridge state or model-hidden app-only tools |
 
@@ -42,7 +42,7 @@ The exhaustive fixture harness covers:
 - status overview, running, completed-answer, and failed forms;
 - compact Settings, models, and Activity results;
 - success and structured failure mutation envelopes;
-- generation 11 private bootstrap/view validation and size limits;
+- generation 11 private bootstrap/view validation, historical rehydrate schema, and size limits;
 - documented task/status/error/cancel text-compatibility content.
 
 The `codex_task` envelope has these invariants:
@@ -87,13 +87,13 @@ recreating the issue-38 channel loss while still keeping summary payloads small.
 Generation 11 defines two versioned, closed component-private payloads:
 
 - `_meta["codex/activityBootstrap@11"]` carries exact request, presentation, Job, Activity, card-generation, render-reason, and render-timing correlation for automatic initial mount.
-- `_meta["codex/activityView@11"]` carries an exact source discriminator, scope version, mounted Activity/presentation correlation, and the validated Activity view used by initial hydration and snapshot/watch refresh.
+- `_meta["codex/activityView@11"]` carries an exact source discriminator, scope version, mounted Activity/presentation correlation, and the validated Activity view used by initial hydration, snapshot/watch refresh, or historical one-shot rehydration.
 
-Both require `purpose: "presentation-hydration-only"`, exact discriminator/version 11, bounded identities, and runtime byte limits of 8 KiB and 768 KiB. Complete MCP private metadata is capped at 1 MiB. Generation 11 reads private metadata for initial model-tool hydration; refreshes use validated app-only snapshot/watch results. The model-visible Activity view fallback is retired.
+Both require `purpose: "presentation-hydration-only"`, exact discriminator/version 11, bounded identities, and runtime byte limits of 8 KiB and 768 KiB. Complete MCP private metadata is capped at 1 MiB. Generation 11 reads private metadata for initial model-tool hydration; live refreshes use validated app-only snapshot/watch results. When a cold-remounted historical Task shell lacks its original private bootstrap, `codex_activity_rehydrate` accepts only public `jobId + requestId` lookup hints, derives host scope, revalidates the retained call/Activity/current visibility, and returns a `historical` mounted-presentation correlation with `live: false`, `ownsCompletionHandoff: false`, empty controls, and no lease or presentation-registry mutation. The model-visible Activity view fallback remains retired.
 
-Private metadata never grants access. Snapshot, handoff, cancellation, steering, interaction response, and background-process termination revalidate scope, mounted widget identity, Activity/card generation, presentation lease, ownership, and optimistic versions on the server.
+Private metadata never grants access. Historical rehydration also grants no mutation authority; only a user-triggered refresh may establish the existing explicit lease. Snapshot, handoff, cancellation, steering, interaction response, and background-process termination revalidate scope, mounted widget identity, Activity/card generation, presentation lease, ownership, and optimistic versions on the server. Rehydration persists no bootstrap payload and does not extend Job/Activity retention.
 
-The minimum supported Activity generation is now 11. The current immutable resource is generation 11 at `ui://codex-mcp-bridge/activity/c3c3c87be464.html`. All 12 retained immutable Activity URIs—including the preceding generation-11 resource and resources from generations 7–10—remain registered and refresh through app-only snapshot/watch paths; together with the current resource, 13 Activity resources are registered. Retained HTML assets are not rewritten or deleted when the minimum advances.
+The minimum supported Activity generation is now 11. The current immutable resource is generation 11 at `ui://codex-mcp-bridge/activity/e381833d1c75.html`. All 14 retained immutable Activity URIs—including preceding generation-11 resources and resources from generations 7–10—remain registered and refresh through app-only snapshot/watch paths; together with the current resource, 15 Activity resources are registered. Retained HTML assets are not rewritten or deleted when the minimum advances.
 
 ## Opaque-leaf policy
 

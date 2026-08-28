@@ -169,6 +169,8 @@ const ENGLISH = {
   "activity.unread": "Unread completion",
   "activity.manualRefresh": "Live updates paused; refresh manually.",
   "activity.superseded": "A newer Activity card now owns live updates. This snapshot will remain available.",
+  "activity.historicalSnapshot": "Historical snapshot · Refresh to open live controls.",
+  "activity.openLive": "Open live Activity",
   "activity.partialChanges": "Force stop does not roll back changes already written to disk.",
   "activity.jobs": "jobs",
   "activity.threads": "threads",
@@ -1174,6 +1176,44 @@ const ACTIVITY_EXECUTION_OVERRIDES: Record<
   }
 };
 
+const ISSUE37_OVERRIDES: Record<
+  Exclude<SupportedUiLocale, "en">,
+  Partial<UiTranslationBundle>
+> = {
+  ko: {
+    "activity.historicalSnapshot": "과거 스냅샷 · 새로 고침하면 실시간 제어로 엽니다.",
+    "activity.openLive": "실시간 Activity 열기"
+  },
+  ja: {
+    "activity.historicalSnapshot": "履歴スナップショット · 更新するとライブ操作で開きます。",
+    "activity.openLive": "ライブ Activity を開く"
+  },
+  "zh-Hans": {
+    "activity.historicalSnapshot": "历史快照 · 刷新以打开实时控制。",
+    "activity.openLive": "打开实时 Activity"
+  },
+  "zh-Hant": {
+    "activity.historicalSnapshot": "歷史快照 · 重新整理以開啟即時控制。",
+    "activity.openLive": "開啟即時 Activity"
+  },
+  es: {
+    "activity.historicalSnapshot": "Instantánea histórica · Actualiza para abrir los controles en vivo.",
+    "activity.openLive": "Abrir Activity en vivo"
+  },
+  fr: {
+    "activity.historicalSnapshot": "Instantané historique · Actualisez pour ouvrir les contrôles en direct.",
+    "activity.openLive": "Ouvrir l’Activity en direct"
+  },
+  de: {
+    "activity.historicalSnapshot": "Historischer Snapshot · Aktualisieren, um die Live-Steuerung zu öffnen.",
+    "activity.openLive": "Live-Activity öffnen"
+  },
+  pt: {
+    "activity.historicalSnapshot": "Instantâneo histórico · Atualize para abrir os controles ao vivo.",
+    "activity.openLive": "Abrir Activity ao vivo"
+  }
+};
+
 const ISSUE22_OVERRIDES: Record<
   Exclude<SupportedUiLocale, "en">,
   Partial<UiTranslationBundle>
@@ -1553,8 +1593,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

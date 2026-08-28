@@ -414,6 +414,37 @@ describe("model-visible output contracts", () => {
     expect(() => validateActivityViewPrivateMetadata(mismatchedView))
       .toThrow(/scope versions/);
 
+    const historicalView = structuredClone(activityPrivateMetadata.view) as Record<string, any>;
+    historicalView.source = "codex_activity_rehydrate";
+    historicalView.correlation.presentation = {
+      kind: "historical",
+      jobId: "37373737-3737-4737-8737-373737373737",
+      requestId: "37373737-3737-4737-8737-373737373738"
+    };
+    historicalView.view.mountedPresentation = historicalView.correlation.presentation;
+    historicalView.view.watcherPolicy = {
+      presentationKind: "historical",
+      mode: "one-shot",
+      live: false,
+      stopped: false,
+      ownsCompletionHandoff: false
+    };
+    expect(validateActivityViewPrivateMetadata(historicalView)).toEqual(historicalView);
+    const owningHistoricalView = structuredClone(historicalView);
+    owningHistoricalView.view.watcherPolicy.live = true;
+    expect(() => validateActivityViewPrivateMetadata(owningHistoricalView))
+      .toThrow(/one-shot, read-only, and non-owning/);
+    const wrongHistoricalSource = structuredClone(historicalView);
+    wrongHistoricalSource.source = "codex_activity_snapshot";
+    expect(() => validateActivityViewPrivateMetadata(wrongHistoricalSource))
+      .toThrow(/exclusive to the rehydrate source/);
+    historicalView.view.mountedPresentation = {
+      ...historicalView.view.mountedPresentation,
+      jobId: "37373737-3737-4737-8737-373737373739"
+    };
+    expect(() => validateActivityViewPrivateMetadata(historicalView))
+      .toThrow(/mounted presentation/);
+
     const oversized = structuredClone(activityPrivateMetadata.view);
     oversized.view.feed = { padding: "x".repeat(ACTIVITY_VIEW_PRIVATE_MAX_BYTES) };
     expect(() => validateActivityViewPrivateMetadata(oversized)).toThrow(/above its/);

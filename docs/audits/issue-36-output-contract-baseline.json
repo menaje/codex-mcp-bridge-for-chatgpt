@@ -108,6 +108,7 @@
         "byTool": {
           "codex_activity_handoff": 910,
           "codex_activity_job_cancel": 2218,
+          "codex_activity_rehydrate": 2954,
           "codex_activity_snapshot": 2954,
           "codex_agent_recovery_detach": 2218,
           "codex_background_process_terminate": 2218,
@@ -116,7 +117,7 @@
           "codex_job_steer": 2218,
           "codex_update_settings": 1724
         },
-        "totalBytes": 19308
+        "totalBytes": 22262
       }
     },
     "resultBytes": {

@@ -382,6 +382,42 @@ const activityViewOutputSchema = z.strictObject({
   wait: opaqueJsonObjectOutputSchema.optional()
 });
 
+const activityRehydrateOutputSchema = activityViewOutputSchema.superRefine((value, context) => {
+  const presentation = value.mountedPresentation;
+  const watcher = value.watcherPolicy;
+  if (
+    presentation.kind !== "historical" ||
+    typeof presentation.jobId !== "string" ||
+    typeof presentation.requestId !== "string"
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["mountedPresentation"],
+      message: "Historical Activity rehydration requires exact Job/request correlation."
+    });
+  }
+  if (
+    watcher.presentationKind !== "historical" ||
+    watcher.mode !== "one-shot" ||
+    watcher.live !== false ||
+    watcher.stopped !== false ||
+    watcher.ownsCompletionHandoff !== false
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["watcherPolicy"],
+      message: "Historical Activity rehydration must be one-shot and non-owning."
+    });
+  }
+  if (value.pendingHandoffs.length !== 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["pendingHandoffs"],
+      message: "Historical Activity rehydration cannot expose completion handoffs."
+    });
+  }
+});
+
 export const ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES = 8 * 1_024;
 export const ACTIVITY_VIEW_PRIVATE_MAX_BYTES = 768 * 1_024;
 const privateActivityIdentitySchema = z.string().trim().min(1).max(200);
@@ -391,7 +427,12 @@ const activityPrivatePresentationSchema = z.discriminatedUnion("kind", [
     activityPresentationId: privateActivityIdentitySchema,
     reservationOwnerId: privateActivityIdentitySchema.optional()
   }),
-  z.strictObject({ kind: z.literal("explicit") })
+  z.strictObject({ kind: z.literal("explicit") }),
+  z.strictObject({
+    kind: z.literal("historical"),
+    jobId: privateActivityIdentitySchema,
+    requestId: privateActivityIdentitySchema
+  })
 ]);
 
 export const activityBootstrapPrivateMetadataSchema = z.strictObject({
@@ -433,7 +474,7 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
   kind: z.literal("codex/activityView"),
   version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
   purpose: z.literal("presentation-hydration-only"),
-  source: z.enum(["codex_activity", "codex_activity_snapshot"]),
+  source: z.enum(["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate"]),
   correlation: z.strictObject({
     scopeVersion: z.number().int().min(0),
     activity: z.strictObject({
@@ -444,6 +485,26 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
   }),
   view: activityViewOutputSchema
 }).superRefine((value, context) => {
+  if (
+    (value.source === "codex_activity_rehydrate") !==
+      (value.correlation.presentation.kind === "historical")
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["source"],
+      message: "Historical Activity presentation is exclusive to the rehydrate source."
+    });
+  }
+  if (
+    value.source === "codex_activity_rehydrate" &&
+    !activityRehydrateOutputSchema.safeParse(value.view).success
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["view"],
+      message: "Historical Activity view must remain one-shot, read-only, and non-owning."
+    });
+  }
   if (value.correlation.scopeVersion !== value.view.scopeVersion) {
     context.addIssue({
       code: "custom",
@@ -482,6 +543,13 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
           value.correlation.presentation.activityPresentationId ||
         mountedPresentation.reservationOwnerId !==
           value.correlation.presentation.reservationOwnerId
+      )
+    ) ||
+    (
+      value.correlation.presentation.kind === "historical" &&
+      (
+        mountedPresentation.jobId !== value.correlation.presentation.jobId ||
+        mountedPresentation.requestId !== value.correlation.presentation.requestId
       )
     )
   ) {
@@ -1001,7 +1069,11 @@ function structuredByteCapFor(toolName: string): number {
     toolName === "app-only-mutation" ||
     toolName === "codex_activity_handoff"
   ) return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
-  if (toolName === "codex_activity_snapshot" || toolName === "codex_update_settings") {
+  if (
+    toolName === "codex_activity_snapshot" ||
+    toolName === "codex_activity_rehydrate" ||
+    toolName === "codex_update_settings"
+  ) {
     return TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration;
   }
   throw new Error(`No structured-content byte cap is registered for ${toolName}.`);
@@ -1042,6 +1114,12 @@ const activityAppResultContract = toolOutputContract(
   "codex_activity_snapshot",
   "app-hydration",
   activityViewOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
+);
+const activityRehydrateResultContract = toolOutputContract(
+  "codex_activity_rehydrate",
+  "app-hydration",
+  activityRehydrateOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
 );
 const modelMutationResultContracts = Object.freeze({
@@ -1122,6 +1200,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_activity_handoff: handoffOutputSchema,
   codex_activity_job_cancel: mutationOutputSchema,
+  codex_activity_rehydrate: activityRehydrateOutputSchema,
   codex_activity_snapshot: activityViewOutputSchema,
   codex_agent_recovery_detach: mutationOutputSchema,
   codex_background_process_terminate: mutationOutputSchema,
@@ -1264,6 +1343,10 @@ type TaskProjectAdmission = {
 type ActivityCardPresentationContext =
   | { kind: "automatic"; activityPresentationId: string; reservationOwnerId?: string }
   | { kind: "explicit" };
+
+type ActivityViewPresentationContext =
+  | ActivityCardPresentationContext
+  | { kind: "historical"; jobId: string; requestId: string };
 
 const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -1852,8 +1935,21 @@ export class CodexJobRegistry {
 
   activityPresentationWatcherPolicy(
     scopeId: string,
-    presentation: ActivityCardPresentationContext
+    presentation: ActivityViewPresentationContext
   ) {
+    if (presentation.kind === "historical") {
+      return {
+        presentationKind: presentation.kind,
+        jobId: presentation.jobId,
+        requestId: presentation.requestId,
+        mode: "one-shot" as const,
+        live: false,
+        stopped: false,
+        ownsCompletionHandoff: false,
+        maxAutomaticPerScope: 1,
+        maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
+      };
+    }
     const stopped = this.isPresentationSuperseded(scopeId, presentation);
     return {
       presentationKind: presentation.kind,
@@ -4197,6 +4293,113 @@ export function registerBridgeTools(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         activityModelResultContract
+      );
+    }
+  );
+
+  server.registerTool(
+    "codex_activity_rehydrate",
+    {
+      title: "Rehydrate Historical Codex Activity Card",
+      description:
+        "App-only one-shot reconstruction for a cold-remounted historical codex_task shell whose private bootstrap metadata is unavailable. Public Job/request identifiers are lookup hints only: the server derives the conversation scope, verifies the exact persisted logical call and current visibility policy, and returns a read-only non-owning snapshot. This tool never creates a live watcher, completion handoff owner, automatic presentation reservation, or control lease.",
+      inputSchema: z.strictObject({
+        scopeId: scopeIdSchema().optional(),
+        widgetInstanceId: widgetInstanceIdSchema.optional(),
+        jobId: scopeIdSchema().describe("Exact Job UUID retained in the historical codex_task result."),
+        requestId: scopeIdSchema().describe("Exact logical-request UUID retained in that same result."),
+        limit: z.number().int().min(1).max(100).optional()
+      }),
+      outputSchema: activityRehydrateOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      }
+    },
+    async (args, extra) => {
+      const { _meta } = extra;
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Historical Codex Activity card"
+      );
+      if (!mountedWidgetInstanceId(args, _meta)) {
+        throw new Error(
+          "CARD_REHYDRATE_WIDGET_REQUIRED: Historical Activity rehydration requires a mounted widget session."
+        );
+      }
+      const job = jobs.get(args.jobId);
+      if (
+        !job ||
+        job.scopeId !== scope.scopeId ||
+        job.requestId !== args.requestId ||
+        !job.activityPresentationId
+      ) {
+        throw new Error(
+          "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation."
+        );
+      }
+      const visibility = userSettings.current.activityCardVisibility;
+      const eligible = visibility === "always" ||
+        (visibility === "background-only" && job.executionMode === "background");
+      if (!eligible) {
+        throw new Error(
+          "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job."
+        );
+      }
+      const selected = jobs.getActivity(job.activityId);
+      if (!selected || selected.scopeId !== scope.scopeId) {
+        throw new Error(
+          "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation."
+        );
+      }
+      const latestEligibleSibling = jobs
+        .listForScope(scope.scopeId, config.maxRetainedJobs, 0)
+        .filter((candidate) =>
+          candidate.activityPresentationId === job.activityPresentationId &&
+          (
+            visibility === "always" ||
+            (visibility === "background-only" && candidate.executionMode === "background")
+          )
+        )
+        .sort((left, right) =>
+          right.createdAt - left.createdAt ||
+          right.jobId.localeCompare(left.jobId)
+        )[0];
+      if (!latestEligibleSibling || latestEligibleSibling.jobId !== job.jobId) {
+        throw new Error(
+          "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
+        );
+      }
+      const presentation: ActivityViewPresentationContext = {
+        kind: "historical",
+        jobId: job.jobId,
+        requestId: job.requestId
+      };
+      const view = await buildActivityView(
+        jobs,
+        upstream,
+        modelCatalog,
+        config,
+        userSettings.current,
+        scope.scopeId,
+        args.limit || 30,
+        selected.activityId,
+        undefined,
+        presentation
+      );
+      return activityViewResult(
+        view,
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        activityRehydrateResultContract
       );
     }
   );
@@ -8140,7 +8343,7 @@ async function buildLegacyActivityView(
   limit: number,
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
-  presentation: ActivityCardPresentationContext = { kind: "explicit" },
+  presentation: ActivityViewPresentationContext = { kind: "explicit" },
   lease?: ActivityCardLeaseTouchResult
 ) {
   const now = Date.now();
@@ -8362,6 +8565,11 @@ async function buildLegacyActivityView(
                 ? { reservationOwnerId: presentation.reservationOwnerId }
                 : {})
             }
+          : presentation.kind === "historical"
+            ? {
+                jobId: presentation.jobId,
+                requestId: presentation.requestId
+              }
           : {})
       },
       uiLocalePreference: preferences.uiLocalePreference,
@@ -8436,7 +8644,7 @@ async function buildActivityView(
   limit: number,
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
-  presentation: ActivityCardPresentationContext = { kind: "explicit" },
+  presentation: ActivityViewPresentationContext = { kind: "explicit" },
   lease?: ActivityCardLeaseTouchResult
 ) {
   const legacy = await buildLegacyActivityView(
@@ -8794,7 +9002,10 @@ async function buildActivityView(
 function activityViewResult(
   view: Awaited<ReturnType<typeof buildActivityView>>,
   locale: string | undefined,
-  contract: typeof activityModelResultContract | typeof activityAppResultContract
+  contract:
+    | typeof activityModelResultContract
+    | typeof activityAppResultContract
+    | typeof activityRehydrateResultContract
 ): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
   const mountedActivity = isRecord(view.structured.mountedActivity)
@@ -8803,23 +9014,36 @@ function activityViewResult(
         cardGeneration: view.structured.mountedActivity.cardGeneration
       }
     : null;
-  const mountedPresentation = isRecord(view.structured.mountedPresentation) &&
-    view.structured.mountedPresentation.kind === "automatic"
+  const mountedPresentationRecord: Record<string, unknown> = isRecord(
+    view.structured.mountedPresentation
+  )
+    ? view.structured.mountedPresentation
+    : {};
+  const mountedPresentation = mountedPresentationRecord.kind === "automatic"
     ? {
         kind: "automatic" as const,
-        activityPresentationId: view.structured.mountedPresentation.activityPresentationId,
-        ...(typeof view.structured.mountedPresentation.reservationOwnerId === "string"
-          ? { reservationOwnerId: view.structured.mountedPresentation.reservationOwnerId }
+        activityPresentationId: mountedPresentationRecord.activityPresentationId,
+        ...(typeof mountedPresentationRecord.reservationOwnerId === "string"
+          ? { reservationOwnerId: mountedPresentationRecord.reservationOwnerId }
           : {})
       }
-    : { kind: "explicit" as const };
+    : mountedPresentationRecord.kind === "historical"
+      ? {
+          kind: "historical" as const,
+          jobId: mountedPresentationRecord.jobId,
+          requestId: mountedPresentationRecord.requestId
+        }
+      : { kind: "explicit" as const };
+  const source = contract === activityModelResultContract
+    ? "codex_activity" as const
+    : contract === activityRehydrateResultContract
+      ? "codex_activity_rehydrate" as const
+      : "codex_activity_snapshot" as const;
   const privateView = validateActivityViewPrivateMetadata({
     kind: "codex/activityView",
     version: ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
     purpose: "presentation-hydration-only",
-    source: contract === activityModelResultContract
-      ? "codex_activity"
-      : "codex_activity_snapshot",
+    source,
     correlation: {
       scopeVersion: view.structured.scopeVersion,
       activity: mountedActivity,
@@ -8837,7 +9061,9 @@ function activityViewResult(
   };
   const appHydration = {
     [ACTIVITY_VIEW_METADATA_KEY]: privateView,
-    interactionControls: view.interactionControls,
+    interactionControls: mountedPresentation.kind === "historical"
+      ? { agents: [] }
+      : view.interactionControls,
     "openai/locale": effectiveLocale,
     hostLocale: locale || null
   };
@@ -8874,6 +9100,15 @@ function activityViewResult(
           `Activity view opened at scope version ${structured.scopeVersion}: ` +
           `${structured.counts.active} active, ${structured.counts.needsAttention} needing attention.`
       },
+      { appHydration }
+    );
+  }
+  if (contract === activityRehydrateResultContract) {
+    return contractedToolResult(
+      activityRehydrateResultContract,
+      view,
+      view.structured,
+      { text: JSON.stringify(summary) },
       { appHydration }
     );
   }
