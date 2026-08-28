@@ -66,6 +66,13 @@ The authenticated raw ChatGPT conversation response for the reported failure was
 
 GPT then created a new foreground `codex_task` solely to reconstruct the report. That Job also completed with a retained multi-section result, but its ChatGPT tool message again contained only the structured state envelope. This proves the failure was after bridge generation/retention and before the model-visible ChatGPT message, not an Activity UI handoff, Codex execution, or retention-limit failure. The sanitized trace record is in `docs/audits/issue-38-chatgpt-host-trace.md`.
 
+The corrected contract subsequently passed an authenticated ChatGPT Work smoke
+for both direct foreground delivery and one background exact-Job wait, without
+creating a reconstruction Job. The same run verified the connector-discovered
+input schemas and cold-reentered both the new smoke conversation and the
+original reported conversation. The sanitized post-fix record is in
+`docs/audits/issue-38-chatgpt-live-smoke.md`.
+
 The corrected retrieval rules are:
 
 - foreground completion: read `codex_task.structuredContent.answer`;

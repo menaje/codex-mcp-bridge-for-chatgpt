@@ -50,3 +50,7 @@ The structured answer is bounded to 24 KiB of JSON-encoded UTF-8 and emits a tru
 - Escaping-heavy text must remain inside the structured-output cap and emit a truncation warning.
 - Retention omission must keep `answer` absent and remain distinguishable from a delivered result.
 - Activity/overview summaries must keep answer bodies absent and direct GPT to exact Job lookup.
+
+The post-fix authenticated ChatGPT acceptance run, including foreground,
+background exact-Job, discovery-schema, and conversation re-entry evidence, is
+recorded in `issue-38-chatgpt-live-smoke.md`.
