@@ -1,6 +1,10 @@
 # Output projection contracts
 
-This document defines the output profile established by issue 36 and corrected by issue 38. ChatGPT is the normative client. Public `structuredContent` is authoritative for model/orchestrator decisions and carries a bounded final `answer`; `content` remains a compatibility copy because some MCP clients consume only that channel.
+This document defines the output profile established by issue 36, corrected by
+issue 38, and extended with the issue-40 active-turn steering contract. ChatGPT
+is the normative client. Public `structuredContent` is authoritative for
+model/orchestrator decisions and carries a bounded final `answer`; `content`
+remains a compatibility copy because some MCP clients consume only that channel.
 
 ## Projection boundary
 
@@ -26,13 +30,21 @@ The channels are independent consumer contracts. Private `_meta` is presentation
 | `codex_status` | One compact closed envelope containing query kind, scope mode/source, counts, optional page data, strict typed items, wait outcome, result/error availability, warnings, and next actions. Only an exact completed Job item carries `answer`; summary queries expose an exact-Job retrieval action instead of bodies | Activity components refresh through `codex_activity_snapshot`; routine status is not a hydration or diagnostic API |
 | `codex_activity` | Activity identity/version and aggregate counts only | The full validated view is `_meta["codex/activityView@11"]`; `codex_activity_snapshot` owns live refresh, while `codex_activity_rehydrate` reconstructs only a one-shot historical view from an exact retained Task correlation |
 | `codex_models` | Compact selectable model descriptors, active policy summary, and Priority state | None |
+| `codex_steer` | Closed mutation result with exact compact Job/version, `active-codex-turn-only` scope, prompt-persistence assertion, `delivered | not-delivered | uncertain` delivery state, structured error, warnings, and next actions | None; the existing card-only `codex_job_steer` retains its separate lease-bound contract |
 | `codex_agent`, `codex_cancel`, `codex_activity_update`, `codex_activity_cancel` | Closed mutation envelope with action/outcome, strict typed target, bounded warnings/next actions, and affected IDs where relevant | Full lifecycle, cancellation provenance, process controls, and recovery data stay in bridge state or model-hidden app-only tools |
 
 Worker/process evidence, catalog fingerprints, bridge-instance data, project UUIDs/paths, HMAC state, and upstream inventory are absent from model-visible results. `structuredContent` is the implementation and test source of truth; tests do not parse `content[0].text` to reconstruct structured fields.
 
 ## Strict public envelopes
 
-All nine model-visible output roots publish JSON Schema with `additionalProperties: false`. Every public success or returned structured-error value is parsed through the corresponding strict runtime Zod schema before it crosses MCP. Nested public objects are also closed; the final public schemas contain no opaque/open object leaves. `codex_task` additionally publishes every declared field in `required`; unavailable semantics are explicit `null` values. This is the host-compatible strict structured-output form that restored the complete ChatGPT tool inventory.
+All ten model-visible output roots publish JSON Schema with
+`additionalProperties: false`. Every public success or returned structured-error
+value is parsed through the corresponding strict runtime Zod schema before it
+crosses MCP. Nested public objects are also closed; the final public schemas
+contain no opaque/open object leaves. `codex_task` additionally publishes every
+declared field in `required`; unavailable semantics are explicit `null` values.
+This is the host-compatible strict structured-output form that restored the
+complete ChatGPT tool inventory.
 
 The published schemas omit redundant JSON Schema keywords where `const` or `enum` already closes the value and where the runtime validator owns numeric bounds. This reduces descriptor bytes without weakening object closure or runtime validation.
 
@@ -42,6 +54,7 @@ The exhaustive fixture harness covers:
 - status overview, running, completed-answer, and failed forms;
 - compact Settings, models, and Activity results;
 - success and structured failure mutation envelopes;
+- active-turn steering delivery and crash-boundary uncertainty envelopes;
 - generation 11 private bootstrap/view validation, historical rehydrate schema, and size limits;
 - documented task/status/error/cancel text-compatibility content.
 
@@ -59,6 +72,21 @@ The `codex_task` envelope has these invariants:
 - a completed retained answer appears in model-authoritative structured `answer`; the original primary `content` is intentionally retained as a compatibility copy for clients with the inverse channel behavior.
 
 Setup rejection uses the same task envelope with `state: "setup-required"`, unavailable result semantics, and a strict structured error. Failed and cancelled forms use the same closed error/result contracts.
+
+The `codex_steer` envelope has these additional invariants:
+
+- success requires `code: null`, a non-null exact compact Job, and
+  `delivery.status: "delivered"`;
+- failure requires a structured code and cannot claim delivered;
+- `DELIVERY_UNCERTAIN` is equivalent to `delivery.status: "uncertain"`; every
+  other failure is `not-delivered`;
+- `promptPersistedByBridge` is always `false`, and
+  `steeringScope` is always `active-codex-turn-only`;
+- `content` is only a bounded stable outcome summary. The structured envelope is
+  authoritative and never includes the prompt or its digest;
+- if Codex reflects the exact steering input through progress, events, an error,
+  or its final result, Bridge projections replace that echo before Job
+  persistence and model-visible output.
 
 ## Issue 38 ChatGPT host trace and retrieval contract
 
@@ -127,6 +155,7 @@ Generic pretty-JSON duplication is prohibited. The one deliberate duplicate is a
 | `codex_models` | Stable catalog count/source/freshness summary | 512 | No complete model descriptors |
 | `codex_agent`, `codex_activity_update` | Stable mutation outcome | 512 | Action/outcome only |
 | `codex_activity_cancel`, `codex_cancel` | Stable cancellation outcome/error | 768 | Action/outcome/error only |
+| `codex_steer` | Stable delivery outcome/error | 768 | Delivery state and error only; no prompt or full Job state |
 
 The default profile does not promise generic text-only completeness for Settings, Activity feeds, status pages, model descriptors, audit details, or full mutation details. A future complete text-only profile requires an explicit versioned compatibility contract and must not reintroduce public JSON duplication.
 
@@ -153,10 +182,40 @@ npx tsx scripts/output-contract-audit.ts
 npx tsx scripts/output-contract-audit.ts --check
 ```
 
-The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`, now audit version 2 with issue-38 regression evidence. The issue-36 baseline was 20,128 model-visible schema bytes. The corrected total is 12,009 bytes: 8,119 bytes smaller, a 40.337% reduction, with 68 bytes of headroom under the enforced 12,077-byte W3 ceiling. Every model-visible output `const`/`enum` leaf retains an explicit primitive type, including nullable enum nodes. The task contract version is the single-value string enum `["1"]`. Task audit source/evidence and result byte accounting remain canonical/operator data; the model projection keeps flat requested/actual model and effort, an explicit reroute flag, a nullable reason, and the bounded answer. The discovery regression suite also requires every `codex_task` property, including `answer` and every error property, to be published in `required`; caps its output at 2,500 bytes and input plus output at 9,500 bytes; and avoids top-level conditional composition. These caps are empirical ChatGPT compatibility guards, not documented platform limits; the execution boundary still enforces every context-sensitive project and model requirement.
+The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`,
+now audit version 3 with issue-38 regression and issue-40 steering evidence. The
+pre-issue-40 model-visible set remains 12,009 bytes: 8,119 bytes smaller than
+the 20,128-byte issue-36 baseline, a 40.337% reduction, and 68 bytes below its
+12,077-byte W3 ceiling. The additive `codex_steer` schema is 1,360 bytes, making
+the ten-tool total 13,369 bytes against a correspondingly additive 13,437-byte
+ceiling, again with 68 bytes of headroom. Every model-visible output
+`const`/`enum` leaf retains an explicit primitive type, including nullable enum
+nodes. The task contract version is the single-value string enum `["1"]`. Task
+audit source/evidence and result byte accounting remain canonical/operator data;
+the model projection keeps flat requested/actual model and effort, an explicit
+reroute flag, a nullable reason, and the bounded answer. The discovery regression
+suite also requires every `codex_task` property, including `answer` and every
+error property, to be published in `required`; caps its output at 2,500 bytes
+and input plus output at 9,500 bytes; and avoids top-level conditional
+composition. These caps are empirical ChatGPT compatibility guards, not
+documented platform limits; the execution boundary still enforces every
+context-sensitive project and model requirement.
 
 M1 passed in a real ChatGPT Work conversation: generation 11 mounted at the current URI, rendered completed work, refreshed its snapshot, and a retained generation 10 resource resolved. Exact raw host metadata bytes were not supplied, so the audit records functional evidence and deterministic private-metadata bytes without inventing a host capture.
 
 M2 also passed after a local build/restart and ChatGPT Developer-mode plugin refresh. A new Work conversation returned `ISSUE36_M2_OK` through a foreground `codex_task`; generation 11 hydrated and refreshed; Settings hydrated; a background task completed; two same-response sibling tasks shared one presentation and elected the newest mounted card; a later response superseded that card; and an existing generation 10 conversation at `ui://codex-mcp-bridge/activity/b4725cb7de0b.html` hydrated and refreshed. The real-host foreground/background/sibling/next-response Jobs all reached `completed` with their expected retained results.
 
 Issue 38 adds deterministic foreground and exact-Job structured-only consumer probes with `ISSUE38_FOREGROUND_SENTINEL` and `ISSUE38_BACKGROUND_SENTINEL`, an escaping-heavy truncation probe, omitted/unavailable separation, and summary-to-exact retrieval checks. The authenticated pre-fix host trace is recorded separately because it demonstrates why a bridge-level object test that sees both MCP channels was insufficient.
+
+Issue 40 adds strict delivered/uncertain steering fixtures, discovery inventory
+checks for the exact four-field public input, cross-field output validation,
+same-scope active App Server, stale/terminal/MCP/cancel/interaction regressions,
+a persistent dispatch-boundary restart probe, a host-derived scope composition
+probe, and an adversarial exact-prompt echo probe across progress, event, final
+result, public status, and SQLite bytes. The authenticated App Server 0.145.0 run
+passed active delivery, stale rejection, exact replay, terminal rejection,
+single-turn behavior, and raw-prompt absence; its sanitized record is
+`docs/audits/issue-40-app-server-canary.md`. The focused public discovery delta
+is `docs/audits/issue-40-tool-schema-delta.json`. Deterministic crash-boundary
+fixtures remain distinct from the live-host evidence, and neither is represented
+as a distributed exactly-once guarantee.

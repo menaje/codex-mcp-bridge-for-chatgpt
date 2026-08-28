@@ -34,7 +34,7 @@ describe("skills release archive", () => {
         skills: expect.arrayContaining([
           expect.objectContaining({
             name: "codex",
-            skillVersion: "0.1.1",
+            skillVersion: "0.1.2",
             path: "skills/codex/SKILL.md"
           })
         ])

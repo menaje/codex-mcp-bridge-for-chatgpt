@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -143,15 +143,21 @@ const untypedNumericModelSchemaLiterals = untypedNumericLiteralPointers(
 );
 const issueSchemaBaselineBytes = 20_128;
 const finalGenerationTargetBytes = Math.ceil(issueSchemaBaselineBytes * 0.6);
-const schemaReductionBytes = issueSchemaBaselineBytes - modelVisibleSchemas.totalBytes;
+const issue40SteeringSchemaBytes = modelVisibleSchemas.byTool.codex_steer || 0;
+const preIssue40ModelVisibleSchemaBytes =
+  modelVisibleSchemas.totalBytes - issue40SteeringSchemaBytes;
+const issue40ExpandedTargetBytes =
+  finalGenerationTargetBytes + issue40SteeringSchemaBytes;
+const schemaReductionBytes = issueSchemaBaselineBytes - preIssue40ModelVisibleSchemaBytes;
 const schemaReductionPercent = Number(
   ((schemaReductionBytes / issueSchemaBaselineBytes) * 100).toFixed(3)
 );
 
 const report = {
-  auditVersion: 2,
+  auditVersion: 3,
   issue: 36,
   regressionIssue: 38,
+  featureIssue: 40,
   basis: {
     commit: "8a2cf54",
     normativeClient: "ChatGPT",
@@ -192,6 +198,22 @@ const report = {
       chatGptToolMessagePrivateMeta: false,
       foregroundStructuredAnswerFixture: "ISSUE38_FOREGROUND_SENTINEL",
       backgroundStructuredAnswerFixture: "ISSUE38_BACKGROUND_SENTINEL"
+    },
+    issue40Evidence: {
+      status: "passed",
+      source: "authenticated Codex App Server 0.145.0 through public Bridge tools",
+      canaryRecord: "docs/audits/issue-40-app-server-canary.md",
+      modelVisibleTool: "codex_steer",
+      activeTurnOnly: true,
+      activeSteerDelivered: true,
+      staleVersionRejectedBeforeDispatch: true,
+      terminalSteerRejectedWithoutNewTurn: true,
+      exactReplayUpstreamCalls: 1,
+      durableDispatchBoundary: true,
+      hostDerivedScopeRegression: true,
+      exactPromptEchoRedacted: true,
+      rawPromptPersisted: false,
+      distributedExactlyOnceClaimed: false
     }
   },
   issueBaseline: {
@@ -237,12 +259,17 @@ const report = {
   finalGenerationBudget: {
     targetReductionPercent: 40,
     targetModelVisibleSchemaBytes: finalGenerationTargetBytes,
+    preIssue40ModelVisibleSchemaBytes,
+    issue40SteeringSchemaBytes,
+    issue40ExpandedTargetBytes,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
     reductionBytes: schemaReductionBytes,
     reductionPercent: schemaReductionPercent,
-    headroomBytes: finalGenerationTargetBytes - modelVisibleSchemas.totalBytes,
-    enforcedAt: "W3",
-    passed: modelVisibleSchemas.totalBytes <= finalGenerationTargetBytes
+    headroomBytes: issue40ExpandedTargetBytes - modelVisibleSchemas.totalBytes,
+    enforcedAt: "W3+issue40-additive-tool",
+    passed:
+      preIssue40ModelVisibleSchemaBytes <= finalGenerationTargetBytes &&
+      modelVisibleSchemas.totalBytes <= issue40ExpandedTargetBytes
   }
 };
 
@@ -253,12 +280,16 @@ if (process.argv.includes("--check")) {
     "Model-visible output schemas contain typeless numeric const/enum nodes that ChatGPT cannot expose reliably."
   );
   assert.ok(
-    modelVisibleSchemas.totalBytes <= finalGenerationTargetBytes,
-    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > ${finalGenerationTargetBytes} bytes.`
+    preIssue40ModelVisibleSchemaBytes <= finalGenerationTargetBytes &&
+      modelVisibleSchemas.totalBytes <= issue40ExpandedTargetBytes,
+    `Model-visible schema budget exceeded: base ${preIssue40ModelVisibleSchemaBytes} > ${finalGenerationTargetBytes} or total ${modelVisibleSchemas.totalBytes} > ${issue40ExpandedTargetBytes} bytes.`
   );
   const baseline = readJson<typeof report>(baselinePath);
   assert.deepStrictEqual(report, baseline, "Output contract audit differs from the checked-in baseline.");
   console.log(`Output contract audit matches ${path.relative(repositoryRoot, baselinePath)}.`);
+} else if (process.argv.includes("--write")) {
+  writeFileSync(baselinePath, `${JSON.stringify(report, null, 2)}\n`);
+  console.log(`Wrote ${path.relative(repositoryRoot, baselinePath)}.`);
 } else {
   console.log(JSON.stringify(report, null, 2));
 }

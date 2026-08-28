@@ -32,6 +32,12 @@ three-property maximum.
 The runtime retains the explicit `waitMs`/`waitFor` check as defense against a
 stale or non-validating MCP caller.
 
+`codex_steer` publishes exactly four required properties: `requestId`, `jobId`,
+`expectedJobVersion`, and `prompt`. It does not publish conversation scope,
+Activity/Agent/thread/turn/card identifiers, execution settings, lifecycle or
+policy controls, or interaction/approval responses. Those omitted fields are
+not compatibility aliases: attempts to inject them fail strict input parsing.
+
 ## Runtime-only authority
 
 Some conditions cannot safely be frozen into discovery because they depend on
@@ -50,6 +56,11 @@ where it must return an authoritative, recoverable error:
   same-backend fresh context forbids it.
 - Cancellation impact sets, optimistic versions, mounted-card leases, and exact
   interaction question IDs are authoritative runtime state.
+- Public steering derives scope from the host and resolves the exact Job's
+  Activity, Agent, current App Server thread, and active root turn at dispatch
+  time. Job ownership, current assignment, optimistic version, cancellation and
+  terminal state, backend capability, and positive active-turn evidence are all
+  runtime checks. No inactive or future turn queue is admitted.
 
 These are intentional semantic admission checks, not open schema leaves. They
 must fail before Activity, Agent, Job, session, cancellation, or upstream side
@@ -64,10 +75,20 @@ schema and fails when:
 - any model-visible literal lacks its primitive type;
 - the dynamic project choices lose their string type;
 - the exact-Job wait variants become ambiguous; or
-- the interaction answer map loses its shared question bound.
+- the interaction answer map loses its shared question bound; or
+- `codex_steer` exposes anything other than its four bounded public fields or
+  loses its destructive/idempotent annotations.
 
 Runtime probes also send unknown fields to the four formerly open roots and an
-oversized interaction-answer map, requiring an input error rather than a
-successful no-op. Dynamic task profiles, unavailable-project recovery, fixed
-and automatic model policies, and adaptive/fixed sandbox profiles remain in
-the existing discovery suite.
+oversized interaction-answer map, and inject upstream/card/policy identifiers
+into `codex_steer`, requiring an input error rather than a successful no-op.
+An end-to-end public steering probe starts and steers the same Job with only
+host metadata plus the four published fields, then proves that another host
+session cannot address that Job.
+Dynamic task profiles, unavailable-project recovery, fixed and automatic model
+policies, and adaptive/fixed sandbox profiles remain in the existing discovery
+suite.
+
+The focused issue-40 discovery delta is checked in at
+`docs/audits/issue-40-tool-schema-delta.json`; the executable full inventory
+snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.

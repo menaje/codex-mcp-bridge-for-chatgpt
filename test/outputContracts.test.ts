@@ -94,6 +94,28 @@ describe("model-visible output contracts", () => {
     }
   });
 
+  it("keeps steering success, failure, and dispatch uncertainty semantically aligned", () => {
+    const delivered = structuredClone(
+      modelResults.codex_steer.find(({ fixture }) => fixture === "active-turn-delivered")!
+        .structuredContent
+    ) as Record<string, any>;
+    delivered.code = "JOB_NOT_ACTIVE";
+    expect(() => validateModelVisibleStructuredOutput("codex_steer", delivered))
+      .toThrow(/Successful steering/);
+
+    const uncertain = structuredClone(
+      modelResults.codex_steer.find(({ fixture }) => fixture === "dispatch-uncertain")!
+        .structuredContent
+    ) as Record<string, any>;
+    uncertain.delivery.status = "not-delivered";
+    expect(() => validateModelVisibleStructuredOutput("codex_steer", uncertain))
+      .toThrow(/uncertainty/);
+
+    uncertain.delivery.status = "delivered";
+    expect(() => validateModelVisibleStructuredOutput("codex_steer", uncertain))
+      .toThrow(/non-delivered/);
+  });
+
   it("emits closed JSON Schema envelopes without model-visible opaque leaves", () => {
     const opaqueLeaves: string[] = [];
     const violations: string[] = [];
@@ -216,8 +238,15 @@ describe("model-visible output contracts", () => {
       (total, schema) => total + Buffer.byteLength(JSON.stringify(z.toJSONSchema(schema)), "utf8"),
       0
     );
-    expect(bytes).toBe(12_009);
-    expect(bytes).toBeLessThanOrEqual(12_077);
+    const steeringBytes = Buffer.byteLength(
+      JSON.stringify(z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_steer)),
+      "utf8"
+    );
+    expect(steeringBytes).toBe(1_360);
+    expect(bytes - steeringBytes).toBe(12_009);
+    expect(bytes - steeringBytes).toBeLessThanOrEqual(12_077);
+    expect(bytes).toBe(13_369);
+    expect(bytes).toBeLessThanOrEqual(13_437);
   });
 
   it("retires public Activity hydration while retaining private generation 11 contracts", () => {

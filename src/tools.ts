@@ -86,7 +86,9 @@ import {
   legacyActivityIdForJob,
   normalizeActivityTitle,
   type ActivityProjectAdmission,
-  type CreateActivityInput
+  type BeginSteeringDeliveryInput,
+  type CreateActivityInput,
+  type SteeringDeliveryRecord
 } from "./stateStore.js";
 import {
   MAX_REGISTERED_PROJECTS,
@@ -939,6 +941,39 @@ const activityCancelMutationOutputSchema = z.strictObject({
   codexOutputCanMutatePolicy: z.literal(false)
 });
 
+const steeringResultCodes = [
+  "JOB_NOT_ACTIVE",
+  "STALE_JOB_VERSION",
+  "STEERING_UNSUPPORTED",
+  "JOB_SCOPE_MISMATCH",
+  "DELIVERY_UNCERTAIN",
+  "STEERING_REQUEST_CONFLICT"
+] as const;
+
+const compactSteeringJobOutputSchema = z.strictObject({
+  jobId: z.string(),
+  activityId: z.string(),
+  agentId: z.string(),
+  status: z.enum(ACTIVITY_JOB_STATUSES),
+  version: z.number().int().min(1)
+});
+
+const codexSteerOutputSchema = z.strictObject({
+  kind: z.literal("mutation"),
+  ok: z.boolean(),
+  action: z.literal("steer"),
+  code: z.enum(steeringResultCodes).nullable(),
+  job: compactSteeringJobOutputSchema.nullable(),
+  promptPersistedByBridge: z.literal(false),
+  steeringScope: z.literal("active-codex-turn-only"),
+  delivery: z.strictObject({
+    status: z.enum(["delivered", "not-delivered", "uncertain"])
+  }),
+  message: z.string(),
+  warnings: z.array(z.string()),
+  nextActions: z.array(modelNextActionOutputSchema)
+});
+
 const handoffOutputSchema = z.strictObject({
   kind: z.literal("handoff"),
   action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
@@ -1032,6 +1067,7 @@ for (const [schema, reuse] of [
   [codexModelsOutputSchema, false],
   [compactSettingsOutputSchema, false],
   [codexStatusOutputSchema, false],
+  [codexSteerOutputSchema, false],
   [codexTaskOutputSchema, false]
 ] as const) {
   installCompactPublishedOutputSchema(schema, reuse);
@@ -1154,6 +1190,13 @@ const modelMutationResultContracts = Object.freeze({
     "documented-support-level"
   )
 });
+const steerResultContract = toolOutputContract(
+  "codex_steer",
+  "model-orchestrator-semantic",
+  codexSteerOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_steer,
+  "documented-support-level"
+);
 const appMutationResultContract = toolOutputContract(
   "app-only-mutation",
   "app-hydration",
@@ -1196,6 +1239,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_models: codexModelsOutputSchema,
   codex_settings: compactSettingsOutputSchema,
   codex_status: codexStatusOutputSchema,
+  codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
 
@@ -1221,7 +1265,25 @@ export function validateModelVisibleStructuredOutput(
 ): unknown {
   if (toolName === "codex_task") return validateTaskOutput(value);
   if (toolName === "codex_status") return validateStatusOutput(value);
+  if (toolName === "codex_steer") return validateSteerOutput(value);
   return MODEL_VISIBLE_OUTPUT_SCHEMAS[toolName].parse(value);
+}
+
+function validateSteerOutput(value: unknown): z.infer<typeof codexSteerOutputSchema> {
+  const parsed = codexSteerOutputSchema.parse(value);
+  if (parsed.ok) {
+    if (parsed.code !== null || parsed.job === null || parsed.delivery.status !== "delivered") {
+      throw new Error("Successful steering requires a delivered result, exact Job, and no error code.");
+    }
+    return parsed;
+  }
+  if (parsed.code === null || parsed.delivery.status === "delivered") {
+    throw new Error("Failed steering requires an error code and a non-delivered status.");
+  }
+  if ((parsed.code === "DELIVERY_UNCERTAIN") !== (parsed.delivery.status === "uncertain")) {
+    throw new Error("Steering delivery uncertainty must match its structured error code.");
+  }
+  return parsed;
 }
 
 function validateTaskOutput(value: unknown): z.infer<typeof codexTaskOutputSchema> {
@@ -1550,6 +1612,22 @@ type CodexJobWaitResult = {
   changed: boolean;
 };
 
+type SteeringTerminalStatus = Extract<
+  SteeringDeliveryRecord["status"],
+  "delivered" | "not-delivered" | "uncertain"
+>;
+
+type SteeringMutationOutcome = {
+  status: SteeringTerminalStatus;
+  result: unknown;
+};
+
+type SteeringMutationFallbacks = {
+  conflict: unknown;
+  notDelivered: unknown;
+  uncertain: unknown;
+};
+
 export class CodexJobRegistry {
   private readonly jobs = new Map<string, CodexJob>();
   private readonly waiters = new Map<string, Set<() => void>>();
@@ -1595,6 +1673,14 @@ export class CodexJobRegistry {
     string,
     { actionHash: string; promise: Promise<unknown> }
   >();
+  private readonly steeringOperationsInFlight = new Map<
+    string,
+    { actionHash: string; promise: Promise<unknown> }
+  >();
+  // Raw steering input is needed transiently only to prevent Codex from
+  // reflecting it into Bridge-owned progress, event, error, or Job-result
+  // persistence. Keep it outside CodexJob so it is never serialized.
+  private readonly steeringPromptRedactions = new Map<string, Set<string>>();
   private readonly interactionResponses = new Map<
     string,
     { responseHash: string; promise: Promise<CodexJob> }
@@ -2315,6 +2401,132 @@ export class CodexJobRegistry {
     this.activityStore.recordAgentMutation(scopeId, requestId, actionHash, result);
   }
 
+  getSteeringDelivery(
+    scopeId: string,
+    requestId: string
+  ): SteeringDeliveryRecord | undefined {
+    return this.activityStore.getSteeringDelivery(scopeId, requestId);
+  }
+
+  listSteeringDeliveries(scopeId?: string): SteeringDeliveryRecord[] {
+    return this.activityStore.listSteeringDeliveries(scopeId);
+  }
+
+  markSteeringDeliveryDispatching(
+    scopeId: string,
+    requestId: string,
+    actionHash: string
+  ): SteeringDeliveryRecord {
+    return this.activityStore.markSteeringDeliveryDispatching(
+      scopeId,
+      requestId,
+      actionHash
+    );
+  }
+
+  async runSteeringMutation(
+    input: BeginSteeringDeliveryInput,
+    fallbacks: SteeringMutationFallbacks,
+    operation: () => Promise<SteeringMutationOutcome>
+  ): Promise<unknown> {
+    const key = `${input.scopeId}\0${input.requestId}`;
+    const active = this.steeringOperationsInFlight.get(key);
+    if (active) {
+      if (active.actionHash !== input.actionHash) return fallbacks.conflict;
+      return active.promise;
+    }
+
+    const replay = this.getSteeringDelivery(input.scopeId, input.requestId);
+    if (replay) {
+      if (replay.actionHash !== input.actionHash) return fallbacks.conflict;
+      if (replay.result !== undefined) return replay.result;
+      const status: SteeringTerminalStatus = replay.status === "prepared"
+        ? "not-delivered"
+        : "uncertain";
+      const result = status === "not-delivered"
+        ? fallbacks.notDelivered
+        : fallbacks.uncertain;
+      if (replay.status === "prepared" || replay.status === "dispatching") {
+        try {
+          this.activityStore.completeSteeringDelivery(
+            input.scopeId,
+            input.requestId,
+            input.actionHash,
+            status,
+            result
+          );
+        } catch {
+          // The returned result remains fail-closed. A later exact replay sees
+          // the same durable prepared/dispatching boundary and cannot resend.
+        }
+      }
+      return result;
+    }
+
+    let prepared: SteeringDeliveryRecord;
+    try {
+      prepared = this.activityStore.beginSteeringDelivery(input);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("STEERING_REQUEST_CONFLICT:")) {
+        return fallbacks.conflict;
+      }
+      throw error;
+    }
+    if (prepared.status !== "prepared") {
+      if (prepared.actionHash !== input.actionHash) return fallbacks.conflict;
+      if (prepared.result !== undefined) return prepared.result;
+      return prepared.status === "dispatching" ? fallbacks.uncertain : fallbacks.notDelivered;
+    }
+
+    const promise = Promise.resolve()
+      .then(operation)
+      .then((outcome) => {
+        try {
+          this.activityStore.completeSteeringDelivery(
+            input.scopeId,
+            input.requestId,
+            input.actionHash,
+            outcome.status,
+            outcome.result
+          );
+          return outcome.result;
+        } catch {
+          if (outcome.status === "delivered") return fallbacks.uncertain;
+          return outcome.result;
+        }
+      })
+      .catch(() => {
+        const current = this.getSteeringDelivery(input.scopeId, input.requestId);
+        const status: SteeringTerminalStatus = current?.status === "prepared"
+          ? "not-delivered"
+          : "uncertain";
+        const result = status === "not-delivered"
+          ? fallbacks.notDelivered
+          : fallbacks.uncertain;
+        try {
+          this.activityStore.completeSteeringDelivery(
+            input.scopeId,
+            input.requestId,
+            input.actionHash,
+            status,
+            result
+          );
+        } catch {
+          // Preserve fail-closed delivery semantics even if the audit write is
+          // unavailable; the durable non-terminal row prevents silent resend.
+        }
+        return result;
+      });
+    this.steeringOperationsInFlight.set(key, { actionHash: input.actionHash, promise });
+    try {
+      return await promise;
+    } finally {
+      if (this.steeringOperationsInFlight.get(key)?.promise === promise) {
+        this.steeringOperationsInFlight.delete(key);
+      }
+    }
+  }
+
   getCancellationOperation(
     scopeId: string,
     requestId: string
@@ -2801,7 +3013,8 @@ export class CodexJobRegistry {
       this.maxResultBytes,
       job.sessionDecision,
       job.cwd,
-      this.allowedRoots
+      this.allowedRoots,
+      this.steeringPromptsFor(job.jobId)
     );
     let undo: (() => void) | undefined;
     try {
@@ -2826,6 +3039,7 @@ export class CodexJobRegistry {
       };
       if (this.stateStore) this.stateStore.transaction(finish);
       else finish();
+      this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId);
       this.pruneAndPersist();
     } catch (error) {
@@ -2844,7 +3058,8 @@ export class CodexJobRegistry {
       this.maxResultBytes,
       job.sessionDecision,
       job.cwd,
-      this.allowedRoots
+      this.allowedRoots,
+      this.steeringPromptsFor(job.jobId)
     );
     let undo: (() => void) | undefined;
     const fail = () => {
@@ -2863,7 +3078,8 @@ export class CodexJobRegistry {
       job.error = sanitizeTextForJob(
         toolResultErrorMessage(result),
         job.cwd,
-        this.allowedRoots
+        this.allowedRoots,
+        this.steeringPromptsFor(job.jobId)
       ).slice(0, 4_000);
       job.updatedAt = Date.now();
       job.version += 1;
@@ -2872,6 +3088,7 @@ export class CodexJobRegistry {
     try {
       if (this.stateStore) this.stateStore.transaction(fail);
       else fail();
+      this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId);
       this.pruneAndPersist();
     } catch (error) {
@@ -2895,7 +3112,8 @@ export class CodexJobRegistry {
     job.error = sanitizeTextForJob(
       error instanceof Error ? error.message : String(error),
       job.cwd,
-      this.allowedRoots
+      this.allowedRoots,
+      this.steeringPromptsFor(job.jobId)
     ).slice(0, 4_000);
     this.recordChange(job);
   }
@@ -3047,7 +3265,19 @@ export class CodexJobRegistry {
     if (job.backendKind !== "app-server" || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
-    await this.upstream.steerThread(job.threadId, prompt);
+    this.rememberSteeringPrompt(job.jobId, prompt);
+    try {
+      await this.upstream.steerThread(job.threadId, prompt);
+    } catch (error) {
+      // The dispatch boundary is uncertain to callers. Keep the redaction until
+      // terminal state, and never reflect a prompt-bearing upstream error.
+      throw new Error(
+        redactSteeringPromptText(
+          error instanceof Error ? error.message : String(error),
+          this.steeringPromptsFor(job.jobId)
+        )
+      );
+    }
     this.recordProgress(job, {
       progress: (job.lastProgress?.progress || 0) + 1,
       message: "Additional user guidance was sent to the active Codex turn.",
@@ -3060,6 +3290,18 @@ export class CodexJobRegistry {
       }
     });
     return job;
+  }
+
+  private rememberSteeringPrompt(jobId: string, prompt: string): void {
+    const prompts = this.steeringPromptRedactions.get(jobId) || new Set<string>();
+    prompts.add(prompt);
+    this.steeringPromptRedactions.set(jobId, prompts);
+  }
+
+  private steeringPromptsFor(jobId: string): string[] {
+    return [...(this.steeringPromptRedactions.get(jobId) || [])]
+      .filter(Boolean)
+      .sort((left, right) => right.length - left.length);
   }
 
   async wait(
@@ -3110,11 +3352,13 @@ export class CodexJobRegistry {
       job.status = "running";
       job.error = undefined;
     }
-    job.lastProgress = sanitizeProgress(progress);
+    const steeringPrompts = this.steeringPromptsFor(job.jobId);
+    job.lastProgress = sanitizeProgress(progress, steeringPrompts);
     const publicEvent = sanitizePublicEventForJob(
       sanitizePublicEvent(progress.event),
       job.cwd,
-      this.allowedRoots
+      this.allowedRoots,
+      steeringPrompts
     );
     if (publicEvent) {
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
@@ -3364,6 +3608,9 @@ export class CodexJobRegistry {
         const previous = beforePrune.get(jobId);
         if (previous) this.jobs.set(jobId, previous);
       }
+    }
+    if (isTerminalActivityJobStatus(job.status)) {
+      this.steeringPromptRedactions.delete(job.jobId);
     }
   }
 
@@ -5395,6 +5642,131 @@ export function registerBridgeTools(
         }
       );
       return mutationToolResult(result, "app");
+    }
+  );
+
+  server.registerTool(
+    "codex_steer",
+    {
+      title: "Steer Active Codex Job",
+      description:
+        "Send bounded additional guidance to the exact currently running App Server Job root in this ChatGPT conversation without creating a new turn. Use it only for a new user constraint, a verified dependency result, or a correction that matters before the active turn finishes. It never queues work for an idle or terminal Agent, targets an internal Codex subagent, resolves an approval or user-input interaction, changes Activity/project/model/sandbox policy, or cancels work. After terminal state, use codex_task with the existing Agent and context='continue' instead. Reuse requestId only for the exact same job, version, and prompt retry; DELIVERY_UNCERTAIN must be inspected and never automatically resent.",
+      inputSchema: withJsonSchemaProjection(
+        z.strictObject({
+          scopeId: scopeIdSchema().optional()
+            .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
+          requestId: scopeIdSchema()
+            .describe("Unique UUID for this exact Job/version/prompt steering request and its retries."),
+          jobId: z.string().trim().min(1).max(200)
+            .describe("Exact active Job id returned by codex_task."),
+          expectedJobVersion: z.number().int().min(1)
+            .describe("Authoritative Job version observed immediately before steering."),
+          prompt: z.string().trim().min(1).max(config.maxPromptChars)
+            .describe("Bounded additional guidance for the current in-flight turn only.")
+        }),
+        z.strictObject({
+          requestId: scopeIdSchema()
+            .describe("Unique UUID for this exact Job/version/prompt steering request and its retries."),
+          jobId: z.string().trim().min(1).max(200)
+            .describe("Exact active Job id returned by codex_task."),
+          expectedJobVersion: z.number().int().min(1)
+            .describe("Authoritative Job version observed immediately before steering."),
+          prompt: z.string().trim().min(1).max(config.maxPromptChars)
+            .describe("Bounded additional guidance for the current in-flight turn only.")
+        })
+      ),
+      outputSchema: codexSteerOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (args, { _meta }) => {
+      const scope = scopeResolver.require(
+        _meta as ToolCallMetadata,
+        args.scopeId,
+        "Codex active Job steering"
+      );
+      const promptHash = createHash("sha256").update(args.prompt).digest("hex");
+      const actionHash = createHash("sha256")
+        .update(JSON.stringify({
+          action: "steer",
+          jobId: args.jobId,
+          expectedJobVersion: args.expectedJobVersion,
+          promptHash
+        }))
+        .digest("hex");
+      const safeCurrentJob = () => {
+        const job = jobs.get(args.jobId);
+        return job?.scopeId === scope.scopeId ? job : undefined;
+      };
+      const result = await jobs.runSteeringMutation(
+        {
+          scopeId: scope.scopeId,
+          requestId: args.requestId,
+          actionHash,
+          jobId: args.jobId,
+          expectedJobVersion: args.expectedJobVersion,
+          promptSha256: promptHash
+        },
+        {
+          conflict: steeringFailureResult(
+            "STEERING_REQUEST_CONFLICT",
+            undefined
+          ),
+          notDelivered: steeringFailureResult(
+            "JOB_NOT_ACTIVE",
+            safeCurrentJob(),
+            "The durable steering request stopped before dispatch and was not queued for a future turn."
+          ),
+          uncertain: steeringFailureResult(
+            "DELIVERY_UNCERTAIN",
+            safeCurrentJob()
+          )
+        },
+        async () => {
+          const validation = validatePublicSteeringTarget(
+            jobs,
+            upstream,
+            scope.scopeId,
+            args.jobId,
+            args.expectedJobVersion
+          );
+          if (!validation.ok) {
+            return {
+              status: "not-delivered",
+              result: steeringFailureResult(
+                validation.code,
+                validation.job,
+                validation.message
+              )
+            };
+          }
+          jobs.markSteeringDeliveryDispatching(
+            scope.scopeId,
+            args.requestId,
+            actionHash
+          );
+          try {
+            const updated = await jobs.steer(validation.job.jobId, args.prompt);
+            return {
+              status: "delivered",
+              result: steeringSuccessResult(updated)
+            };
+          } catch {
+            return {
+              status: "uncertain",
+              result: steeringFailureResult(
+                "DELIVERY_UNCERTAIN",
+                safeCurrentJob()
+              )
+            };
+          }
+        }
+      );
+      return steeringToolResult(result);
     }
   );
 
@@ -7929,6 +8301,218 @@ function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number 
   } catch {
     throw new Error(`Invalid or mismatched ${expectedKind} pagination cursor.`);
   }
+}
+
+type PublicSteeringValidation =
+  | { ok: true; job: CodexJob }
+  | {
+      ok: false;
+      code: (typeof steeringResultCodes)[number];
+      job?: CodexJob;
+      message: string;
+    };
+
+function validatePublicSteeringTarget(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  scopeId: string,
+  jobId: string,
+  expectedJobVersion: number
+): PublicSteeringValidation {
+  const job = jobs.get(jobId);
+  if (!job) {
+    return {
+      ok: false,
+      code: "JOB_NOT_ACTIVE",
+      message: "The exact Job does not exist or is no longer retained; no future Agent turn was queued."
+    };
+  }
+  if (job.scopeId !== scopeId) {
+    return {
+      ok: false,
+      code: "JOB_SCOPE_MISMATCH",
+      message: "The exact Job is not owned by this ChatGPT conversation scope."
+    };
+  }
+
+  const activity = jobs.getActivity(job.activityId);
+  const agent = job.agentId ? jobs.getAgent(job.agentId) : undefined;
+  const assignment = job.agentId
+    ? jobs.listActivityAgentAssignments(job.activityId, job.agentId)
+        .find((candidate) => candidate.releasedAt === undefined)
+    : undefined;
+  if (
+    !activity ||
+    activity.scopeId !== scopeId ||
+    !agent ||
+    agent.scopeId !== scopeId
+  ) {
+    return {
+      ok: false,
+      code: "JOB_SCOPE_MISMATCH",
+      message: "The Job, Activity, Agent, and current thread no longer form one exact scope-owned root."
+    };
+  }
+  if (
+    job.status !== "running" ||
+    job.cancelRequestedAt !== undefined ||
+    (agent.lifecycle !== "active" && agent.lifecycle !== "waiting-input") ||
+    activity.lifecycle === "terminating" ||
+    activity.lifecycle === "completed" ||
+    activity.lifecycle === "cancelled" ||
+    activity.lifecycle === "abandoned"
+  ) {
+    return {
+      ok: false,
+      code: "JOB_NOT_ACTIVE",
+      job,
+      message: "The exact Job no longer has a steerable active turn; no future Agent turn was queued."
+    };
+  }
+  if (
+    !assignment ||
+    assignment.activityId !== activity.activityId ||
+    assignment.agentId !== agent.agentId ||
+    agent.currentJobId !== job.jobId
+  ) {
+    return {
+      ok: false,
+      code: "JOB_SCOPE_MISMATCH",
+      message: "The active Job is not the current scope-owned Activity assignment for this Agent."
+    };
+  }
+  if (job.version !== expectedJobVersion) {
+    return {
+      ok: false,
+      code: "STALE_JOB_VERSION",
+      job,
+      message: `The Job version changed from ${expectedJobVersion} to ${job.version}; steering was not dispatched.`
+    };
+  }
+  if (
+    job.backendKind !== "app-server" ||
+    !job.threadId ||
+    !upstream.steerThread ||
+    !upstream.canSteerThread
+  ) {
+    return {
+      ok: false,
+      code: "STEERING_UNSUPPORTED",
+      job,
+      message: "Steering requires a bridge-verified active Codex App Server turn."
+    };
+  }
+  const thread = jobs.listAgentThreads(agent.agentId)
+    .find((candidate) => candidate.threadId === job.threadId);
+  if (
+    !thread ||
+    thread.scopeId !== scopeId ||
+    thread.agentId !== agent.agentId ||
+    thread.backendKind !== "app-server" ||
+    !thread.isCurrent ||
+    agent.currentThreadId !== job.threadId
+  ) {
+    return {
+      ok: false,
+      code: "JOB_SCOPE_MISMATCH",
+      job,
+      message: "The active App Server thread is not the current scope-owned root for this Agent."
+    };
+  }
+  if (upstream.canSteerThread(job.threadId) !== true) {
+    return {
+      ok: false,
+      code: "JOB_NOT_ACTIVE",
+      job,
+      message: "The App Server thread has no active turn to steer; no future turn was queued."
+    };
+  }
+  return { ok: true, job };
+}
+
+function compactSteeringJob(
+  job: CodexJob | undefined
+): z.infer<typeof compactSteeringJobOutputSchema> | null {
+  if (!job?.agentId) return null;
+  return compactSteeringJobOutputSchema.parse({
+    jobId: job.jobId,
+    activityId: job.activityId,
+    agentId: job.agentId,
+    status: job.status,
+    version: job.version
+  });
+}
+
+function steeringSuccessResult(job: CodexJob): z.infer<typeof codexSteerOutputSchema> {
+  return codexSteerOutputSchema.parse({
+    kind: "mutation",
+    ok: true,
+    action: "steer",
+    code: null,
+    job: compactSteeringJob(job),
+    promptPersistedByBridge: false,
+    steeringScope: "active-codex-turn-only",
+    delivery: { status: "delivered" },
+    message: "Additional guidance was delivered to the exact active Codex turn without creating a new turn.",
+    warnings: [],
+    nextActions: []
+  });
+}
+
+function steeringFailureResult(
+  code: (typeof steeringResultCodes)[number],
+  job?: CodexJob,
+  message?: string
+): z.infer<typeof codexSteerOutputSchema> {
+  const defaults: Record<(typeof steeringResultCodes)[number], string> = {
+    JOB_NOT_ACTIVE:
+      "The exact Job has no active turn to steer; no future Agent turn was queued.",
+    STALE_JOB_VERSION:
+      "The Job version changed before dispatch; refresh exact Job status before deciding on another request.",
+    STEERING_UNSUPPORTED:
+      "The selected Job is not a bridge-verified active App Server turn and cannot be steered.",
+    JOB_SCOPE_MISMATCH:
+      "The selected Job is not the exact scope-owned Job root for this conversation.",
+    DELIVERY_UNCERTAIN:
+      "The bridge crossed the upstream dispatch boundary but could not durably confirm delivery; do not automatically resend.",
+    STEERING_REQUEST_CONFLICT:
+      "The requestId is already bound to a different Job, version, or prompt digest."
+  };
+  const nextActions: Record<(typeof steeringResultCodes)[number], string[]> = {
+    JOB_NOT_ACTIVE: [
+      "Read the exact Job with codex_status; if it is terminal and more work is needed, use codex_task with the existing Agent and context='continue'."
+    ],
+    STALE_JOB_VERSION: [
+      "Refresh the exact Job with codex_status, then use a fresh requestId with the current Job version if steering is still necessary."
+    ],
+    STEERING_UNSUPPORTED: [
+      "Let the current Job finish or use codex_task with the existing Agent and context='continue' for a later turn."
+    ],
+    JOB_SCOPE_MISMATCH: [
+      "Use only an exact Job ID returned in the current ChatGPT conversation scope."
+    ],
+    DELIVERY_UNCERTAIN: [
+      "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+    ],
+    STEERING_REQUEST_CONFLICT: [
+      "Generate a fresh requestId for any different steering payload."
+    ]
+  };
+  return codexSteerOutputSchema.parse({
+    kind: "mutation",
+    ok: false,
+    action: "steer",
+    code,
+    job: compactSteeringJob(job),
+    promptPersistedByBridge: false,
+    steeringScope: "active-codex-turn-only",
+    delivery: { status: code === "DELIVERY_UNCERTAIN" ? "uncertain" : "not-delivered" },
+    message: message || defaults[code],
+    warnings: code === "DELIVERY_UNCERTAIN"
+      ? ["The bridge does not claim distributed exactly-once delivery across this crash boundary."]
+      : [],
+    nextActions: nextActions[code]
+  });
 }
 
 function formatJobStatus(
@@ -10665,13 +11249,18 @@ async function enforceSensitiveFilePreflight(
   }
 }
 
-function sanitizeProgress(progress: Progress): Progress {
+function sanitizeProgress(
+  progress: Progress,
+  steeringPrompts: readonly string[] = []
+): Progress {
   return {
     progress: Number.isFinite(progress.progress) ? progress.progress : 0,
     ...(typeof progress.total === "number" && Number.isFinite(progress.total)
       ? { total: progress.total }
       : {}),
-    ...(typeof progress.message === "string" ? { message: progress.message.slice(0, 500) } : {})
+    ...(typeof progress.message === "string"
+      ? { message: redactSteeringPromptText(progress.message, steeringPrompts).slice(0, 500) }
+      : {})
   };
 }
 
@@ -10718,7 +11307,8 @@ function sanitizePublicEvent(value: unknown): CodexPublicEvent | undefined {
 function sanitizePublicEventForJob(
   event: CodexPublicEvent | undefined,
   cwd: string,
-  allowedRoots: string[]
+  allowedRoots: string[],
+  steeringPrompts: readonly string[] = []
 ): CodexPublicEvent | undefined {
   if (!event) return undefined;
   const replacements = [cwd, ...allowedRoots]
@@ -10726,13 +11316,16 @@ function sanitizePublicEventForJob(
     .sort((left, right) => right.length - left.length);
   const replacePaths = (value: unknown): unknown => {
     if (typeof value === "string") {
-      let result = value;
+      let result = redactSteeringPromptText(value, steeringPrompts);
       for (const root of replacements) result = result.split(root).join(path.basename(root));
       return result;
     }
     if (Array.isArray(value)) return value.map(replacePaths);
     if (!isRecord(value)) return value;
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replacePaths(entry)]));
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+      redactSteeringPromptText(key, steeringPrompts),
+      replacePaths(entry)
+    ]));
   };
   return {
     ...event,
@@ -11372,9 +11965,15 @@ function retainBoundedResult(
   maxBytes: number,
   session: SessionDecision,
   cwd: string,
-  allowedRoots: string[]
+  allowedRoots: string[],
+  steeringPrompts: readonly string[] = []
 ): { result: ToolResult; originalBytes: number; omitted: boolean } {
-  const sanitized = sanitizeRetainedToolResult(result, cwd, allowedRoots);
+  const sanitized = sanitizeRetainedToolResult(
+    result,
+    cwd,
+    allowedRoots,
+    steeringPrompts
+  );
   let serialized: string | undefined;
   try {
     serialized = JSON.stringify(sanitized);
@@ -11408,7 +12007,8 @@ function retainBoundedResult(
 function sanitizeRetainedToolResult(
   result: ToolResult,
   cwd: string,
-  allowedRoots: string[]
+  allowedRoots: string[],
+  steeringPrompts: readonly string[] = []
 ): ToolResult {
   const replacements = [cwd, ...allowedRoots]
     .filter(Boolean)
@@ -11419,7 +12019,9 @@ function sanitizeRetainedToolResult(
       if (key && /^(?:password|passwd|token|api[_-]?key|secret|authorization)$/i.test(key)) {
         return "[REDACTED]";
       }
-      let text = redactSensitiveText(value);
+      let text = redactSensitiveText(
+        redactSteeringPromptText(value, steeringPrompts)
+      );
       for (const root of replacements) text = text.split(root).join(path.basename(root));
       return text;
     }
@@ -11432,7 +12034,9 @@ function sanitizeRetainedToolResult(
       Object.entries(value).flatMap(([entryKey, entry]) => {
         if (entryKey === "_meta") return [];
         const sanitizedEntry = sanitize(entry, depth + 1, entryKey);
-        return sanitizedEntry === undefined ? [] : [[entryKey, sanitizedEntry]];
+        return sanitizedEntry === undefined
+          ? []
+          : [[redactSteeringPromptText(entryKey, steeringPrompts), sanitizedEntry]];
       })
     );
   };
@@ -11445,12 +12049,54 @@ function sanitizeRetainedToolResult(
       };
 }
 
-function sanitizeTextForJob(value: string, cwd: string, allowedRoots: string[]): string {
-  let sanitized = redactSensitiveText(value);
+function sanitizeTextForJob(
+  value: string,
+  cwd: string,
+  allowedRoots: string[],
+  steeringPrompts: readonly string[] = []
+): string {
+  let sanitized = redactSensitiveText(
+    redactSteeringPromptText(value, steeringPrompts)
+  );
   for (const root of [cwd, ...allowedRoots].filter(Boolean).sort((a, b) => b.length - a.length)) {
     sanitized = sanitized.split(root).join(path.basename(root));
   }
   return sanitized;
+}
+
+const STEERING_PROMPT_REDACTION_MARKER = "[steering input omitted]";
+
+function redactSteeringPromptText(
+  value: string,
+  steeringPrompts: readonly string[]
+): string {
+  const prompts = [...new Set(steeringPrompts)]
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  if (prompts.length === 0) return value;
+
+  let redacted = value;
+  let matched = false;
+  for (const prompt of prompts) {
+    if (!redacted.includes(prompt)) continue;
+    redacted = redacted.split(prompt).join(STEERING_PROMPT_REDACTION_MARKER);
+    matched = true;
+  }
+  if (!matched) return value;
+
+  // A marker or a concatenation created by a prior replacement could itself
+  // contain another tracked prompt. Deletion-only cleanup strictly decreases
+  // the string until no exact raw steering input remains.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const prompt of prompts) {
+      if (!redacted.includes(prompt)) continue;
+      redacted = redacted.split(prompt).join("");
+      changed = true;
+    }
+  }
+  return redacted;
 }
 
 function activityCardToolMetadata(): Record<string, unknown> {
@@ -12229,6 +12875,21 @@ function mutationToolResult(
   return contractedToolResult(contract, value, structured, { text });
 }
 
+function steeringToolResult(value: unknown): ToolResult {
+  const structured = codexSteerOutputSchema.parse(stripInternalProjectData(value));
+  const target = structured.job?.jobId;
+  const text = structured.ok
+    ? `steer${target ? ` ${target}` : ""}: delivered.`
+    : `steer${target ? ` ${target}` : ""}: ${structured.code || "not applied"}.`;
+  return contractedToolResult(
+    steerResultContract,
+    value,
+    structured,
+    { text },
+    structured.ok ? {} : { isError: true }
+  );
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
@@ -12280,6 +12941,7 @@ function contractedToolResult<Schema extends z.ZodType>(
 ): ToolResult {
   if (contract.toolName === "codex_task") validateTaskOutput(structured);
   if (contract.toolName === "codex_status") validateStatusOutput(structured);
+  if (contract.toolName === "codex_steer") validateSteerOutput(structured);
   return projectToolResult(contract, {
     canonical,
     authoritative: {

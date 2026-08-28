@@ -75,7 +75,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "8";
+const CURRENT_SCHEMA_VERSION = "9";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -344,6 +344,42 @@ export type TransportObservationRecord = {
   createdAt: number;
 };
 
+export const STEERING_DELIVERY_STATUSES = [
+  "prepared",
+  "dispatching",
+  "delivered",
+  "not-delivered",
+  "uncertain"
+] as const;
+
+export type SteeringDeliveryStatus = (typeof STEERING_DELIVERY_STATUSES)[number];
+
+export type SteeringDeliveryRecord = {
+  scopeId: string;
+  requestId: string;
+  actionHash: string;
+  jobId: string;
+  expectedJobVersion: number;
+  promptSha256: string;
+  status: SteeringDeliveryStatus;
+  bridgeInstanceId: string;
+  result?: unknown;
+  createdAt: number;
+  updatedAt: number;
+  dispatchedAt?: number;
+  completedAt?: number;
+};
+
+export type BeginSteeringDeliveryInput = {
+  scopeId: string;
+  requestId: string;
+  actionHash: string;
+  jobId: string;
+  expectedJobVersion: number;
+  promptSha256: string;
+  now?: number;
+};
+
 export type BridgeStateStoreOptions = {
   file: string;
 };
@@ -385,6 +421,7 @@ export class BridgeStateStore {
       existingVersion !== "5" &&
       existingVersion !== "6" &&
       existingVersion !== "7" &&
+      existingVersion !== "8" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -401,6 +438,7 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "5") this.migrateV5ToV6();
       if (this.getMeta("schema_version") === "6") this.migrateV6ToV7();
       if (this.getMeta("schema_version") === "7") this.migrateV7ToV8();
+      if (this.getMeta("schema_version") === "8") this.migrateV8ToV9();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -1216,6 +1254,146 @@ export class BridgeStateStore {
         VALUES (?, ?, ?, ?, ?)
       `)
       .run(scopeId, requestId, actionHash, JSON.stringify(result), now);
+  }
+
+  getSteeringDelivery(
+    scopeId: string,
+    requestId: string
+  ): SteeringDeliveryRecord | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM steering_deliveries WHERE scope_id = ? AND request_id = ?"
+      )
+      .get(scopeId, requestId) as Record<string, unknown> | undefined;
+    return row ? readSteeringDeliveryRow(row) : undefined;
+  }
+
+  listSteeringDeliveries(scopeId?: string): SteeringDeliveryRecord[] {
+    const rows = scopeId
+      ? this.database
+          .prepare(
+            "SELECT * FROM steering_deliveries WHERE scope_id = ? ORDER BY created_at ASC"
+          )
+          .all(scopeId)
+      : this.database
+          .prepare("SELECT * FROM steering_deliveries ORDER BY created_at ASC")
+          .all();
+    return (rows as Array<Record<string, unknown>>).map(readSteeringDeliveryRow);
+  }
+
+  beginSteeringDelivery(input: BeginSteeringDeliveryInput): SteeringDeliveryRecord {
+    const scopeId = normalizeUuid(input.scopeId, "steering scopeId");
+    const requestId = normalizeUuid(input.requestId, "steering requestId");
+    const actionHash = normalizeDigest(input.actionHash, "steering actionHash");
+    const jobId = normalizeRequiredString(input.jobId, "steering jobId", 200);
+    const expectedJobVersion = normalizeExpectedVersion(input.expectedJobVersion);
+    const promptSha256 = normalizeDigest(input.promptSha256, "steering prompt digest");
+    const now = normalizeEventTimestamp(input.now ?? Date.now());
+    return this.transaction(() => {
+      const existing = this.getSteeringDelivery(scopeId, requestId);
+      if (existing) {
+        if (existing.actionHash !== actionHash) {
+          throw new Error(
+            "STEERING_REQUEST_CONFLICT: requestId was already used for a different steering payload in this scope."
+          );
+        }
+        return existing;
+      }
+      this.ensureScope(scopeId, now);
+      this.database
+        .prepare(`
+          INSERT INTO steering_deliveries(
+            scope_id, request_id, action_hash, job_id, expected_job_version,
+            prompt_sha256, status, bridge_instance_id, result,
+            created_at, updated_at, dispatched_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, NULL, ?, ?, NULL, NULL)
+        `)
+        .run(
+          scopeId,
+          requestId,
+          actionHash,
+          jobId,
+          expectedJobVersion,
+          promptSha256,
+          this.currentInstanceId,
+          now,
+          now
+        );
+      return this.getSteeringDelivery(scopeId, requestId) as SteeringDeliveryRecord;
+    });
+  }
+
+  markSteeringDeliveryDispatching(
+    scopeId: string,
+    requestId: string,
+    actionHash: string,
+    now = Date.now()
+  ): SteeringDeliveryRecord {
+    return this.transaction(() => {
+      const delivery = this.requireSteeringDelivery(scopeId, requestId, actionHash);
+      if (delivery.status === "dispatching" || delivery.status === "delivered") return delivery;
+      if (delivery.status !== "prepared") {
+        throw new Error(
+          `Invalid steering delivery status transition: ${delivery.status} -> dispatching.`
+        );
+      }
+      if (delivery.bridgeInstanceId !== this.currentInstanceId) {
+        throw new Error(
+          "DELIVERY_UNCERTAIN: A previous bridge instance owns this steering delivery boundary."
+        );
+      }
+      this.database
+        .prepare(`
+          UPDATE steering_deliveries
+             SET status = 'dispatching', updated_at = ?, dispatched_at = ?
+           WHERE scope_id = ? AND request_id = ?
+        `)
+        .run(now, now, delivery.scopeId, delivery.requestId);
+      return this.getSteeringDelivery(delivery.scopeId, delivery.requestId) as SteeringDeliveryRecord;
+    });
+  }
+
+  completeSteeringDelivery(
+    scopeId: string,
+    requestId: string,
+    actionHash: string,
+    status: Extract<SteeringDeliveryStatus, "delivered" | "not-delivered" | "uncertain">,
+    result: unknown,
+    now = Date.now()
+  ): SteeringDeliveryRecord {
+    return this.transaction(() => {
+      const delivery = this.requireSteeringDelivery(scopeId, requestId, actionHash);
+      if (
+        delivery.status === "delivered" ||
+        delivery.status === "not-delivered" ||
+        delivery.status === "uncertain"
+      ) {
+        if (delivery.status !== status) {
+          throw new Error(
+            `Invalid steering delivery status transition: ${delivery.status} -> ${status}.`
+          );
+        }
+        return delivery;
+      }
+      if (status === "delivered" && delivery.status !== "dispatching") {
+        throw new Error("A steering delivery cannot be marked delivered before dispatch begins.");
+      }
+      this.database
+        .prepare(`
+          UPDATE steering_deliveries
+             SET status = ?, result = ?, updated_at = ?, completed_at = ?
+           WHERE scope_id = ? AND request_id = ?
+        `)
+        .run(
+          status,
+          JSON.stringify(result),
+          now,
+          now,
+          delivery.scopeId,
+          delivery.requestId
+        );
+      return this.getSteeringDelivery(delivery.scopeId, delivery.requestId) as SteeringDeliveryRecord;
+    });
   }
 
   getCancellationOperation(
@@ -2466,6 +2644,24 @@ export class BridgeStateStore {
     }
   }
 
+  private requireSteeringDelivery(
+    scopeId: string,
+    requestId: string,
+    actionHash: string
+  ): SteeringDeliveryRecord {
+    const normalizedScopeId = normalizeUuid(scopeId, "steering scopeId");
+    const normalizedRequestId = normalizeUuid(requestId, "steering requestId");
+    const normalizedActionHash = normalizeDigest(actionHash, "steering actionHash");
+    const delivery = this.getSteeringDelivery(normalizedScopeId, normalizedRequestId);
+    if (!delivery) throw new Error("Unknown steering delivery request.");
+    if (delivery.actionHash !== normalizedActionHash) {
+      throw new Error(
+        "STEERING_REQUEST_CONFLICT: requestId was already used for a different steering payload in this scope."
+      );
+    }
+    return delivery;
+  }
+
   getMeta(key: string): string | undefined {
     const row = this.database
       .prepare("SELECT value FROM bridge_meta WHERE key = ?")
@@ -3311,8 +3507,43 @@ export class BridgeStateStore {
       }
 
       const now = Date.now();
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "8");
       this.setMeta("schema_v8_migrated_at", new Date(now).toISOString());
+    });
+  }
+
+  private migrateV8ToV9(): void {
+    this.transaction(() => {
+      this.database.exec(`
+        CREATE TABLE steering_deliveries (
+          scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE RESTRICT,
+          request_id TEXT NOT NULL,
+          action_hash TEXT NOT NULL,
+          job_id TEXT NOT NULL,
+          expected_job_version INTEGER NOT NULL CHECK(expected_job_version >= 1),
+          prompt_sha256 TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN (
+            'prepared','dispatching','delivered','not-delivered','uncertain'
+          )),
+          bridge_instance_id TEXT NOT NULL REFERENCES bridge_instances(instance_id) ON DELETE RESTRICT,
+          result TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          dispatched_at INTEGER,
+          completed_at INTEGER,
+          PRIMARY KEY(scope_id, request_id),
+          CHECK(length(action_hash) = 64),
+          CHECK(length(prompt_sha256) = 64),
+          CHECK((status IN ('prepared','dispatching')) = (completed_at IS NULL))
+        ) STRICT;
+        CREATE INDEX steering_deliveries_job_recent
+          ON steering_deliveries(job_id, created_at DESC);
+        CREATE INDEX steering_deliveries_status_recent
+          ON steering_deliveries(status, updated_at DESC);
+      `);
+      const now = Date.now();
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v9_migrated_at", new Date(now).toISOString());
     });
   }
 
@@ -4489,7 +4720,7 @@ function normalizeCancellationWidgetProof(
 
 function normalizeExpectedVersion(value: number): number {
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error("Cancellation expectedVersion must be a positive integer.");
+    throw new Error("expectedVersion must be a positive integer.");
   }
   return value;
 }
@@ -4512,8 +4743,36 @@ function normalizeOptionalDigest(value: string | undefined): string | undefined 
 }
 
 function normalizeEventTimestamp(value: number): number {
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid cancellation timestamp.");
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid state-event timestamp.");
   return value;
+}
+
+function readSteeringDeliveryRow(row: Record<string, unknown>): SteeringDeliveryRecord {
+  const status = row.status as SteeringDeliveryStatus;
+  if (!STEERING_DELIVERY_STATUSES.includes(status)) {
+    throw new Error(`Invalid persisted steering delivery status: ${String(row.status)}.`);
+  }
+  return {
+    scopeId: String(row.scope_id),
+    requestId: String(row.request_id),
+    actionHash: String(row.action_hash),
+    jobId: String(row.job_id),
+    expectedJobVersion: Number(row.expected_job_version),
+    promptSha256: String(row.prompt_sha256),
+    status,
+    bridgeInstanceId: String(row.bridge_instance_id),
+    result: row.result
+      ? parsePayload({ payload: String(row.result) }, "steering delivery result")
+      : undefined,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+    dispatchedAt: row.dispatched_at === null || row.dispatched_at === undefined
+      ? undefined
+      : Number(row.dispatched_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined
+      ? undefined
+      : Number(row.completed_at)
+  };
 }
 
 function readCancellationOperationRow(row: Record<string, unknown>): CancellationOperationRecord {

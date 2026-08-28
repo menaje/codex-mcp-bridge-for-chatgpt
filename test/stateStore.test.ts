@@ -1,4 +1,5 @@
-import { mkdtempSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -57,6 +58,80 @@ describe("BridgeStateStore", () => {
     expect(() => new BridgeStateStore({ file })).toThrow(/Unsupported bridge state database schema version: 999/);
   });
 
+  it("persists steering intent and dispatch state without storing the raw prompt", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const requestId = "12121212-1212-4212-8212-121212121212";
+    const actionHash = "a".repeat(64);
+    const rawPrompt = "private steering prompt must never enter SQLite";
+    const promptSha256 = createHash("sha256").update(rawPrompt).digest("hex");
+    const prepared = store.beginSteeringDelivery({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash,
+      jobId: "steering-job",
+      expectedJobVersion: 7,
+      promptSha256,
+      now: 10
+    });
+    expect(prepared).toMatchObject({
+      status: "prepared",
+      promptSha256,
+      result: undefined
+    });
+    expect(JSON.stringify(prepared)).not.toContain(rawPrompt);
+
+    const dispatching = store.markSteeringDeliveryDispatching(
+      SCOPE_A,
+      requestId,
+      actionHash,
+      11
+    );
+    expect(dispatching).toMatchObject({ status: "dispatching", dispatchedAt: 11 });
+    const result = {
+      ok: true,
+      action: "steer",
+      delivery: { status: "delivered" },
+      promptPersistedByBridge: false
+    };
+    store.completeSteeringDelivery(
+      SCOPE_A,
+      requestId,
+      actionHash,
+      "delivered",
+      result,
+      12
+    );
+    expect(store.getSteeringDelivery(SCOPE_A, requestId)).toMatchObject({
+      status: "delivered",
+      result,
+      completedAt: 12
+    });
+    expect(() => store.beginSteeringDelivery({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash: "c".repeat(64),
+      jobId: "different-job",
+      expectedJobVersion: 1,
+      promptSha256: "d".repeat(64)
+    })).toThrow(/STEERING_REQUEST_CONFLICT/);
+    store.close();
+    expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
+
+    const reopened = new BridgeStateStore({ file });
+    expect(reopened.schemaVersion).toBe(9);
+    expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
+      expect.objectContaining({
+        requestId,
+        actionHash,
+        promptSha256,
+        status: "delivered",
+        result
+      })
+    ]);
+    reopened.close();
+  });
+
   it("persists first-class project admission without exposing the canonical path on Activities", () => {
     const file = stateFile();
     const store = new BridgeStateStore({ file });
@@ -112,7 +187,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(8);
+    expect(restored.schemaVersion).toBe(9);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })

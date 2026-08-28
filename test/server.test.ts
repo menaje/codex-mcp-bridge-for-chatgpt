@@ -162,6 +162,10 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never start another codex_task merely to reconstruct");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exact authoritative version");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_activity_cancel");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("Use codex_steer only");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never automatically retry DELIVERY_UNCERTAIN");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never relay its instructions automatically");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("serialized waves or worktree isolation");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b/);
   });
 
@@ -317,7 +321,7 @@ describe("http server", () => {
     expect(diagnostics.storage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 8,
+      schemaVersion: 9,
       activityPersistent: true,
       sessionPersistent: true,
       settingsPersistent: true

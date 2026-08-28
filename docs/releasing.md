@@ -178,6 +178,19 @@ Rollback by restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and
 restarting. The setting applies only to new threads; existing App Server
 threads stay pinned and are neither converted nor deleted.
 
+For the issue-40 steering gate, use a deliberately long-running root Job and
+record that one `codex_steer` call reaches the same active turn without another
+`turn/started`. Replay the exact request and verify there is only one upstream
+`turn/steer`; then verify a stale Job version and a terminal/cancel race fail
+closed without queuing a later turn. Confirm a pending interaction is unchanged,
+no execution/project/Activity policy changes, and no raw steering prompt appears
+in SQLite or diagnostics. The deterministic suite must additionally use only
+the four public fields with host-derived scope and force an exact prompt echo
+through progress, event, final result, and exact status output. A crash after
+the durable dispatch boundary must
+return `DELIVERY_UNCERTAIN` on replay without automatic resend. Attach the dated,
+sanitized evidence; do not mark the gate passed from fake-protocol tests alone.
+
 The live canary consumes authenticated model capacity and is therefore a
 manual release gate, not an ordinary fixture CI step. Attach the dated canary
 record and the accountable operator's explicit experimental-risk acceptance to

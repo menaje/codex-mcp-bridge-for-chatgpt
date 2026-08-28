@@ -228,6 +228,8 @@ export type CodexUpstream = {
     interactionId: string,
     response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void>;
+  /** Positive local evidence that this exact App Server thread has an in-flight turn. */
+  canSteerThread?(threadId: string): boolean;
   steerThread?(threadId: string, prompt: string): Promise<{ turnId: string }>;
   close(): Promise<void>;
 };

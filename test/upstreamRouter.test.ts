@@ -101,6 +101,9 @@ describe("CodexBackendRouter", () => {
       mode: "turn-interrupt"
     });
     await expect(router.steerThread("app-thread", "guide")).resolves.toEqual({ turnId: "turn-1" });
+    expect(router.canSteerThread("app-thread")).toBe(true);
+    router.bindThread("mcp-thread", "mcp-server");
+    expect(router.canSteerThread("mcp-thread")).toBe(false);
     await router.respondToInteraction("interaction-1", { decision: "accept" });
     expect(app.forceAssignments).toEqual([assignment]);
     expect(app.steers).toEqual([{ threadId: "app-thread", prompt: "guide" }]);
@@ -121,6 +124,9 @@ function fakeBackend(kind: CodexBackendKind) {
     },
     canResumeThread() {
       return true;
+    },
+    canSteerThread() {
+      return kind === "app-server";
     },
     async callTool(name, args, _progress, assigned): Promise<ToolResult> {
       calls.push({ name, args });

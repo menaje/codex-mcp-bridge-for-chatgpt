@@ -844,6 +844,7 @@ describe("CodexAppServerUpstreamPool", () => {
         (value) => { assignment = value; }
       );
       await eventually(() => Boolean(assignment?.upstreamRequestId));
+      expect(pool.canSteerThread(assignment!.threadId!)).toBe(true);
       await expect(pool.steerThread(assignment!.threadId!, "new direction")).resolves.toEqual({
         turnId: assignment!.upstreamRequestId
       });
@@ -851,6 +852,7 @@ describe("CodexAppServerUpstreamPool", () => {
         content: [{ type: "text", text: "STEERED:new direction" }],
         structuredContent: { threadId: assignment!.threadId, turnStatus: "completed" }
       });
+      expect(pool.canSteerThread(assignment!.threadId!)).toBe(false);
 
       await expect(
         pool.callTool("codex-reply", {

@@ -1,0 +1,83 @@
+{
+  "inventoryVersion": 1,
+  "issue": 40,
+  "generatedOn": "2026-08-28",
+  "normativeClient": "ChatGPT",
+  "measurement": {
+    "propertyCount": "Object.keys(inputSchema.properties).length",
+    "schemaBytes": "Buffer.byteLength(JSON.stringify(schema), 'utf8')",
+    "visibility": "derived from ui.visibility, openai/visibility, and openai/widgetAccessible"
+  },
+  "inventory": {
+    "toolCount": 20,
+    "modelVisibleToolCountBefore": 9,
+    "modelVisibleToolCountAfter": 10,
+    "modelVisibleAddition": {
+      "name": "codex_steer",
+      "visibility": {
+        "model": true,
+        "app": false,
+        "operatorCapability": false
+      },
+      "input": {
+        "propertyCount": 4,
+        "properties": [
+          "expectedJobVersion",
+          "jobId",
+          "prompt",
+          "requestId"
+        ],
+        "requiredInCallOrder": [
+          "requestId",
+          "jobId",
+          "expectedJobVersion",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "schemaBytes": 792
+      },
+      "output": {
+        "additionalProperties": false,
+        "schemaBytes": 1360,
+        "structuredContentByteCap": 131072,
+        "contentByteCap": 768
+      },
+      "annotations": {
+        "readOnly": false,
+        "destructive": true,
+        "idempotent": true,
+        "openWorld": false
+      }
+    }
+  },
+  "forbiddenPublicInputs": [
+    "scopeId",
+    "activityId",
+    "agentId",
+    "threadId",
+    "turnId",
+    "card",
+    "widgetInstanceId",
+    "sandbox",
+    "model",
+    "reasoningEffort",
+    "project",
+    "activityPolicy",
+    "interactionId",
+    "response"
+  ],
+  "compatibility": {
+    "appPrivateTool": "codex_job_steer",
+    "appPrivateContractChanged": false,
+    "retainedActivityResourcesChanged": false,
+    "uiResourceRegenerationRequired": false
+  },
+  "regressionEvidence": [
+    "test/tools.test.ts discovery inventory and exact four-field schema",
+    "test/tools.test.ts unknown authority-field injection rejection",
+    "test/tools.test.ts host-derived scope composition and cross-session rejection",
+    "test/tools.test.ts adversarial exact-prompt echo redaction across output and SQLite",
+    "test/outputContracts.test.ts strict output and cross-field invariants",
+    "docs/audits/issue-36-output-contract-baseline.json additive schema budget"
+  ]
+}

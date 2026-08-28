@@ -501,6 +501,12 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return worker.connection.steerThread(threadId, prompt);
   }
 
+  canSteerThread(threadId: string): boolean {
+    const workerIndex = this.threadWorkers.get(threadId);
+    const worker = workerIndex === undefined ? undefined : this.workers[workerIndex];
+    return Boolean(worker?.connection?.hasActiveTurn(threadId));
+  }
+
   async close(): Promise<void> {
     this.closing = true;
     this.threadWorkers.clear();
@@ -1032,6 +1038,10 @@ class AppServerConnection {
       }
     );
     return { turnId: requiredString(result.turnId, "turn/steer turnId") };
+  }
+
+  hasActiveTurn(threadId: string): boolean {
+    return this.threadTurns.has(threadId);
   }
 
   respondToInteraction(

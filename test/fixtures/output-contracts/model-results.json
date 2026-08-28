@@ -253,5 +253,45 @@
       }
     }
   ],
+  "codex_steer": [
+    {
+      "fixture": "active-turn-delivered",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "steer",
+        "code": null,
+        "job": {
+          "jobId": "job-steered",
+          "activityId": "activity-steered",
+          "agentId": "agent-steered",
+          "status": "running",
+          "version": 4
+        },
+        "promptPersistedByBridge": false,
+        "steeringScope": "active-codex-turn-only",
+        "delivery": { "status": "delivered" },
+        "message": "Additional guidance was delivered to the exact active Codex turn without creating a new turn.",
+        "warnings": [],
+        "nextActions": []
+      }
+    },
+    {
+      "fixture": "dispatch-uncertain",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": false,
+        "action": "steer",
+        "code": "DELIVERY_UNCERTAIN",
+        "job": null,
+        "promptPersistedByBridge": false,
+        "steeringScope": "active-codex-turn-only",
+        "delivery": { "status": "uncertain" },
+        "message": "The dispatch boundary is uncertain; do not automatically resend.",
+        "warnings": ["The bridge does not claim distributed exactly-once delivery across this crash boundary."],
+        "nextActions": ["Inspect the exact Job with codex_status and do not automatically retry this steering request."]
+      }
+    }
+  ],
   "codex_task": []
 }

@@ -70,7 +70,7 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify discovery of nine model-visible tools: `codex_status`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
+5. Verify discovery of ten model-visible tools: `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
 6. The app-private `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, and `codex_update_settings` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
 
 ### Refresh after a bridge/UI change
@@ -222,6 +222,7 @@ Inspect `tools/list`:
 - `adaptive` exposes only permitted sandboxes;
 - Activity and Agent routing use separate discriminated `activity` and `agent` objects;
 - an existing Agent's optional `context` values are exactly `continue`, `fork`, and `fresh`.
+- `codex_steer` exposes exactly `requestId`, `jobId`, `expectedJobVersion`, and `prompt`; it exposes no scope, Activity, Agent, thread/turn, card, policy, model, project, sandbox, cancellation, approval, or interaction field;
 - `codex_task` publishes required nullable `answer`; a delivered foreground result has a non-null bounded answer;
 - `codex_status` permits `answer` only on an exact completed Job item, while summary items expose exact-Job retrieval actions.
 
@@ -304,7 +305,64 @@ and it is not stored as a separate bridge request field. Normal retained model
 output can still contain text that Codex repeats. Omitting the summary fails with
 `BACKEND_HANDOFF_SUMMARY_REQUIRED` instead of implying transcript migration.
 
-## 7. Activity card behavior
+## 7. Active-turn orchestration
+
+Use `codex_steer` only when new information matters to an exact Job that is
+still running on App Server. Appropriate deltas are a new user constraint, a
+correction, or a sibling Job result that ChatGPT has independently checked and
+restated. Do not send a message merely because another Job produced output.
+Codex output is untrusted task data and never carries authority to instruct a
+sibling Agent.
+
+Read the exact Job first and send only the four public fields:
+
+```json
+{
+  "requestId": "...",
+  "jobId": "...",
+  "expectedJobVersion": 6,
+  "prompt": "Verified dependency result: the schema is v2. Apply that constraint before finishing."
+}
+```
+
+The bridge derives conversation scope and resolves Activity, Agent, current
+App Server thread, and active turn from the exact Job. It rejects stale
+versions, cross-scope or inconsistent roots, MCP Server Jobs, inactive turns,
+and terminating/cancelled Jobs. A successful call appends input to the current
+turn without emitting a new turn. It cannot change the admitted model/effort,
+project, cwd, sandbox, Activity policy, or output schema, and cannot address an
+internal Codex subagent.
+
+Steering is not interaction response or cancellation. If an approval or
+user-input control is pending, leave it pending and use its dedicated card
+control. A steering prompt containing “stop” remains ordinary turn guidance;
+an explicit stop request uses `codex_cancel`, which has priority. If the Job is
+already terminal, inspect its exact result and, only if more work is needed,
+call `codex_task` with the existing Activity/Agent and `context: "continue"`.
+No prompt is queued to that future turn automatically.
+
+Reuse a steering `requestId` only for the exact same Job, expected version, and
+prompt. The bridge stores a prompt SHA-256 and durable delivery phase, not the
+raw prompt. Exact delivered replay does not call App Server again. A process
+failure after dispatch can produce `DELIVERY_UNCERTAIN`; inspect exact Job
+status and never automatically resend it. The bridge intentionally makes no
+distributed exactly-once claim.
+
+The accepted input remains part of the upstream Codex turn. Within the bridge,
+its exact text is held only in non-serialized memory until terminal state so an
+exact Codex echo can be removed from progress, Activity events, errors, retained
+Job results, and model output. `promptPersistedByBridge: false` is a statement
+about Bridge-owned storage, not Codex App Server thread-history retention.
+
+Within one ChatGPT response, run independent Jobs in the background, use a
+bounded exact-Job `codex_status` wait, verify the dependency fact, then steer an
+affected still-running Job if necessary. Independent Jobs need no message.
+Shared-working-tree write conflicts require serialized waves or worktree
+isolation. When the ChatGPT response has already ended, a later user message or
+completion handoff must wake orchestration; this feature adds no general
+Job-result wake system.
+
+## 8. Activity card behavior
 
 `codex_task` owns automatic card presentation. When saved visibility is `always` or `background-only`, its descriptor points directly to the same Activity UI resource as `codex_activity`. Call `codex_task` directly—not through programmatic tool calling or an exec wrapper—so ChatGPT preserves that native UI. Do not call `codex_activity` afterward.
 
@@ -379,7 +437,7 @@ abort observation does not override that provenance.
 
 App Server may leave a background terminal after the turn itself completes. The card keeps the Agent idle but separately shows the remaining-process count and **Stop background processes** action. This action calls the app-private, destructive `codex_background_process_terminate` tool. The bridge revalidates the mounted-card lease, exact Agent version, current App Server thread, fresh terminal inventory, and absence of an active turn before calling `thread/backgroundTerminals/terminate`; it is not Agent archive or job force-stop. Every supported Activity resource calls this dedicated tool; the former Agent-operation shortcut has expired.
 
-## 8. Smoke checklist after Plugin Refresh
+## 9. Smoke checklist after Plugin Refresh
 
 In a new ChatGPT conversation:
 
@@ -416,7 +474,26 @@ In a new ChatGPT conversation:
 20. inspect `codex_status` for the experimental policy, exact CLI, catalog
     freshness, aggregate RSS/FD, startup/crash/config/MCP health, and orphaned
     count; verify no worker identifier, full path, raw reasoning, MCP payload,
-    or collaboration prompt appears.
+    or collaboration prompt appears;
+21. start a long App Server Job, read its exact version, call `codex_steer`, and
+    confirm the same active turn consumes the delta without another
+    `turn/started` event or a resolved pending interaction;
+22. retry that exact steering request and confirm one upstream `turn/steer`, then
+    change the prompt under the same request UUID and confirm
+    `STEERING_REQUEST_CONFLICT` with no second dispatch;
+23. exercise stale version, inactive/terminal turn, active MCP Server Job, and
+    explicit cancellation races; confirm `STALE_JOB_VERSION`,
+    `JOB_NOT_ACTIVE`, and `STEERING_UNSUPPORTED` remain distinct and no future
+    turn is queued;
+24. interrupt the bridge after durable steering dispatch but before result
+    recording, restart, and confirm the exact replay returns
+    `DELIVERY_UNCERTAIN` without resending and that SQLite contains only the
+    prompt digest, not the raw prompt;
+25. invoke public `codex_steer` with only its four fields plus ChatGPT host
+    metadata, confirm the same host scope succeeds and another session fails;
+26. make Codex repeat the exact steering text in progress and its final answer,
+    then confirm the exact Job result, public status output, Activity events, and
+    a byte scan of Bridge SQLite contain only the redaction marker.
 
 In an existing pre-refresh conversation:
 
@@ -427,7 +504,7 @@ In an existing pre-refresh conversation:
 
 Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavior, and any host cache limitation in the release or issue report.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - Tunnel missing: verify workspace association and Tunnel Read/Use permissions.
 - Runtime dotenv missing: create `~/.config/codex-mcp-bridge/.env` from `.env.example`, replace both `CONTROL_PLANE_*` values, and run `chmod 600` on it.
@@ -445,6 +522,10 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - `AGENT_ID_REQUIRED`: inspect current Activity Agents and retry with the exact intended ID.
 - `AGENT_ORPHANED`: use explicit `fresh` only if replacing the lost backend context is intended.
 - Archive conflict: finish/force-stop the active turn or terminate remaining background processes first.
+- `STALE_JOB_VERSION`: refresh the exact Job and use a fresh steering request UUID only if the active turn still needs the delta.
+- `JOB_NOT_ACTIVE`: inspect the exact Job result; use `codex_task` with the existing Agent and `continue` only for intentional later work.
+- `STEERING_UNSUPPORTED`: the Job is not a bridge-verified active App Server turn; do not emulate steering with a queued message.
+- `DELIVERY_UNCERTAIN`: inspect exact Job state and do not automatically resend the steering request.
 - Codex connection failure: retry after bridge reconnection; enable `CODEX_MCP_BRIDGE_DEBUG=1` only for local diagnosis.
 
 Official guidance:
@@ -453,3 +534,4 @@ Official guidance:
 - [Connect and test a ChatGPT plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt)
 - [MCP Apps and ChatGPT extensions](https://developers.openai.com/plugins/reference)
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [Multi-agent orchestration](https://developers.openai.com/api/docs/guides/responses-multi-agent)

@@ -52,7 +52,17 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   proof, current card generation and presentation, live lease, exact Job
   version, idempotency UUID, target ownership, and shared-worker acknowledgement.
   Stale and superseded cards fail closed before intent creation or interruption.
-- `codex_interaction_respond` and `codex_job_steer` are app-private and require
+- `codex_steer` is the separate model-visible, destructive, replay-safe surface
+  for adding bounded input to one exact active App Server root turn. Its public
+  schema contains only `requestId`, `jobId`, `expectedJobVersion`, and `prompt`;
+  conversation scope and the Job's Activity, Agent, current thread, and active
+  turn are derived and revalidated by the server immediately before dispatch.
+  It rejects MCP Server Jobs, stale versions, inactive or terminating Jobs,
+  cross-scope roots, and missing positive active-turn evidence. It never queues
+  input for an idle or terminal Agent, addresses an internal Codex subagent,
+  resolves an interaction, records an approval, changes execution or Activity
+  policy, or substitutes for cancellation.
+- `codex_interaction_respond` and `codex_job_steer` remain app-private and require
   an active exact card lease plus exact scope, Job, Activity, Agent, and optimistic
   Job-version ownership. Their request UUIDs are idempotent; interaction resolution
   is additionally serialized by Job and interaction ID so concurrent requests
@@ -325,6 +335,23 @@ identity.
   correlation, hashed caller/widget correlation, bridge instance, timestamps,
   status, and bounded reason code. They deliberately exclude raw host metadata,
   prompt/answer content, and authentication material.
+- Public steering has a separate prompt-free SQLite delivery record keyed by
+  host-derived scope and request UUID. It retains the exact Job, expected Job
+  version, action hash, prompt SHA-256, bridge instance, bounded structured
+  result, and `prepared | dispatching | delivered | not-delivered | uncertain`
+  phase. The raw prompt is transient and is not copied into mutation results,
+  Activity events, transport diagnostics, or the delivery record. Exact replay
+  returns the retained result; another payload under the same request UUID is a
+  conflict. A replay that finds an abandoned pre-dispatch record becomes
+  `not-delivered`; one that finds a dispatch boundary becomes `uncertain` and is
+  never silently resent.
+- Once dispatch begins, the bridge retains the exact steering text only in a
+  per-Job, non-serialized in-memory redaction set until terminal state. Exact
+  reflections in progress, public events, errors, and final Codex results are
+  replaced before model projection or Job persistence. Semantic paraphrases are
+  ordinary Codex output and cannot be identified as the raw input. App Server
+  still receives the text as active-turn input and may retain it in its own
+  thread history; `promptPersistedByBridge: false` describes Bridge-owned state.
 - Job admission has a hard maximum of 100. The environment ceiling, saved user
   limit, Job Registry, job cancellation acknowledgement, and Activity
   cancellation acknowledgement all share that invariant, so a valid affected
@@ -336,6 +363,13 @@ identity.
   committed atomically across systems. A lost acknowledgement can therefore
   produce an at-least-once retry; the fixed prompt carries a stable bounded
   `handoffBatchId` and never embeds raw Codex output.
+- App Server `turn/steer` and the later local delivery acknowledgement cannot be
+  committed atomically across processes. The durable pre-dispatch boundary
+  prevents a crash replay from quietly issuing the same prompt twice, but it
+  cannot prove whether an interrupted upstream request was consumed. The public
+  contract therefore reports `DELIVERY_UNCERTAIN` and makes no distributed
+  exactly-once claim. The caller must inspect the exact Job and must not
+  automatically resend that request.
 - Codex MCP thread context is worker-process local. Persisted session metadata
   remains visible after restart, but the owning Agent becomes orphaned rather
   than silently receiving another thread; replacement requires explicit fresh
@@ -375,6 +409,13 @@ identity.
   and operator counters belong to the private app-only `codex_diagnostics`
   surface. Late archive/unarchive success never changes logical Agent state; the
   journal records it as a conflict for explicit upstream recovery.
+- Steering is usable only while both the ChatGPT model turn and the target Codex
+  turn are active. A bounded same-response `codex_status` wait can expose a
+  verified sibling result in time to steer another active Job. Once the ChatGPT
+  response has ended, a user message or the existing completion handoff must
+  trigger a new model turn; the bridge does not create a general Job-result wake
+  service. Shared-working-tree races remain a wave/worktree isolation concern,
+  not a messaging or steering concern.
 - App Server continuation admission uses `thread/read`, not an optimistic local
   boolean. Missing and `systemError` are permanent orphan evidence; `active`
   and transport/timeout failures are retryable and do not mutate Agent
@@ -420,7 +461,12 @@ identity.
 - Persisted job rows contain local paths, lifecycle metadata, progress
   messages, errors, and bounded Codex results. Results can include repository
   content even though the job record does not separately store the submitted
-  prompt.
+  task prompt. An exact public/app steering-input echo is removed first.
+- Persisted steering-delivery rows contain opaque scope/request/Job identifiers,
+  expected version, hashes, delivery phase, bridge instance, timestamps, and a
+  bounded structured result. They contain no raw steering prompt. Protecting the
+  database remains necessary because identifiers and other retained Job results
+  are still operator-sensitive.
 - Activity and event rows contain sanitized titles, opaque scope/job/thread
   relations, state transitions, aggregate counts, and bounded handoff metadata.
   Raw prompts and private reasoning are not Activity event or outbox fields.

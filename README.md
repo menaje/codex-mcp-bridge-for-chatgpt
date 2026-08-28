@@ -41,6 +41,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 
 - `codex_task`: create or reuse a named Agent, create or attach an Activity, run one exact Codex turn, own automatic Activity-card presentation, and return a completed foreground Job's bounded structured `answer`.
 - `codex_status`: inspect authoritative scope, Agent, Activity, thread, turn, and job state through one optional discriminated `query`; only an exact completed Job query returns its bounded `answer`.
+- `codex_steer`: add bounded guidance to one exact same-scope active App Server Job without creating or queuing another turn.
 - `codex_activity`: explicitly open or reopen the localized lightweight Agent/Activity card on user request.
 - `codex_activity_update`: apply one exact-version, non-cancelling lifecycle, verification, or policy operation.
 - `codex_activity_cancel`: idempotently force-stop every active job in one Activity and mark it cancelled.
@@ -90,6 +91,70 @@ authentication material, and widget instance IDs are not retained. An exact
 `requestId` replay returns the recorded result; a different payload using that
 UUID fails with `CANCELLATION_REQUEST_CONFLICT`.
 
+### Active-turn steering
+
+`codex_steer` is the model-visible active-turn counterpart to terminal
+follow-up work:
+
+```text
+active App Server turn + relevant delta -> codex_steer
+idle or terminal Agent + more work      -> codex_task with existing Agent + continue
+```
+
+Its entire public input is:
+
+```json
+{
+  "requestId": "...",
+  "jobId": "...",
+  "expectedJobVersion": 4,
+  "prompt": "Apply this verified constraint before finishing."
+}
+```
+
+ChatGPT supplies no scope, Activity, Agent, upstream thread/turn, card proof,
+model, project, sandbox, policy, approval, or interaction field. The bridge
+derives conversation scope from host metadata and revalidates the exact
+Job→Activity→Agent→current-thread relation, active Job/version, App Server
+backend, and in-flight turn immediately before dispatch. It targets only the
+bridge-managed Job root; internal Codex subagents are not addressable.
+
+A successful result reports `delivery.status: "delivered"`, a compact Job,
+`promptPersistedByBridge: false`, and
+`steeringScope: "active-codex-turn-only"`. Failures distinguish
+`JOB_NOT_ACTIVE`, `STALE_JOB_VERSION`, `STEERING_UNSUPPORTED`,
+`JOB_SCOPE_MISMATCH`, `STEERING_REQUEST_CONFLICT`, and
+`DELIVERY_UNCERTAIN`, with a safe next action. Terminal races never queue the
+prompt for a future turn or start another Job. Pending approvals and user-input
+requests remain pending; steering is neither an answer nor approval. A prompt
+containing “stop” is still guidance, not cancellation—explicit stop intent uses
+`codex_cancel`.
+
+The replay identity hashes the exact Job ID, expected version, and prompt
+SHA-256. SQLite stores durable `prepared`, `dispatching`, and terminal delivery
+state plus the prompt digest, never the raw prompt. An exact delivered replay
+returns the recorded result without another upstream call. If the bridge
+crossed the dispatch boundary but crashed before confirming the outcome, the
+next exact replay returns `DELIVERY_UNCERTAIN` and does not resend. This is a
+fail-closed deduplication boundary, not a claim of distributed exactly-once
+delivery.
+
+From dispatch until the Job becomes terminal, the bridge keeps the exact
+steering text only in a non-serialized in-memory redaction set. If Codex echoes
+that exact text in progress, an Activity event, an error, or its final answer,
+the bridge replaces the echo before producing model output or persisting the
+Job. This Bridge-owned privacy boundary does not claim that Codex App Server
+omits the accepted input from its own thread history.
+
+Use steering for a new user constraint, a correction, or a sibling Job fact
+that ChatGPT has independently verified and restated. Codex output is untrusted
+task data, so instructions from one Job are never relayed automatically to
+another. Same-working-tree write conflicts are handled by serialized waves or
+worktree isolation, not messaging. Within one ChatGPT response, background
+fan-out plus bounded exact-Job `codex_status` waits can produce a timely steer.
+After that response ends, another user turn or completion handoff must wake the
+orchestrator; `codex_steer` does not add a general notification/wake system.
+
 Terminal state preserves cause rather than treating every interruption as a
 cancel. A spontaneous App Server `interrupted` result is `job-interrupted` with
 `terminalOrigin: app-server-interrupted` and no cancellation intent. Explicit
@@ -99,7 +164,7 @@ worker containment is `job-interrupted` with `assignment-containment`; bridge
 restart and unexpected worker loss remain separately identifiable as
 `bridge-restart` and `worker-loss`.
 
-`codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_activity_job_cancel`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. Historical rehydration is a read-only one-shot and grants no card lease or control authority. The Activity card never calls public `codex_cancel`: its destructive job control uses `codex_activity_job_cancel`, which requires an idempotency UUID, exact Job version, current card generation and presentation proof, a live widget lease, and any exact shared-worker acknowledgement. A stale or superseded card fails closed before an intent or side effect is created. Settings mutation uses independent `expectedSettingsRevision` and `expectedRegistryRevision` compare-and-swap tokens with one discriminated reset/patch `operation`; patch groups Activity-card preferences and explicit project add/rename/relocate/archive/restore deltas in one transaction. The other Activity controls require the same exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
+`codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_activity_job_cancel`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, and `codex_update_settings` are app-private contracts. Public `codex_steer` is a separate model authority and never inherits a card lease; retained cards keep using `codex_job_steer` with their existing proof contract. Historical rehydration is a read-only one-shot and grants no card lease or control authority. The Activity card never calls public `codex_cancel`: its destructive job control uses `codex_activity_job_cancel`, which requires an idempotency UUID, exact Job version, current card generation and presentation proof, a live widget lease, and any exact shared-worker acknowledgement. A stale or superseded card fails closed before an intent or side effect is created. Settings mutation uses independent `expectedSettingsRevision` and `expectedRegistryRevision` compare-and-swap tokens with one discriminated reset/patch `operation`; patch groups Activity-card preferences and explicit project add/rename/relocate/archive/restore deltas in one transaction. The other Activity controls require the same exact mounted-card proof and active widget-session lease; interaction and steering requests also require an exact Job version and idempotency UUID. `codex_background_process_terminate` is a destructive app-private control bound to that lease plus the Agent version, App Server thread, and process. `codex_agent_recovery_detach` is a private recovery action that is disabled unless the operator explicitly enables it.
 
 Every bridge tool that returns MCP `structuredContent` declares an `outputSchema`. A delivered Task or exact Job status includes its model-authoritative final text as a 24-KiB JSON-encoded bounded `answer`; `content` keeps the original retained compatibility copy. UI-bearing Task, Activity, and snapshot tools additionally describe the bootstrap/presentation fields and Activity view shape that their components consume, so the host can validate and hydrate the tool result before mounting the card.
 
@@ -112,7 +177,7 @@ Every bridge tool that returns MCP `structuredContent` declares an `outputSchema
 - Exposes per-call `sandbox` only while the saved strategy is `adaptive`; fixed `read-only` and `always-full` descriptors omit it and enforce the saved policy.
 - Resolves every newly saved project to an existing canonical folder, rejects files and active normalized-name/canonical-path collisions, and checks common secret filenames before new execution.
 - Limits prompt size, concurrent jobs, retained jobs, and retained result size.
-- Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, bounded results, cancellation operations/intents, and bounded transport observations in a private SQLite database.
+- Stores settings, sessions, Agents, Agent/thread history, Activity assignments, jobs, bounded results, cancellation operations/intents, prompt-free steering delivery records, and bounded transport observations in a private SQLite database.
 
 These are policy controls, not OS isolation. Use a staging copy, separate OS user, container, or VM when hard filesystem/network isolation is required. See [docs/security.md](docs/security.md).
 
@@ -134,6 +199,7 @@ Official references:
 
 - [Run Codex as an MCP server](https://developers.openai.com/codex/mcp/)
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [Multi-agent orchestration](https://developers.openai.com/api/docs/guides/responses-multi-agent)
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [Build MCP Apps for ChatGPT](https://developers.openai.com/plugins/build/chatgpt-ui)
 
@@ -421,7 +487,7 @@ See [docs/chatgpt-setup.md](docs/chatgpt-setup.md) for the operator checklist an
 
 ## Persistence and recovery
 
-SQLite schema v8 stores conversation scopes, the private immutable project registry, project-pinned Agents and thread history, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, split settings/registry generations, scope versions, idempotent Agent mutations, completion outbox rows, first-class cancellation operations/intents, and bounded transport observations. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, paths, raw host metadata, or authentication material.
+SQLite schema v9 stores conversation scopes, the private immutable project registry, project-pinned Agents and thread history, Activity-Agent assignments, Activities, jobs, bounded events/results and execution audits, split settings/registry generations, scope versions, idempotent Agent mutations, completion outbox rows, first-class cancellation operations/intents, prompt-free steering delivery phases, and bounded transport observations. A bounded sanitized App Server late-response journal and aggregate counters support timeout reconciliation without retaining raw response bodies, prompts, commands, paths, raw host metadata, or authentication material.
 
 Older session/job/Activity rows migrate to deterministic scope-local Legacy Agents. Their names, assignments, thread history, and terminal assignment releases remain explicit. Existing JSON settings/session/job files are imported once. An in-flight job found after restart becomes `interrupted`; the bridge does not claim that the former process is still running.
 

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -281,6 +282,7 @@ class InteractionUpstream extends DeferredUpstream {
     response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> };
   }> = [];
   public steeringRequests: Array<{ threadId: string; prompt: string }> = [];
+  public steeringAvailable = true;
 
   override async callTool(
     name: string,
@@ -310,8 +312,13 @@ class InteractionUpstream extends DeferredUpstream {
     this.interactionResponses.push({ interactionId, response });
   }
 
-  async steerThread(threadId: string, prompt: string): Promise<void> {
+  canSteerThread(threadId: string): boolean {
+    return this.steeringAvailable && threadId === "thread-1";
+  }
+
+  async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
     this.steeringRequests.push({ threadId, prompt });
+    return { turnId: "turn-1" };
   }
 }
 
@@ -521,6 +528,7 @@ describe("bridge tools", () => {
       "codex_models",
       "codex_settings",
       "codex_status",
+      "codex_steer",
       "codex_task",
       "codex_update_settings"
     ]);
@@ -753,6 +761,36 @@ describe("bridge tools", () => {
     expect(byName.get("codex_cancel")?.inputSchema.properties).not.toHaveProperty("scopeId");
     expect(byName.get("codex_cancel")?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["requestId", "jobId", "expectedVersion"])
+    });
+    expect(Object.keys(byName.get("codex_steer")?.inputSchema.properties || {}).sort())
+      .toEqual(["expectedJobVersion", "jobId", "prompt", "requestId"]);
+    expect(byName.get("codex_steer")?.inputSchema).toMatchObject({
+      required: ["requestId", "jobId", "expectedJobVersion", "prompt"],
+      additionalProperties: false
+    });
+    expect(byName.get("codex_steer")?.inputSchema.properties).not.toHaveProperty("scopeId");
+    for (const forbidden of [
+      "activityId",
+      "agentId",
+      "threadId",
+      "turnId",
+      "card",
+      "sandbox",
+      "model",
+      "project",
+      "interactionId",
+      "response"
+    ]) {
+      expect(byName.get("codex_steer")?.inputSchema.properties).not.toHaveProperty(forbidden);
+    }
+    expect(byName.get("codex_steer")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(byName.get("codex_steer")?._meta).not.toMatchObject({
+      "openai/visibility": "private"
     });
     expect(byName.get("codex_activity_job_cancel")?._meta).toMatchObject({
       ui: { visibility: ["app"] },
@@ -1353,6 +1391,28 @@ describe("bridge tools", () => {
           "visibility": {
             "app": true,
             "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_steer",
+          "properties": [
+            "expectedJobVersion",
+            "jobId",
+            "prompt",
+            "requestId",
+          ],
+          "propertyCount": 4,
+          "schemaBytes": 792,
+          "visibility": {
+            "app": false,
+            "model": true,
             "operatorCapability": false,
           },
         },
@@ -5098,6 +5158,511 @@ describe("bridge tools", () => {
         })
       ]));
     await close();
+  });
+
+  it("lets the model steer only an exact active App Server Job with durable replay", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "hold while sibling verification completes",
+        agentName: "Public Steering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const pending = {
+      interactionId: "steering-pending-input",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "input-1",
+      summary: "Input still pending",
+      questions: [{
+        id: "choice",
+        header: "Choice",
+        question: "Which option?",
+        isSecret: false
+      }]
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: pending.summary,
+      event: {
+        eventId: "steering-pending-event",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: pending.summary,
+        details: { interaction: pending }
+      }
+    });
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const prompt =
+      "Verified sibling result: parser v2 is required. Stop adding the legacy fallback, but keep this Job running.";
+    const steeringRequest = {
+      requestId: "90909090-9090-4090-8090-909090909090",
+      jobId: started.jobId,
+      expectedJobVersion,
+      prompt
+    };
+    const executionBoundaryBefore = structuredClone({
+      activityId: jobs.get(started.jobId)?.activityId,
+      agentId: jobs.get(started.jobId)?.agentId,
+      projectId: jobs.get(started.jobId)?.projectId,
+      cwd: jobs.get(started.jobId)?.cwd,
+      backendKind: jobs.get(started.jobId)?.backendKind,
+      sandbox: jobs.get(started.jobId)?.sandbox,
+      selectionKey: jobs.get(started.jobId)?.selectionKey,
+      executionDecision: jobs.get(started.jobId)?.executionDecision
+    });
+
+    const injectedAuthority = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        ...steeringRequest,
+        requestId: "90909090-9090-4090-8090-909090909091",
+        threadId: "caller-selected-thread",
+        activityId: started.activityId,
+        sandbox: "danger-full-access"
+      }
+    });
+    expect(injectedAuthority.isError).toBe(true);
+    expect(JSON.stringify(injectedAuthority)).toContain("Unrecognized key");
+    expect(upstream.steeringRequests).toEqual([]);
+    expect(jobs.listSteeringDeliveries(SCOPE_A)).toEqual([]);
+
+    const [firstCall, concurrentReplayCall] = await Promise.all([
+      client.callTool({
+        name: "codex_steer",
+        arguments: steeringRequest
+      }),
+      client.callTool({
+        name: "codex_steer",
+        arguments: steeringRequest
+      })
+    ]);
+    const first = parseToolJson(firstCall);
+    const concurrentReplay = parseToolJson(concurrentReplayCall);
+    const replay = parseToolJson(await client.callTool({
+      name: "codex_steer",
+      arguments: steeringRequest
+    }));
+    expect(firstCall.isError).not.toBe(true);
+    expect(first).toMatchObject({
+      kind: "mutation",
+      ok: true,
+      action: "steer",
+      code: null,
+      job: {
+        jobId: started.jobId,
+        activityId: started.activityId,
+        agentId: started.agentId,
+        status: "running"
+      },
+      promptPersistedByBridge: false,
+      steeringScope: "active-codex-turn-only",
+      delivery: { status: "delivered" }
+    });
+    expect(concurrentReplay).toEqual(first);
+    expect(replay).toEqual(first);
+    expect(upstream.steeringRequests).toEqual([{ threadId: "thread-1", prompt }]);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([pending]);
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toEqual([]);
+    expect({
+      activityId: jobs.get(started.jobId)?.activityId,
+      agentId: jobs.get(started.jobId)?.agentId,
+      projectId: jobs.get(started.jobId)?.projectId,
+      cwd: jobs.get(started.jobId)?.cwd,
+      backendKind: jobs.get(started.jobId)?.backendKind,
+      sandbox: jobs.get(started.jobId)?.sandbox,
+      selectionKey: jobs.get(started.jobId)?.selectionKey,
+      executionDecision: jobs.get(started.jobId)?.executionDecision
+    }).toEqual(executionBoundaryBefore);
+    const delivery = jobs.listSteeringDeliveries(SCOPE_A)[0]!;
+    expect(delivery).toMatchObject({
+      requestId: steeringRequest.requestId,
+      jobId: started.jobId,
+      expectedJobVersion,
+      promptSha256: createHash("sha256").update(prompt).digest("hex"),
+      status: "delivered",
+      result: first
+    });
+    expect(JSON.stringify(delivery)).not.toContain(prompt);
+
+    const conflictCall = await client.callTool({
+      name: "codex_steer",
+      arguments: { ...steeringRequest, prompt: "different payload" }
+    });
+    expect(conflictCall.isError).toBe(true);
+    expect(parseToolJson(conflictCall)).toMatchObject({
+      ok: false,
+      code: "STEERING_REQUEST_CONFLICT",
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toHaveLength(1);
+
+    const staleCall = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "91919191-9191-4191-8191-919191919190",
+        jobId: started.jobId,
+        expectedJobVersion,
+        prompt: "This stale guidance must not dispatch."
+      }
+    });
+    expect(staleCall.isError).toBe(true);
+    expect(parseToolJson(staleCall)).toMatchObject({
+      code: "STALE_JOB_VERSION",
+      delivery: { status: "not-delivered" }
+    });
+
+    const scopeMismatch = await rawCallTool({
+      name: "codex_steer",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "92929292-9292-4292-8292-929292929290",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "Cross-scope guidance must fail."
+      }
+    });
+    expect(scopeMismatch.isError).toBe(true);
+    expect(parseToolJson(scopeMismatch)).toMatchObject({
+      code: "JOB_SCOPE_MISMATCH",
+      job: null,
+      delivery: { status: "not-delivered" }
+    });
+
+    upstream.steeringAvailable = false;
+    const inactiveTurn = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "93939393-9393-4393-8393-939393939390",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "No active upstream turn means no queue."
+      }
+    });
+    expect(inactiveTurn.isError).toBe(true);
+    expect(parseToolJson(inactiveTurn)).toMatchObject({
+      code: "JOB_NOT_ACTIVE",
+      delivery: { status: "not-delivered" }
+    });
+    upstream.steeringAvailable = true;
+
+    const cancelled = parseToolJson(await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "94949494-9494-4494-8494-949494949489",
+        jobId: started.jobId,
+        expectedVersion: jobs.get(started.jobId)?.version
+      }
+    }));
+    expect(cancelled).toMatchObject({
+      ok: true,
+      action: "cancel-job",
+      target: { type: "job", id: started.jobId, state: "cancelled" }
+    });
+    const terminalRace = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "94949494-9494-4494-8494-949494949490",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "A terminal Job must not receive future queued work."
+      }
+    });
+    expect(terminalRace.isError).toBe(true);
+    expect(parseToolJson(terminalRace)).toMatchObject({
+      code: "JOB_NOT_ACTIVE",
+      job: { status: "cancelled" },
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toHaveLength(1);
+    await close();
+  });
+
+  it("redacts exact steering input echoed by Codex from Bridge-owned state and output", async () => {
+    const root = temporaryRoot();
+    const databaseFile = path.join(
+      mkdtempSync(path.join(tmpdir(), "steering-echo-")),
+      "state.sqlite"
+    );
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new InteractionUpstream();
+    const settings = new UserSettingsStore(config, { stateStore });
+    const jobs = new CodexJobRegistry({
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    const connected = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      jobs
+    );
+    const prompt = "RAW_STEERING_ECHO_7f4c1d9a must never enter Bridge SQLite or output";
+    const started = parseToolJson(await connected.client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for an adversarial steering echo probe",
+        agentName: "Steering Echo Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const steered = parseToolJson(await connected.client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "97979797-9797-4797-8797-979797979790",
+        jobId: started.jobId,
+        expectedJobVersion,
+        prompt
+      }
+    }));
+    expect(steered).toMatchObject({
+      ok: true,
+      delivery: { status: "delivered" },
+      promptPersistedByBridge: false
+    });
+
+    upstream.progressNext({
+      progress: 2,
+      message: `progress echoed ${prompt}`,
+      event: {
+        eventId: "steering-echo-event",
+        type: "agent-message",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: `event echoed ${prompt}`,
+        details: { echo: prompt, nested: [prompt], [prompt]: "echo-key" }
+      }
+    });
+    upstream.resolveNext({
+      content: [{ type: "text", text: `final answer echoed ${prompt}` }],
+      structuredContent: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turnStatus: "completed",
+        echo: prompt,
+        [prompt]: "echo-key"
+      }
+    });
+    await waitForJobStatus(connected.client, started.jobId, "completed");
+
+    const persistedJob = jobs.get(started.jobId);
+    expect(JSON.stringify(persistedJob)).not.toContain(prompt);
+    expect(JSON.stringify(persistedJob)).toContain("[steering input omitted]");
+    expect(JSON.stringify(jobs.listSteeringDeliveries(SCOPE_A))).not.toContain(prompt);
+    const exactStatus = await connected.client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: started.jobId } }
+    });
+    expect(JSON.stringify(exactStatus)).not.toContain(prompt);
+    expect(JSON.stringify(exactStatus)).toContain("[steering input omitted]");
+
+    await connected.close();
+    stateStore.close();
+    expect(readFileSync(databaseFile).includes(Buffer.from(prompt))).toBe(false);
+  });
+
+  it("derives scope for the public four-field steering call from host metadata", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const metadata = {
+      "openai/organization": "steering-org",
+      "openai/subject": "steering-user",
+      "openai/session": "steering-session"
+    };
+    const started = parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "98989898-9898-4898-8898-989898989890",
+        prompt: "host-derived steering target",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Host-derived steering" },
+        agent: { mode: "new", name: "Host Scope Steering Agent" },
+        executionMode: "background"
+      },
+      _meta: {
+        ...metadata,
+        "codex/activityPresentationId": "98989898-9898-4898-8898-989898989890"
+      }
+    }));
+    await Promise.resolve();
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const steeringArguments = {
+      requestId: "99999999-9999-4999-8999-999999999990",
+      jobId: started.jobId,
+      expectedJobVersion,
+      prompt: "Apply the host-scoped correction."
+    };
+    expect(Object.keys(steeringArguments).sort()).toEqual([
+      "expectedJobVersion",
+      "jobId",
+      "prompt",
+      "requestId"
+    ]);
+    const delivered = parseToolJson(await rawCallTool({
+      name: "codex_steer",
+      arguments: steeringArguments,
+      _meta: metadata
+    }));
+    expect(delivered).toMatchObject({
+      ok: true,
+      job: { jobId: started.jobId },
+      delivery: { status: "delivered" }
+    });
+
+    const denied = await rawCallTool({
+      name: "codex_steer",
+      arguments: {
+        ...steeringArguments,
+        requestId: "a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0",
+        expectedJobVersion: jobs.get(started.jobId)?.version
+      },
+      _meta: { ...metadata, "openai/session": "other-steering-session" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(parseToolJson(denied)).toMatchObject({
+      code: "JOB_SCOPE_MISMATCH",
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toEqual([
+      { threadId: "thread-1", prompt: steeringArguments.prompt }
+    ]);
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    for (let attempt = 0; attempt < 30 && jobs.get(started.jobId)?.status !== "completed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(jobs.get(started.jobId)?.status).toBe("completed");
+    await close();
+  });
+
+  it("distinguishes an active MCP Server Job from steerable App Server work", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "active MCP work",
+        agentName: "MCP Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const result = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "95959595-9595-4595-8595-959595959590",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "MCP Server cannot steer an in-flight turn."
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect(parseToolJson(result)).toMatchObject({
+      code: "STEERING_UNSUPPORTED",
+      job: { status: "running" },
+      delivery: { status: "not-delivered" }
+    });
+    expect(jobs.listSteeringDeliveries(SCOPE_A)).toEqual([
+      expect.objectContaining({ status: "not-delivered" })
+    ]);
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
+  it("returns delivery-uncertain after a persisted dispatch boundary without resending", async () => {
+    const root = temporaryRoot();
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "steering-crash-")), "state.sqlite");
+    const prompt = "crash-boundary steering prompt must remain private";
+    const promptSha256 = createHash("sha256").update(prompt).digest("hex");
+    const requestId = "96969696-9696-4696-8696-969696969690";
+    const jobId = "crashed-steering-job";
+    const expectedJobVersion = 3;
+    const actionHash = createHash("sha256")
+      .update(JSON.stringify({ action: "steer", jobId, expectedJobVersion, promptHash: promptSha256 }))
+      .digest("hex");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    firstStore.beginSteeringDelivery({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash,
+      jobId,
+      expectedJobVersion,
+      promptSha256
+    });
+    firstStore.markSteeringDeliveryDispatching(SCOPE_A, requestId, actionHash);
+    firstStore.close();
+
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new InteractionUpstream();
+    const settings = new UserSettingsStore(config, { stateStore });
+    const jobs = new CodexJobRegistry({
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    const connected = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      jobs
+    );
+    const arguments_ = { requestId, jobId, expectedJobVersion, prompt };
+    const first = await connected.client.callTool({ name: "codex_steer", arguments: arguments_ });
+    const replay = await connected.client.callTool({ name: "codex_steer", arguments: arguments_ });
+    expect(first.isError).toBe(true);
+    expect(parseToolJson(first)).toMatchObject({
+      ok: false,
+      code: "DELIVERY_UNCERTAIN",
+      job: null,
+      delivery: { status: "uncertain" },
+      promptPersistedByBridge: false
+    });
+    expect(parseToolJson(replay)).toEqual(parseToolJson(first));
+    expect(upstream.steeringRequests).toEqual([]);
+    expect(stateStore.getSteeringDelivery(SCOPE_A, requestId)).toMatchObject({
+      actionHash,
+      promptSha256,
+      status: "uncertain",
+      result: parseToolJson(first)
+    });
+    expect(JSON.stringify(stateStore.getSteeringDelivery(SCOPE_A, requestId))).not.toContain(prompt);
+    await connected.close();
+    stateStore.close();
+    expect(readFileSync(databaseFile).includes(Buffer.from(prompt))).toBe(false);
   });
 
   it("projects only allowed interaction decisions and clears server-resolved requests from Activity state", async () => {
@@ -10594,7 +11159,8 @@ async function connectTestClient(
           request.name === "codex_agent_recovery_detach" ||
           request.name === "codex_background_process_terminate" ||
           request.name === "codex_interaction_respond" ||
-          request.name === "codex_job_steer"
+          request.name === "codex_job_steer" ||
+          request.name === "codex_steer"
         ) &&
         !currentArguments.scopeId &&
         !currentArguments.includeAllScopes

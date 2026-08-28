@@ -260,6 +260,11 @@ export class CodexBackendRouter implements CodexUpstream {
     return this.appBackend.steerThread(threadId, prompt);
   }
 
+  canSteerThread(threadId: string): boolean {
+    return this.threadBackends.get(threadId) === "app-server" &&
+      this.appBackend.canSteerThread?.(threadId) === true;
+  }
+
   async close(): Promise<void> {
     this.threadBackends.clear();
     await Promise.allSettled([this.mcpBackend.close(), this.appBackend.close()]);
