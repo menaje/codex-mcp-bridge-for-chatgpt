@@ -1010,6 +1010,17 @@ export class BridgeStateStore {
       .map(readActivityAgentRow);
   }
 
+  listScopeActivityAgentAssignments(scopeId: string): ActivityAgentAssignment[] {
+    const normalizedScopeId = normalizeUuid(scopeId, "assignment scopeId");
+    return (this.database.prepare(`
+      SELECT aa.*
+        FROM activity_agents aa
+        JOIN activities a ON a.activity_id = aa.activity_id
+       WHERE a.scope_id = ?
+       ORDER BY aa.assigned_at ASC, aa.assignment_id ASC
+    `).all(normalizedScopeId) as ActivityAgentStorageRow[]).map(readActivityAgentRow);
+  }
+
   releaseAgentAssignment(activityId: string, agentId: string, now = Date.now()): ActivityAgentAssignment | undefined {
     return this.transaction(() => {
       const activity = this.requireActivity(activityId);
@@ -1913,6 +1924,18 @@ export class BridgeStateStore {
       `)
       .all(scopeId, Math.max(0, Math.min(100, limit)));
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  listPendingCompletionActivityIds(scopeId: string): string[] {
+    const rows = this.database
+      .prepare(`
+        SELECT DISTINCT activity_id
+          FROM completion_outbox
+         WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+         ORDER BY activity_id ASC
+      `)
+      .all(normalizeUuid(scopeId, "completion outbox scopeId")) as Array<{ activity_id: string }>;
+    return rows.map((row) => row.activity_id);
   }
 
   claimCompletionOutbox(

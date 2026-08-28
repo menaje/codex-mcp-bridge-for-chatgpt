@@ -348,7 +348,11 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("<body hidden>");
     expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
     expect(ACTIVITY_CARD_HTML).toContain("next.feed");
-    expect(ACTIVITY_CARD_HTML).toContain('renderGroup("completed"');
+    expect(ACTIVITY_CARD_HTML).toContain("renderHistorySummary(next.feed)");
+    expect(ACTIVITY_CARD_HTML).toContain("renderFullHistory(next.feed,showWorkspace)");
+    expect(ACTIVITY_CARD_HTML).toContain('renderGroup("idle",feed.idleAgents');
+    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("completed",next.feed.completed');
+    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("ended",next.feed.ended');
     expect(ACTIVITY_CARD_HTML).toContain("renderHistoryRow(item,kind,showWorkspace)");
     expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
     expect(ACTIVITY_CARD_HTML).toContain("summary.push(...(item.workspaceLabels||[]))");
@@ -372,6 +376,11 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(".execution-list{");
     expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
     expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.allActivities");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.previousPage");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.nextPage");
+    expect(UI_TRANSLATIONS.ko["activity.pastRecords"]).toBe("지난 기록");
+    expect(UI_TRANSLATIONS.ko["activity.completedActivities"]).toBe("완료 작업");
     expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');
     expect(ACTIVITY_CARD_HTML).not.toContain("renderActivities(next)");
     expect(ACTIVITY_CARD_HTML).not.toContain("renderAgents(next)");
@@ -380,7 +389,8 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("expectedAgentVersion:control.agentVersion");
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_snapshot",{card:cardProof(),limit:viewLimit}');
+    expect(ACTIVITY_CARD_HTML).toContain('async function reload(){const card=cardProof(),args={card,limit:viewLimit}');
+    expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
     expect(ACTIVITY_CARD_HTML).toContain(
       'callTool("codex_activity_rehydrate",{jobId:correlation.jobId'
     );
@@ -432,7 +442,7 @@ describe("human-facing UI localization", () => {
       'next.watcherPolicy.stopReason==="presentation-duplicate"'
     );
     expect(ACTIVITY_CARD_HTML).toContain(
-      "snapshot=null;historicalCorrelation=null;setCardVisible(false);return"
+      "snapshot=null;historicalCorrelation=null;historyCursor=null;setCardVisible(false);return"
     );
     expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
     expect(ACTIVITY_CARD_HTML).toContain('readOnly=historicalView()');

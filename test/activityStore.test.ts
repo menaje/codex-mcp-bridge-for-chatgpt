@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -343,6 +344,77 @@ describe("Activity SQLite state", () => {
       expect.objectContaining({ channel: "notify", completionVersion: 1 })
     ]);
     expect(() => store.completeActivity(ACTIVITY_A, undefined, 4)).toThrow(/completed Activity/);
+    store.close();
+  });
+
+  it("scope-bounds Activity feed joins and returns every pending completion Activity", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    const agentA = store.createAgent({ scopeId: SCOPE_A, agentName: "Scope A Agent", now: 1 });
+    const agentB = store.createAgent({ scopeId: SCOPE_B, agentName: "Scope B Agent", now: 2 });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      handoffPolicy: "notify",
+      completionTrigger: "manual",
+      now: 3
+    });
+    store.createActivity({
+      activityId: ACTIVITY_B,
+      scopeId: SCOPE_B,
+      handoffPolicy: "notify",
+      completionTrigger: "manual",
+      now: 4
+    });
+    store.assignAgent({
+      activityId: ACTIVITY_A,
+      agentId: agentA.agentId,
+      contextMode: "continue",
+      now: 5
+    });
+    store.assignAgent({
+      activityId: ACTIVITY_B,
+      agentId: agentB.agentId,
+      contextMode: "continue",
+      now: 6
+    });
+
+    store.upsertJob(job("scope-a-job", "scope-a-request", ACTIVITY_A, "completed", 7));
+    store.completeActivity(ACTIVITY_A, undefined, 8);
+    store.upsertJob({
+      ...job("scope-b-job", "scope-b-request", ACTIVITY_B, "completed", 9),
+      scopeId: SCOPE_B
+    });
+    store.completeActivity(ACTIVITY_B, undefined, 10);
+
+    const scopeAActivityIds = [ACTIVITY_A];
+    for (let index = 0; index < 100; index += 1) {
+      const activityId = randomUUID();
+      scopeAActivityIds.push(activityId);
+      store.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "manual",
+        now: 20 + index * 3
+      });
+      store.upsertJob(job(
+        `scope-a-job-${index}`,
+        `scope-a-request-${index}`,
+        activityId,
+        "completed",
+        21 + index * 3
+      ));
+      store.completeActivity(activityId, undefined, 22 + index * 3);
+    }
+
+    expect(store.listScopeActivityAgentAssignments(SCOPE_A)).toEqual([
+      expect.objectContaining({ activityId: ACTIVITY_A, agentId: agentA.agentId })
+    ]);
+    expect(store.listScopeActivityAgentAssignments(SCOPE_B)).toEqual([
+      expect.objectContaining({ activityId: ACTIVITY_B, agentId: agentB.agentId })
+    ]);
+    expect(store.listPendingCompletionActivityIds(SCOPE_A)).toEqual(scopeAActivityIds.sort());
+    expect(store.listPendingCompletionActivityIds(SCOPE_B)).toEqual([ACTIVITY_B]);
     store.close();
   });
 

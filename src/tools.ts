@@ -369,6 +369,7 @@ const activityViewOutputSchema = z.strictObject({
   activityPagination: z.strictObject({
     limit: z.number().int().positive(),
     returned: z.number().int().min(0),
+    total: z.number().int().min(0),
     hasMore: z.boolean()
   }),
   pendingHandoffs: z.array(opaqueJsonObjectOutputSchema),
@@ -2228,6 +2229,10 @@ export class CodexJobRegistry {
     return this.activityStore.listActivityAgentAssignments(activityId, agentId);
   }
 
+  listScopeActivityAgentAssignments(scopeId: string): ActivityAgentAssignment[] {
+    return this.activityStore.listScopeActivityAgentAssignments(scopeId);
+  }
+
   assignAgent(input: {
     activityId: string;
     agentId: string;
@@ -2463,6 +2468,10 @@ export class CodexJobRegistry {
 
   listPendingCompletionOutbox(scopeId: string, limit = 20) {
     return this.activityStore.listPendingCompletionOutbox(scopeId, limit);
+  }
+
+  listPendingCompletionActivityIds(scopeId: string): string[] {
+    return this.activityStore.listPendingCompletionActivityIds(scopeId);
   }
 
   claimCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string) {
@@ -4273,7 +4282,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Activity Manager`,
       description:
-        "Explicitly open or refresh the lightweight Agent/Activity view for the current ChatGPT conversation when the user asks to see it. codex_task owns automatic response presentation and must not be followed by codex_activity. Explicit cards use up to three separate scope watcher slots and never compete for automatic completion handoff; this tool never changes execution, visibility, or lifecycle policy.",
+        "Explicitly open or refresh the scoped, paginated full Activity view when the user asks to see all current and past work. Automatic codex_task cards remain compact and must not be followed by codex_activity. Explicit cards use up to three separate scope watcher slots and never compete for automatic completion handoff; this tool never changes execution, visibility, or lifecycle policy.",
       inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
       outputSchema: activityModelOutputSchema,
       annotations: {
@@ -4445,7 +4454,8 @@ export function registerBridgeTools(
         card: activityCardProofInputSchema,
         afterVersion: z.number().int().min(0).optional(),
         waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
-        limit: z.number().int().min(1).max(100).optional()
+        limit: z.number().int().min(1).max(100).optional(),
+        cursor: z.string().trim().min(1).max(256).optional()
       }),
       outputSchema: activityViewOutputSchema,
       annotations: {
@@ -4476,6 +4486,9 @@ export function registerBridgeTools(
         throw new Error("CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.");
       }
       const presentation = presentationFromActivityCardProof(args.card);
+      if (args.cursor && presentation.kind !== "explicit") {
+        throw new Error("Activity history pagination is available only in an explicit full view.");
+      }
       const lease = jobs.touchActivityCardLease(
         scope.scopeId,
         args.card.activityId,
@@ -4550,7 +4563,8 @@ export function registerBridgeTools(
           args.card.activityId,
           wait,
           presentation,
-          lease
+          lease,
+          args.cursor
         ),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         activityAppResultContract
@@ -7837,6 +7851,44 @@ function resultForJob(
 
 type PageCursorKind = "sessions" | "jobs" | "activities";
 
+type ActivityHistoryCursor = {
+  scopeVersion: number;
+  offset: number;
+};
+
+function encodeActivityHistoryCursor(scopeVersion: number, offset: number): string {
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    kind: "activity-history",
+    scopeVersion,
+    offset
+  }), "utf8").toString("base64url");
+}
+
+function decodeActivityHistoryCursor(cursor: string): ActivityHistoryCursor {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    if (
+      !isRecord(value) ||
+      value.v !== 1 ||
+      value.kind !== "activity-history" ||
+      !Number.isSafeInteger(value.scopeVersion) ||
+      (value.scopeVersion as number) < 0 ||
+      !Number.isSafeInteger(value.offset) ||
+      (value.offset as number) < 0 ||
+      (value.offset as number) > 1_000_000_000
+    ) {
+      throw new Error("invalid cursor payload");
+    }
+    return {
+      scopeVersion: value.scopeVersion as number,
+      offset: value.offset as number
+    };
+  } catch {
+    throw new Error("Invalid Activity history pagination cursor.");
+  }
+}
+
 function pageSummary(
   kind: PageCursorKind,
   offset: number,
@@ -8379,6 +8431,28 @@ function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<
   };
 }
 
+function listAllScopedActivities(jobs: CodexJobRegistry, scopeId: string): BridgeActivity[] {
+  const total = jobs.activityCount(scopeId);
+  const activities: BridgeActivity[] = [];
+  while (activities.length < total) {
+    const page = jobs.listActivities(scopeId, 1_000, activities.length);
+    if (page.length === 0) break;
+    activities.push(...page);
+  }
+  return activities;
+}
+
+function listAllScopedAgents(jobs: CodexJobRegistry, scopeId: string): BridgeAgent[] {
+  const total = jobs.agentCount(scopeId, true);
+  const agents: BridgeAgent[] = [];
+  while (agents.length < total) {
+    const page = jobs.listAgents(scopeId, true, 1_000, agents.length);
+    if (page.length === 0) break;
+    agents.push(...page);
+  }
+  return agents;
+}
+
 async function buildLegacyActivityView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
@@ -8393,7 +8467,7 @@ async function buildLegacyActivityView(
   lease?: ActivityCardLeaseTouchResult
 ) {
   const now = Date.now();
-  const allAgents = jobs.listAgents(scopeId, true, 1_000, 0);
+  const allAgents = listAllScopedAgents(jobs, scopeId);
   const controlRows: Array<Record<string, unknown>> = [];
   const currentThreads = new Map<string, BridgeAgentThread>();
   const agentRows = allAgents.map((agent) => {
@@ -8591,6 +8665,7 @@ async function buildLegacyActivityView(
       activityPagination: {
         limit,
         returned: activities.length,
+        total: jobs.activityCount(scopeId),
         hasMore: allActivities.length > limit
       },
       pendingHandoffs,
@@ -8599,7 +8674,8 @@ async function buildLegacyActivityView(
       mountedActivity: selectedActivity
         ? {
             activityId: selectedActivity.activityId,
-            cardGeneration: selectedActivity.cardGeneration
+            cardGeneration: selectedActivity.cardGeneration,
+            version: selectedActivity.version
           }
         : null,
       mountedPresentation: {
@@ -8630,7 +8706,8 @@ async function buildLegacyActivityView(
     },
     interactionControls: {
       agents: controlRows
-    }
+    },
+    allAgentRows: agentRows
   };
 }
 
@@ -8691,8 +8768,10 @@ async function buildActivityView(
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
   presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult
+  lease?: ActivityCardLeaseTouchResult,
+  historyCursor?: string
 ) {
+  const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
   const legacy = await buildLegacyActivityView(
     jobs,
     upstream,
@@ -8707,8 +8786,9 @@ async function buildActivityView(
     lease
   );
   const now = Date.now();
-  const allActivities = jobs.listActivities(scopeId, 1_000, 0);
-  const allAgents = jobs.listAgents(scopeId, true, 1_000, 0);
+  const scopeVersion = jobs.getScopeVersion(scopeId);
+  const allActivities = listAllScopedActivities(jobs, scopeId);
+  const allAgents = listAllScopedAgents(jobs, scopeId);
   const activityById = new Map(allActivities.map((activity) => [activity.activityId, activity]));
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const scopeJobs = jobs.listForScope(scopeId, config.maxRetainedJobs, 0);
@@ -8723,7 +8803,7 @@ async function buildActivityView(
   }
 
   const assignments = jobs
-    .listActivityAgentAssignments()
+    .listScopeActivityAgentAssignments(scopeId)
     .filter((assignment) => activityById.has(assignment.activityId) && agentById.has(assignment.agentId));
   const assignmentsByActivity = new Map<string, ActivityAgentAssignment[]>();
   const assignmentsByAgent = new Map<string, ActivityAgentAssignment[]>();
@@ -8736,12 +8816,9 @@ async function buildActivityView(
     assignmentsByAgent.set(assignment.agentId, agentEntries);
   }
 
-  const legacyAgents = [...legacy.structured.agents, ...legacy.structured.archivedAgents];
+  const legacyAgents = legacy.allAgentRows;
   const legacyAgentById = new Map(legacyAgents.map((agent) => [agent.agentId, agent]));
-  const pendingCompletionRecords = jobs.listPendingCompletionOutbox(scopeId, 1_000);
-  const pendingHandoffActivityIds = new Set(
-    pendingCompletionRecords.map((record) => record.activityId)
-  );
+  const pendingHandoffActivityIds = new Set(jobs.listPendingCompletionActivityIds(scopeId));
 
   const assignmentFor = (activityId: string, agentId: string): ActivityAgentAssignment | undefined =>
     [...(assignmentsByActivity.get(activityId) || [])]
@@ -8780,36 +8857,57 @@ async function buildActivityView(
       (agent) => agent.backgroundProcessState === "unavailable"
     );
     const pendingHandoff = pendingHandoffActivityIds.has(activity.activityId);
+    const hasTerminatingJob = activeJobs.some((job) => job.status === "terminating");
+    const hasFailedWork =
+      activity.verification === "failed" ||
+      activity.counts.failed > 0 ||
+      relevantStates.has("failed");
+    const hasInterruptedWork =
+      activity.counts.interrupted + activity.counts.cancelled > 0 ||
+      relevantStates.has("interrupted");
+    const verificationComplete =
+      activity.verification === "verified" || activity.verification === "not-required";
+    const canFoldCompletedActivity =
+      activity.lifecycle === "completed" &&
+      activeJobs.length === 0 &&
+      activeInteractions.length === 0 &&
+      verificationComplete &&
+      !pendingHandoff &&
+      !hasOpenAssignment &&
+      !hasBackgroundProcesses &&
+      !hasUnknownBackgroundProcesses;
+    const canFoldEndedActivity =
+      (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") &&
+      activeJobs.length === 0 &&
+      activeInteractions.length === 0 &&
+      !pendingHandoff &&
+      !hasOpenAssignment &&
+      !hasBackgroundProcesses &&
+      !hasUnknownBackgroundProcesses;
     let displayState: string;
-    if (hasInput || activity.waitingOn === "user") displayState = "input-required";
+    if (hasInput) displayState = "input-required";
     else if (hasApproval) displayState = "approval-required";
+    else if (activity.waitingOn === "user") displayState = "input-required";
     else if (relevantStates.has("termination-failed")) displayState = "termination-failed";
     else if (relevantStates.has("orphaned")) displayState = "orphaned";
     else if (hasUnknownBackgroundProcesses) displayState = "background-unavailable";
-    else if (activeJobs.some((job) => job.status === "terminating")) displayState = "terminating";
-    else if (activeJobs.length > 0 || hasBackgroundProcesses || activity.waitingOn === "codex") {
-      displayState = "running";
-    } else if (
+    else if (canFoldCompletedActivity) displayState = "completed";
+    else if (canFoldEndedActivity) displayState = "ended";
+    else if (hasFailedWork) displayState = "failed";
+    else if (hasInterruptedWork) displayState = "interrupted";
+    else if (
       activity.verification === "pending" ||
       activity.verification === "verifying" ||
       activity.waitingOn === "verification"
     ) displayState = "verification";
     else if (pendingHandoff) displayState = "waiting-gpt";
-    else if (hasOpenAssignment) displayState = "waiting-gpt";
-    else if (
-      activity.lifecycle === "completed" &&
-      (activity.verification === "verified" || activity.verification === "not-required")
-    ) displayState = "completed";
-    else if (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") {
-      displayState = "ended";
-    } else if (
-      activity.verification === "failed" ||
-      activity.counts.failed > 0 ||
-      relevantStates.has("failed")
-    ) displayState = "failed";
-    else if (activity.counts.interrupted + activity.counts.cancelled > 0) {
-      displayState = "interrupted";
-    } else if (activity.waitingOn === "orchestrator") displayState = "waiting-gpt";
+    else if (hasTerminatingJob) displayState = "terminating";
+    else if (activeJobs.length > 0 || hasBackgroundProcesses || activity.waitingOn === "codex") {
+      displayState = "running";
+    }
+    else if (hasOpenAssignment || activity.waitingOn === "orchestrator") {
+      displayState = "waiting-gpt";
+    }
     else displayState = "idle";
 
     const participants = participantIds.map((agentId) => {
@@ -8873,16 +8971,25 @@ async function buildActivityView(
   }
 
   const activityPriority = (row: (typeof activityRows)[number]): number => {
-    if (["input-required", "approval-required", "verification", "waiting-gpt"].includes(row.displayState)) return 0;
+    if (["input-required", "approval-required"].includes(row.displayState)) return 0;
     if (["failed", "interrupted", "termination-failed", "orphaned", "background-unavailable"].includes(row.displayState)) return 1;
-    if (["running", "terminating"].includes(row.displayState)) return 2;
-    return 3;
+    if (["verification", "waiting-gpt"].includes(row.displayState)) return 2;
+    if (["terminating", "running"].includes(row.displayState)) return 3;
+    if (row.displayState === "idle") return 4;
+    return 5;
   };
   const activeRows = activityRows
-    .filter((row) => row.displayState !== "completed" && row.displayState !== "ended")
+    .filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
     .sort((left, right) =>
       activityPriority(left) - activityPriority(right) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+      left.activityId.localeCompare(right.activityId)
+    );
+  const historyRows = activityRows
+    .filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
+    .sort((left, right) =>
+      Date.parse(right.completedAt || right.updatedAt) - Date.parse(left.completedAt || left.updatedAt) ||
+      left.activityId.localeCompare(right.activityId)
     );
   const activeAgentIds = new Set(activeRows.flatMap((row) => row.agents.map((agent) => agent.agentId)));
   for (const agent of legacyAgents) {
@@ -8998,43 +9105,164 @@ async function buildActivityView(
     });
   }
 
-  completedAgentRows.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  idleAgentRows.sort((left, right) => Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)));
-  endedAgentRows.sort((left, right) => Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)));
-  const completedActivityIds = new Set(completedAgentRows.flatMap((row) => row.activityIds));
-  const visibleCompletedAgents = completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row);
-  const visibleActiveRows = activeRows.slice(0, limit);
-  const visibleIdleAgents = idleAgentRows.slice(0, limit);
-  const visibleEndedAgents = endedAgentRows.slice(0, limit);
+  completedAgentRows.sort((left, right) =>
+    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.agentId.localeCompare(right.agentId)
+  );
+  idleAgentRows.sort((left, right) =>
+    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
+    String(left.agentId).localeCompare(String(right.agentId))
+  );
+  endedAgentRows.sort((left, right) =>
+    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
+    String(left.agentId).localeCompare(String(right.agentId))
+  );
+  const completedActivityCount = completedActivityRows.size;
+  const endedActivityCount = endedActivityRows.size;
+  const visibleCompletedAgents = feedMode === "full"
+    ? completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row)
+    : [];
+  const fullActivityRows = [...activeRows, ...historyRows];
+  const visibleLegacyIdleAgents = feedMode === "full" ? idleAgentRows.slice(0, limit) : [];
+  const visibleEndedAgents = feedMode === "full" ? endedAgentRows.slice(0, limit) : [];
+
+  let pageOffset = 0;
+  let pageReset = false;
+  if (feedMode === "full" && historyCursor) {
+    const decoded = decodeActivityHistoryCursor(historyCursor);
+    if (decoded.scopeVersion === scopeVersion) {
+      pageOffset = decoded.offset;
+    } else {
+      pageReset = true;
+    }
+  } else if (feedMode === "full" && selectedActivityId) {
+    const selectedActivityIndex = fullActivityRows.findIndex(
+      (row) => row.activityId === selectedActivityId
+    );
+    if (selectedActivityIndex >= 0) {
+      pageOffset = Math.floor(selectedActivityIndex / limit) * limit;
+    }
+  }
+  const maximumPageRowCount = Math.max(fullActivityRows.length, idleAgentRows.length);
+  const maximumPageOffset = maximumPageRowCount > 0
+    ? Math.floor((maximumPageRowCount - 1) / limit) * limit
+    : 0;
+  if (pageOffset > maximumPageOffset) {
+    pageOffset = maximumPageOffset;
+    pageReset = true;
+  }
+  const visibleFullActivityRows = feedMode === "full"
+    ? fullActivityRows.slice(pageOffset, pageOffset + limit)
+    : [];
+  const visibleActiveRows = feedMode === "full"
+    ? visibleFullActivityRows.filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
+    : activeRows.slice(0, limit);
+  const visibleHistoryRows = feedMode === "full"
+    ? visibleFullActivityRows.filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
+    : [];
+  const visibleIdleAgents = feedMode === "full"
+    ? idleAgentRows.slice(pageOffset, pageOffset + limit)
+    : [];
+  const nextPageOffset = feedMode === "full" && pageOffset + limit < maximumPageRowCount
+    ? pageOffset + limit
+    : null;
+  const currentHistoryCursor = feedMode === "full"
+    ? encodeActivityHistoryCursor(scopeVersion, pageOffset)
+    : null;
+  const previousHistoryCursor = feedMode === "full" && pageOffset > 0
+    ? encodeActivityHistoryCursor(scopeVersion, Math.max(0, pageOffset - limit))
+    : null;
+  const nextHistoryCursor = feedMode === "full" && nextPageOffset !== null
+    ? encodeActivityHistoryCursor(scopeVersion, nextPageOffset)
+    : null;
   const hasMore =
     activeRows.length > visibleActiveRows.length ||
-    completedAgentRows.length > visibleCompletedAgents.length ||
-    idleAgentRows.length > visibleIdleAgents.length ||
-    endedAgentRows.length > visibleEndedAgents.length;
+    (feedMode === "full" && (
+      nextHistoryCursor !== null ||
+      completedAgentRows.length > visibleCompletedAgents.length ||
+      idleAgentRows.length > visibleIdleAgents.length ||
+      endedAgentRows.length > visibleEndedAgents.length
+    ));
+
+  const projectedLegacy = feedMode === "compact"
+    ? {
+        ...legacy.structured,
+        agents: [],
+        archivedAgents: [],
+        agentPagination: {
+          ...legacy.structured.agentPagination,
+          returned: 0,
+          archivedReturned: 0
+        },
+        unassignedJobs: [],
+        activities: [],
+        activityPagination: {
+          ...legacy.structured.activityPagination,
+          returned: 0,
+          hasMore: legacy.structured.activityPagination.total > 0
+        }
+      }
+    : legacy.structured;
 
   return {
-    ...legacy,
+    interactionControls: legacy.interactionControls,
     structured: {
-      ...legacy.structured,
+      ...projectedLegacy,
       feed: {
+        mode: feedMode,
         showWorkspaceLabels: hasMultipleWorkspaces,
+        activityTotal: activityRows.length,
         activeCount: activeRows.length,
         active: visibleActiveRows,
-        completed: {
-          agentCount: completedAgentRows.length,
-          activityCount: completedActivityIds.size,
-          rows: visibleCompletedAgents,
-          hasMore: completedAgentRows.length > visibleCompletedAgents.length
+        activeHasMore: activeRows.length > visibleActiveRows.length,
+        historySummary: {
+          completedActivities: completedActivityCount,
+          endedActivities: endedActivityCount,
+          idleAgents: idleAgentRows.length
         },
-        idle: {
+        history: {
+          rows: visibleHistoryRows,
+          pagination: {
+            offset: feedMode === "full" ? pageOffset : 0,
+            limit,
+            returned: visibleFullActivityRows.length,
+            total: fullActivityRows.length,
+            hasPrevious: feedMode === "full" && pageOffset > 0,
+            hasMore: nextHistoryCursor !== null,
+            currentCursor: currentHistoryCursor,
+            previousCursor: previousHistoryCursor,
+            nextCursor: nextHistoryCursor,
+            reset: pageReset
+          }
+        },
+        idleAgents: {
           agentCount: idleAgentRows.length,
           rows: visibleIdleAgents,
-          hasMore: idleAgentRows.length > visibleIdleAgents.length
+          hasMore: feedMode === "full" && pageOffset + visibleIdleAgents.length < idleAgentRows.length,
+          pagination: {
+            offset: feedMode === "full" ? pageOffset : 0,
+            limit,
+            returned: visibleIdleAgents.length,
+            total: idleAgentRows.length,
+            hasPrevious: feedMode === "full" && pageOffset > 0,
+            hasMore: feedMode === "full" && pageOffset + visibleIdleAgents.length < idleAgentRows.length
+          }
+        },
+        completed: {
+          agentCount: feedMode === "full" ? completedAgentRows.length : 0,
+          activityCount: completedActivityCount,
+          rows: visibleCompletedAgents,
+          hasMore: feedMode === "full" && completedAgentRows.length > visibleCompletedAgents.length
+        },
+        idle: {
+          agentCount: feedMode === "full" ? idleAgentRows.length : 0,
+          rows: visibleLegacyIdleAgents,
+          hasMore: feedMode === "full" && idleAgentRows.length > visibleLegacyIdleAgents.length
         },
         ended: {
-          agentCount: endedAgentRows.length,
+          agentCount: feedMode === "full" ? endedAgentRows.length : 0,
+          activityCount: endedActivityCount,
           rows: visibleEndedAgents,
-          hasMore: endedAgentRows.length > visibleEndedAgents.length
+          hasMore: feedMode === "full" && endedAgentRows.length > visibleEndedAgents.length
         },
         pagination: {
           limit,
@@ -9054,10 +9282,13 @@ function activityViewResult(
     | typeof activityRehydrateResultContract
 ): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
-  const mountedActivity = isRecord(view.structured.mountedActivity)
+  const mountedActivityRecord = isRecord(view.structured.mountedActivity)
+    ? view.structured.mountedActivity
+    : null;
+  const mountedActivity = mountedActivityRecord
     ? {
-        activityId: view.structured.mountedActivity.activityId,
-        cardGeneration: view.structured.mountedActivity.cardGeneration
+        activityId: mountedActivityRecord.activityId,
+        cardGeneration: mountedActivityRecord.cardGeneration
       }
     : null;
   const mountedPresentationRecord: Record<string, unknown> = isRecord(
@@ -9099,10 +9330,11 @@ function activityViewResult(
   });
   const summary = {
     scopeVersion: view.structured.scopeVersion,
+    mode: view.structured.feed.mode,
     active: view.structured.feed.activeCount,
-    completedActivities: view.structured.feed.completed.activityCount,
-    idleAgents: view.structured.feed.idle.agentCount,
-    endedAgents: view.structured.feed.ended.agentCount,
+    completedActivities: view.structured.feed.historySummary.completedActivities,
+    endedActivities: view.structured.feed.historySummary.endedActivities,
+    idleAgents: view.structured.feed.historySummary.idleAgents,
     attention: view.structured.aggregates.needsAttention
   };
   const appHydration = {
@@ -9126,11 +9358,13 @@ function activityViewResult(
       kind: "activity",
       scopeVersion: view.structured.scopeVersion,
       ...(mountedActivity ? { activityId: mountedActivity.activityId } : {}),
-      ...(selectedRecord && Number.isInteger(selectedRecord.version)
-        ? { activityVersion: selectedRecord.version }
+      ...(mountedActivityRecord && Number.isInteger(mountedActivityRecord.version)
+        ? { activityVersion: mountedActivityRecord.version }
+        : selectedRecord && Number.isInteger(selectedRecord.version)
+          ? { activityVersion: selectedRecord.version }
         : {}),
       counts: {
-        activities: view.structured.activities.length,
+        activities: view.structured.feed.activityTotal,
         agents: view.structured.agentPagination.total +
           view.structured.agentPagination.archivedTotal,
         active: view.structured.feed.activeCount,

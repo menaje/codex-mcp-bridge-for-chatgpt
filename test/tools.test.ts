@@ -897,6 +897,7 @@ describe("bridge tools", () => {
       required: expect.arrayContaining(["card"]),
       properties: {
         afterVersion: { minimum: 0 },
+        cursor: { maxLength: 256, type: "string" },
         waitMs: { maximum: 60000 },
         widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") },
         card: expect.any(Object)
@@ -1177,13 +1178,14 @@ describe("bridge tools", () => {
           "properties": [
             "afterVersion",
             "card",
+            "cursor",
             "limit",
             "scopeId",
             "waitMs",
             "widgetInstanceId",
           ],
-          "propertyCount": 6,
-          "schemaBytes": 1527,
+          "propertyCount": 7,
+          "schemaBytes": 1584,
           "visibility": {
             "app": true,
             "model": false,
@@ -1894,6 +1896,7 @@ describe("bridge tools", () => {
       const revisions = uiResourceRevisions(name);
       expect(revisions.map((revision) => revision.uri)).toEqual(name === "settings"
         ? [
+            "ui://codex-mcp-bridge/settings/076902290d5a.html",
             "ui://codex-mcp-bridge/settings/c0afef77c90b.html",
             "ui://codex-mcp-bridge/settings/7c3ab734ff3a.html",
             "ui://codex-mcp-bridge/settings/34e2eb4c94d2.html",
@@ -1903,6 +1906,7 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/339d1ebfbd91.html",
             "ui://codex-mcp-bridge/activity/e381833d1c75.html",
             "ui://codex-mcp-bridge/activity/5e4acb22f165.html",
             "ui://codex-mcp-bridge/activity/c3c3c87be464.html",
@@ -4871,7 +4875,7 @@ describe("bridge tools", () => {
   it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
     const root = temporaryRoot();
     const upstream = new BackgroundTerminalUpstream();
-    const { client, jobs, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
@@ -4888,6 +4892,33 @@ describe("bridge tools", () => {
     const agentId = completed.agentId as string;
     const activityId = completed.activityId as string;
     expect(agentId).toEqual(expect.any(String));
+    const automaticBootstrap = privateActivityBootstrap(completedResult);
+    const automaticView = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId,
+          generation: automaticBootstrap.activity.cardGeneration,
+          presentation: {
+            kind: "automatic",
+            activityPresentationId: automaticBootstrap.correlation.activityPresentationId,
+            reservationOwnerId: completed.jobId
+          }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "background-process-compact-card" }
+    });
+    expect(automaticView.isError, JSON.stringify(automaticView)).not.toBe(true);
+    expect((automaticView as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed).toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId,
+          displayState: "running",
+          agents: [expect.objectContaining({ backgroundProcessCount: 2 })]
+        })]
+      });
 
     const widgetSessionId = "71717171-7171-4171-8171-717171717171";
     const card = await client.callTool({
@@ -5153,6 +5184,19 @@ describe("bridge tools", () => {
       }
     });
     expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([approval]);
+    const approvalSnapshot = await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect((approvalSnapshot as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId: started.activityId,
+          displayState: "approval-required"
+        })]
+      });
 
     const movedLegacyControl = await client.callTool({
       name: "codex_activity_update",
@@ -5281,6 +5325,19 @@ describe("bridge tools", () => {
       }
     });
     expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([input]);
+    const inputSnapshot = await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect((inputSnapshot as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId: started.activityId,
+          displayState: "input-required"
+        })]
+      });
     upstream.progressNext({
       progress: 4,
       message: "input resolved",
@@ -7841,6 +7898,24 @@ describe("bridge tools", () => {
       expect.objectContaining({ activityId: started.activityId, channel: "notify" }),
       expect.objectContaining({ activityId: secondActivity.activityId, channel: "notify" })
     ]));
+    expect((view as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        historySummary: { completedActivities: 0 },
+        history: { rows: [] },
+        active: expect.arrayContaining([
+          expect.objectContaining({
+            activityId: started.activityId,
+            displayState: "waiting-gpt",
+            pendingHandoff: true
+          }),
+          expect.objectContaining({
+            activityId: secondActivity.activityId,
+            displayState: "waiting-gpt",
+            pendingHandoff: true
+          })
+        ])
+      });
     const outboxIds = pending.map((event: Record<string, any>) => event.outboxId);
     const peerSnapshot = await rawCallTool({
       name: "codex_activity_snapshot",
@@ -8657,11 +8732,11 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("renders one scoped flat feed and folds completed work by Agent", async () => {
+  it("keeps automatic Activity cards compact and preserves terminal Activity history across Agent reuse", async () => {
     const root = temporaryRoot();
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
-    const { client, jobs, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
       config,
       new FakeUpstream(),
       undefined,
@@ -8684,6 +8759,7 @@ describe("bridge tools", () => {
     const summary = privateActivityView(summaryResult);
     expect(summary).toMatchObject({
       feed: {
+        mode: "full",
         activeCount: 1,
         active: [expect.objectContaining({
           activityId,
@@ -8691,6 +8767,8 @@ describe("bridge tools", () => {
           displayState: "waiting-gpt",
           agents: [expect.objectContaining({ agentName: "Summary Agent" })]
         })],
+        historySummary: { completedActivities: 0, endedActivities: 0 },
+        history: { rows: [] },
         completed: { agentCount: 0, activityCount: 0 }
       }
     });
@@ -8711,7 +8789,12 @@ describe("bridge tools", () => {
     const agents = privateActivityView(agentsResult);
     expect(agents).not.toHaveProperty("viewMode");
     expect(agents.feed).toMatchObject({
+      mode: "full",
       activeCount: 0,
+      historySummary: { completedActivities: 1, endedActivities: 0 },
+      history: {
+        rows: [expect.objectContaining({ activityId, displayState: "completed" })]
+      },
       completed: {
         agentCount: 1,
         activityCount: 1,
@@ -8735,13 +8818,307 @@ describe("bridge tools", () => {
     const resumedResult = await client.callTool({ name: "codex_activity", arguments: {} });
     const resumedFeed = privateActivityView(resumedResult).feed;
     expect(resumedFeed).toMatchObject({
+      mode: "full",
       activeCount: 1,
       active: [expect.objectContaining({
         activityId: resumedActivityId,
         agents: [expect.objectContaining({ agentName: "Summary Agent" })]
       })],
-      completed: { agentCount: 0, activityCount: 0 }
+      historySummary: { completedActivities: 1, endedActivities: 0 },
+      history: {
+        rows: [expect.objectContaining({ activityId, displayState: "completed" })]
+      },
+      completed: { agentCount: 0, activityCount: 1, rows: [] }
     });
+
+    const bootstrap = privateActivityBootstrap(resumed);
+    const ended = jobs.createActivity({ scopeId: SCOPE_A, title: "Ended history" });
+    jobs.cancelActivity(ended.activityId, "No longer needed");
+    jobs.createAgent({ scopeId: SCOPE_A, agentName: "Unused idle Agent" });
+    const automatic = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: resumedActivityId,
+          generation: bootstrap.activity.cardGeneration,
+          presentation: {
+            kind: "automatic",
+            activityPresentationId: bootstrap.correlation.activityPresentationId,
+            reservationOwnerId: parseToolJson(resumed).jobId
+          }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "compact-history-summary" }
+    });
+    const compact = (automatic as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(compact.feed).toMatchObject({
+      mode: "compact",
+      activeCount: 1,
+      active: [expect.objectContaining({ activityId: resumedActivityId })],
+      historySummary: { completedActivities: 1, endedActivities: 1, idleAgents: 1 },
+      history: { rows: [] },
+      idleAgents: { rows: [] },
+      completed: { rows: [] },
+      idle: { rows: [] },
+      ended: { rows: [] }
+    });
+    expect(compact.agents).toEqual([]);
+    expect(compact.archivedAgents).toEqual([]);
+    expect(compact.activities).toEqual([]);
+    expect(compact.unassignedJobs).toEqual([]);
+    await close();
+  });
+
+  it("paginates the explicit full Activity history within scope and keeps an exact selected Activity visible", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    const scopedActivities = Array.from({ length: 35 }, (_, index) => jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: `Scoped history ${index + 1}`
+    }));
+    const scopedAgents = Array.from({ length: 35 }, (_, index) => jobs.createAgent({
+      scopeId: SCOPE_A,
+      agentName: `Scoped idle Agent ${index + 1}`
+    }));
+    jobs.createActivity({ scopeId: SCOPE_B, title: "Other conversation history" });
+    jobs.createAgent({ scopeId: SCOPE_B, agentName: "Other conversation Agent" });
+    const oldest = scopedActivities[0]!;
+
+    const opened = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId: oldest.activityId }
+    });
+    expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      kind: "activity",
+      activityId: oldest.activityId,
+      activityVersion: oldest.version,
+      counts: { activities: 35, agents: 35 }
+    });
+    const selectedPage = privateActivityView(opened);
+    expect(selectedPage.feed).toMatchObject({
+      mode: "full",
+      activityTotal: 35,
+      history: {
+        pagination: {
+          offset: 30,
+          returned: 5,
+          total: 35,
+          hasPrevious: true,
+          hasMore: false
+        }
+      },
+      idleAgents: {
+        agentCount: 35,
+        pagination: { offset: 30, returned: 5, total: 35 }
+      }
+    });
+    expect(selectedPage.feed.history.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ activityId: oldest.activityId })])
+    );
+    expect(JSON.stringify(selectedPage)).not.toContain("Other conversation history");
+    expect(JSON.stringify(selectedPage)).not.toContain("Other conversation Agent");
+
+    const card = {
+      activityId: selectedPage.mountedActivity.activityId,
+      generation: selectedPage.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
+    const firstPageResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: selectedPage.feed.history.pagination.previousCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const firstPage = (firstPageResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(firstPage.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      total: 35,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(firstPage.feed.history.rows).toHaveLength(30);
+    expect(firstPage.feed.idleAgents).toMatchObject({
+      agentCount: 35,
+      pagination: { offset: 0, returned: 30, total: 35, hasMore: true }
+    });
+    expect(firstPage.feed.idleAgents.rows).toHaveLength(30);
+
+    const nextPageResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: firstPage.feed.history.pagination.nextCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const nextPage = (nextPageResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(nextPage.feed.history.pagination).toMatchObject({
+      offset: 30,
+      returned: 5,
+      total: 35,
+      hasPrevious: true,
+      hasMore: false
+    });
+    expect(nextPage.feed.idleAgents).toMatchObject({
+      agentCount: 35,
+      pagination: { offset: 30, returned: 5, total: 35, hasMore: false }
+    });
+    expect(nextPage.feed.idleAgents.rows).toHaveLength(5);
+
+    jobs.createActivity({ scopeId: SCOPE_A, title: "New ordering boundary" });
+    const resetResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: nextPage.feed.history.pagination.currentCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const resetPage = (resetResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(resetPage.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      total: 36,
+      reset: true
+    });
+    expect(resetPage.feed.history.pagination.currentCursor)
+      .not.toBe(nextPage.feed.history.pagination.currentCursor);
+    expect(scopedAgents).toHaveLength(35);
+    await close();
+  });
+
+  it("orders Activity rows by user block, recovery, result review, and running state", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fail for ordering",
+        agentName: "Failed ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    upstream.rejectNext(new Error("ordering failure"));
+    await waitForJobStatus(client, failed.jobId, "failed");
+
+    const verification = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "verify for ordering",
+        agentName: "Verification ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background",
+        handoffPolicy: "verify",
+        completionTrigger: "sealed-jobs-terminal"
+      }
+    }));
+    upstream.resolveNext(fakeCodexResult("verification-ordering-thread"));
+    await waitForJobStatus(client, verification.jobId, "completed");
+    jobs.sealActivity(verification.activityId);
+
+    const waiting = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for GPT ordering",
+        agentName: "Waiting ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    upstream.resolveNext(fakeCodexResult("waiting-ordering-thread"));
+    await waitForJobStatus(client, waiting.jobId, "completed");
+
+    const approval = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "request approval for ordering",
+        agentName: "Approval ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const approvalInteraction = {
+      interactionId: "ordering-approval",
+      kind: "command-approval" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "ordering-item",
+      summary: "Approval blocks the user",
+      availableDecisions: ["accept", "decline"] as CodexInteractionDecision[]
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: approvalInteraction.summary,
+      event: {
+        eventId: "ordering-approval-event",
+        type: "approval-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: approvalInteraction.summary,
+        details: { interaction: approvalInteraction }
+      }
+    });
+
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep running for ordering",
+        agentName: "Running ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const newerRunning = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep a newer row running for stable ordering",
+        agentName: "Newer running ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+
+    const card = privateActivityView(await client.callTool({ name: "codex_activity", arguments: {} }));
+    expect(card.feed.active.map((row: { activityId: string; displayState: string }) => ({
+      activityId: row.activityId,
+      displayState: row.displayState
+    }))).toEqual([
+      { activityId: approval.activityId, displayState: "approval-required" },
+      { activityId: failed.activityId, displayState: "failed" },
+      { activityId: waiting.activityId, displayState: "waiting-gpt" },
+      { activityId: verification.activityId, displayState: "verification" },
+      { activityId: newerRunning.activityId, displayState: "running" },
+      { activityId: running.activityId, displayState: "running" }
+    ]);
+
+    upstream.resolveNext(fakeCodexResult("approval-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("running-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("newer-running-ordering-thread"));
+    await Promise.all([
+      waitForJobStatus(client, approval.jobId, "completed"),
+      waitForJobStatus(client, running.jobId, "completed"),
+      waitForJobStatus(client, newerRunning.jobId, "completed")
+    ]);
     await close();
   });
 

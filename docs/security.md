@@ -19,9 +19,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   structured `answer`; the widget consumes only the task's scoped Activity identity
   and obtains its feed through the app-private `codex_activity_snapshot` contract.
   That contract establishes or renews an exact Activity/generation/presentation
-  lease correlated to the mounted widget session. `codex_activity` explicitly
-  opens that localized flat Activity feed. Its
-  private metadata remains bounded and redacted; public rows omit Agent/job/thread
+  lease correlated to the mounted widget session. Automatic snapshots contain
+  only current/action-needed Activity rows plus exact terminal/idle counts;
+  `codex_activity` explicitly opens the scoped, cursor-paginated full view. Its
+  private metadata remains bounded and redacted; rendered rows omit Agent/job/thread
   IDs, expose each Agent's current or latest effective model/effort selection, and
   show only final folder names when multiple projects must be distinguished, never
   full working paths.

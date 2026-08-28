@@ -146,6 +146,15 @@ const ENGLISH = {
   "activity.retry": "Retry",
   "activity.followUpSent": "A GPT follow-up was added to this conversation.",
   "activity.moreActivities": "Additional completed activities:",
+  "activity.allActivities": "All activities",
+  "activity.pastRecords": "Past records",
+  "activity.completedActivities": "Completed activities",
+  "activity.endedActivities": "Ended activities",
+  "activity.idleAgentCount": "Idle agents",
+  "activity.history": "Activity history",
+  "activity.noHistory": "No past Activity in this conversation.",
+  "activity.previousPage": "Previous",
+  "activity.nextPage": "Next",
   "activity.defaultAgent": "Codex Agent",
   "activity.currentExecution": "Current run",
   "activity.latestExecution": "Latest run",
@@ -714,6 +723,33 @@ const ISSUE20_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTran
   },
   pt: {
     "activity.currentActivities": "Atividade atual", "activity.noCurrent": "Não há atividade do Codex em andamento nesta conversa.", "activity.completedCodex": "Codex concluídos", "activity.completedWork": "atividades concluídas", "activity.idleCodex": "Codex ociosos", "activity.endedCodex": "Codex encerrados", "activity.turns": "turnos", "activity.continued": "Trabalho continuado", "activity.reviewComplete": "Revisão concluída", "activity.workComplete": "Trabalho concluído", "activity.gptVerificationNeeded": "Verificação do GPT necessária", "activity.verify": "Verificar", "activity.retry": "Tentar novamente", "activity.followUpSent": "Um acompanhamento do GPT foi adicionado a esta conversa.", "activity.moreActivities": "Outras atividades concluídas:"
+  }
+};
+
+const ISSUE41_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
+  ko: {
+    "activity.allActivities": "전체 Activity", "activity.pastRecords": "지난 기록", "activity.completedActivities": "완료 작업", "activity.endedActivities": "종료 작업", "activity.idleAgentCount": "유휴 Agent", "activity.history": "Activity 기록", "activity.noHistory": "이 대화에는 지난 Activity가 없습니다.", "activity.previousPage": "이전", "activity.nextPage": "다음"
+  },
+  ja: {
+    "activity.allActivities": "すべてのアクティビティ", "activity.pastRecords": "過去の記録", "activity.completedActivities": "完了", "activity.endedActivities": "終了", "activity.idleAgentCount": "待機中のエージェント", "activity.history": "アクティビティ履歴", "activity.noHistory": "この会話には過去のアクティビティがありません。", "activity.previousPage": "前へ", "activity.nextPage": "次へ"
+  },
+  "zh-Hans": {
+    "activity.allActivities": "所有活动", "activity.pastRecords": "历史记录", "activity.completedActivities": "已完成", "activity.endedActivities": "已结束", "activity.idleAgentCount": "空闲代理", "activity.history": "活动历史", "activity.noHistory": "此对话中没有历史活动。", "activity.previousPage": "上一页", "activity.nextPage": "下一页"
+  },
+  "zh-Hant": {
+    "activity.allActivities": "所有活動", "activity.pastRecords": "歷史記錄", "activity.completedActivities": "已完成", "activity.endedActivities": "已結束", "activity.idleAgentCount": "閒置代理程式", "activity.history": "活動歷程", "activity.noHistory": "此對話中沒有歷史活動。", "activity.previousPage": "上一頁", "activity.nextPage": "下一頁"
+  },
+  es: {
+    "activity.allActivities": "Todas las actividades", "activity.pastRecords": "Historial", "activity.completedActivities": "Completadas", "activity.endedActivities": "Finalizadas", "activity.idleAgentCount": "Agentes inactivos", "activity.history": "Historial de actividades", "activity.noHistory": "No hay actividades anteriores en esta conversación.", "activity.previousPage": "Anterior", "activity.nextPage": "Siguiente"
+  },
+  fr: {
+    "activity.allActivities": "Toutes les activités", "activity.pastRecords": "Historique", "activity.completedActivities": "Terminées", "activity.endedActivities": "Arrêtées", "activity.idleAgentCount": "Agents inactifs", "activity.history": "Historique des activités", "activity.noHistory": "Aucune activité antérieure dans cette conversation.", "activity.previousPage": "Précédent", "activity.nextPage": "Suivant"
+  },
+  de: {
+    "activity.allActivities": "Alle Aktivitäten", "activity.pastRecords": "Verlauf", "activity.completedActivities": "Abgeschlossen", "activity.endedActivities": "Beendet", "activity.idleAgentCount": "Inaktive Agenten", "activity.history": "Aktivitätsverlauf", "activity.noHistory": "In dieser Unterhaltung gibt es keine früheren Aktivitäten.", "activity.previousPage": "Zurück", "activity.nextPage": "Weiter"
+  },
+  pt: {
+    "activity.allActivities": "Todas as atividades", "activity.pastRecords": "Histórico", "activity.completedActivities": "Concluídas", "activity.endedActivities": "Encerradas", "activity.idleAgentCount": "Agentes ociosos", "activity.history": "Histórico de atividades", "activity.noHistory": "Não há atividades anteriores nesta conversa.", "activity.previousPage": "Anterior", "activity.nextPage": "Próxima"
   }
 };
 
@@ -1593,8 +1629,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

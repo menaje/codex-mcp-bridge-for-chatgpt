@@ -137,7 +137,7 @@ describe("release manifest", () => {
             content: {
               prefersBorder: true,
               csp: { connectDomains: [] },
-              "codex/uiContractGeneration": 11
+              "codex/uiContractGeneration": 12
             }
           }
         }
@@ -215,7 +215,7 @@ describe("release manifest", () => {
     expect(history.resources.activity.previous.length).toBeGreaterThan(5);
 
     const retiredSettingsGeneration6Uri = history.resources.settings.uri;
-    rendered = renderedRevision("settings-v9", "activity-v11-current", 9, 11);
+    rendered = renderedRevision("settings-v9", "activity-v12-current", 9, 12);
     const reconciled = deriveUiResourceManifest(manifest, rendered, history);
     expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredSettingsUri);

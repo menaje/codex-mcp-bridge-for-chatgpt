@@ -62,6 +62,7 @@
       "activityPagination": {
         "limit": 30,
         "returned": 0,
+        "total": 0,
         "hasMore": false
       },
       "pendingHandoffs": [],
@@ -82,8 +83,36 @@
         "live": true
       },
       "feed": {
+        "mode": "compact",
+        "activityTotal": 0,
         "activeCount": 0,
-        "active": []
+        "active": [],
+        "activeHasMore": false,
+        "historySummary": {
+          "completedActivities": 0,
+          "endedActivities": 0,
+          "idleAgents": 0
+        },
+        "history": {
+          "rows": [],
+          "pagination": {
+            "offset": 0,
+            "limit": 30,
+            "returned": 0,
+            "total": 0,
+            "hasPrevious": false,
+            "hasMore": false,
+            "currentCursor": null,
+            "previousCursor": null,
+            "nextCursor": null,
+            "reset": false
+          }
+        },
+        "idleAgents": {
+          "agentCount": 0,
+          "rows": [],
+          "hasMore": false
+        }
       }
     }
   }
