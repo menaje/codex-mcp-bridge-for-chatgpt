@@ -70,7 +70,7 @@ Both require `purpose: "presentation-hydration-only"`, exact discriminator/versi
 
 Private metadata never grants access. Snapshot, handoff, cancellation, steering, interaction response, and background-process termination revalidate scope, mounted widget identity, Activity/card generation, presentation lease, ownership, and optimistic versions on the server.
 
-The minimum supported Activity generation is now 11. The current immutable resource is generation 11 at `ui://codex-mcp-bridge/activity/17c24231c553.html`. All 11 retained immutable Activity URIs from generations 7–10 remain registered and refresh through app-only snapshot/watch paths; together with the current resource, 12 Activity resources are registered. Retained HTML assets are not rewritten or deleted when the minimum advances.
+The minimum supported Activity generation is now 11. The current immutable resource is generation 11 at `ui://codex-mcp-bridge/activity/c3c3c87be464.html`. All 12 retained immutable Activity URIs—including the preceding generation-11 resource and resources from generations 7–10—remain registered and refresh through app-only snapshot/watch paths; together with the current resource, 13 Activity resources are registered. Retained HTML assets are not rewritten or deleted when the minimum advances.
 
 ## Opaque-leaf policy
 
