@@ -57,10 +57,11 @@ npm run skills:package -- --output /tmp/codex-mcp-bridge-skills-0.3.0.zip
 The archive has one predictable root directory and contains
 `codex-mcp-bridge-skills-<bridgeVersion>/manifest.json` plus every source file
 under `skills/`. The manifest records `bridgeVersion` from `package.json` and,
-for each skill, its frontmatter `name`, explicit SemVer `version` as
-`skillVersion`, and `skills/<name>/SKILL.md` path. Explicit frontmatter versions
-are the minimal compatibility rule: they let skills evolve independently of the
-runtime without embedding model, project, or live schema values.
+for each skill, its frontmatter `name`, the same release-derived SemVer as
+`skillVersion`, and `skills/<name>/SKILL.md` path. Source skills omit a custom
+frontmatter version: `npm run release:version` changes the package/release
+version, and the skills packager applies that version automatically. Unreleased
+skill edits therefore do not consume versions or require version-only changes.
 
 `npm run skills:check` builds and inspects the archive in a temporary directory,
 checks manifest paths and frontmatter, compares every ZIP entry with source,

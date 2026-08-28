@@ -34,7 +34,7 @@ describe("skills release archive", () => {
         skills: expect.arrayContaining([
           expect.objectContaining({
             name: "codex",
-            skillVersion: "0.1.2",
+            skillVersion: release.bridgeVersion,
             path: "skills/codex/SKILL.md"
           })
         ])
@@ -64,7 +64,7 @@ describe("skills release archive", () => {
       writeFileSync(path.join(skillRoot, ".DS_Store"), "finder metadata");
       writeFileSync(
         path.join(skillRoot, "SKILL.md"),
-        "---\nname: example-skill\nversion: 0.1.0\ndescription: Example.\n---\n"
+        "---\nname: example-skill\ndescription: Example.\n---\n"
       );
 
       const release = collectSkillsRelease(root);
@@ -72,12 +72,31 @@ describe("skills release archive", () => {
       expect(release.manifest.skills).toEqual([
         {
           name: "example-skill",
-          skillVersion: "0.1.0",
+          skillVersion: "1.2.3",
           path: "skills/example-skill/SKILL.md"
         }
       ]);
       expect(release.archiveEntries.map((entry) => entry.path)).not.toContain(
         expect.stringContaining(".DS_Store")
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects hand-authored skill versions in favor of release-derived versions", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-skills-version-test-"));
+    try {
+      const skillRoot = path.join(root, "skills", "example-skill");
+      mkdirSync(skillRoot, { recursive: true });
+      writeFileSync(path.join(root, "package.json"), '{"version":"1.2.3"}\n');
+      writeFileSync(
+        path.join(skillRoot, "SKILL.md"),
+        "---\nname: example-skill\nversion: 0.1.0\ndescription: Example.\n---\n"
+      );
+
+      expect(() => collectSkillsRelease(root)).toThrow(
+        "frontmatter must omit version; skillVersion is derived from the bridge release version"
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

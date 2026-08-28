@@ -56,10 +56,9 @@ export function collectSkillsRelease(repoRoot = DEFAULT_REPO_ROOT) {
     if (frontmatter.name !== entry.name) {
       throw new Error(`skills/${entry.name}/${SKILL_DOCUMENT} frontmatter name must match its directory.`);
     }
-    assertSemver(frontmatter.version, `skills/${entry.name}/${SKILL_DOCUMENT} frontmatter version`);
     skills.push({
       name: frontmatter.name,
-      skillVersion: frontmatter.version,
+      skillVersion: bridgeVersion,
       path: `skills/${entry.name}/${SKILL_DOCUMENT}`
     });
     for (const relativePath of listRegularFiles(skillRoot)) {
@@ -151,12 +150,13 @@ function parseFrontmatter(source, label) {
     fields.set(field[1], unquoteFrontmatter(field[2], label, field[1]));
   }
   const name = fields.get("name");
-  const version = fields.get("version");
   if (typeof name !== "string" || !SKILL_NAME_PATTERN.test(name)) {
     throw new Error(`${label} frontmatter name must be a safe kebab-case skill name.`);
   }
-  if (typeof version !== "string") throw new Error(`${label} frontmatter must include an explicit version.`);
-  return { name, version };
+  if (fields.has("version")) {
+    throw new Error(`${label} frontmatter must omit version; skillVersion is derived from the bridge release version.`);
+  }
+  return { name };
 }
 
 function unquoteFrontmatter(value, label, field) {
