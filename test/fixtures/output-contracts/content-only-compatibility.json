@@ -4,7 +4,7 @@
     "tool": "codex_task",
     "support": "primary-payload",
     "cap": "retained-result-limit",
-    "content": "Implemented the requested change."
+    "content": "ISSUE38_FOREGROUND_SENTINEL\n\n## Files\n- src/tools.ts\n\n## Tests\n- output contract passed\n\n## Remaining\n- none"
   },
   {
     "fixture": "task-running",
@@ -26,6 +26,13 @@
     "support": "documented-support-level",
     "cap": 1024,
     "content": "Job job-running is running. Result: pending."
+  },
+  {
+    "fixture": "status-completed-primary",
+    "tool": "codex_status",
+    "support": "primary-payload",
+    "cap": "retained-result-limit",
+    "content": "ISSUE38_BACKGROUND_SENTINEL\n\n## Result\n- background report recovered"
   },
   {
     "fixture": "cancel-success",

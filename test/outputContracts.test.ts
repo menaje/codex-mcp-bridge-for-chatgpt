@@ -13,6 +13,7 @@ import {
 } from "../src/tools.js";
 import {
   TOOL_CONTENT_BYTE_CAPS,
+  boundedUtf8JsonString,
   boundedUtf8Text,
   contentTextBytes,
   defineToolResultContract,
@@ -175,9 +176,24 @@ describe("model-visible output contracts", () => {
     const schema = z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_task) as any;
     expect(schema.required.sort()).toEqual(Object.keys(schema.properties).sort());
     expect(schema.properties.jobId.type).toEqual(["string", "null"]);
+    expect(schema.properties.answer.type).toEqual(["string", "null"]);
     expect(schema.properties.error.type).toEqual(["object", "null"]);
     expect(schema.properties.error.required.sort())
       .toEqual(Object.keys(schema.properties.error.properties).sort());
+
+    const missingDeliveredAnswer = structuredClone(
+      taskForms.find(({ fixture }) => fixture === "completed")!.structuredContent
+    );
+    missingDeliveredAnswer.answer = null;
+    expect(() => validateModelVisibleStructuredOutput("codex_task", missingDeliveredAnswer))
+      .toThrow(/model-authoritative answer/);
+
+    const unexpectedPendingAnswer = structuredClone(
+      taskForms.find(({ fixture }) => fixture === "running")!.structuredContent
+    );
+    unexpectedPendingAnswer.answer = "not terminal";
+    expect(() => validateModelVisibleStructuredOutput("codex_task", unexpectedPendingAnswer))
+      .toThrow(/model-authoritative answer/);
   });
 
   it("enforces the final model-visible schema budget", () => {
@@ -185,7 +201,7 @@ describe("model-visible output contracts", () => {
       (total, schema) => total + Buffer.byteLength(JSON.stringify(z.toJSONSchema(schema)), "utf8"),
       0
     );
-    expect(bytes).toBe(11_937);
+    expect(bytes).toBe(12_009);
     expect(bytes).toBeLessThanOrEqual(12_077);
   });
 
@@ -223,6 +239,7 @@ describe("model-visible output contracts", () => {
       "task-running",
       "task-structured-error",
       "status-running",
+      "status-completed-primary",
       "cancel-success"
     ]);
     for (const fixture of compatibilityFixtures) {
@@ -237,7 +254,7 @@ describe("model-visible output contracts", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("carries a completed Codex answer once as primary content, never in structuredContent", () => {
+  it("keeps completed answers model-authoritative when ChatGPT retains only structuredContent", () => {
     const completed = taskForms.find(({ fixture }) => fixture === "completed")!.structuredContent;
     const primary = compatibilityFixtures.find(({ fixture }) => fixture === "task-completed-primary")!;
     const result = {
@@ -248,10 +265,24 @@ describe("model-visible output contracts", () => {
     expect(completed).toMatchObject({
       delivery: "primary-content",
       resultAvailability: "delivered",
-      resultOmitted: false
+      resultOmitted: false,
+      answer: primary.content
     });
-    expect(JSON.stringify(completed)).not.toContain(primary.content);
-    expect(JSON.stringify(result).split(primary.content)).toHaveLength(2);
+    const chatGptStoredToolMessage = JSON.stringify(completed);
+    expect(chatGptStoredToolMessage).toContain("ISSUE38_FOREGROUND_SENTINEL");
+    expect(chatGptStoredToolMessage).toContain("## Files");
+    expect(chatGptStoredToolMessage).toContain("## Tests");
+    expect(completed.answer).toBe(primary.content);
+    expect(result.content[0].text).toBe(primary.content);
+
+    const completedStatus = modelResults.codex_status.find(
+      ({ fixture }) => fixture === "completed-job"
+    )!.structuredContent;
+    expect(JSON.stringify(completedStatus)).toContain("ISSUE38_BACKGROUND_SENTINEL");
+    expect((completedStatus.items as Array<Record<string, unknown>>)[0]).toMatchObject({
+      result: { availability: "delivered", omitted: false },
+      answer: expect.stringContaining("background report recovered")
+    });
   });
 
   it("enforces the typed projection boundary before results cross MCP", () => {
@@ -291,6 +322,9 @@ describe("model-visible output contracts", () => {
       compatibility: { channel: "text-protocol-compatibility", text: "invalid" }
     } as any)).toThrow(/output contract rejected/);
     expect(Buffer.byteLength(boundedUtf8Text("가".repeat(100), 32), "utf8")).toBeLessThanOrEqual(32);
+    const escaped = boundedUtf8JsonString('"\\\n'.repeat(100), 64);
+    expect(Buffer.byteLength(JSON.stringify(escaped), "utf8") - 2).toBeLessThanOrEqual(64);
+    expect(escaped).toContain("truncated");
   });
 
   it("keeps compact Settings free of editor-only project identity and paths", () => {

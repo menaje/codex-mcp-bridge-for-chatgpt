@@ -139,6 +139,7 @@ import {
 import {
   TOOL_CONTENT_BYTE_CAPS,
   TOOL_STRUCTURED_BYTE_CAPS,
+  boundedUtf8JsonString,
   defineToolResultContract,
   projectToolResult,
   type AuthoritativeProjectionChannel,
@@ -156,6 +157,10 @@ type CodexJobStatus =
 type CodexJobOperation = "start" | "continue";
 type SessionMode = "auto" | "new" | "continue";
 type CodexJobWaitMode = "change" | "terminal";
+
+export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
+const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
+  "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
 type ForceTerminateOptions = {
   acknowledgeAffectedJobIds?: string[];
@@ -324,6 +329,7 @@ const codexTaskOutputSchema = z.strictObject({
   rerouteReason: z.string().nullable(),
   resultAvailability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
   resultOmitted: z.boolean(),
+  answer: z.string().nullable(),
   error: taskStructuredErrorOutputSchema.nullable(),
   warnings: z.array(z.string()),
   nextActions: z.array(modelNextActionOutputSchema)
@@ -772,6 +778,7 @@ const statusItemOutputSchema = z.strictObject({
     sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"])
   }).optional(),
   result: modelResultAvailabilityOutputSchema.optional(),
+  answer: z.string().optional(),
   error: structuredErrorOutputSchema.optional(),
   wait: jobWaitOutputSchema.optional(),
   nextActions: z.array(modelNextActionOutputSchema).optional(),
@@ -1142,6 +1149,9 @@ function validateTaskOutput(value: unknown): z.infer<typeof codexTaskOutputSchem
   }
   if (parsed.delivery === "primary-content" && parsed.resultAvailability !== "delivered") {
     throw new Error("Primary-content delivery requires a delivered result.");
+  }
+  if ((parsed.resultAvailability === "delivered") !== (parsed.answer !== null)) {
+    throw new Error("A delivered task result requires one model-authoritative answer.");
   }
   return parsed;
 }
@@ -3664,7 +3674,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
+        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. Only an exact completed Job query returns its bounded model-authoritative answer; overview, Activity, thread, and page results expose Job IDs and retrieval actions but never Job answer bodies. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
       outputSchema: codexStatusOutputSchema,
       annotations: {
@@ -5891,7 +5901,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this tool directly; outside the first-install setup-probe state its UI binding lets ChatGPT preserve the native Activity card. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select one exact currently exposed project object containing the user-defined name and registryRevision freshness token, even when only one project is available. There is no first, sole, default, slug, ID, alias, or path fallback. When the registry contains no project entries, the descriptor omits project; after the user explicitly requests new or fresh Codex work, call this tool once without project as a setup probe. The probe admits no work, exposes no Activity card, and returns PROJECT_SETUP_REQUIRED; only then follow its codex_settings next action. If registered entries exist but none are selectable because they are archived or unavailable, do not use the first-install probe; after an explicit user work request, use codex_settings for recovery. Never open Settings merely because a conversation starts or this plugin is attached. Existing Activity continue/fork calls omit project and retain their admission-time project UUID and cwd snapshot. tools/list_changed only improves discovery; runtime revision validation is authoritative. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry; an exact admitted replay remains valid after registry changes. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Call this tool directly; outside the first-install setup-probe state its UI binding lets ChatGPT preserve the native Activity card. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral display and policy defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutrally named Agent with fresh context; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses to the configured backend, provide handoffSummary; it is the only context copied and must never be described as transcript migration. New-Activity policy is committed atomically with Agent assignment, replay registration, and job admission; existing-Activity policy changes use codex_activity_update. Every new Activity or fresh Agent context must select one exact currently exposed project object containing the user-defined name and registryRevision freshness token, even when only one project is available. There is no first, sole, default, slug, ID, alias, or path fallback. When the registry contains no project entries, the descriptor omits project; after the user explicitly requests new or fresh Codex work, call this tool once without project as a setup probe. The probe admits no work, exposes no Activity card, and returns PROJECT_SETUP_REQUIRED; only then follow its codex_settings next action. If registered entries exist but none are selectable because they are archived or unavailable, do not use the first-install probe; after an explicit user work request, use codex_settings for recovery. Never open Settings merely because a conversation starts or this plugin is attached. Existing Activity continue/fork calls omit project and retain their admission-time project UUID and cwd snapshot. tools/list_changed only improves discovery; runtime revision validation is authoritative. Background returns a tracked job immediately, while foreground waits for the terminal result. Generate one UUID requestId per logical Codex call and reuse it only for the same execution retry; an exact admitted replay remains valid after registry changes. When automatic Activity UI is enabled, generate one separate UUID activityPresentationId for the current assistant response, reuse it for every codex_task call in that response, and generate a new value for the next response. Presentation state never changes execution replay identity. The saved visibility setting remains authoritative; never call codex_activity as a follow-up.",
       inputSchema: codexTaskInputSchema(
         config,
         taskPolicyAtRegistration,
@@ -7725,7 +7735,7 @@ function formatJobStatus(
         : job.status === "completed"
           ? resultOmitted
             ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
-            : "Codex completed; the primary answer is delivered once in tool content."
+            : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
   };
 }
@@ -10959,6 +10969,14 @@ function forwardResult(
     );
   }
   const primaryContent = primaryResultContent(result);
+  const primaryAnswer = modelPrimaryAnswer(result);
+  const deliveredSemantic = codexTaskOutputSchema.parse({
+    ...semantic,
+    answer: primaryAnswer.text,
+    warnings: primaryAnswer.truncated
+      ? [...semantic.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
+      : semantic.warnings
+  });
   const primaryBytes = primaryContent.reduce(
     (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
     0
@@ -10973,7 +10991,7 @@ function forwardResult(
   return contractedToolResult(
     primaryContract,
     result,
-    semantic,
+    deliveredSemantic,
     { content: primaryContent },
     appHydration ? { appHydration } : {}
   );
@@ -11057,6 +11075,7 @@ function taskProjectionForJob(
     rerouteReason: semantic.executionAudit?.reroute?.reason ?? null,
     resultAvailability: semantic.result.availability,
     resultOmitted: semantic.result.omitted,
+    answer: null,
     error: semantic.error ? taskStructuredErrorProjection(semantic.error) : null,
     warnings: semantic.warnings,
     nextActions: semantic.nextActions.map(modelNextActionProjection)
@@ -11128,6 +11147,23 @@ function statusToolResult(
     detailResult?.availability === "delivered"
   ) {
     const primaryContent = primaryResultContent(job.result);
+    const primaryAnswer = modelPrimaryAnswer(job.result);
+    const answeredStructured = codexStatusOutputSchema.parse({
+      ...structured,
+      items: structured.items.map((item) =>
+        item.type === "job" && item.id === job.jobId
+          ? {
+              ...item,
+              answer: primaryAnswer.text,
+              message:
+                "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
+            }
+          : item
+      ),
+      warnings: primaryAnswer.truncated
+        ? [...structured.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
+        : structured.warnings
+    });
     const contentBytes = primaryContent.reduce(
       (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),
       0
@@ -11139,7 +11175,7 @@ function statusToolResult(
       Math.max(1, contentBytes, maxPrimaryBytes),
       "primary-payload"
     );
-    return contractedToolResult(contract, job, structured, { content: primaryContent });
+    return contractedToolResult(contract, job, answeredStructured, { content: primaryContent });
   }
   return contractedToolResult(
     statusResultContract,
@@ -11221,6 +11257,20 @@ function compactStatusProjection(
     ];
   } else {
     detail = statusItemProjection(value, "job");
+  }
+  if (kind !== "job") {
+    items = items.map((item) =>
+      item.type === "job" && item.result?.availability === "delivered"
+        ? statusItemOutputSchema.parse({
+            ...item,
+            nextActions: [
+              `Call codex_status with query {kind:\"job\",id:\"${item.id}\"} to retrieve this Job's answer.`
+            ],
+            message:
+              "This summary does not include the Job answer; retrieve the exact Job before reporting its result."
+          })
+        : item
+    );
   }
   return codexStatusOutputSchema.parse({
     kind,
@@ -11371,6 +11421,17 @@ function primaryResultContent(result: ToolResult): ToolResult["content"] {
   return [{ type: "text", text: "Codex completed without a model-readable text payload." }];
 }
 
+function modelPrimaryAnswer(result: ToolResult): { text: string; truncated: boolean } {
+  const textBlocks = primaryResultContent(result).flatMap((item) =>
+    item.type === "text" ? [item.text] : []
+  );
+  const source = textBlocks.length > 0
+    ? textBlocks.join("\n\n")
+    : "Codex completed without a model-readable text payload.";
+  const text = boundedUtf8JsonString(source, MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES);
+  return { text, truncated: text !== source };
+}
+
 function statusCompatibilityText(value: Record<string, unknown>): string {
   if (value.kind === "job") {
     const detail = Array.isArray(value.items) && isRecord(value.items[0])
@@ -11418,7 +11479,7 @@ function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): st
   if (value.state === "completed") {
     return value.resultOmitted
       ? "Codex completed, but the result was omitted by the retention limit."
-      : "Codex completed; its primary answer is the content of this result.";
+      : "Codex completed; its bounded primary answer is in structured answer and tool content is a compatibility copy.";
   }
   if (value.state === "cancelled") {
     return "Codex was cancelled. Partial filesystem changes may remain.";
@@ -11792,6 +11853,7 @@ function taskPreflightErrorResult(
     rerouteReason: null,
     resultAvailability: "unavailable",
     resultOmitted: false,
+    answer: null,
     error: taskStructuredErrorProjection(error),
     warnings: [],
     nextActions

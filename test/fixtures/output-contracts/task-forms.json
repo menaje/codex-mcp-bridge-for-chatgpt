@@ -27,6 +27,7 @@
       "rerouteReason": null,
       "resultAvailability": "unavailable",
       "resultOmitted": false,
+      "answer": null,
       "error": {
         "code": "PROJECT_SETUP_REQUIRED",
         "message": "Register a project folder before starting fresh Codex work.",
@@ -66,6 +67,7 @@
       "rerouteReason": null,
       "resultAvailability": "pending",
       "resultOmitted": false,
+      "answer": null,
       "error": null,
       "warnings": [],
       "nextActions": ["codex_status(job-replay)"]
@@ -99,6 +101,7 @@
       "rerouteReason": null,
       "resultAvailability": "pending",
       "resultOmitted": false,
+      "answer": null,
       "error": null,
       "warnings": [],
       "nextActions": []
@@ -132,6 +135,7 @@
       "rerouteReason": null,
       "resultAvailability": "delivered",
       "resultOmitted": false,
+      "answer": "ISSUE38_FOREGROUND_SENTINEL\n\n## Files\n- src/tools.ts\n\n## Tests\n- output contract passed\n\n## Remaining\n- none",
       "error": null,
       "warnings": [],
       "nextActions": []
@@ -165,6 +169,7 @@
       "rerouteReason": null,
       "resultAvailability": "unavailable",
       "resultOmitted": false,
+      "answer": null,
       "error": {
         "code": "CONTEXT_WINDOW_EXCEEDED",
         "message": "The upstream turn exhausted its context window.",
@@ -204,6 +209,7 @@
       "rerouteReason": null,
       "resultAvailability": "unavailable",
       "resultOmitted": false,
+      "answer": null,
       "error": {
         "code": "JOB_CANCELLED",
         "message": "The job was cancelled; partial filesystem changes may remain.",

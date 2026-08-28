@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import {
   APP_ONLY_OUTPUT_SCHEMAS,
+  MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
   validateActivityBootstrapPrivateMetadata,
   validateActivityViewPrivateMetadata,
@@ -148,14 +149,15 @@ const schemaReductionPercent = Number(
 );
 
 const report = {
-  auditVersion: 1,
+  auditVersion: 2,
   issue: 36,
+  regressionIssue: 38,
   basis: {
-    commit: "2b077a4",
+    commit: "8a2cf54",
     normativeClient: "ChatGPT",
     measurement: "Buffer.byteLength(JSON.stringify(value), 'utf8')",
-    fixtureProfile: "bounded deterministic final W0/W1/W2/W3 contract fixtures",
-    phasesIncluded: ["W0", "W1", "W2", "M1", "W3", "M2"],
+    fixtureProfile: "bounded deterministic W0/W1/W2/W3 plus issue-38 answer-recovery fixtures",
+    phasesIncluded: ["W0", "W1", "W2", "M1", "W3", "M2", "R38"],
     phasesDeferred: [],
     m1Evidence: {
       status: "passed",
@@ -179,6 +181,17 @@ const report = {
       retainedActivityResourceUri: "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
       retainedGeneration10Hydrated: true,
       retainedGeneration10SnapshotRefresh: true
+    },
+    issue38Evidence: {
+      status: "fixture-passed-real-host-pending",
+      source: "authenticated raw ChatGPT Work conversation response plus bridge SQLite",
+      exactJobStatusCalled: true,
+      bridgeRetainedPrimaryContent: true,
+      chatGptToolMessageStructuredContent: true,
+      chatGptToolMessagePrimaryContent: false,
+      chatGptToolMessagePrivateMeta: false,
+      foregroundStructuredAnswerFixture: "ISSUE38_FOREGROUND_SENTINEL",
+      backgroundStructuredAnswerFixture: "ISSUE38_BACKGROUND_SENTINEL"
     }
   },
   issueBaseline: {
@@ -218,7 +231,8 @@ const report = {
       }
     },
     contentByteCaps: TOOL_CONTENT_BYTE_CAPS,
-    structuredContentByteCaps: TOOL_STRUCTURED_BYTE_CAPS
+    structuredContentByteCaps: TOOL_STRUCTURED_BYTE_CAPS,
+    modelPrimaryAnswerMaxJsonBytes: MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES
   },
   finalGenerationBudget: {
     targetReductionPercent: 40,

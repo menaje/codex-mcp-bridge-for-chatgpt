@@ -222,6 +222,8 @@ Inspect `tools/list`:
 - `adaptive` exposes only permitted sandboxes;
 - Activity and Agent routing use separate discriminated `activity` and `agent` objects;
 - an existing Agent's optional `context` values are exactly `continue`, `fork`, and `fresh`.
+- `codex_task` publishes required nullable `answer`; a delivered foreground result has a non-null bounded answer;
+- `codex_status` permits `answer` only on an exact completed Job item, while summary items expose exact-Job retrieval actions.
 
 ## 6. Agent and Activity routing
 
@@ -328,11 +330,13 @@ Automatic duplicate suppression is keyed by `scopeId + activityPresentationId`; 
 
 Only the newest confirmed mounted automatic candidate owns the scope live watch and completion handoff. When a newer response or same-response sibling candidate confirms its first snapshot lease, the previous automatic card receives a normal `presentation-superseded` stop result, retains its last snapshot, and releases its watcher slot without a retry loop. Explicit `codex_activity` cards use separate admission (up to three concurrent explicit watchers per scope alongside the one automatic owner) and do not claim automatic completion handoff. `openai/widgetSessionId` identifies only the mounted widget instance and is not authorization by itself; every control revalidates the exact card lease and target ownership. Handoff discovery exposes batch actions only and requires the newest automatic card proof. UI-bearing Activity tools use strict private/app-only bootstrap and view contracts. The current content-hashed Activity resource uses generation 11 and the exact app-private snapshot, proof, destructive Job-cancel, control, and batch-handoff contracts. Its Force Stop action calls `codex_activity_job_cancel`, which validates the live widget lease, current presentation/card proof, exact Job version, target ownership, and cancellation UUID. Generation 11 is the minimum for new descriptors; all immutable retained generation 7–10 resources remain registered for existing mounts and refresh through app-only tools. Reservations and ownership are in-memory; after bridge restart the first valid automatic card to reconnect safely re-establishes ownership.
 
-`executionMode: foreground` waits for terminal result. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded wait:
+`executionMode: foreground` waits for terminal result and returns its bounded structured `answer`. `background` returns `jobId` immediately. Neither completes the Activity. A host without the card can use a bounded exact-Job wait:
 
 ```json
 { "query": { "kind": "job", "id": "...", "waitFor": "terminal", "waitMs": 55000 } }
 ```
+
+When the exact Job completes with `result.availability: "delivered"`, read that Job item's `answer`. Overview, Activity, thread, and page status never carry Job answer bodies. `omitted` and `unavailable` keep `answer` absent; `delivered` without `answer` is a contract/host delivery failure and must not trigger a new re-report Job.
 
 Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. The card's private `codex_activity_job_cancel` is a distinct destructive surface, and `codex_activity_cancel` force-stops every active job in one exact-version Activity. Every path durably records its cancellation operation and intent before interruption; terminal state is recorded only after exit evidence. Activity cancellation records a parent intent, enters `Activity-terminating`, records linked child intents, cancels the children, and only then writes `Activity-cancelled`. None rolls back filesystem changes. HTTP abort, SSE disconnect, MCP cancellation notifications, wait/snapshot abort, presentation supersession, and widget unmount are transport or presentation observations only and never cancel a Job.
 

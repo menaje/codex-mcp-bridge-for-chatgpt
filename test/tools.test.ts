@@ -26,6 +26,7 @@ import {
 } from "../src/settingsCard.js";
 import {
   CodexJobRegistry,
+  MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
   validateActivityBootstrapPrivateMetadata,
   validateActivityViewPrivateMetadata
 } from "../src/tools.js";
@@ -1734,6 +1735,7 @@ describe("bridge tools", () => {
             "ui://codex-mcp-bridge/settings/ad24ba83c693.html",
           ]
         : [
+            "ui://codex-mcp-bridge/activity/5e4acb22f165.html",
             "ui://codex-mcp-bridge/activity/c3c3c87be464.html",
             "ui://codex-mcp-bridge/activity/17c24231c553.html",
             "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
@@ -4925,6 +4927,95 @@ describe("bridge tools", () => {
       waitingOn: "orchestrator",
       counts: { completed: 1 }
     });
+    await close();
+  });
+
+  it("projects retained foreground and exact-Job answers into ChatGPT-visible structured output", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const report = [
+      "ISSUE38_E2E_SENTINEL",
+      "",
+      "## Files",
+      "- src/tools.ts",
+      "",
+      "## Tests",
+      "- output contract passed",
+      "",
+      "## Remaining",
+      "- none"
+    ].join("\n");
+    const pending = client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "return a structured smoke report",
+        sessionMode: "new",
+        executionMode: "foreground"
+      }
+    });
+    await expect.poll(() => upstream.calls.length).toBe(1);
+    upstream.resolveNext({
+      structuredContent: { threadId: "issue-38-thread" },
+      content: [{ type: "text", text: report }]
+    });
+
+    const foreground = await pending as { structuredContent?: Record<string, any> };
+    expect(foreground.structuredContent).toMatchObject({
+      state: "completed",
+      resultAvailability: "delivered",
+      resultOmitted: false,
+      answer: report
+    });
+    const chatGptForegroundMessage = JSON.stringify(foreground.structuredContent);
+    expect(chatGptForegroundMessage).toContain("ISSUE38_E2E_SENTINEL");
+    expect(chatGptForegroundMessage).toContain("## Remaining");
+
+    const jobId = foreground.structuredContent?.jobId as string;
+    const activityId = foreground.structuredContent?.activityId as string;
+    const exact = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: jobId } }
+    }) as { structuredContent?: Record<string, any> };
+    expect(exact.structuredContent?.items[0]).toMatchObject({
+      id: jobId,
+      result: { availability: "delivered", omitted: false },
+      answer: report
+    });
+    expect(JSON.stringify(exact.structuredContent)).toContain("ISSUE38_E2E_SENTINEL");
+
+    const activity = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "activity", id: activityId } }
+    }));
+    const summaryJob = activity.items.find((item: Record<string, any>) => item.id === jobId);
+    expect(summaryJob).not.toHaveProperty("answer");
+    expect(summaryJob.nextActions).toEqual([
+      expect.stringContaining(`id:\"${jobId}\"`)
+    ]);
+
+    const escapedReport = '"\\\n'.repeat(12_000);
+    const largePending = client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "return a large escaped report",
+        sessionMode: "new",
+        executionMode: "foreground"
+      }
+    });
+    await expect.poll(() => upstream.calls.length).toBe(2);
+    upstream.resolveNext({
+      structuredContent: { threadId: "issue-38-large-thread" },
+      content: [{ type: "text", text: escapedReport }]
+    });
+    const large = await largePending as { structuredContent?: Record<string, any> };
+    const boundedAnswer = large.structuredContent?.answer as string;
+    expect(Buffer.byteLength(JSON.stringify(boundedAnswer), "utf8") - 2)
+      .toBeLessThanOrEqual(MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES);
+    expect(boundedAnswer).toContain("truncated by output contract");
+    expect(large.structuredContent?.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("model-authoritative primary answer was truncated")
+    ]));
     await close();
   });
 
@@ -8696,8 +8787,18 @@ describe("bridge tools", () => {
       delivery: "omitted",
       resultAvailability: "omitted",
       resultOmitted: true,
+      answer: null,
       threadId: "large-thread"
     });
+
+    const exact = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: result.jobId } }
+    }));
+    expect(exact.items[0]).toMatchObject({
+      result: { availability: "omitted", omitted: true }
+    });
+    expect(exact.items[0]).not.toHaveProperty("answer");
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status.counts.sessions).toBe(1);

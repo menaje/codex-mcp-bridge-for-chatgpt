@@ -157,6 +157,9 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("tools/list_changed is delayed or lost");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("programmatic tool calling");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never call codex_activity after codex_task");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("structured answer");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never contain Job answer bodies");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never start another codex_task merely to reconstruct");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exact authoritative version");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_activity_cancel");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toMatch(/\bsessionMode\b|\badoptThread\b|\bthreadId\b/);

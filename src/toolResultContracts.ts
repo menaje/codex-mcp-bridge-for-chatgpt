@@ -193,6 +193,36 @@ export function boundedUtf8Text(text: string, maxBytes: number): string {
   return `${output}${suffix}`;
 }
 
+/**
+ * Bound a string by its JSON-encoded UTF-8 size. Structured tool results pay
+ * for escaping as well as the source text, so a raw-byte limit alone is not a
+ * safe guard for quotes, backslashes, or control characters.
+ */
+export function boundedUtf8JsonString(text: string, maxBytes: number): string {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("JSON string byte cap must be a positive safe integer.");
+  }
+  const encodedBytes = (value: string) =>
+    Buffer.byteLength(JSON.stringify(value), "utf8") - 2;
+  if (encodedBytes(text) <= maxBytes) return text;
+
+  const rawBytes = Buffer.byteLength(text, "utf8");
+  let low = 1;
+  let high = Math.max(1, rawBytes - 1);
+  let best = boundedUtf8Text(text, 1);
+  while (low <= high) {
+    const candidateBytes = Math.floor((low + high) / 2);
+    const candidate = boundedUtf8Text(text, candidateBytes);
+    if (encodedBytes(candidate) <= maxBytes) {
+      best = candidate;
+      low = candidateBytes + 1;
+    } else {
+      high = candidateBytes - 1;
+    }
+  }
+  return best;
+}
+
 export function contentTextBytes(content: readonly ContentBlock[]): number {
   return content.reduce(
     (total, item) => total + (item.type === "text" ? Buffer.byteLength(item.text, "utf8") : 0),

@@ -188,6 +188,38 @@
       }
     },
     {
+      "fixture": "completed-job",
+      "structuredContent": {
+        "kind": "job",
+        "scope": { "mode": "scoped" },
+        "counts": {
+          "sessions": 1,
+          "jobs": 1,
+          "runningJobs": 0,
+          "activities": 1,
+          "agents": 1,
+          "orphanedAgents": 0
+        },
+        "items": [{
+          "type": "job",
+          "id": "job-completed",
+          "state": "completed",
+          "activityId": "activity-completed",
+          "agentId": "agent-completed",
+          "threadId": "thread-completed",
+          "terminal": true,
+          "delivery": "primary-content",
+          "replay": false,
+          "versions": { "job": 5, "activity": 4 },
+          "execution": { "mode": "background", "backend": "app-server", "sandbox": "workspace-write" },
+          "result": { "availability": "delivered", "omitted": false },
+          "answer": "ISSUE38_BACKGROUND_SENTINEL\n\n## Result\n- background report recovered",
+          "message": "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
+        }],
+        "warnings": []
+      }
+    },
+    {
       "fixture": "failed-job",
       "structuredContent": {
         "kind": "job",

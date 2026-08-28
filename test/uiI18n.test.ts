@@ -383,6 +383,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_snapshot",{card:cardProof(),limit:viewLimit}');
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_interaction_respond"');
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
+    expect(ACTIVITY_CARD_HTML).toContain("For every listed Job ID");
+    expect(ACTIVITY_CARD_HTML).toContain("Activity and overview queries never contain Job answers");
+    expect(ACTIVITY_CARD_HTML).toContain("Do not start another codex_task merely to reconstruct");
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_status",Object.assign({activityView:true');
     expect(ACTIVITY_CARD_HTML).toContain("consumeToolOutput");
     expect(ACTIVITY_CARD_HTML).toContain("codex/activityBootstrap@11");

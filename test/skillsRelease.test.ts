@@ -33,9 +33,9 @@ describe("skills release archive", () => {
         bridgeVersion: release.bridgeVersion,
         skills: expect.arrayContaining([
           expect.objectContaining({
-            name: "codex-bridge-implementation-orchestrator",
-            skillVersion: "0.1.0",
-            path: "skills/codex-bridge-implementation-orchestrator/SKILL.md"
+            name: "codex",
+            skillVersion: "0.1.1",
+            path: "skills/codex/SKILL.md"
           })
         ])
       });

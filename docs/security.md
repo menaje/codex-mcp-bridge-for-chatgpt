@@ -10,10 +10,13 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 
 - `codex_status` publishes one optional discriminated `query` for an exact
   job/Activity/thread detail, bounded job wait, or cursor page; omission returns
-  the scoped overview. The expired flat query envelope is rejected. Explicit
+  the scoped overview. Only an exact completed Job item can expose the bounded
+  model-authoritative `answer`; summary queries expose exact-Job retrieval actions
+  and never answer bodies. The expired flat query envelope is rejected. Explicit
   compatibility scope and the all-scope operator audit remain runtime-only.
 - `codex_task` conditionally binds the Activity UI according to the saved card
-  visibility setting; the widget consumes only the task's scoped Activity identity
+  visibility setting and exposes a delivered foreground result through a bounded
+  structured `answer`; the widget consumes only the task's scoped Activity identity
   and obtains its feed through the app-private `codex_activity_snapshot` contract.
   That contract establishes or renews an exact Activity/generation/presentation
   lease correlated to the mounted widget session. `codex_activity` explicitly
