@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   BackendAwareModelCatalog,
   CodexCliModelCatalog,
+  modelCatalogAdmissionFingerprint,
+  modelCatalogFingerprint,
   parseAppServerModelCatalog,
   parseCodexModelCatalog,
   type CodexModelCatalogProvider,
@@ -134,6 +136,110 @@ describe("Codex model catalog", () => {
     expect(first.validation).toBe("valid");
 
     now += 2000;
+  });
+
+  it("emits only when a successful CLI last-known-good fingerprint changes", async () => {
+    let raw = catalogJson;
+    let fails = false;
+    const catalog = new CodexCliModelCatalog(
+      "codex",
+      1000,
+      5000,
+      async () => {
+        if (fails) throw new Error("temporary catalog failure");
+        return raw;
+      }
+    );
+    const events: Array<{
+      backendKind: string;
+      previousFingerprint?: string;
+      fingerprint: string;
+    }> = [];
+    const unsubscribe = catalog.subscribe((event) => {
+      events.push({
+        backendKind: event.backendKind,
+        previousFingerprint: event.previousFingerprint,
+        fingerprint: event.snapshot.fingerprint
+      });
+      // Listener isolation prevents accidental mutation of the provider cache.
+      event.snapshot.models[0]!.displayName = "listener mutation";
+    });
+
+    const first = await catalog.getCatalog({ refresh: true });
+    expect(events).toEqual([{
+      backendKind: "mcp-server",
+      previousFingerprint: undefined,
+      fingerprint: first.fingerprint
+    }]);
+    expect(first.models[0]?.displayName).toBe("GPT Current");
+
+    await catalog.getCatalog({ refresh: true });
+    expect(events).toHaveLength(1);
+
+    const changed = JSON.parse(catalogJson) as Record<string, any>;
+    changed.models[0].description = "Changed GPT-facing model guidance";
+    raw = JSON.stringify(changed);
+    const refreshed = await catalog.getCatalog({ refresh: true });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual({
+      backendKind: "mcp-server",
+      previousFingerprint: first.fingerprint,
+      fingerprint: refreshed.fingerprint
+    });
+
+    fails = true;
+    await expect(catalog.getCatalog({ refresh: true })).resolves.toMatchObject({
+      stale: true,
+      fingerprint: refreshed.fingerprint
+    });
+    expect(events).toHaveLength(2);
+
+    unsubscribe();
+    fails = false;
+    changed.models[0].description = "Another change after unsubscribe";
+    raw = JSON.stringify(changed);
+    await catalog.getCatalog({ refresh: true });
+    expect(events).toHaveLength(2);
+  });
+
+  it("changes the catalog fingerprint when GPT-facing model guidance changes", () => {
+    const baseline = parseCodexModelCatalog(catalogJson);
+    const renamed = structuredClone(baseline);
+    renamed[0]!.displayName = "GPT Current Renamed";
+    const modelDescriptionChanged = structuredClone(baseline);
+    modelDescriptionChanged[0]!.description = "Updated model-selection guidance";
+    const effortDescriptionChanged = structuredClone(baseline);
+    effortDescriptionChanged[0]!.supportedReasoningEfforts[0]!.description =
+      "Updated effort-selection guidance";
+
+    const fingerprint = modelCatalogFingerprint(baseline);
+    const admissionFingerprint = modelCatalogAdmissionFingerprint(baseline);
+    expect(modelCatalogFingerprint(renamed)).not.toBe(fingerprint);
+    expect(modelCatalogFingerprint(modelDescriptionChanged)).not.toBe(fingerprint);
+    expect(modelCatalogFingerprint(effortDescriptionChanged)).not.toBe(fingerprint);
+    expect(modelCatalogAdmissionFingerprint(renamed)).toBe(admissionFingerprint);
+    expect(modelCatalogAdmissionFingerprint(modelDescriptionChanged)).toBe(
+      admissionFingerprint
+    );
+    expect(modelCatalogAdmissionFingerprint(effortDescriptionChanged)).toBe(
+      admissionFingerprint
+    );
+
+    const defaultChanged = structuredClone(baseline);
+    defaultChanged[0]!.defaultReasoningEffort = "low";
+    const effortChanged = structuredClone(baseline);
+    effortChanged[0]!.supportedReasoningEfforts = [{ effort: "low" }];
+    const visibilityChanged = structuredClone(baseline);
+    visibilityChanged[0]!.hidden = true;
+    expect(modelCatalogAdmissionFingerprint(defaultChanged)).not.toBe(
+      admissionFingerprint
+    );
+    expect(modelCatalogAdmissionFingerprint(effortChanged)).not.toBe(
+      admissionFingerprint
+    );
+    expect(modelCatalogAdmissionFingerprint(visibilityChanged)).not.toBe(
+      admissionFingerprint
+    );
   });
 
   it("returns the last successful catalog as stale when a later refresh fails", async () => {
@@ -352,6 +458,67 @@ describe("Codex model catalog", () => {
       warning: expect.stringContaining("refresh failed")
     });
   });
+
+  it("emits backend-aware changes once and preserves the app last-known-good on failure", async () => {
+    const cliSnapshot = snapshot("codex-cli", "c");
+    const cli: CodexModelCatalogProvider = {
+      async getCatalog() { return cliSnapshot; },
+      getCachedCatalog() { return cliSnapshot; }
+    };
+    let description = "Initial app guidance";
+    let fails = false;
+    const app = new BackendAwareModelCatalog(
+      "app-server",
+      cli,
+      async () => {
+        if (fails) throw new Error("temporary app failure");
+        return appPayload(description);
+      }
+    );
+    const events: Array<{
+      backendKind: string;
+      previousFingerprint?: string;
+      fingerprint: string;
+    }> = [];
+    app.subscribe((event) => {
+      events.push({
+        backendKind: event.backendKind,
+        previousFingerprint: event.previousFingerprint,
+        fingerprint: event.snapshot.fingerprint
+      });
+    });
+    app.subscribe(() => {
+      throw new Error("observer failure must be isolated");
+    });
+
+    const first = await app.getCatalog({ refresh: true, backendKind: "app-server" });
+    expect(events).toEqual([{
+      backendKind: "app-server",
+      previousFingerprint: undefined,
+      fingerprint: first.fingerprint
+    }]);
+
+    await app.getCatalog({ refresh: true, backendKind: "app-server" });
+    expect(events).toHaveLength(1);
+
+    description = "Changed app guidance";
+    const changed = await app.getCatalog({ refresh: true, backendKind: "app-server" });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual({
+      backendKind: "app-server",
+      previousFingerprint: first.fingerprint,
+      fingerprint: changed.fingerprint
+    });
+
+    fails = true;
+    await expect(app.getCatalog({ refresh: true, backendKind: "app-server" }))
+      .resolves.toMatchObject({
+        stale: true,
+        fingerprint: changed.fingerprint,
+        validation: "temporarily-unverified-with-last-known-good"
+      });
+    expect(events).toHaveLength(2);
+  });
 });
 
 function snapshot(source: "app-server" | "codex-cli", fingerprint: string): CodexModelCatalogSnapshot {
@@ -368,6 +535,23 @@ function snapshot(source: "app-server" | "codex-cli", fingerprint: string): Code
       displayName: "GPT CLI",
       defaultReasoningEffort: "medium",
       supportedReasoningEfforts: [{ effort: "medium" }],
+      isDefault: true,
+      serviceTiers: [],
+      inputModalities: ["text"]
+    }]
+  };
+}
+
+function appPayload(description: string): unknown {
+  return {
+    data: [{
+      id: "gpt-app",
+      model: "gpt-app",
+      displayName: "GPT App",
+      description,
+      defaultReasoningEffort: "high",
+      supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+      hidden: false,
       isDefault: true,
       serviceTiers: [],
       inputModalities: ["text"]

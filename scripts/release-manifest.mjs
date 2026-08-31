@@ -12,6 +12,7 @@ const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
+const UI_RESOURCE_NAMES = ["settings", "activity", "dashboard"];
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
@@ -159,10 +160,10 @@ export function validateReleaseManifest(value) {
   );
   assertKeys(
     minimumContractGeneration,
-    ["settings", "activity"],
+    UI_RESOURCE_NAMES,
     "uiResources.minimumContractGeneration"
   );
-  for (const name of ["settings", "activity"]) {
+  for (const name of UI_RESOURCE_NAMES) {
     const generation = minimumContractGeneration[name];
     if (!Number.isInteger(generation) || generation < 1) {
       fail(`uiResources.minimumContractGeneration.${name} must be a positive integer`);
@@ -170,12 +171,11 @@ export function validateReleaseManifest(value) {
   }
   if (
     !Array.isArray(uiResources.resources) ||
-    uiResources.resources.length !== 2 ||
-    !uiResources.resources.includes("settings") ||
-    !uiResources.resources.includes("activity") ||
+    uiResources.resources.length !== UI_RESOURCE_NAMES.length ||
+    UI_RESOURCE_NAMES.some((name) => !uiResources.resources.includes(name)) ||
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
-    fail("uiResources.resources must contain settings and activity exactly once");
+    fail("uiResources.resources must contain settings, activity, and dashboard exactly once");
   }
 
   const release = requiredRecord(root.release, "release");
@@ -387,12 +387,14 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
     for (const entry of candidates) {
       if (!validUiRevision(entry) || seenDigests.has(entry.digest)) continue;
       const contractGeneration = uiContractGeneration(entry);
-      // Activity resources are immutable mount targets. Keep every historical
-      // revision registered so an already-mounted ChatGPT conversation can
-      // refresh through app-only tools after the minimum generation advances.
+      // Activity and Dashboard resources are immutable mount targets. Keep
+      // every historical revision registered so an already-mounted ChatGPT
+      // conversation can refresh through app-only tools after the minimum
+      // generation advances. Settings generations may encode incompatible
+      // mutation contracts and are pruned below the supported minimum.
       if (
         contractGeneration === undefined ||
-        (name !== "activity" && contractGeneration < minimumContractGeneration)
+        (name === "settings" && contractGeneration < minimumContractGeneration)
       ) continue;
       seenDigests.add(entry.digest);
       previousRevisions.push({
@@ -478,7 +480,7 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
       }
     }
   }
-  for (const constant of ["SETTINGS_CARD_URI", "ACTIVITY_CARD_URI"]) {
+  for (const constant of ["SETTINGS_CARD_URI", "ACTIVITY_CARD_URI", "DASHBOARD_CARD_URI"]) {
     const escaped = constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!new RegExp(`ui:\\s*\\{[\\s\\S]{0,120}?resourceUri:\\s*${escaped}\\b`).test(descriptorSource)) {
       drift.push(`${constant} _meta.ui.resourceUri`);
@@ -653,7 +655,7 @@ function renderUiResources(repoRoot) {
   } catch (error) {
     throw new Error(`UI resource renderer returned invalid JSON: ${errorMessage(error)}`);
   }
-  for (const name of ["settings", "activity"]) {
+  for (const name of UI_RESOURCE_NAMES) {
     const resource = rendered?.resources?.[name];
     if (
       !isRecord(resource) ||

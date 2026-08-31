@@ -24,6 +24,8 @@ import {
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";
+const REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
+const REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("project registry", () => {
   it("accepts only internal UUID identities and never derives them from names", () => {
@@ -55,10 +57,21 @@ describe("project registry", () => {
     expect(projectNameKey("  Alpha\u00a0Project ")).toBe(projectNameKey("alpha project"));
   });
 
-  it("requires name plus the exact registry generation without fallback", () => {
+  it("uses an opaque ref and per-project generation while retaining legacy resolution", () => {
     const root = temporaryDirectory("project-registry-");
     const registry = new ProjectRegistry([project(UUID_A, "Codex Bridge", root)], [root], 7);
 
+    expect(registry.resolve({
+      name: "Codex Bridge",
+      projectRef: REF_A,
+      projectRevision: 1
+    })).toMatchObject({
+      id: UUID_A,
+      projectRef: REF_A,
+      projectRevision: 1,
+      name: "Codex Bridge",
+      cwd: root
+    });
     expect(registry.resolve({ name: "codex bridge", registryRevision: 7 })).toMatchObject({
       id: UUID_A,
       name: "Codex Bridge",
@@ -67,6 +80,21 @@ describe("project registry", () => {
     expect(() => registry.resolve()).toThrow(PROJECT_REQUIRED);
     expect(() => registry.resolve({ name: "Codex Bridge", registryRevision: 6 }))
       .toThrow(PROJECT_REGISTRY_CHANGED);
+    expect(() => registry.resolve({
+      name: "Codex Bridge",
+      projectRef: REF_A,
+      projectRevision: 2
+    })).toThrow(PROJECT_REGISTRY_CHANGED);
+    expect(() => registry.resolve({
+      name: "Renamed",
+      projectRef: REF_A,
+      projectRevision: 1
+    })).toThrow(PROJECT_REGISTRY_CHANGED);
+    expect(() => registry.resolve({
+      name: "Codex Bridge",
+      projectRef: REF_B,
+      projectRevision: 1
+    })).toThrow(PROJECT_NOT_FOUND);
     expect(() => registry.resolve({ name: "Codex", registryRevision: 7 }))
       .toThrow(PROJECT_NOT_FOUND);
     expect(() => registry.resolve({ name: "default", registryRevision: 7 }))
@@ -143,6 +171,8 @@ function project(
 ): ProjectTarget {
   return {
     id,
+    projectRef: id === UUID_A ? REF_A : id === UUID_B ? REF_B : projectRefFor(sortOrder),
+    projectRevision: 1,
     name,
     label: name,
     nameKey: projectNameKey(name),
@@ -151,6 +181,12 @@ function project(
     createdAt: sortOrder + 1,
     updatedAt: sortOrder + 1
   };
+}
+
+function projectRefFor(index: number): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const marker = alphabet[index % alphabet.length] as string;
+  return `prj_${marker.repeat(22)}`;
 }
 
 function uuidFor(index: number): string {

@@ -122,6 +122,9 @@ After a UI or tool-metadata change, follow the OpenAI deployment order: sync and
 build, restart the MCP server, select **Refresh** in ChatGPT Plugins, then test a
 new conversation. Existing conversations may keep their cached descriptor, so
 the supported compatibility resources remain part of the packaged build.
+Ordinary saved settings, project, availability, and model-catalog changes do not
+change stable `codex_task` contract v2 and require neither this release flow nor
+another connection Refresh.
 
 ## App Server protocol compatibility
 
@@ -265,9 +268,12 @@ For a UI or tool-contract change, use this order:
    mount still resolves and refreshes. Record the results in the output-contract
    audit before declaring M2 complete.
 
-The bridge cannot force ChatGPT to replace a tool list already cached by a
-conversation. If rediscovery is unavailable or retains the former descriptor,
-record that limitation and use a new conversation. See
+The bridge cannot force ChatGPT to replace a static tool contract already cached
+by a conversation. Refresh once when migrating a pre-v2 conversation or after a
+genuine tool/UI metadata change; after v2 adoption, ordinary runtime Settings
+and project changes remain valid in that same conversation. If a future static
+contract is retained despite Refresh, record that limitation and use a new
+conversation. See
 [`docs/chatgpt-setup.md`](chatgpt-setup.md) for the full checklist.
 
 ## GitHub workflow contract

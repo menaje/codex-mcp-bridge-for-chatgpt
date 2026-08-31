@@ -79,6 +79,18 @@
       }
     }
   ],
+  "codex_dashboard": [
+    {
+      "fixture": "bridge-wide-read-only-overview",
+      "structuredContent": {
+        "kind": "dashboard",
+        "scope": "bridge-wide",
+        "readOnly": true,
+        "statusSource": "codex-runtime-only",
+        "summary": "3 tracked retained conversations; 1 active; 1 running; 0 needing attention; 0 confirmed background processes; 0 App Server runtime checks deferred. Generated 2026-08-29T00:00:00.000Z; bounded details are in the card."
+      }
+    }
+  ],
   "codex_models": [
     {
       "fixture": "current-model-catalog",
@@ -88,8 +100,6 @@
         "warning": null,
         "policy": {
           "mode": "automatic",
-          "model": "gpt-5.6-sol",
-          "reasoningEffort": "max",
           "allowed": "catalog-visible",
           "delegation": true
         },
@@ -98,10 +108,8 @@
           {
             "id": "gpt-5.6-sol",
             "name": "GPT-5.6 Codex",
-            "defaultEffort": "max",
             "efforts": ["max"],
-            "serviceTiers": [],
-            "isDefault": true
+            "serviceTiers": []
           }
         ]
       }
@@ -116,8 +124,6 @@
           "access": "adaptive",
           "model": {
             "mode": "automatic",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "max",
             "allowed": "catalog-visible",
             "delegation": true
           },

@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
@@ -6,6 +7,7 @@ import { BridgeStateStore } from "./stateStore.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
   automaticModelPolicy,
+  sameModelChoice,
   validateModelPolicy,
   type ModelPolicy
 } from "./modelPolicy.js";
@@ -14,12 +16,14 @@ import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_REQUIRED,
   ProjectRegistry,
+  createProjectRef,
   normalizeProjectId,
   normalizeProjectName,
+  normalizeProjectRef,
   projectNameKey,
   type ProjectRegistryOperation,
   type ProjectRegistrySnapshot,
-  type ProjectSelection,
+  type RuntimeProjectSelection,
   type ProjectTarget
 } from "./projectRegistry.js";
 
@@ -30,6 +34,9 @@ export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number]
 export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
+const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 3;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 1;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -74,7 +81,7 @@ type GeneralSettings = Omit<
 >;
 
 type PersistedSettingsState = {
-  version: 3;
+  version: 4;
   settings: GeneralSettings;
   projectRegistry: ProjectRegistrySnapshot;
 };
@@ -89,6 +96,7 @@ export class UserSettingsStore {
   private readonly stateFile?: string;
   private readonly stateStore: BridgeStateStore;
   private readonly suppliedStateStore: boolean;
+  private readonly executionPolicyHmacSecret: Buffer;
   private readonly now: () => number;
   private readonly initial: GeneralSettings;
   private settings: GeneralSettings;
@@ -101,6 +109,7 @@ export class UserSettingsStore {
     this.stateFile = options.stateFile;
     this.suppliedStateStore = Boolean(options.stateStore);
     this.stateStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
+    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(this.stateStore);
     this.now = options.now || Date.now;
     this.initial = this.validateGeneral({
       schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
@@ -153,6 +162,58 @@ export class UserSettingsStore {
     return [...this.warnings];
   }
 
+  /**
+   * Opaque, installation-bound reference to execution-affecting policy.
+   * Presentation-only settings intentionally do not invalidate admission.
+   */
+  executionPolicyRef(
+    settings: BridgeUserSettings = this.current,
+    admissionCatalogFingerprint: string | null = null
+  ): string {
+    return createHmac("sha256", this.executionPolicyHmacSecret)
+      .update(
+        `codex-mcp-bridge/execution-policy/v${EXECUTION_POLICY_REF_CONTRACT_VERSION}\0`
+      )
+      .update(canonicalJsonValue({
+        contract: EXECUTION_POLICY_REF_CONTRACT_VERSION,
+        accessStrategy: settings.accessStrategy,
+        modelPolicy: canonicalExecutionModelPolicy(settings.modelPolicy),
+        legacyPreferredModel: settings.legacyPreferredModel || null,
+        usePriorityServiceTier: settings.usePriorityServiceTier,
+        // Bind only catalog fields that can alter admission or dispatch.
+        // GPT-facing names and guidance may refresh Settings/UI catalog data,
+        // but do not make an otherwise equivalent admission snapshot stale.
+        admissionCatalogFingerprint,
+        showBridgeThreadsInCodexApp: settings.showBridgeThreadsInCodexApp,
+        maxConcurrentJobs: settings.maxConcurrentJobs,
+        operator: canonicalExecutionOperatorEnvelope(this.config)
+      }))
+      .digest("hex");
+  }
+
+  /**
+   * Stable installation-bound reference to the maximum authority and static
+   * wire shape advertised by codex_task contract v2.
+   *
+   * User settings, projects, and the live model catalog are deliberately not
+   * included: contract v2 declares their runtime-authoritative behavior in a
+   * stable schema. A process/operator change can alter the maximum authority
+   * or the schema itself and therefore still requires a connection Refresh.
+   */
+  taskExecutionEnvelopeRef(): string {
+    return createHmac("sha256", this.executionPolicyHmacSecret)
+      .update(
+        `codex-mcp-bridge/task-execution-envelope/v${TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION}\0`
+      )
+      .update(canonicalJsonValue({
+        contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
+        taskInputContract: 2,
+        maxPromptChars: this.config.maxPromptChars,
+        operator: canonicalExecutionOperatorEnvelope(this.config)
+      }))
+      .digest("hex");
+  }
+
   get projectRegistry(): ProjectRegistry {
     const snapshot = this.stateStore.getProjectRegistrySnapshot();
     return new ProjectRegistry(
@@ -163,8 +224,8 @@ export class UserSettingsStore {
     );
   }
 
-  /** Runtime name+generation resolution. There is no ID, slug, alias, or default fallback. */
-  resolveProject(selection?: ProjectSelection): ProjectTarget {
+  /** Runtime opaque-ref resolution, with global-generation compatibility for cached descriptors. */
+  resolveProject(selection?: RuntimeProjectSelection): ProjectTarget {
     if (!selection) return this.projectRegistry.resolve();
     return this.stateStore.resolveProjectSelection(selection, this.config.allowedRoots);
   }
@@ -211,10 +272,13 @@ export class UserSettingsStore {
     );
   }
 
-  reset(expectedSettingsRevision: number): BridgeUserSettings {
+  reset(
+    expectedSettingsRevision: number,
+    modelPolicy: ModelPolicy = this.initial.modelPolicy
+  ): BridgeUserSettings {
     const patch: BridgeUserSettingsPatch = {
       accessStrategy: this.initial.accessStrategy,
-      modelPolicy: this.initial.modelPolicy,
+      modelPolicy,
       usePriorityServiceTier: this.initial.usePriorityServiceTier,
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
@@ -257,13 +321,17 @@ export class UserSettingsStore {
       throw new Error("PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required.");
     }
 
-    const candidate = this.validateGeneral({
+    const merged = {
       ...this.settings,
       ...patch,
       settingsRevision: this.settings.settingsRevision,
       updatedAt: this.settings.updatedAt
-    } as GeneralSettings);
-    if (patch.modelPolicy !== undefined) delete candidate.legacyPreferredModel;
+    } as GeneralSettings;
+    // Replacing a migrated model-only preference with an exact policy must
+    // remove the compatibility marker before validation. Validating first made
+    // it impossible for the Settings card to complete that migration.
+    if (patch.modelPolicy !== undefined) delete merged.legacyPreferredModel;
+    const candidate = this.validateGeneral(merged);
     const generalChanged = hasGeneralPatch &&
       canonicalGeneralSettings(candidate) !== canonicalGeneralSettings(this.settings);
     const now = this.now();
@@ -455,14 +523,18 @@ export class UserSettingsStore {
     );
     this.settings = loaded.settings;
     this.stateStore.setSettings(this.settings);
-    if (parsed.version === 3 && isRecord(parsed.projectRegistry)) {
-      this.stateStore.importProjectRegistry(readProjectRegistrySnapshot(parsed.projectRegistry));
+    let migratedProjectRegistry = false;
+    if ((parsed.version === 3 || parsed.version === 4) && isRecord(parsed.projectRegistry)) {
+      migratedProjectRegistry = parsed.version === 3;
+      this.stateStore.importProjectRegistry(
+        readProjectRegistrySnapshot(parsed.projectRegistry, migratedProjectRegistry)
+      );
     } else if ("projects" in parsed.settings) {
       this.warnings.push(
         "Legacy project IDs/default aliases were intentionally not migrated. Register projects by name in Settings."
       );
     }
-    if (loaded.changed) this.persistStandaloneState();
+    if (loaded.changed || migratedProjectRegistry) this.persistStandaloneState();
   }
 
   private reconcileLoadedGeneral(
@@ -472,6 +544,36 @@ export class UserSettingsStore {
   ): { settings: GeneralSettings; changed: boolean } {
     const candidate = readGeneralSettings(source, sourceLabel, settingsRevision);
     let changed = needsGeneralSettingsRewrite(source);
+    if (
+      candidate.modelPolicy.mode === "automatic" &&
+      !candidate.modelPolicy.fallbackSelection &&
+      !candidate.legacyPreferredModel &&
+      this.config.defaultModel &&
+      this.config.defaultReasoningEffort
+    ) {
+      const configured = {
+        model: this.config.defaultModel,
+        reasoningEffort: this.config.defaultReasoningEffort
+      };
+      const inAllowedRange = candidate.modelPolicy.allowedSelections.kind === "catalog-visible" ||
+        candidate.modelPolicy.allowedSelections.selections.some((selection) =>
+          sameModelChoice(selection, configured)
+        );
+      if (
+        inAllowedRange &&
+        (candidate.modelPolicy.constraints.allowDelegation ||
+          configured.reasoningEffort !== "ultra")
+      ) {
+        candidate.modelPolicy = {
+          ...candidate.modelPolicy,
+          fallbackSelection: configured
+        };
+        changed = true;
+        this.warnings.push(
+          "Automatic model policy was missing an exact fallback; the configured model/effort seed was persisted as its omission fallback."
+        );
+      }
+    }
     if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
       candidate.accessStrategy = "read-only";
       changed = true;
@@ -506,7 +608,7 @@ export class UserSettingsStore {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     const state: PersistedSettingsState = {
-      version: 3,
+      version: 4,
       settings: cloneGeneralSettings(this.settings),
       projectRegistry: this.stateStore.getProjectRegistrySnapshot()
     };
@@ -541,6 +643,88 @@ function cloneGeneralSettings(settings: GeneralSettings): GeneralSettings {
 function canonicalGeneralSettings(settings: GeneralSettings): string {
   const { settingsRevision: _revision, updatedAt: _updatedAt, ...semantic } = settings;
   return JSON.stringify(semantic);
+}
+
+function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer {
+  return stateStore.transaction(() => {
+    const encoded = stateStore.getMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY);
+    if (encoded !== undefined) {
+      let decoded: Buffer;
+      try {
+        decoded = Buffer.from(encoded, "base64url");
+      } catch {
+        throw new Error("Invalid persisted execution-policy HMAC key encoding.");
+      }
+      if (decoded.length !== 32 || decoded.toString("base64url") !== encoded) {
+        throw new Error("Invalid persisted execution-policy HMAC key.");
+      }
+      return decoded;
+    }
+    const created = randomBytes(32);
+    stateStore.setMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY, created.toString("base64url"));
+    return created;
+  });
+}
+
+function canonicalJsonValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Cannot sign a non-finite policy number.");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJsonValue(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJsonValue(entry)}`)
+      .join(",")}}`;
+  }
+  throw new Error(`Cannot sign unsupported policy value of type ${typeof value}.`);
+}
+
+function canonicalExecutionModelPolicy(policy: ModelPolicy): ModelPolicy {
+  if (
+    policy.mode !== "automatic" ||
+    policy.allowedSelections.kind !== "explicit"
+  ) {
+    return policy;
+  }
+  return {
+    ...policy,
+    allowedSelections: {
+      kind: "explicit",
+      selections: canonicalModelChoices(policy.allowedSelections.selections)
+    }
+  };
+}
+
+function canonicalExecutionOperatorEnvelope(config: BridgeConfig): Record<string, unknown> {
+  return {
+    codexCommand: config.codexCommand,
+    backend: config.defaultBackend,
+    allowedRoots: [...config.allowedRoots].sort(),
+    defaultSandbox: config.defaultSandbox,
+    allowWorkspaceWrite: config.allowWorkspaceWrite,
+    allowDangerFullAccess: config.allowDangerFullAccess,
+    approvalPolicy: config.defaultApprovalPolicy,
+    modelCeiling: config.operatorModelCeiling
+      ? canonicalModelChoices(config.operatorModelCeiling)
+      : null,
+    secretScan: config.secretScan
+  };
+}
+
+function canonicalModelChoices<T extends { model: string; reasoningEffort: string }>(
+  selections: readonly T[]
+): T[] {
+  return [...selections].sort((left, right) =>
+    left.model.localeCompare(right.model) ||
+    left.reasoningEffort.localeCompare(right.reasoningEffort)
+  );
 }
 
 function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
@@ -645,7 +829,10 @@ function readGeneralSettings(
   };
 }
 
-function readProjectRegistrySnapshot(value: Record<string, unknown>): ProjectRegistrySnapshot {
+function readProjectRegistrySnapshot(
+  value: Record<string, unknown>,
+  migrateLegacySelectors = false
+): ProjectRegistrySnapshot {
   if (
     !Number.isInteger(value.registryRevision) ||
     typeof value.updatedAt !== "number" ||
@@ -670,8 +857,25 @@ function readProjectRegistrySnapshot(value: Record<string, unknown>): ProjectReg
         throw new Error("Invalid project registry entry.");
       }
       const name = normalizeProjectName(entry.name);
+      let projectRef: string;
+      let projectRevision: number;
+      if (migrateLegacySelectors) {
+        projectRef = createProjectRef();
+        projectRevision = 1;
+      } else {
+        if (typeof entry.projectRef !== "string") {
+          throw new Error("Invalid project selection reference.");
+        }
+        if (!Number.isInteger(entry.projectRevision) || Number(entry.projectRevision) < 1) {
+          throw new Error("Invalid project revision.");
+        }
+        projectRef = normalizeProjectRef(entry.projectRef);
+        projectRevision = Number(entry.projectRevision);
+      }
       const target: ProjectTarget = {
         id: normalizeProjectId(entry.id),
+        projectRef,
+        projectRevision,
         name,
         label: name,
         nameKey: projectNameKey(name),

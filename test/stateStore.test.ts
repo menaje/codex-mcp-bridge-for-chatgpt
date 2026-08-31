@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
@@ -56,6 +57,52 @@ describe("BridgeStateStore", () => {
     store.close();
 
     expect(() => new BridgeStateStore({ file })).toThrow(/Unsupported bridge state database schema version: 999/);
+  });
+
+  it("migrates v9 projects to opaque refs without changing private project pins", () => {
+    const file = stateFile();
+    const cwd = temporaryRoot();
+    const initial = new BridgeStateStore({ file });
+    const project = registerProject(initial, "Migrated Project", cwd);
+    const activityId = "abababab-abab-4bab-8bab-abababababab";
+    initial.createActivity({
+      activityId,
+      scopeId: SCOPE_A,
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: cwd,
+      now: 10
+    });
+    initial.close();
+
+    downgradeProjectTableToV9(file);
+    const migrated = new BridgeStateStore({ file });
+    const migratedProject = migrated.getProjectRegistrySnapshot().projects[0]!;
+    expect(migrated.schemaVersion).toBe(10);
+    expect(migratedProject).toMatchObject({
+      id: project.id,
+      name: "Migrated Project",
+      projectRevision: 1
+    });
+    expect(migratedProject.projectRef).toMatch(/^prj_[A-Za-z0-9_-]{22}$/);
+    expect(migratedProject.projectRef).not.toBe(project.id);
+    expect(migrated.getActivityProjectAdmission(activityId)).toEqual({
+      projectId: project.id,
+      projectLabel: "Migrated Project",
+      projectCwd: cwd
+    });
+    const persistedRef = migratedProject.projectRef;
+    migrated.close();
+
+    const reopened = new BridgeStateStore({ file });
+    expect(reopened.getProjectRegistrySnapshot().projects[0]).toMatchObject({
+      projectRef: persistedRef,
+      projectRevision: 1
+    });
+    reopened.close();
+    const database = new Database(file, { readonly: true });
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    database.close();
   });
 
   it("persists steering intent and dispatch state without storing the raw prompt", () => {
@@ -119,7 +166,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(9);
+    expect(reopened.schemaVersion).toBe(10);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -187,7 +234,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(9);
+    expect(restored.schemaVersion).toBe(10);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
@@ -474,6 +521,39 @@ function registerProject(store: BridgeStateStore, name: string, cwd: string) {
     before,
     []
   ).projects.at(-1)!;
+}
+
+function downgradeProjectTableToV9(file: string): void {
+  const database = new Database(file);
+  database.pragma("foreign_keys = OFF");
+  database.exec(`
+    CREATE TABLE projects_v9 (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      name_key TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      archived_at INTEGER
+    ) STRICT;
+    INSERT INTO projects_v9(
+      project_id, name, name_key, cwd, sort_order, created_at, updated_at, archived_at
+    )
+    SELECT project_id, name, name_key, cwd, sort_order, created_at, updated_at, archived_at
+      FROM projects;
+    DROP TABLE projects;
+    ALTER TABLE projects_v9 RENAME TO projects;
+    CREATE UNIQUE INDEX projects_active_name
+      ON projects(name_key) WHERE archived_at IS NULL;
+    CREATE UNIQUE INDEX projects_active_cwd
+      ON projects(cwd) WHERE archived_at IS NULL;
+    CREATE INDEX projects_ordered
+      ON projects(archived_at, sort_order, created_at);
+    UPDATE bridge_meta SET value = '9' WHERE key = 'schema_version';
+    DELETE FROM bridge_meta WHERE key = 'schema_v10_migrated_at';
+  `);
+  database.close();
 }
 
 function session(threadId: string) {

@@ -32,7 +32,7 @@ describe("Activity SQLite state", () => {
     const [activity] = store.listActivities(SCOPE_A);
     const [job] = store.listJobs() as Array<Record<string, unknown>>;
 
-    expect(store.schemaVersion).toBe(9);
+    expect(store.schemaVersion).toBe(10);
     expect(activity).toMatchObject({
       scopeId: SCOPE_A,
       title: "Legacy Codex job legacy-j",
@@ -489,9 +489,37 @@ describe("Activity SQLite state", () => {
     expect(store.countJobs(SCOPE_B)).toBe(0);
     expect(store.getScopeVersion(SCOPE_B)).toBe(scopeBVersion);
 
-    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 3));
+    store.upsertJob({
+      ...job("job-a", "request-a", ACTIVITY_A, "completed", 3),
+      createdAt: 1,
+      executionDecision: {
+        effectiveSelection: { model: "gpt-test", reasoningEffort: "high" }
+      },
+      publicEvents: [{
+        type: "model",
+        details: { kind: "rerouted", toModel: "gpt-rerouted" }
+      }],
+      result: { secret: "must-not-survive-pruning" }
+    } as any);
     store.deleteJob("job-a");
     expect(store.listJobs()).toHaveLength(0);
+    expect(store.listDashboardRetainedJobs()).toEqual([
+      expect.objectContaining({
+        jobId: "job-a",
+        scopeId: SCOPE_A,
+        activityId: ACTIVITY_A,
+        status: "completed",
+        createdAt: 1,
+        updatedAt: 3,
+        execution: {
+          model: "gpt-test",
+          reasoningEffort: "high",
+          reroutedModel: "gpt-rerouted"
+        }
+      })
+    ]);
+    expect(JSON.stringify(store.listDashboardRetainedJobs()))
+      .not.toContain("must-not-survive-pruning");
     expect(store.getActivity(ACTIVITY_A)).toMatchObject({
       counts: { total: 1, completed: 1, terminal: 1 }
     });

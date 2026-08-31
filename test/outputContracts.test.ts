@@ -94,6 +94,24 @@ describe("model-visible output contracts", () => {
     }
   });
 
+  it("rejects automatic policy summaries that disclose the saved fallback pair", () => {
+    const models = structuredClone(
+      modelResults.codex_models[0]!.structuredContent
+    ) as Record<string, any>;
+    models.policy.model = "gpt-private-fallback";
+    models.policy.reasoningEffort = "private-effort";
+    expect(() => validateModelVisibleStructuredOutput("codex_models", models))
+      .toThrow(/must not expose the saved fallback/);
+
+    const settings = structuredClone(
+      modelResults.codex_settings[0]!.structuredContent
+    ) as Record<string, any>;
+    settings.policy.model.model = "gpt-private-fallback";
+    settings.policy.model.reasoningEffort = "private-effort";
+    expect(() => validateModelVisibleStructuredOutput("codex_settings", settings))
+      .toThrow(/must not expose the saved fallback/);
+  });
+
   it("keeps steering success, failure, and dispatch uncertainty semantically aligned", () => {
     const delivered = structuredClone(
       modelResults.codex_steer.find(({ fixture }) => fixture === "active-turn-delivered")!
@@ -243,10 +261,10 @@ describe("model-visible output contracts", () => {
       "utf8"
     );
     expect(steeringBytes).toBe(1_360);
-    expect(bytes - steeringBytes).toBe(12_009);
-    expect(bytes - steeringBytes).toBeLessThanOrEqual(12_077);
-    expect(bytes).toBe(13_369);
-    expect(bytes).toBeLessThanOrEqual(13_437);
+    expect(bytes - steeringBytes).toBe(12_315);
+    expect(bytes - steeringBytes).toBeLessThanOrEqual(12_505);
+    expect(bytes).toBe(13_675);
+    expect(bytes).toBeLessThanOrEqual(13_865);
   });
 
   it("retires public Activity hydration while retaining private generation 11 contracts", () => {

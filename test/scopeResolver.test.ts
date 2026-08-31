@@ -96,7 +96,7 @@ describe("ScopeResolver", () => {
     ).toThrow(/non-empty bounded string/);
   });
 
-  it("persists only the HMAC key and keeps derived scopes stable across store restarts", () => {
+  it("does not persist arbitrary host identifiers and keeps derived scopes stable across store restarts", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "bridge-scope-resolver-"));
     const file = path.join(directory, "state.sqlite");
     const metadata = {
@@ -120,6 +120,39 @@ describe("ScopeResolver", () => {
     expect(persistedBytes.includes(Buffer.from("never-persist-session-98431"))).toBe(false);
     expect(persistedBytes.includes(Buffer.from("never-persist-subject-98431"))).toBe(false);
     expect(persistedBytes.includes(Buffer.from("never-persist-org-98431"))).toBe(false);
+  });
+
+  it("retains a UUID-shaped host session as a best-effort Dashboard route candidate", () => {
+    const file = path.join(
+      mkdtempSync(path.join(tmpdir(), "bridge-conversation-links-")),
+      "state.sqlite"
+    );
+    const conversationId = "12345678-1234-4234-8234-123456789abc";
+    const metadata = {
+      "openai/organization": "link-org",
+      "openai/subject": "link-subject",
+      "openai/session": conversationId
+    };
+    const firstStore = new BridgeStateStore({ file });
+    const firstResolver = new ScopeResolver({ stateStore: firstStore });
+    const first = firstResolver.resolve(metadata);
+    expect(first?.conversationUrl).toBe(`https://chatgpt.com/c/${conversationId}`);
+    expect(firstResolver.conversationUrl(first!.scopeId)).toBe(first?.conversationUrl);
+    firstStore.close();
+
+    const secondStore = new BridgeStateStore({ file });
+    const secondResolver = new ScopeResolver({ stateStore: secondStore });
+    expect(secondResolver.conversationUrl(first!.scopeId)).toBe(
+      `https://chatgpt.com/c/${conversationId}`
+    );
+    secondStore.close();
+  });
+
+  it("does not turn a non-UUID host session into a ChatGPT link", () => {
+    const resolver = new ScopeResolver({ secret: new Uint8Array(32).fill(17) });
+    const resolved = resolver.resolve({ "openai/session": "host-session-not-a-route" });
+    expect(resolved).not.toHaveProperty("conversationUrl");
+    expect(resolver.conversationUrl(resolved!.scopeId)).toBeUndefined();
   });
 
   it("fails closed instead of replacing an invalid persisted HMAC key", () => {

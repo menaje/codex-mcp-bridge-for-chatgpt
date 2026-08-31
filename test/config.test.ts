@@ -18,6 +18,9 @@ describe("config policy", () => {
     });
 
     expect(config.allowedRoots).toEqual([]);
+    expect(config.mcpTransportMode).toBe("stateless");
+    expect(config.mcpSessionIdleTtlMs).toBe(30 * 60 * 1000);
+    expect(config.maxMcpSessions).toBe(64);
     expect(config.defaultSandbox).toBe("read-only");
     expect(config.defaultAccessStrategy).toBe("adaptive");
     expect(config.allowWorkspaceWrite).toBe(false);
@@ -44,6 +47,32 @@ describe("config policy", () => {
     expect(config.maxJobResultBytes).toBe(1048576);
     expect(config.jobStaleAfterMs).toBe(600000);
     expect(config.startupWarnings).toEqual([]);
+  });
+
+  it("loads and validates bounded stateful MCP transport settings", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "stateful",
+      CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "120000",
+      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "12"
+    });
+
+    expect(config.mcpTransportMode).toBe("stateful");
+    expect(config.mcpSessionIdleTtlMs).toBe(120000);
+    expect(config.maxMcpSessions).toBe(12);
+
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "persistent"
+    })).toThrow(/MCP transport mode/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "0"
+    })).toThrow(/positive integer/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "0"
+    })).toThrow(/positive integer/);
   });
 
   it("loads the optional exact automatic-policy model and effort seed", () => {

@@ -1,5 +1,6 @@
 const VALUE_OPTIONS = new Map([
   ["--mode", "mode"],
+  ["--transport", "transport"],
   ["--port", "port"],
   ["--env-file", "envFile"],
   ["--tunnel-id", "tunnelId"],
@@ -29,6 +30,12 @@ export function parseLauncherArgs(rawArgs) {
     }
   }
   return parsed;
+}
+
+export function requiredBuildOutputs(transport) {
+  if (transport === "http") return ["dist/cli.js"];
+  if (transport === "stdio") return ["dist/stdio.js", "dist/stdioServer.js"];
+  throw new Error(`Unknown transport: ${transport}. Use http or stdio.`);
 }
 
 function readOptionValue(rawArgs, index, option) {

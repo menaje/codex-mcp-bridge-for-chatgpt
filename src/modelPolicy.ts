@@ -58,6 +58,7 @@ export type ExecutionDecisionSource =
   | "fixed"
   | "configured-fallback"
   | "caller"
+  | "thread-inherited"
   | "backend-default"
   | "compatibility-fallback";
 
@@ -209,17 +210,51 @@ export function validatePolicyAgainstCatalog(
   );
 }
 
+/**
+ * Produce a newly saved automatic policy with one exact omission fallback.
+ * Existing persisted policies may omit it for backward compatibility, but
+ * Settings saves and resets should materialize a deterministic pair from the
+ * same live allowlist projection used for task admission.
+ */
+export function materializeAutomaticFallback(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling?: ModelChoice[],
+  policyRevision = 0
+): ModelPolicy {
+  const normalized = validateModelPolicy(policy);
+  if (normalized.mode === "fixed") return normalized;
+  const allowed = listAllowedModelSelections(normalized, catalog, operatorCeiling);
+  if (
+    normalized.fallbackSelection &&
+    allowed.some((selection) => sameModelChoice(selection, normalized.fallbackSelection))
+  ) return normalized;
+  const fallbackSelection = catalogDefaultSelection(
+    catalog,
+    normalized,
+    operatorCeiling
+  );
+  if (!fallbackSelection) {
+    throw unavailable(
+      policyRevision,
+      "The automatic model policy has no usable exact fallback selection."
+    );
+  }
+  return {
+    ...normalized,
+    fallbackSelection
+  };
+}
+
 export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDecision {
   const policy = validateModelPolicy(input.policy);
   if (
     input.requestedPolicyRevision !== undefined &&
     input.requestedPolicyRevision !== input.policyRevision
   ) {
-    throw new ModelPolicyError(
-      "MODEL_POLICY_CHANGED",
-      `The request used policy revision ${input.requestedPolicyRevision}, but revision ${input.policyRevision} is active.`,
+    throw policyChanged(
       input.policyRevision,
-      ["Refresh the Codex tool descriptor or settings view and retry with the current revision."]
+      `The request used policy revision ${input.requestedPolicyRevision}, but revision ${input.policyRevision} is active.`,
     );
   }
 
@@ -278,6 +313,20 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
   } else if (input.requestedSelection) {
     effectiveSelection = readModelChoice(input.requestedSelection, "requested model selection");
     source = "caller";
+  } else if (
+    input.operation === "continue" &&
+    input.currentSelection &&
+    listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
+      .some((selection) => sameModelChoice(selection, input.currentSelection)) &&
+    catalogSupportsSelection(input.catalog, input.currentSelection)
+  ) {
+    // Omission on a retained thread means inheritance, not "choose the
+    // omission fallback again". The current selection still has to survive
+    // the active catalog, user policy, operator ceiling, and delegation
+    // intersection; a policy change can therefore require an explicit fresh
+    // context on a backend that cannot override continued threads.
+    effectiveSelection = cloneSelection(input.currentSelection);
+    source = "thread-inherited";
   } else if (
     fallbackSelection &&
     listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
@@ -349,6 +398,7 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
 
   const turnOverride =
     input.operation === "continue" &&
+    source !== "thread-inherited" &&
     input.backendCapabilities.supportsModelOverrideOnContinue &&
     input.backendCapabilities.supportsEffortOverrideOnContinue;
   const catalogValidation: CatalogValidationState = input.catalog.stale
@@ -500,13 +550,16 @@ function assertSelectionAllowed(
     );
   }
   if (!policy.constraints.allowDelegation && selection.reasoningEffort === "ultra") {
-    throw forbidden(policyRevision, "Ultra reasoning is disabled by the active model policy.");
+    throw policyChanged(policyRevision, "Ultra reasoning is disabled by the active model policy.");
   }
   if (
     operatorCeiling &&
     !operatorCeiling.some((entry) => sameModelChoice(entry, selection))
   ) {
-    throw forbidden(policyRevision, `Selection ${selectionLabel(selection)} exceeds the operator model ceiling.`);
+    throw policyChanged(
+      policyRevision,
+      `Selection ${selectionLabel(selection)} exceeds the current operator model ceiling.`
+    );
   }
   if (policy.mode === "fixed" && !sameModelChoice(policy.selection, selection)) {
     throw forbidden(policyRevision, "The selected model configuration differs from the fixed policy.");
@@ -516,7 +569,10 @@ function assertSelectionAllowed(
     policy.allowedSelections.kind === "explicit" &&
     !policy.allowedSelections.selections.some((entry) => sameModelChoice(entry, selection))
   ) {
-    throw forbidden(policyRevision, `Selection ${selectionLabel(selection)} is not in the user allowlist.`);
+    throw policyChanged(
+      policyRevision,
+      `Selection ${selectionLabel(selection)} is not in the current user allowlist.`
+    );
   }
 }
 
@@ -662,6 +718,18 @@ function unavailable(policyRevision: number, message: string): ModelPolicyError 
   );
 }
 
+function policyChanged(policyRevision: number, message: string): ModelPolicyError {
+  return new ModelPolicyError(
+    "MODEL_POLICY_CHANGED",
+    message,
+    policyRevision,
+    [
+      "Call codex_models to read the current policy-allowed model and reasoning-effort values.",
+      "Refresh the ChatGPT developer-mode connection before retrying with the current codex_task descriptor."
+    ]
+  );
+}
+
 function forbidden(policyRevision: number, message: string): ModelPolicyError {
   return new ModelPolicyError(
     "MODEL_SELECTION_FORBIDDEN",
@@ -687,6 +755,8 @@ function decisionReason(
       ? "the configured automatic fallback"
       : source === "caller"
         ? "the caller's exact selection"
+        : source === "thread-inherited"
+          ? "the retained thread's admission-time selection"
         : source === "compatibility-fallback"
           ? "the current upstream default because the saved selection is unsupported"
           : "the validated backend catalog default";

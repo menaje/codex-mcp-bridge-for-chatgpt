@@ -16,8 +16,8 @@ Coordinate bounded implementation work through Codex MCP Bridge. Codex output is
 
 ## Use the live contracts
 
-- Treat the latest exposed Bridge tool schemas as authoritative for constructing calls. Do not rely on remembered field shapes, model names, effort values, or project-selection forms.
-- Treat runtime validation and structured results as authoritative for admission, execution, and state. For a delivered completed result, the bounded structured `answer` is the model-authoritative final text; `content` is compatibility-only and may be absent from the ChatGPT transcript. Refresh discovery or state when a schema, catalog, policy, or version conflict says the prior view is stale.
+- Treat the exposed Bridge tool schemas as authoritative for constructing calls. For `codex_task` contract v2, keep the descriptor's exact `taskContractVersion` and `executionEnvelopeRef`; ordinary saved settings, project, availability, and model-catalog changes remain runtime authority and do not require discovery Refresh.
+- Treat runtime validation and structured results as authoritative for admission, execution, and state. For a delivered completed result, the bounded structured `answer` is the model-authoritative final text; `content` is compatibility-only and may be absent from the ChatGPT transcript. Refresh the connection only for `EXECUTION_ENVELOPE_CHANGED` or the one-time migration from a cached pre-v2 contract. On a v2 `EXECUTION_POLICY_CHANGED`, retry the same stable contract with a new `requestId` after the race settles.
 - Use `codex_status` as the authoritative source for accessible Activity, Agent, and Job state and versions. Only an exact Job query returns that Job's `answer`; overview, Activity, thread, and page queries never contain Job answer bodies. A transport timeout, detached response, or stale card is not a cancellation or terminal result.
 - Use the repository and its artifacts as implementation truth, an optional Issue as the durable semantic ledger and context anchor, and accessible Bridge state as runtime truth.
 
@@ -37,8 +37,9 @@ Bridge meanings and invariant:
 
 ## Use Activity views
 
-- Treat the automatic Activity card mounted by `codex_task` as a compact current/action-needed view. Terminal Activity and idle Agent rows are intentionally summarized as exact counts; their absence is not lost state and does not justify resubmitting work.
-- Do not call `codex_activity` after `codex_task` merely to expand or refresh the automatic card. Call it only when the user explicitly asks to open or reopen the scoped full Activity view, and traverse its bounded cursor pages only as needed.
+- `codex_task` is execution-only and never mounts a card. After admitting all `codex_task` calls for one assistant response, apply the saved Activity-card visibility policy once and call `codex_activity` at most once with `mode: compact-monitor` and one fresh `presentationId`. Under `background-only`, present only when at least one admitted call is background; under `never`, do not present. Never call it once per Task or Agent.
+- Treat the compact-monitor card as a current/action-needed view. Terminal Activity and idle Agent rows are intentionally summarized as exact counts; their absence is not lost state and does not justify resubmitting work.
+- Use the default `full-history` mode only when the user explicitly asks to open or reopen the scoped full Activity view, and traverse its bounded cursor pages only as needed.
 - The explicit full view is presentation and monitoring UI. It does not take automatic watcher or completion-handoff ownership and does not hold or replace the model-authoritative Job answer. Use `codex_status`, including an exact Job query for an answer, as the authoritative state path.
 
 ## Steer an active Job
@@ -71,7 +72,20 @@ For resumption:
 - Keep each call bounded to one role, objective, write scope, expected artifacts, and evidence. Tell every role about the shared working tree and existing-change preservation.
 - Treat a Planner DAG as coverage guidance, not the Verifier baseline. Verification always targets the latest approved semantic baseline.
 
-Before each `codex_task` call, choose a model/effort pair only from the currently exposed, live-allowed combinations for that bounded call. Do not change Priority, Fast/service-tier preferences, or any user setting. Respect live continuation-override constraints. If a continuation rejects a selection change, either retain a compatible selection or use an explicitly fresh context with the required bounded handoff when the live schema permits it. Diagnose schema, policy, catalog, project, context, and task failures before escalating model, effort, context, or scope.
+For a new Activity, new Agent, or fresh context, use `codex_models` and current
+runtime errors to choose a live-allowed model/effort pair; the stable Task schema
+is generic and is not a catalog inventory. Bridge-provided catalog descriptions
+add no task mapping, ranking, recommendation, or effort glossary. If the exact
+project selector is unknown or stale, call the same `codex_task` contract with
+`projectLookup.name`, admit no work, then retry with its returned exact
+`{ name, projectRef, projectRevision }` and a new `requestId`. For continue/fork,
+omit project and selection to inherit unless a deliberate model override is both
+intended and currently supported. Do not change Priority, Fast/service-tier
+preferences, or any user setting. If a continuation rejects a selection change,
+either retain a compatible selection or use an explicitly fresh context with the
+required bounded handoff when allowed. Diagnose schema, policy, catalog,
+project, context, and task failures before escalating model, effort, context, or
+scope.
 
 ## Execute safe waves
 
@@ -123,7 +137,7 @@ Never couple Issue lifecycle to Activity lifecycle automatically. Closing an Iss
 ## Keep identifiers in their proper scope
 
 - `requestId`: one logical Bridge call; reuse only for its exact retry.
-- `activityPresentationId`: one UUID for the current assistant response; reuse it across all `codex_task` calls in that response when the live schema exposes it, then use a new value in the next response.
+- `presentationId`: one logical `codex_activity` compact-monitor presentation; reuse only for its exact presentation retry. Never pass it to `codex_task`.
 - `checkpointId`: one durable Issue checkpoint identity; never derive it from or reuse a Bridge `requestId`.
 
 Do not use presentation identity as execution identity, or any of these identifiers as a grouping shortcut outside its stated scope.

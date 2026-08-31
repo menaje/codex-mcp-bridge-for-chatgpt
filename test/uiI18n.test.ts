@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
+import {
+  DASHBOARD_CARD_CONTENT_METADATA,
+  DASHBOARD_CARD_HTML
+} from "../src/dashboardCard.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import {
   SETTINGS_CARD_HTML,
@@ -111,6 +115,33 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
     expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
+    expect(UI_TRANSLATIONS.ko["dashboard.title"]).toBe("Codex 전체 현황");
+    expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("다시 열어");
+    expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("Codex turn 완료");
+    expect(UI_TRANSLATIONS.ko["dashboard.status.background-process-running"])
+      .toBe("백그라운드 프로세스 실행 중");
+    expect(UI_TRANSLATIONS.ko["dashboard.history.show"]).toBe("이력 {count}건 펼치기");
+    expect(UI_TRANSLATIONS.ko["dashboard.openConversation"]).toBe("대화 열기");
+    expect(UI_TRANSLATIONS.ko["dashboard.attention"]).toBe("주의 상태");
+    expect(UI_TRANSLATIONS.ko["dashboard.loadMore"]).toBe("더 보기");
+    expect(UI_TRANSLATIONS.en["dashboard.loadMore"]).toBe("Show more");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.project"]).toBe("프로젝트별");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.conversation"]).toBe("대화별");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.status"]).toBe("상태별");
+    expect(UI_TRANSLATIONS.ko["dashboard.conversationCurrent"])
+      .toBe("활성 및 최근 GPT 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleConversations"]).toBe("유휴 GPT 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleProjects"]).toBe("유휴 프로젝트");
+    expect(UI_TRANSLATIONS.ko["dashboard.unknownProject"]).toBe("프로젝트 미확인");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleAgentDisclosure"])
+      .toBe("유휴 에이전트 {count}개 펼치기");
+    expect(UI_TRANSLATIONS.ko["dashboard.agentShownCount"]).toBe("현재 페이지 {count}개");
+    expect(UI_TRANSLATIONS.ko["dashboard.sectionCount"])
+      .toBe("대화 {conversations}개 · 에이전트 {agents}개");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.duration"]).toBe("소요 {duration}");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.terminal"]).toBe("{relative} {status}");
+    expect(UI_TRANSLATIONS.ko["dashboard.scopeNotice"]).toContain("전체 ChatGPT 기록은 아닙니다");
+    expect(UI_TRANSLATIONS.ko["dashboard.runtimeOnly"]).toContain("GPT의 검증·완료 판단은 사용하지 않습니다");
     for (const locale of SUPPORTED_UI_LOCALES) {
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).toBe(
         UI_TRANSLATIONS[locale]["activity.workComplete"]
@@ -141,6 +172,9 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsMcpHint"]).toContain(
       "MCP Server 백엔드는 스레드를 숨길 수 없습니다"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.developerModeRefreshRequired"]).toContain(
+      "정적 도구 계약도 변경"
     );
   });
 
@@ -220,6 +254,7 @@ describe("human-facing UI localization", () => {
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
     expect(SETTINGS_CARD_HTML).toContain(serialized);
     expect(ACTIVITY_CARD_HTML).toContain(serialized);
+    expect(DASHBOARD_CARD_HTML).toContain(serialized);
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
@@ -241,7 +276,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
     expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
-    expect(ACTIVITY_CARD_HTML).not.toContain("viewMode");
+    expect(ACTIVITY_CARD_HTML).not.toContain("let viewMode=");
     expect(serialized).not.toContain("settings.cardView");
     expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
     expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
@@ -258,21 +293,100 @@ describe("human-facing UI localization", () => {
     expect(serialized).not.toContain('settings.defaultProject');
     expect(serialized).not.toContain('settings.cwd');
     expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
-    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
+    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`)
+      .not.toContain("MacBook Air");
   });
 
   it("supports host locale updates, accessible controls, and standard/fallback app messaging", () => {
-    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML]) {
+    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
       expect(html).toContain('"openai/locale"');
       expect(html).toContain('"webplus/i18n"');
       expect(html).toContain('window.openai.locale');
       expect(html).toContain("resolveHostUiLocaleTag(");
-      expect(html).toContain("initialMetadata,navigator.language)");
       expect(html).toContain('openai:set_globals');
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
+    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
+      expect(html).toContain("initialMetadata,navigator.language)");
+    }
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_dashboard_snapshot"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="dashboard-content" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="common.loading"');
+    expect(DASHBOARD_CARD_HTML).toContain("function normalizeHostToolResult");
+    expect(DASHBOARD_CARD_HTML).toContain("mcp_tool_result");
+    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=");
+    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=beginStandardBridge()");
+    expect(DASHBOARD_CARD_HTML).toContain("function standardToolCall(name,args)");
+    expect(DASHBOARD_CARD_HTML).toContain("function callUiToolWithFallback");
+    expect(DASHBOARD_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
+    expect(DASHBOARD_CARD_HTML).toContain("compatibilityTimeoutMs:TOOL_CALL_TIMEOUT_MS");
+    expect(DASHBOARD_CARD_HTML).not.toContain('typeof window.openai.callTool==="function"?Promise.resolve(false)');
+    expect(DASHBOARD_CARD_HTML).not.toContain("__name");
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-result"');
+    expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false,priority=0)");
+    expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
+    expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
+    expect(DASHBOARD_CARD_HTML).toContain("dashboard.refreshFailedRetained");
+    expect(DASHBOARD_CARD_HTML).toContain("MCP_TOOL_CALL_DISPATCH_TIMEOUT");
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-project"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-conversation"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-status"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="project-view"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="conversation-view"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-view"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="status-idle-panel" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain("statusIdleExpanded=false");
+    expect(DASHBOARD_CARD_HTML).toContain('id="status-idle-toggle"');
+    expect(DASHBOARD_CARD_HTML).toContain('aria-expanded="false"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-more"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="idle-more"');
+    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.previous"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.next"');
+    expect(DASHBOARD_CARD_HTML).toContain("async function loadMore(bucket)");
+    expect(DASHBOARD_CARD_HTML).toContain("function mergeRows(current,incoming)");
+    expect(DASHBOARD_CARD_HTML).toContain("function reconcileDashboardPageCaches(");
+    expect(DASHBOARD_CARD_HTML).toContain("next.terminalPagination.offset > 0");
+    expect(DASHBOARD_CARD_HTML).toContain("next.idlePagination.offset > 0");
+    expect(DASHBOARD_CARD_HTML).not.toContain("dashboardViewMode");
+    expect(DASHBOARD_CARD_HTML).not.toContain("api.setWidgetState");
+    expect(DASHBOARD_CARD_HTML).toContain("render(unwrap(message.params),false,1)");
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pagehide"');
+    expect(DASHBOARD_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed"');
+    expect(DASHBOARD_CARD_HTML).toContain("notifyIntrinsicHeight");
+    expect(DASHBOARD_CARD_HTML).toContain("new ResizeObserver");
+    expect(DASHBOARD_CARD_HTML).toContain("new Intl.RelativeTimeFormat");
+    expect(DASHBOARD_CARD_HTML).toContain("expandedHistories");
+    expect(DASHBOARD_CARD_HTML).toContain('node("details","history")');
+    expect(DASHBOARD_CARD_HTML).toContain("function renderAgentRows(parent,rows)");
+    expect(DASHBOARD_CARD_HTML).toContain("function appendRowContext(parent,row)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function conversationGroups(rows)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function projectGroups(rows)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderConversationGroups");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderProjectGroups");
+    expect(DASHBOARD_CARD_HTML).not.toContain('node("section","conversation-group")');
+    expect(DASHBOARD_CARD_HTML).toContain('node("a","conversation-link"');
+    expect(DASHBOARD_CARD_HTML).toContain('link.rel="noopener noreferrer"');
+    expect(DASHBOARD_CARD_HTML).toContain('api.openExternal({href:url,redirectUrl:false})');
+    expect(DASHBOARD_CARD_HTML).toContain("safeConversationUrl(row.conversationUrl)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("const values=[row.sessionAlias,row.projectName]");
+    expect(DASHBOARD_CARD_HTML).toContain("turn.durationMs");
+    expect(DASHBOARD_CARD_HTML).toContain("lastRenderedAt");
+    expect(DASHBOARD_CARD_HTML).toContain("lastRenderPriority");
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pageshow"');
+    expect(DASHBOARD_CARD_HTML).toContain('role="status" aria-live="polite"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("setInterval(");
+    expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
+    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
+      .toEqual(["https://chatgpt.com"]);
+    expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.active"'))
+      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'));
+    expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'))
+      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.idle"'));
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
     expect(SETTINGS_CARD_HTML).toContain(
@@ -292,10 +406,12 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
-    expect(SETTINGS_CARD_HTML).toContain('id="preferred-model"');
-    expect(SETTINGS_CARD_HTML).toContain('id="preferred-effort"');
+    expect(SETTINGS_CARD_HTML).toContain('id="preferred-model" required');
+    expect(SETTINGS_CARD_HTML).toContain('id="preferred-effort" required');
     expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-selection"');
     expect(SETTINGS_CARD_HTML).toContain("currentPreferredSelection()");
+    expect(SETTINGS_CARD_HTML).toContain("if(!fallbackSelection)throw new Error");
+    expect(SETTINGS_CARD_HTML).not.toContain('preferredModel.replaceChildren(option(""');
     expect(SETTINGS_CARD_HTML).toContain("modelDisplayName(modelId)");
     expect(SETTINGS_CARD_HTML).not.toContain('selection.model+"]"');
     expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
@@ -333,6 +449,10 @@ describe("human-facing UI localization", () => {
       SETTINGS_CARD_HTML.indexOf('id="model-policy-mode"')
     );
     expect(SETTINGS_CARD_HTML).toContain('elements.retryModels.hidden=!catalogProblem');
+    expect(SETTINGS_CARD_HTML).toContain(
+      "next.policyActivation.developerModeRefreshRequired"
+    );
+    expect(SETTINGS_CARD_HTML).toContain('t["settings.developerModeRefreshRequired"]');
     expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
     expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
     expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
@@ -379,6 +499,14 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("activity.allActivities");
     expect(ACTIVITY_CARD_HTML).toContain("activity.previousPage");
     expect(ACTIVITY_CARD_HTML).toContain("activity.nextPage");
+    expect(ACTIVITY_CARD_HTML).toContain("function previousFailureText(row)");
+    expect(ACTIVITY_CARD_HTML).toContain('count>0&&row.displayState!=="failed"');
+    expect(UI_TRANSLATIONS.ko["activity.previousFailures"]).toBe("이전 실패 {count}건");
+    expect(UI_TRANSLATIONS.ko["activity.forceStop"]).toBe("에이전트 강제 종료…");
+    expect(UI_TRANSLATIONS.ko["activity.stopBackground"]).toBe("백그라운드 프로세스 종료…");
+    for (const locale of SUPPORTED_UI_LOCALES) {
+      expect(UI_TRANSLATIONS[locale]["activity.previousFailures"]).toContain("{count}");
+    }
     expect(UI_TRANSLATIONS.ko["activity.pastRecords"]).toBe("지난 기록");
     expect(UI_TRANSLATIONS.ko["activity.completedActivities"]).toBe("완료 작업");
     expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');

@@ -56,6 +56,7 @@ export type CanonicalResultProjection<Canonical, Structured> = Readonly<{
 }>;
 
 export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
+  codex_dashboard: 512,
   codex_status: 1_024,
   codex_models: 512,
   codex_settings: 768,
@@ -73,6 +74,7 @@ export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
 } as const);
 
 export const TOOL_STRUCTURED_BYTE_CAPS = Object.freeze({
+  codex_dashboard: 16 * 1_024,
   codex_status: 512 * 1_024,
   codex_models: 256 * 1_024,
   codex_settings: 32 * 1_024,

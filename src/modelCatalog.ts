@@ -57,6 +57,16 @@ export type CodexModelCatalogSnapshot = {
   warning?: string;
 };
 
+export type ModelCatalogChangedEvent = {
+  backendKind: CodexBackendKind;
+  previousFingerprint?: string;
+  snapshot: CodexModelCatalogSnapshot;
+};
+
+export type ModelCatalogListener = (
+  event: ModelCatalogChangedEvent
+) => void | Promise<void>;
+
 export type ModelCatalogOptions = {
   refresh?: boolean;
   backendKind?: CodexBackendKind;
@@ -65,6 +75,7 @@ export type ModelCatalogOptions = {
 export type CodexModelCatalogProvider = {
   getCatalog(options?: ModelCatalogOptions): Promise<CodexModelCatalogSnapshot>;
   getCachedCatalog?(options?: Pick<ModelCatalogOptions, "backendKind">): CodexModelCatalogSnapshot | undefined;
+  subscribe?(listener: ModelCatalogListener): () => void;
 };
 
 type CatalogData = Omit<CodexModelCatalogSnapshot, "cached" | "stale" | "validation" | "warning">;
@@ -152,6 +163,7 @@ const appCatalogSchema = z.object({ data: z.array(appModelSchema) }).passthrough
 export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   private cached?: { data: CatalogData; expiresAt: number };
   private refreshing?: Promise<CatalogData>;
+  private readonly listeners = new Set<ModelCatalogListener>();
 
   constructor(
     private readonly codexCommand: string,
@@ -208,6 +220,16 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
     };
   }
 
+  subscribe(listener: ModelCatalogListener): () => void {
+    this.listeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.listeners.delete(listener);
+    };
+  }
+
   private async refresh(): Promise<CatalogData> {
     if (!this.refreshing) {
       this.refreshing = this.fetchCatalog().finally(() => {
@@ -228,11 +250,24 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       fingerprint: modelCatalogFingerprint(models),
       models
     };
+    const previousFingerprint = this.cached?.data.fingerprint;
     this.cached = {
       data,
       expiresAt: fetchedAtMs + this.cacheTtlMs
     };
     this.persistCache({ version: 1, fetchedAt: data.fetchedAt, raw: stdout });
+    if (previousFingerprint !== data.fingerprint) {
+      emitCatalogChanged(this.listeners, {
+        backendKind: "mcp-server",
+        ...(previousFingerprint ? { previousFingerprint } : {}),
+        snapshot: {
+          ...data,
+          cached: false,
+          stale: false,
+          validation: "valid"
+        }
+      });
+    }
     return data;
   }
 
@@ -372,6 +407,8 @@ type AppServerCatalogLoader = () => Promise<unknown>;
 export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
   private appCached?: { snapshot: CodexModelCatalogSnapshot; expiresAt: number };
   private appFallbackWarning?: string;
+  private readonly listeners = new Set<ModelCatalogListener>();
+  private readonly lastKnownGoodFingerprints = new Map<CodexBackendKind, string>();
 
   constructor(
     private readonly defaultBackend: CodexBackendKind,
@@ -379,11 +416,23 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
     private readonly loadAppServerCatalog: AppServerCatalogLoader,
     private readonly cacheTtlMs = 10 * 60 * 1000,
     private readonly now: () => number = Date.now
-  ) {}
+  ) {
+    const cliCached = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
+    if (cliCached) {
+      this.lastKnownGoodFingerprints.set("mcp-server", cliCached.fingerprint);
+    }
+    this.cliCatalog.subscribe?.((event) => {
+      this.noteLastKnownGood(event.backendKind, event.snapshot);
+    });
+  }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
     const backendKind = options.backendKind || this.defaultBackend;
-    if (backendKind !== "app-server") return this.cliCatalog.getCatalog(options);
+    if (backendKind !== "app-server") {
+      const snapshot = await this.cliCatalog.getCatalog(options);
+      this.noteLastKnownGood(backendKind, snapshot);
+      return snapshot;
+    }
     const now = this.now();
     if (!options.refresh && this.appCached && this.appCached.expiresAt > now) {
       const stale = Boolean(this.appFallbackWarning);
@@ -410,6 +459,7 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
       };
       this.appCached = { snapshot, expiresAt: now + this.cacheTtlMs };
       this.appFallbackWarning = undefined;
+      this.noteLastKnownGood("app-server", snapshot);
       return snapshot;
     } catch (error) {
       if (this.appCached) {
@@ -437,10 +487,14 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
 
   getCachedCatalog(options: Pick<ModelCatalogOptions, "backendKind"> = {}): CodexModelCatalogSnapshot | undefined {
     const backendKind = options.backendKind || this.defaultBackend;
-    if (backendKind !== "app-server") return this.cliCatalog.getCachedCatalog?.(options);
+    if (backendKind !== "app-server") {
+      const snapshot = this.cliCatalog.getCachedCatalog?.(options);
+      if (snapshot) this.rememberLastKnownGood(backendKind, snapshot);
+      return snapshot;
+    }
     if (this.appCached) {
       const stale = Boolean(this.appFallbackWarning) || this.appCached.expiresAt <= this.now();
-      return {
+      const snapshot: CodexModelCatalogSnapshot = {
         ...this.appCached.snapshot,
         cached: true,
         stale,
@@ -452,6 +506,8 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
             }
           : {})
       };
+      this.rememberLastKnownGood("app-server", snapshot);
+      return snapshot;
     }
     const fallback = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
     if (!fallback) return undefined;
@@ -463,14 +519,53 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
         "The cached Codex CLI catalog is an unverified fallback for the App Server backend."
     };
   }
+
+  subscribe(listener: ModelCatalogListener): () => void {
+    this.listeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.listeners.delete(listener);
+    };
+  }
+
+  private noteLastKnownGood(
+    backendKind: CodexBackendKind,
+    snapshot: CodexModelCatalogSnapshot
+  ): void {
+    if (snapshot.stale || snapshot.validation !== "valid") return;
+    const previousFingerprint = this.lastKnownGoodFingerprints.get(backendKind);
+    if (previousFingerprint === snapshot.fingerprint) return;
+    this.lastKnownGoodFingerprints.set(backendKind, snapshot.fingerprint);
+    emitCatalogChanged(this.listeners, {
+      backendKind,
+      ...(previousFingerprint ? { previousFingerprint } : {}),
+      snapshot
+    });
+  }
+
+  private rememberLastKnownGood(
+    backendKind: CodexBackendKind,
+    snapshot: CodexModelCatalogSnapshot
+  ): void {
+    if (!this.lastKnownGoodFingerprints.has(backendKind)) {
+      this.lastKnownGoodFingerprints.set(backendKind, snapshot.fingerprint);
+    }
+  }
 }
 
 export function modelCatalogFingerprint(models: CodexModelDescriptor[]): string {
   const canonical = models.map((model) => ({
     id: model.id,
     catalogId: model.catalogId || null,
+    displayName: model.displayName,
+    description: model.description || null,
     defaultReasoningEffort: model.defaultReasoningEffort || null,
-    supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => entry.effort),
+    supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => ({
+      effort: entry.effort,
+      description: entry.description || null
+    })),
     hidden: model.hidden || false,
     isDefault: model.isDefault || false,
     upgrade: model.upgrade || null,
@@ -481,6 +576,46 @@ export function modelCatalogFingerprint(models: CodexModelDescriptor[]): string 
     inputModalities: model.inputModalities
   }));
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/**
+ * Fingerprint only catalog fields that can change task admission or dispatch.
+ *
+ * The complete catalog fingerprint intentionally includes GPT-facing names,
+ * descriptions, and migration guidance for Settings/UI cache updates. Those
+ * presentation-only changes must not invalidate a request that still selects
+ * the same executable model/effort/service-tier contract.
+ */
+export function modelCatalogAdmissionFingerprint(
+  models: CodexModelDescriptor[]
+): string {
+  const canonical = models.map((model) => ({
+    id: model.id,
+    hidden: model.hidden || false,
+    isDefault: model.isDefault || false,
+    defaultReasoningEffort: model.defaultReasoningEffort || null,
+    supportedReasoningEfforts: model.supportedReasoningEfforts.map(
+      (entry) => entry.effort
+    ),
+    defaultServiceTier: model.defaultServiceTier || null,
+    serviceTiers: model.serviceTiers.map((tier) => tier.id)
+  }));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function emitCatalogChanged(
+  listeners: ReadonlySet<ModelCatalogListener>,
+  event: ModelCatalogChangedEvent
+): void {
+  for (const listener of listeners) {
+    const isolatedEvent = structuredClone(event);
+    try {
+      void Promise.resolve(listener(isolatedEvent)).catch(() => undefined);
+    } catch {
+      // Catalog observation is advisory. A listener must never invalidate a
+      // successful last-known-good refresh or force a stale fallback.
+    }
+  }
 }
 
 async function runCodexCatalogCommand(command: string, args: string[], timeoutMs: number): Promise<string> {

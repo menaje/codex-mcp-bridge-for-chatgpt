@@ -140,6 +140,17 @@ describe("release manifest", () => {
               "codex/uiContractGeneration": 12
             }
           }
+        },
+        dashboard: {
+          html: "<!doctype html><p>dashboard</p>",
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: {
+              prefersBorder: true,
+              csp: { connectDomains: [] },
+              "codex/uiContractGeneration": 6
+            }
+          }
         }
       }
     };
@@ -150,6 +161,7 @@ describe("release manifest", () => {
 
     expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
     expect(semverOnly.resources.activity.uri).toBe(initial.resources.activity.uri);
+    expect(semverOnly.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
 
     const metadataChanged = structuredClone(rendered);
     metadataChanged.resources.settings.metadata.content.prefersBorder = false;
@@ -166,15 +178,21 @@ describe("release manifest", () => {
     expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
   });
 
-  it("retains every immutable Activity revision while pruning unsupported non-Activity generations", () => {
+  it("retains every immutable Activity and Dashboard revision while pruning unsupported Settings generations", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const legacyPolicy = structuredClone(manifest);
-    legacyPolicy.uiResources.minimumContractGeneration = { settings: 3, activity: 4 };
+    legacyPolicy.uiResources.minimumContractGeneration = {
+      settings: 3,
+      activity: 4,
+      dashboard: 1
+    };
     const renderedRevision = (
       settingsHtml: string,
       activityHtml: string,
       settingsGeneration: number,
-      activityGeneration: number
+      activityGeneration: number,
+      dashboardHtml = "dashboard-v1",
+      dashboardGeneration = 1
     ) => ({
       resources: {
         settings: {
@@ -190,6 +208,13 @@ describe("release manifest", () => {
             descriptor: { mimeType: "text/html;profile=mcp-app" },
             content: { "codex/uiContractGeneration": activityGeneration }
           }
+        },
+        dashboard: {
+          html: dashboardHtml,
+          metadata: {
+            descriptor: { mimeType: "text/html;profile=mcp-app" },
+            content: { "codex/uiContractGeneration": dashboardGeneration }
+          }
         }
       }
     });
@@ -198,6 +223,7 @@ describe("release manifest", () => {
     let history = deriveUiResourceManifest(legacyPolicy, rendered);
     const retiredSettingsUri = history.resources.settings.uri;
     const retiredActivityUri = history.resources.activity.uri;
+    const retiredDashboardUri = history.resources.dashboard.uri;
 
     rendered = renderedRevision("settings-v5", "activity-v5", 5, 5);
     history = deriveUiResourceManifest(legacyPolicy, rendered, history);
@@ -215,7 +241,14 @@ describe("release manifest", () => {
     expect(history.resources.activity.previous.length).toBeGreaterThan(5);
 
     const retiredSettingsGeneration6Uri = history.resources.settings.uri;
-    rendered = renderedRevision("settings-v9", "activity-v12-current", 9, 12);
+    rendered = renderedRevision(
+      "settings-v9",
+      "activity-v12-current",
+      9,
+      12,
+      "dashboard-v6-current",
+      6
+    );
     const reconciled = deriveUiResourceManifest(manifest, rendered, history);
     expect(reconciled.resources.settings.previous.map((entry: any) => entry.uri))
       .not.toContain(retiredSettingsUri);
@@ -223,12 +256,17 @@ describe("release manifest", () => {
       .not.toContain(retiredSettingsGeneration6Uri);
     expect(reconciled.resources.activity.previous.map((entry: any) => entry.uri))
       .toContain(retiredActivityUri);
+    expect(reconciled.resources.dashboard.previous.map((entry: any) => entry.uri))
+      .toContain(retiredDashboardUri);
     expect(reconciled.resources.settings.previous.every((entry: any) =>
       entry.metadata.content["codex/uiContractGeneration"] >= 9
     )).toBe(true);
     expect(reconciled.resources.activity.previous.map((entry: any) =>
       entry.metadata.content["codex/uiContractGeneration"]
     )).toEqual(expect.arrayContaining([4, 5, 7]));
+    expect(reconciled.resources.dashboard.previous.map((entry: any) =>
+      entry.metadata.content["codex/uiContractGeneration"]
+    )).toContain(1);
 
     const missingGeneration = structuredClone(rendered);
     delete missingGeneration.resources.settings.metadata.content["codex/uiContractGeneration"];

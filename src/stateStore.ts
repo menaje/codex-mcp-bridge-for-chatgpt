@@ -50,14 +50,16 @@ import {
   PROJECT_SETUP_REQUIRED,
   PROJECT_UNAVAILABLE,
   canonicalProjectCwd,
+  createProjectRef,
   PROJECT_CONTEXT_CONFLICT,
   normalizeProjectId,
   normalizeProjectLabel,
   normalizeProjectName,
+  normalizeProjectRef,
   projectNameKey,
   type ProjectRegistryOperation,
   type ProjectRegistrySnapshot,
-  type ProjectSelection,
+  type RuntimeProjectSelection,
   type ProjectTarget
 } from "./projectRegistry.js";
 import {
@@ -75,7 +77,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "9";
+const CURRENT_SCHEMA_VERSION = "10";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -115,10 +117,28 @@ type JobRowInput = {
   cancellationIntentId?: string;
 };
 
+export type DashboardRetainedJobSummary = {
+  jobId: string;
+  scopeId: string;
+  activityId: string;
+  agentId?: string;
+  backendKind?: string;
+  status: string;
+  createdAt?: number;
+  updatedAt: number;
+  execution?: {
+    model: string;
+    reasoningEffort: string;
+    reroutedModel?: string;
+  };
+};
+
 type JsonRow = { payload: string };
 type CountRow = { count: number };
 type ProjectStorageRow = {
   project_id: string;
+  project_ref: string;
+  project_revision: number;
   name: string;
   name_key: string;
   cwd: string;
@@ -127,6 +147,7 @@ type ProjectStorageRow = {
   updated_at: number;
   archived_at: number | null;
 };
+type LegacyProjectStorageRow = Omit<ProjectStorageRow, "project_ref" | "project_revision">;
 type ProjectRegistryStorageRow = {
   registry_revision: number;
   updated_at: number;
@@ -422,6 +443,7 @@ export class BridgeStateStore {
       existingVersion !== "6" &&
       existingVersion !== "7" &&
       existingVersion !== "8" &&
+      existingVersion !== "9" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -439,6 +461,7 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "6") this.migrateV6ToV7();
       if (this.getMeta("schema_version") === "7") this.migrateV7ToV8();
       if (this.getMeta("schema_version") === "8") this.migrateV8ToV9();
+      if (this.getMeta("schema_version") === "9") this.migrateV9ToV10();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -562,6 +585,53 @@ export class BridgeStateStore {
       .map((row) => hydrateJobPayload(row as JobStorageRow));
   }
 
+  /**
+   * Returns only the bounded, result-free fields needed by the global
+   * dashboard after ordinary retained jobs have been pruned. Older archived
+   * rows may not have a start time or execution selection; callers must not
+   * infer those values from the agent's current session.
+   */
+  listDashboardRetainedJobs(limit = 10_000): DashboardRetainedJobSummary[] {
+    const boundedLimit = Math.max(0, Math.min(100_000, Math.floor(limit)));
+    if (boundedLimit === 0) return [];
+    const rows = this.database
+      .prepare(`
+        SELECT job_id, scope_id, activity_id, agent_id, backend_kind,
+               status, updated_at, payload
+          FROM jobs
+         WHERE archived_at IS NOT NULL
+         ORDER BY updated_at DESC, job_id DESC
+         LIMIT ?
+      `)
+      .all(boundedLimit) as Array<{
+        job_id: string;
+        scope_id: string;
+        activity_id: string;
+        agent_id: string | null;
+        backend_kind: string | null;
+        status: string;
+        updated_at: number;
+        payload: string;
+      }>;
+    return rows.map((row) => {
+      const payload = parsePayload({ payload: row.payload }, "archived dashboard job");
+      const summary = isRecord(payload) ? payload : {};
+      const createdAt = finiteNumber(summary.createdAt);
+      const execution = readDashboardRetainedExecution(summary);
+      return {
+        jobId: row.job_id,
+        scopeId: row.scope_id,
+        activityId: row.activity_id,
+        ...(row.agent_id ? { agentId: row.agent_id } : {}),
+        ...(row.backend_kind ? { backendKind: row.backend_kind } : {}),
+        status: row.status,
+        ...(createdAt !== undefined ? { createdAt } : {}),
+        updatedAt: Number(row.updated_at),
+        ...(execution ? { execution } : {})
+      };
+    });
+  }
+
   upsertJob(job: JobRowInput): void {
     this.transaction(() => this.upsertJobInternal(job));
   }
@@ -570,7 +640,8 @@ export class BridgeStateStore {
     this.transaction(() => {
       const row = this.database
         .prepare(`
-          SELECT job_id, scope_id, request_id, status, updated_at, activity_id, terminal_version
+          SELECT job_id, scope_id, request_id, status, updated_at, activity_id,
+                 terminal_version, payload
             FROM jobs
            WHERE job_id = ? AND archived_at IS NULL
         `)
@@ -583,11 +654,16 @@ export class BridgeStateStore {
             updated_at: number;
             activity_id: string;
             terminal_version: number | null;
+            payload: string;
           }
         | undefined;
       if (!row) return;
       const now = Date.now();
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
+      const payload = parsePayload({ payload: row.payload }, "job");
+      const dashboardFields = isRecord(payload)
+        ? retainedDashboardJobFields(payload)
+        : {};
       const retainedSummary = {
         jobId: row.job_id,
         scopeId: row.scope_id,
@@ -596,6 +672,7 @@ export class BridgeStateStore {
         status: row.status,
         updatedAt: row.updated_at,
         terminalVersion: row.terminal_version || undefined,
+        ...dashboardFields,
         archivedAt: now,
         resultOmitted: true
       };
@@ -2284,7 +2361,7 @@ export class BridgeStateStore {
     if (!registry) throw new Error("Project registry metadata is missing.");
     const rows = this.database
       .prepare(`
-        SELECT project_id, name, name_key, cwd, sort_order,
+        SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
                created_at, updated_at, archived_at
           FROM projects
          ORDER BY sort_order ASC, created_at ASC, project_id ASC
@@ -2314,39 +2391,69 @@ export class BridgeStateStore {
     }
   }
 
-  /**
-   * Runtime authority for fresh admission. Revision is checked before name
-   * lookup so an old name can never be reinterpreted after rename/reuse.
-   */
+  /** Runtime authority for fresh admission, including legacy cached descriptors. */
   resolveProjectSelection(
-    selection: ProjectSelection,
+    selection: RuntimeProjectSelection,
     allowedRoots: readonly string[]
   ): ProjectTarget {
     return this.transaction(() => {
-      const registryRevision = this.getProjectRegistryRevision();
-      if (
-        !selection ||
-        !Number.isInteger(selection.registryRevision) ||
-        selection.registryRevision < 0 ||
-        selection.registryRevision !== registryRevision
-      ) {
-        throw new Error(
-          `${PROJECT_REGISTRY_CHANGED}: Project choices changed. Refresh the tool descriptor and retry.`
-        );
+      let project: ProjectTarget;
+      if ("registryRevision" in selection) {
+        const registryRevision = this.getProjectRegistryRevision();
+        if (
+          !Number.isInteger(selection.registryRevision) ||
+          selection.registryRevision < 0 ||
+          selection.registryRevision !== registryRevision
+        ) {
+          throw new Error(
+            `${PROJECT_REGISTRY_CHANGED}: Project choices changed. Refresh the tool descriptor and retry.`
+          );
+        }
+        const nameKey = projectNameKey(selection.name);
+        const rows = this.database
+          .prepare(`
+            SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
+                   created_at, updated_at, archived_at
+              FROM projects
+             WHERE name_key = ? AND archived_at IS NULL
+          `)
+          .all(nameKey) as ProjectStorageRow[];
+        if (rows.length !== 1) {
+          throw new Error(`${PROJECT_NOT_FOUND}: No active project has that exact normalized name.`);
+        }
+        project = readProjectStorageRow(rows[0] as ProjectStorageRow);
+      } else {
+        const projectRef = normalizeProjectRef(selection.projectRef);
+        const row = this.database
+          .prepare(`
+            SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
+                   created_at, updated_at, archived_at
+              FROM projects
+             WHERE project_ref = ?
+          `)
+          .get(projectRef) as ProjectStorageRow | undefined;
+        if (!row) {
+          throw new Error(`${PROJECT_NOT_FOUND}: Unknown project selection reference.`);
+        }
+        project = readProjectStorageRow(row);
+        if (
+          !Number.isInteger(selection.projectRevision) ||
+          selection.projectRevision < 1 ||
+          selection.projectRevision !== project.projectRevision
+        ) {
+          throw new Error(
+            `${PROJECT_REGISTRY_CHANGED}: The selected project changed. Refresh the tool descriptor and retry.`
+          );
+        }
+        if (normalizeProjectName(selection.name) !== project.name) {
+          throw new Error(
+            `${PROJECT_REGISTRY_CHANGED}: The selected project name changed. Refresh the tool descriptor and retry.`
+          );
+        }
+        if (project.archivedAt !== undefined) {
+          throw new Error(`${PROJECT_NOT_FOUND}: The selected project is archived.`);
+        }
       }
-      const nameKey = projectNameKey(selection.name);
-      const rows = this.database
-        .prepare(`
-          SELECT project_id, name, name_key, cwd, sort_order,
-                 created_at, updated_at, archived_at
-            FROM projects
-           WHERE name_key = ? AND archived_at IS NULL
-        `)
-        .all(nameKey) as ProjectStorageRow[];
-      if (rows.length !== 1) {
-        throw new Error(`${PROJECT_NOT_FOUND}: No active project has that exact normalized name.`);
-      }
-      const project = readProjectStorageRow(rows[0] as ProjectStorageRow);
       let canonical: string;
       try {
         canonical = canonicalProjectCwd(project.cwd, allowedRoots);
@@ -2398,6 +2505,7 @@ export class BridgeStateStore {
       }
 
       let changed = false;
+      const changedProjectIds = new Set<string>();
       for (const operation of operations) {
         if (operation.kind === "add") {
           const count = Number((this.database
@@ -2412,6 +2520,7 @@ export class BridgeStateStore {
           const nameKey = projectNameKey(name);
           const cwd = canonicalProjectCwd(operation.project.cwd, allowedRoots);
           const projectId = randomUUID();
+          const projectRef = createProjectRef();
           this.assertActiveProjectUniqueness(nameKey, cwd);
           this.assertProjectCwdReusable(cwd, projectId);
           const maxSort = this.database
@@ -2420,11 +2529,20 @@ export class BridgeStateStore {
           this.database
             .prepare(`
               INSERT INTO projects(
-                project_id, name, name_key, cwd, sort_order,
+                project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
                 created_at, updated_at, archived_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+              ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, NULL)
             `)
-            .run(projectId, name, nameKey, cwd, (maxSort.value ?? -1) + 1, now, now);
+            .run(
+              projectId,
+              projectRef,
+              name,
+              nameKey,
+              cwd,
+              (maxSort.value ?? -1) + 1,
+              now,
+              now
+            );
           changed = true;
           continue;
         }
@@ -2467,6 +2585,7 @@ export class BridgeStateStore {
               .prepare("UPDATE projects SET name = ?, name_key = ?, updated_at = ? WHERE project_id = ?")
               .run(name, nameKey, now, projectId);
             changed = true;
+            changedProjectIds.add(projectId);
           }
           continue;
         }
@@ -2482,6 +2601,7 @@ export class BridgeStateStore {
               .prepare("UPDATE projects SET cwd = ?, updated_at = ? WHERE project_id = ?")
               .run(cwd, now, projectId);
             changed = true;
+            changedProjectIds.add(projectId);
           }
           continue;
         }
@@ -2491,6 +2611,7 @@ export class BridgeStateStore {
               .prepare("UPDATE projects SET archived_at = ?, updated_at = ? WHERE project_id = ?")
               .run(now, now, projectId);
             changed = true;
+            changedProjectIds.add(projectId);
           }
           continue;
         }
@@ -2514,9 +2635,16 @@ export class BridgeStateStore {
           `)
           .run(name, nameKey, cwd, now, projectId);
         changed = true;
+        changedProjectIds.add(projectId);
       }
 
       if (changed) {
+        const bumpProjectRevision = this.database.prepare(`
+          UPDATE projects
+             SET project_revision = project_revision + 1
+           WHERE project_id = ?
+        `);
+        for (const projectId of changedProjectIds) bumpProjectRevision.run(projectId);
         this.database
           .prepare(`
             UPDATE project_registry
@@ -2544,18 +2672,24 @@ export class BridgeStateStore {
       }
       for (const project of snapshot.projects) {
         const projectId = normalizeProjectId(project.id);
+        const projectRef = normalizeProjectRef(project.projectRef);
+        if (!Number.isInteger(project.projectRevision) || project.projectRevision < 1) {
+          throw new Error("Invalid project revision in import.");
+        }
         const name = normalizeProjectName(project.name);
         const nameKey = projectNameKey(name);
         if (project.nameKey !== nameKey) throw new Error("Invalid project name key in import.");
         this.database
           .prepare(`
             INSERT INTO projects(
-              project_id, name, name_key, cwd, sort_order,
+              project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
               created_at, updated_at, archived_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
           .run(
             projectId,
+            projectRef,
+            project.projectRevision,
             name,
             nameKey,
             project.cwd,
@@ -2578,7 +2712,7 @@ export class BridgeStateStore {
   private requireProjectStorageRow(projectId: string): ProjectStorageRow {
     const row = this.database
       .prepare(`
-        SELECT project_id, name, name_key, cwd, sort_order,
+        SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
                created_at, updated_at, archived_at
           FROM projects WHERE project_id = ?
       `)
@@ -3542,9 +3676,77 @@ export class BridgeStateStore {
           ON steering_deliveries(status, updated_at DESC);
       `);
       const now = Date.now();
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "9");
       this.setMeta("schema_v9_migrated_at", new Date(now).toISOString());
     });
+  }
+
+  private migrateV9ToV10(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        const rows = this.database
+          .prepare(`
+            SELECT project_id, name, name_key, cwd, sort_order,
+                   created_at, updated_at, archived_at
+              FROM projects
+             ORDER BY sort_order ASC, created_at ASC, project_id ASC
+          `)
+          .all() as LegacyProjectStorageRow[];
+        this.database.exec(`
+          CREATE TABLE projects_v10 (
+            project_id TEXT PRIMARY KEY,
+            project_ref TEXT NOT NULL UNIQUE,
+            project_revision INTEGER NOT NULL CHECK(project_revision >= 1),
+            name TEXT NOT NULL,
+            name_key TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            archived_at INTEGER
+          ) STRICT;
+        `);
+        const insert = this.database.prepare(`
+          INSERT INTO projects_v10(
+            project_id, project_ref, project_revision, name, name_key, cwd,
+            sort_order, created_at, updated_at, archived_at
+          ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const row of rows) {
+          insert.run(
+            row.project_id,
+            createProjectRef(),
+            row.name,
+            row.name_key,
+            row.cwd,
+            row.sort_order,
+            row.created_at,
+            row.updated_at,
+            row.archived_at
+          );
+        }
+        this.database.exec(`
+          DROP TABLE projects;
+          ALTER TABLE projects_v10 RENAME TO projects;
+          CREATE UNIQUE INDEX projects_active_name
+            ON projects(name_key) WHERE archived_at IS NULL;
+          CREATE UNIQUE INDEX projects_active_cwd
+            ON projects(cwd) WHERE archived_at IS NULL;
+          CREATE INDEX projects_ordered
+            ON projects(archived_at, sort_order, created_at);
+        `);
+        const now = Date.now();
+        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_v10_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+    const violations = this.database.pragma("foreign_key_check") as unknown[];
+    if (violations.length > 0) {
+      throw new Error("Bridge state schema v10 migration produced foreign-key violations.");
+    }
   }
 
   private registerBridgeInstance(): void {
@@ -4894,6 +5096,10 @@ function readTransportObservationRow(row: Record<string, unknown>): TransportObs
 
 function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
   const id = normalizeProjectId(row.project_id);
+  const projectRef = normalizeProjectRef(row.project_ref);
+  if (!Number.isInteger(row.project_revision) || row.project_revision < 1) {
+    throw new Error(`${PROJECT_REGISTRY_CHANGED}: Stored project revision is invalid.`);
+  }
   const name = normalizeProjectName(row.name);
   const nameKey = projectNameKey(name);
   if (row.name_key !== nameKey) {
@@ -4901,6 +5107,8 @@ function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
   }
   return {
     id,
+    projectRef,
+    projectRevision: row.project_revision,
     name,
     label: name,
     nameKey,
@@ -5270,6 +5478,47 @@ function readNestedThreadId(payload: Record<string, unknown>): string | undefine
   if (direct) return direct;
   const decision = payload.sessionDecision;
   return isRecord(decision) ? normalizeOptionalString(decision.threadId) : undefined;
+}
+
+function readDashboardRetainedExecution(
+  payload: Record<string, unknown>
+): DashboardRetainedJobSummary["execution"] | undefined {
+  const retainedExecution = isRecord(payload.execution) ? payload.execution : undefined;
+  const decision = isRecord(payload.executionDecision) ? payload.executionDecision : undefined;
+  const selection = decision && isRecord(decision.effectiveSelection)
+    ? decision.effectiveSelection
+    : retainedExecution;
+  const model = selection && normalizeOptionalString(selection.model);
+  const reasoningEffort = selection && normalizeOptionalString(selection.reasoningEffort);
+  if (!model || !reasoningEffort) return undefined;
+
+  let reroutedModel = retainedExecution && normalizeOptionalString(retainedExecution.reroutedModel);
+  if (!reroutedModel && Array.isArray(payload.publicEvents)) {
+    for (let index = payload.publicEvents.length - 1; index >= 0; index -= 1) {
+      const event = payload.publicEvents[index];
+      if (!isRecord(event) || event.type !== "model" || !isRecord(event.details)) continue;
+      if (event.details.kind !== "rerouted") continue;
+      reroutedModel = normalizeOptionalString(event.details.toModel);
+      if (reroutedModel) break;
+    }
+  }
+  if (reroutedModel === model) reroutedModel = undefined;
+  return {
+    model,
+    reasoningEffort,
+    ...(reroutedModel ? { reroutedModel } : {})
+  };
+}
+
+function retainedDashboardJobFields(
+  payload: Record<string, unknown>
+): Pick<DashboardRetainedJobSummary, "createdAt" | "execution"> | Record<string, never> {
+  const createdAt = finiteNumber(payload.createdAt);
+  const execution = readDashboardRetainedExecution(payload);
+  return {
+    ...(createdAt !== undefined ? { createdAt } : {}),
+    ...(execution ? { execution } : {})
+  };
 }
 
 function finiteNumber(value: unknown): number | undefined {

@@ -68,11 +68,13 @@
     "hashLength": 12,
     "minimumContractGeneration": {
       "settings": 9,
-      "activity": 12
+      "activity": 12,
+      "dashboard": 6
     },
     "resources": [
       "settings",
-      "activity"
+      "activity",
+      "dashboard"
     ]
   },
   "release": {

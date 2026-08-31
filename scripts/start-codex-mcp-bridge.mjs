@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
-import { parseLauncherArgs } from "./launcher-options.mjs";
+import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
 import {
   loadRuntimeEnvFile,
   resolveRuntimeEnvFile,
@@ -25,6 +25,8 @@ const runtimeEnvLoaded = args.help
       required: Boolean(args.envFile || process.env.CODEX_MCP_BRIDGE_ENV_FILE)
     });
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
+const tunnelTransport =
+  args.transport || process.env.CODEX_MCP_BRIDGE_TUNNEL_TRANSPORT || "http";
 const port = String(args.port || process.env.CODEX_MCP_BRIDGE_PORT || "8876");
 const host = "127.0.0.1";
 const localOriginUrl = `http://${host}:${port}`;
@@ -45,6 +47,12 @@ async function main() {
   if (mode !== "local" && mode !== "secure") {
     throw new Error(`Unknown mode: ${mode}. Use local or secure.`);
   }
+  if (tunnelTransport !== "http" && tunnelTransport !== "stdio") {
+    throw new Error(`Unknown transport: ${tunnelTransport}. Use http or stdio.`);
+  }
+  if (mode === "local" && tunnelTransport === "stdio") {
+    throw new Error("Local stdio uses npm run dev:stdio or npm run start:stdio directly.");
+  }
   if (runtimeEnvLoaded) console.log(`Loaded runtime environment from ${runtimeEnvFile}.`);
   const secureTunnelEnvironment =
     mode === "secure"
@@ -58,8 +66,10 @@ async function main() {
       : undefined;
   ensurePrerequisites();
   ensureBuilt();
-  startBridge();
-  await waitForHealth(`${localOriginUrl}/healthz`);
+  if (tunnelTransport === "http") {
+    startBridge();
+    await waitForHealth(`${localOriginUrl}/healthz`);
+  }
 
   if (mode === "local") {
     console.log(`Local MCP endpoint: ${localMcpUrl}`);
@@ -81,9 +91,10 @@ function ensurePrerequisites() {
 }
 
 function ensureBuilt() {
-  const cliPath = resolve(repoRoot, "dist/cli.js");
-  if (args.noBuild && buildMatchesSource(cliPath)) return;
-  if (args.noBuild && existsSync(cliPath)) {
+  const outputPaths = requiredBuildOutputs(tunnelTransport)
+    .map((output) => resolve(repoRoot, output));
+  if (args.noBuild && buildMatchesSource(outputPaths)) return;
+  if (args.noBuild && outputPaths.every((outputPath) => existsSync(outputPath))) {
     console.log("Built output does not match the current source; rebuilding before startup.");
   } else if (args.noBuild) {
     console.log("Built output is missing; building once before startup.");
@@ -94,8 +105,8 @@ function ensureBuilt() {
   }
 }
 
-function buildMatchesSource(cliPath) {
-  if (!existsSync(cliPath)) return false;
+function buildMatchesSource(outputPaths) {
+  if (!outputPaths.every((outputPath) => existsSync(outputPath))) return false;
   try {
     const buildInfo = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
     return buildInfo.sourceHash === computeSourceHash(repoRoot);
@@ -106,29 +117,42 @@ function buildMatchesSource(cliPath) {
 
 async function startSecureTunnel({ tunnelId }) {
   const tunnelClient = args.tunnelClient || process.env.TUNNEL_CLIENT || defaultTunnelClient();
-  const profile = args.profile || process.env.TUNNEL_CLIENT_PROFILE || "codex-mcp-bridge";
+  const profile = args.profile || process.env.TUNNEL_CLIENT_PROFILE ||
+    (tunnelTransport === "stdio" ? "codex-mcp-bridge-stdio" : "codex-mcp-bridge");
+  const endpointArguments = tunnelTransport === "stdio"
+    ? [
+        "--sample",
+        "sample_mcp_stdio_local",
+        "--mcp-command",
+        stdioBridgeCommand()
+      ]
+    : [
+        "--sample",
+        "sample_mcp_remote_no_auth",
+        "--mcp-server-url",
+        localMcpUrl,
+        "--health-listen-addr",
+        "127.0.0.1:0"
+      ];
+  const childEnvironment = bridgeEnvironment();
   const init = spawnSync(
     tunnelClient,
     [
       "init",
-      "--sample",
-      "sample_mcp_remote_no_auth",
       "--profile",
       profile,
       "--tunnel-id",
       tunnelId,
-      "--mcp-server-url",
-      localMcpUrl,
+      ...endpointArguments,
       "--force",
-      "--health-listen-addr",
-      "127.0.0.1:0"
     ],
-    { cwd: repoRoot, stdio: "inherit" }
+    { cwd: repoRoot, env: childEnvironment, stdio: "inherit" }
   );
   if (init.status !== 0) throw new Error("tunnel-client init failed.");
 
   const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
+    env: childEnvironment,
     encoding: "utf8"
   });
   if (doctor.stdout) process.stdout.write(doctor.stdout);
@@ -153,8 +177,10 @@ async function startSecureTunnel({ tunnelId }) {
     controlPlaneInflight,
     "--log.level",
     logLevel
-  ]);
-  console.log(`Secure MCP Tunnel is running with profile ${profile}.`);
+  ], { env: childEnvironment });
+  console.log(
+    `Secure MCP Tunnel is running with profile ${profile} over ${tunnelTransport}.`
+  );
   console.log(
     `Tunnel limits: ${mcpConcurrency} active MCP requests, ${controlPlaneInflight} buffered control-plane requests.`
   );
@@ -163,6 +189,12 @@ async function startSecureTunnel({ tunnelId }) {
 }
 
 function startBridge() {
+  return spawnChild("node", [resolve(repoRoot, "dist/cli.js")], {
+    env: bridgeEnvironment()
+  });
+}
+
+function bridgeEnvironment() {
   const env = {
     ...process.env,
     CODEX_MCP_BRIDGE_HOST: host,
@@ -183,7 +215,17 @@ function startBridge() {
   } else {
     env.CODEX_MCP_BRIDGE_DEFAULT_SANDBOX = "read-only";
   }
-  return spawnChild("node", [resolve(repoRoot, "dist/cli.js")], { env });
+  return env;
+}
+
+function stdioBridgeCommand() {
+  return [process.execPath, resolve(repoRoot, "dist/stdio.js")]
+    .map(shellQuote)
+    .join(" ");
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
 function spawnChild(command, childArgs, options = {}) {
@@ -243,6 +285,7 @@ Options:
   --write                Enable workspace-write for this process.
   --allow-write          Keep read-only as the default, but allow explicit workspace-write calls.
   --allow-full-access    Keep read-only as the default, but allow workspace-write and danger-full-access calls.
+  --transport <kind>     Secure Tunnel MCP transport: http (default) or stdio.
   --env-file <path>      Dotenv file. Defaults to ~/.config/codex-mcp-bridge/.env.
   --tunnel-id <id>       OpenAI Secure MCP Tunnel id.
   --profile <name>       tunnel-client profile name.

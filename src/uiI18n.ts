@@ -69,7 +69,7 @@ const ENGLISH = {
   "settings.preferredModel": "Default model when GPT does not choose",
   "settings.preferredEffort": "Default reasoning effort when GPT does not choose",
   "settings.preferred.none": "Use the Codex default when GPT does not choose",
-  "settings.automaticNotice": "GPT chooses a model and reasoning effort from this range based on the task requirements. The configured default is used only when GPT omits a selection and is not a recommendation. Priority is applied separately by the bridge. Choosing all available models and efforts automatically includes newly added options.",
+  "settings.automaticNotice": "GPT chooses a model and reasoning effort from this range based on the task requirements. One exact default pair must also be saved; it is used only when GPT omits a selection and is not exposed as a recommendation. Continue and fork inherit the retained thread when GPT omits selection. Priority is applied separately by the bridge. Choosing all available models and efforts automatically includes newly added options.",
   "settings.catalogStatus.valid": "Model catalog valid",
   "settings.catalogStatus.lastKnownGood": "Model catalog using last known good data",
   "settings.catalogStatus.invalid": "Model catalog unavailable",
@@ -123,6 +123,7 @@ const ENGLISH = {
   "settings.resetHint": "Restores access, model, Codex-app thread visibility, interface, concurrency, and Activity settings. Projects and their order are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
+  "settings.developerModeRefreshRequired": "Saved and active. This deployment also changed the static tool contract; refresh the ChatGPT developer-mode connection once to adopt it.",
   "settings.refreshing": "Retrying model lookup…",
   "settings.refreshed": "Model list loaded.",
   "settings.resetting": "Restoring…",
@@ -163,12 +164,13 @@ const ENGLISH = {
   "activity.attention": "Needs attention",
   "activity.verification": "Ready for verification",
   "activity.failed": "Failed",
+  "activity.previousFailures": "Previous failures: {count}",
   "activity.empty": "No activities in this conversation yet.",
-  "activity.forceStop": "Force stop…",
-  "activity.forceConfirmTitle": "Force-stop Codex?",
+  "activity.forceStop": "Force-stop Agent work…",
+  "activity.forceConfirmTitle": "Force-stop this Agent's current work?",
   "activity.forceConfirm": "This sends TERM and automatically escalates to KILL for the exact tracked worker process group. Shared-worker jobs may be interrupted, and filesystem changes are not rolled back.",
-  "activity.forceStopping": "Force-stopping…",
-  "activity.forceStopped": "Worker termination was confirmed.",
+  "activity.forceStopping": "Force-stopping Agent work…",
+  "activity.forceStopped": "Agent work termination was confirmed.",
   "activity.viewDetails": "View details",
   "activity.hideDetails": "Hide details",
   "activity.updated": "Updated",
@@ -222,7 +224,89 @@ const ENGLISH = {
   "lifecycle.open": "Open", "lifecycle.sealed": "Sealed", "lifecycle.terminating": "Terminating", "lifecycle.completed": "Completed", "lifecycle.cancelled": "Cancelled", "lifecycle.abandoned": "Abandoned",
   "waiting.none": "No pending owner", "waiting.codex": "Waiting for Codex", "waiting.orchestrator": "Work complete", "waiting.user": "Waiting for user", "waiting.verification": "Waiting for verification",
   "verification.not-required": "Verification not required", "verification.pending": "Verification pending", "verification.verifying": "Verifying", "verification.verified": "Verified", "verification.failed": "Verification failed",
-  "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled"
+  "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled",
+  "dashboard.title": "Codex overview",
+  "dashboard.restoreFailed": "This client could not restore the card. Ask ChatGPT in this conversation to open the Codex overview again.",
+  "dashboard.scopeNotice": "Conversations currently known to this personal bridge through retained Jobs, Agents, or threads; not all ChatGPT history.",
+  "dashboard.runtimeOnly": "Status comes only from Codex runtime evidence. Recent App Server process state uses bounded read-only probes; refresh is not a live health check of every historical thread. GPT verification and completion judgment are excluded.",
+  "dashboard.projects": "Tracked projects",
+  "dashboard.conversations": "Tracked conversations",
+  "dashboard.running": "Running",
+  "dashboard.attention": "Attention states",
+  "dashboard.backgroundProcesses": "Confirmed background processes",
+  "dashboard.idleAgents": "Idle agents",
+  "dashboard.viewMode": "View grouping",
+  "dashboard.view.project": "By project",
+  "dashboard.view.conversation": "By conversation",
+  "dashboard.view.status": "By status",
+  "dashboard.projectCurrent": "Active and recent projects",
+  "dashboard.noProjects": "No active or recent projects on this page.",
+  "dashboard.idleProjects": "Idle projects",
+  "dashboard.noIdleProjects": "No idle projects on this page.",
+  "dashboard.projectCount": "{count} projects",
+  "dashboard.conversationCurrent": "Active and recent GPT conversations",
+  "dashboard.noConversations": "No active or recent GPT conversations on this page.",
+  "dashboard.idleConversations": "Idle GPT conversations",
+  "dashboard.noIdleConversations": "No idle GPT conversations on this page.",
+  "dashboard.conversationCount": "{count} conversations",
+  "dashboard.summary.attention": "Attention {count}",
+  "dashboard.summary.active": "Active {count}",
+  "dashboard.summary.running": "Running {count}",
+  "dashboard.summary.recent": "Recent {count}",
+  "dashboard.summary.idle": "Idle {count}",
+  "dashboard.active": "Active Codex work",
+  "dashboard.noActive": "No active Codex work.",
+  "dashboard.recent": "Recent Codex turn outcomes",
+  "dashboard.noRecent": "No recent Codex turn outcomes.",
+  "dashboard.idle": "Idle Codex agents",
+  "dashboard.noIdle": "No idle Codex agents.",
+  "dashboard.loadMore": "Show more",
+  "dashboard.previous": "Previous",
+  "dashboard.next": "Next",
+  "dashboard.page": "{current} / {total}",
+  "dashboard.updated": "Refreshed {time}",
+  "dashboard.activeTruncated": "Some active or recovery rows are omitted from this bounded view.",
+  "dashboard.runtimeUnknown": "Runtime or process state was unavailable for {count} agents.",
+  "dashboard.runtimeProbeSkipped": "{count} App Server agents were not probed because a safe non-loading probe was unavailable or the bounded limit was reached.",
+  "dashboard.backgroundProcessCount": "{count} background processes",
+  "dashboard.jobFallback": "Codex job",
+  "dashboard.unknownProject": "Project unavailable",
+  "dashboard.conversation": "GPT conversation",
+  "dashboard.openConversation": "Open conversation",
+  "dashboard.agentCount": "{count} agents",
+  "dashboard.agentShownCount": "Showing {count} on this page",
+  "dashboard.lastActivity": "Last activity {relative}",
+  "dashboard.sectionCount": "{conversations} conversations · {agents} agents",
+  "dashboard.idleAgentDisclosure": "Show {count} idle agents",
+  "dashboard.idleConversationDisclosure": "Show {conversations} idle conversations · {agents} agents",
+  "dashboard.history.show": "Show history ({count})",
+  "dashboard.history.hide": "Hide history ({count})",
+  "dashboard.history.showPartial": "Show history ({shown} of {count})",
+  "dashboard.history.hidePartial": "Hide history ({shown} of {count})",
+  "dashboard.execution.current": "Current selection: {execution}",
+  "dashboard.duration.seconds": "{count}s",
+  "dashboard.duration.minutes": "{count}m",
+  "dashboard.duration.hours": "{count}h",
+  "dashboard.duration.days": "{count}d",
+  "dashboard.time.active": "Running {duration}",
+  "dashboard.time.updated": "Last status update {relative}",
+  "dashboard.time.duration": "Took {duration}",
+  "dashboard.time.durationUnknown": "Duration unavailable",
+  "dashboard.time.terminal": "{status} {relative}",
+  "dashboard.refreshFailedRetained": "Refresh failed; showing the last loaded snapshot.",
+  "dashboard.status.running": "Running",
+  "dashboard.status.background-process-running": "Background process running",
+  "dashboard.status.input-required": "Input required",
+  "dashboard.status.approval-required": "Approval required",
+  "dashboard.status.terminating": "Terminating",
+  "dashboard.status.termination-failed": "Termination failed",
+  "dashboard.status.liveness-unknown": "Liveness unknown",
+  "dashboard.status.completed": "Codex turn completed",
+  "dashboard.status.failed": "Failed",
+  "dashboard.status.interrupted": "Interrupted",
+  "dashboard.status.cancelled": "Cancelled",
+  "dashboard.status.idle": "Idle",
+  "dashboard.status.orphaned": "Thread unavailable"
 } as const;
 
 type UiTranslationKey = keyof typeof ENGLISH;
@@ -232,6 +316,7 @@ const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationB
   ko: {
     "settings.usePriority": "Priority 빠른 처리 사용",
     "settings.usePriorityHint": "Codex 호출 시 브리지가 내부적으로 적용합니다. GPT는 모델과 추론 에포트만 선택합니다.",
+    "settings.developerModeRefreshRequired": "저장되어 즉시 반영되었습니다. 이 배포에서 정적 도구 계약도 변경되었으므로 ChatGPT 개발자 모드 연결을 한 번 새로고침해 적용하세요.",
     "settings.language": "인터페이스 언어", "settings.language.auto": "자동", "settings.languageHint": "자동은 호스트 앱의 언어를 따릅니다.",
     "common.loading": "불러오는 중…", "common.refresh": "새로고침", "common.cancel": "취소", "common.confirm": "확인", "common.error": "요청에 실패했습니다.",
     "settings.title": "Codex Bridge 설정", "settings.scope": "이 브리지 연결을 사용하는 모든 대화에 공유됩니다.", "settings.access": "접근 전략", "settings.access.readOnly": "항상 읽기 전용", "settings.access.adaptive": "GPT가 작업별 판단", "settings.access.full": "항상 전체 접근", "settings.access.readOnlyHint": "모든 새 작업을 읽기 전용으로 고정합니다.", "settings.access.adaptiveHint": "GPT가 허용된 범위 안에서 읽기 전용·작업공간 쓰기·전체 접근을 판단합니다.", "settings.access.fullHint": "모든 새 작업을 danger-full-access로 고정합니다.", "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다.",
@@ -863,6 +948,65 @@ const BACKGROUND_PROCESS_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Par
   }
 };
 
+const CURRENT_WORK_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
+  ko: {
+    "activity.previousFailures": "이전 실패 {count}건",
+    "activity.forceStop": "에이전트 강제 종료…",
+    "activity.forceConfirmTitle": "에이전트의 현재 작업을 강제 종료할까요?",
+    "activity.forceStopping": "에이전트 강제 종료 중…",
+    "activity.forceStopped": "에이전트의 현재 작업 종료를 확인했습니다."
+  },
+  ja: {
+    "activity.previousFailures": "以前の失敗 {count} 件",
+    "activity.forceStop": "エージェントの作業を強制終了…",
+    "activity.forceConfirmTitle": "このエージェントの現在の作業を強制終了しますか？",
+    "activity.forceStopping": "エージェントの作業を強制終了中…",
+    "activity.forceStopped": "エージェントの作業終了を確認しました。"
+  },
+  "zh-Hans": {
+    "activity.previousFailures": "之前失败 {count} 次",
+    "activity.forceStop": "强制停止智能体任务…",
+    "activity.forceConfirmTitle": "强制停止此智能体的当前任务？",
+    "activity.forceStopping": "正在强制停止智能体任务…",
+    "activity.forceStopped": "已确认智能体任务终止。"
+  },
+  "zh-Hant": {
+    "activity.previousFailures": "先前失敗 {count} 次",
+    "activity.forceStop": "強制停止代理程式工作…",
+    "activity.forceConfirmTitle": "強制停止此代理程式目前的工作？",
+    "activity.forceStopping": "正在強制停止代理程式工作…",
+    "activity.forceStopped": "已確認代理程式工作終止。"
+  },
+  es: {
+    "activity.previousFailures": "Fallos anteriores: {count}",
+    "activity.forceStop": "Forzar detención del trabajo del agente…",
+    "activity.forceConfirmTitle": "¿Forzar la detención del trabajo actual de este agente?",
+    "activity.forceStopping": "Deteniendo por la fuerza el trabajo del agente…",
+    "activity.forceStopped": "Se confirmó la finalización del trabajo del agente."
+  },
+  fr: {
+    "activity.previousFailures": "Échecs précédents : {count}",
+    "activity.forceStop": "Forcer l’arrêt du travail de l’agent…",
+    "activity.forceConfirmTitle": "Forcer l’arrêt du travail en cours de cet agent ?",
+    "activity.forceStopping": "Arrêt forcé du travail de l’agent…",
+    "activity.forceStopped": "L’arrêt du travail de l’agent a été confirmé."
+  },
+  de: {
+    "activity.previousFailures": "Frühere Fehlschläge: {count}",
+    "activity.forceStop": "Agentenarbeit zwangsweise stoppen…",
+    "activity.forceConfirmTitle": "Aktuelle Arbeit dieses Agenten zwangsweise stoppen?",
+    "activity.forceStopping": "Agentenarbeit wird zwangsweise gestoppt…",
+    "activity.forceStopped": "Die Beendigung der Agentenarbeit wurde bestätigt."
+  },
+  pt: {
+    "activity.previousFailures": "Falhas anteriores: {count}",
+    "activity.forceStop": "Forçar parada do trabalho do agente…",
+    "activity.forceConfirmTitle": "Forçar a parada do trabalho atual deste agente?",
+    "activity.forceStopping": "Forçando a parada do trabalho do agente…",
+    "activity.forceStopped": "A finalização do trabalho do agente foi confirmada."
+  }
+};
+
 const ISSUE21_OVERRIDES: Partial<
   Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>>
 > = {
@@ -1006,7 +1150,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "GPT 미지정 시 기본 추론 수준",
     "settings.preferred.none": "GPT 미지정 시 Codex 기본값 사용",
     "settings.selectionCount": "허용한 모델·에포트 조합 {count}개",
-    "settings.automaticNotice": "GPT는 작업 요구에 따라 이 범위에서 모델과 추론 수준을 선택합니다. 설정된 기본값은 GPT가 selection을 생략할 때만 사용되며 추천값이 아닙니다. Priority는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다.",
+    "settings.automaticNotice": "GPT는 작업 요구에 따라 이 범위에서 모델과 추론 수준을 선택합니다. 정확한 기본 모델·추론 쌍도 반드시 저장하며, 새 작업에서 GPT가 selection을 생략할 때만 사용되고 추천값으로 노출되지 않습니다. 기존 작업의 continue/fork에서 생략하면 해당 스레드의 선택을 그대로 상속합니다. Priority는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다.",
     "settings.catalogStatus.valid": "모델 카탈로그 정상",
     "settings.catalogStatus.lastKnownGood": "모델 카탈로그: 마지막 정상 데이터 사용 중",
     "settings.catalogStatus.invalid": "모델 카탈로그 사용 불가",
@@ -1623,14 +1767,124 @@ const CODEX_APP_THREAD_OVERRIDES: Record<
   }
 };
 
+const DASHBOARD_OVERRIDES: Partial<
+  Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>>
+> = {
+  ko: {
+    "dashboard.title": "Codex 전체 현황",
+    "dashboard.restoreFailed": "이 클라이언트에서 카드를 복원하지 못했습니다. 이 대화에서 ChatGPT에게 Codex 전체 현황을 다시 열어 달라고 요청하세요.",
+    "dashboard.scopeNotice": "이 개인 브리지가 보존 중인 작업·에이전트·스레드로 파악한 대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.",
+    "dashboard.runtimeOnly": "상태는 Codex 런타임 근거만으로 계산합니다. 최근 App Server 프로세스는 제한된 읽기 전용 조회로 확인하며, 새로고침은 모든 과거 스레드의 실시간 상태 검사가 아닙니다. GPT의 검증·완료 판단은 사용하지 않습니다.",
+    "dashboard.projects": "추적된 프로젝트",
+    "dashboard.conversations": "추적된 대화",
+    "dashboard.running": "실행 중",
+    "dashboard.attention": "주의 상태",
+    "dashboard.backgroundProcesses": "확인된 백그라운드 프로세스",
+    "dashboard.idleAgents": "유휴 에이전트",
+    "dashboard.viewMode": "보기 기준",
+    "dashboard.view.project": "프로젝트별",
+    "dashboard.view.conversation": "대화별",
+    "dashboard.view.status": "상태별",
+    "dashboard.projectCurrent": "활성 및 최근 프로젝트",
+    "dashboard.noProjects": "이 페이지에는 활성 또는 최근 프로젝트가 없습니다.",
+    "dashboard.idleProjects": "유휴 프로젝트",
+    "dashboard.noIdleProjects": "이 페이지에는 유휴 프로젝트가 없습니다.",
+    "dashboard.projectCount": "프로젝트 {count}개",
+    "dashboard.conversationCurrent": "활성 및 최근 GPT 대화",
+    "dashboard.noConversations": "이 페이지에는 활성 또는 최근 GPT 대화가 없습니다.",
+    "dashboard.idleConversations": "유휴 GPT 대화",
+    "dashboard.noIdleConversations": "이 페이지에는 유휴 GPT 대화가 없습니다.",
+    "dashboard.conversationCount": "대화 {count}개",
+    "dashboard.summary.attention": "주의 {count}개",
+    "dashboard.summary.active": "활성 {count}개",
+    "dashboard.summary.running": "실행 중 {count}개",
+    "dashboard.summary.recent": "최근 종료 {count}개",
+    "dashboard.summary.idle": "유휴 {count}개",
+    "dashboard.active": "활성 Codex 작업",
+    "dashboard.noActive": "활성 Codex 작업이 없습니다.",
+    "dashboard.recent": "최근 Codex turn 결과",
+    "dashboard.noRecent": "최근 Codex turn 결과가 없습니다.",
+    "dashboard.idle": "유휴 Codex 에이전트",
+    "dashboard.noIdle": "유휴 Codex 에이전트가 없습니다.",
+    "dashboard.loadMore": "더 보기",
+    "dashboard.previous": "이전",
+    "dashboard.next": "다음",
+    "dashboard.page": "{current} / {total}",
+    "dashboard.updated": "{time} 새로고침",
+    "dashboard.activeTruncated": "활성 또는 복구가 필요한 일부 행은 제한된 화면에서 생략되었습니다.",
+    "dashboard.runtimeUnknown": "에이전트 {count}개의 런타임 또는 프로세스 상태를 확인하지 못했습니다.",
+    "dashboard.runtimeProbeSkipped": "스레드를 깨우지 않는 안전한 조회가 불가능하거나 조회 한도를 넘은 App Server 에이전트 {count}개는 프로세스 상태를 확인하지 않았습니다.",
+    "dashboard.backgroundProcessCount": "백그라운드 프로세스 {count}개",
+    "dashboard.jobFallback": "Codex 작업",
+    "dashboard.unknownProject": "프로젝트 미확인",
+    "dashboard.conversation": "GPT 대화",
+    "dashboard.openConversation": "대화 열기",
+    "dashboard.agentCount": "에이전트 {count}개",
+    "dashboard.agentShownCount": "현재 페이지 {count}개",
+    "dashboard.lastActivity": "최근 활동 {relative}",
+    "dashboard.sectionCount": "대화 {conversations}개 · 에이전트 {agents}개",
+    "dashboard.idleAgentDisclosure": "유휴 에이전트 {count}개 펼치기",
+    "dashboard.idleConversationDisclosure": "유휴 대화 {conversations}개 · 에이전트 {agents}개 펼치기",
+    "dashboard.history.show": "이력 {count}건 펼치기",
+    "dashboard.history.hide": "이력 {count}건 접기",
+    "dashboard.history.showPartial": "이력 {count}건 중 {shown}건 펼치기",
+    "dashboard.history.hidePartial": "이력 {count}건 중 {shown}건 접기",
+    "dashboard.execution.current": "현재 실행 설정: {execution}",
+    "dashboard.duration.seconds": "{count}초",
+    "dashboard.duration.minutes": "{count}분",
+    "dashboard.duration.hours": "{count}시간",
+    "dashboard.duration.days": "{count}일",
+    "dashboard.time.active": "진행 {duration}",
+    "dashboard.time.updated": "마지막 상태 갱신 {relative}",
+    "dashboard.time.duration": "소요 {duration}",
+    "dashboard.time.durationUnknown": "소요 시간 미확인",
+    "dashboard.time.terminal": "{relative} {status}",
+    "dashboard.refreshFailedRetained": "새로고침에 실패해 마지막으로 불러온 현황을 표시합니다.",
+    "dashboard.status.running": "실행 중",
+    "dashboard.status.background-process-running": "백그라운드 프로세스 실행 중",
+    "dashboard.status.input-required": "입력 필요",
+    "dashboard.status.approval-required": "승인 필요",
+    "dashboard.status.terminating": "종료 중",
+    "dashboard.status.termination-failed": "종료 실패",
+    "dashboard.status.liveness-unknown": "실행 여부 확인 불가",
+    "dashboard.status.completed": "Codex turn 완료",
+    "dashboard.status.failed": "실패",
+    "dashboard.status.interrupted": "중단됨",
+    "dashboard.status.cancelled": "취소됨",
+    "dashboard.status.idle": "유휴",
+    "dashboard.status.orphaned": "스레드 사용 불가"
+  },
+  ja: {
+    "dashboard.restoreFailed": "このクライアントではカードを復元できませんでした。この会話で ChatGPT に Codex の全体状況をもう一度開くよう依頼してください。"
+  },
+  "zh-Hans": {
+    "dashboard.restoreFailed": "此客户端无法恢复卡片。请在此对话中让 ChatGPT 重新打开 Codex 概览。"
+  },
+  "zh-Hant": {
+    "dashboard.restoreFailed": "此用戶端無法還原卡片。請在此對話中要求 ChatGPT 重新開啟 Codex 概覽。"
+  },
+  es: {
+    "dashboard.restoreFailed": "Este cliente no pudo restaurar la tarjeta. Pide a ChatGPT en esta conversación que vuelva a abrir el resumen de Codex."
+  },
+  fr: {
+    "dashboard.restoreFailed": "Ce client n’a pas pu restaurer la carte. Demandez à ChatGPT dans cette conversation de rouvrir la vue d’ensemble Codex."
+  },
+  de: {
+    "dashboard.restoreFailed": "Dieser Client konnte die Karte nicht wiederherstellen. Bitte ChatGPT in dieser Unterhaltung, die Codex-Übersicht erneut zu öffnen."
+  },
+  pt: {
+    "dashboard.restoreFailed": "Este cliente não conseguiu restaurar o cartão. Peça ao ChatGPT nesta conversa para abrir novamente a visão geral do Codex."
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

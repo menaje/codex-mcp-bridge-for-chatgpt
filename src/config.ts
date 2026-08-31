@@ -8,6 +8,7 @@ export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
 export type CodexBackendKind = "mcp-server" | "app-server";
+export type McpTransportMode = "stateless" | "stateful";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
 
@@ -17,6 +18,9 @@ export type BridgeConfig = {
   token?: string;
   noAuth: boolean;
   allowedHosts?: string[];
+  mcpTransportMode: McpTransportMode;
+  mcpSessionIdleTtlMs: number;
+  maxMcpSessions: number;
   codexCommand: string;
   defaultBackend: CodexBackendKind;
   allowedRoots: string[];
@@ -57,6 +61,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const token = normalizeOptional(read("TOKEN"));
   const noAuth = parseBool(read("NO_AUTH"));
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
+  const mcpTransportMode = parseMcpTransportMode(read("MCP_TRANSPORT_MODE") || "stateless");
+  const mcpSessionIdleTtlMs = parsePositiveInt(
+    read("MCP_SESSION_IDLE_TTL_MS") || String(30 * 60 * 1000)
+  );
+  const maxMcpSessions = parsePositiveInt(read("MAX_MCP_SESSIONS") || "64");
   const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "mcp-server");
   // Project folders are registered in user settings. ROOTS remains only as a
   // backwards-compatible operator ceiling for existing deployments that set
@@ -179,6 +188,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     token,
     noAuth,
     allowedHosts,
+    mcpTransportMode,
+    mcpSessionIdleTtlMs,
+    maxMcpSessions,
     codexCommand: read("CODEX") || "codex",
     defaultBackend,
     allowedRoots,
@@ -456,6 +468,11 @@ function parseAccessStrategy(raw: string): AccessStrategy {
 function parseBackendKind(raw: string): CodexBackendKind {
   if (raw === "mcp-server" || raw === "app-server") return raw;
   throw new Error(`Invalid default Codex backend: ${raw}`);
+}
+
+function parseMcpTransportMode(raw: string): McpTransportMode {
+  if (raw === "stateless" || raw === "stateful") return raw;
+  throw new Error(`Invalid MCP transport mode: ${raw}`);
 }
 
 function normalizeOptional(raw: string | undefined): string | undefined {

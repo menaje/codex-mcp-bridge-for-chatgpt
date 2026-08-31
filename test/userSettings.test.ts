@@ -81,7 +81,11 @@ describe("user settings and project registry", () => {
       undefined,
       0
     );
-    const projectId = store.current.projects[0]!.id;
+    const initialProject = store.current.projects[0]!;
+    const projectId = initialProject.id;
+    expect(initialProject).toMatchObject({ projectRevision: 1 });
+    expect(initialProject.projectRef).toMatch(/^prj_[A-Za-z0-9_-]{22}$/);
+    expect(initialProject.projectRef).not.toBe(initialProject.id);
 
     const both = store.updateWithProjectOperations(
       { uiLocalePreference: "ko", maxConcurrentJobs: 2 },
@@ -93,6 +97,10 @@ describe("user settings and project registry", () => {
       1
     );
     expect(both).toMatchObject({ settingsRevision: 1, registryRevision: 2 });
+    expect(both.projects[0]).toMatchObject({
+      projectRef: initialProject.projectRef,
+      projectRevision: 2
+    });
 
     const noOp = store.updateWithProjectOperations(
       { uiLocalePreference: "ko" },
@@ -101,6 +109,7 @@ describe("user settings and project registry", () => {
       2
     );
     expect(noOp).toMatchObject({ settingsRevision: 1, registryRevision: 2 });
+    expect(noOp.projects[0]).toMatchObject({ projectRevision: 2 });
 
     expect(() => store.updateWithProjectOperations(
       { uiLocalePreference: "ja" },
@@ -128,6 +137,7 @@ describe("user settings and project registry", () => {
       0
     );
     const id = store.current.projects[0]!.id;
+    const projectRef = store.current.projects[0]!.projectRef;
 
     store.updateWithProjectOperations(
       {},
@@ -138,7 +148,13 @@ describe("user settings and project registry", () => {
       undefined,
       1
     );
-    expect(store.current.projects[0]).toMatchObject({ id, name: "Renamed", cwd: second });
+    expect(store.current.projects[0]).toMatchObject({
+      id,
+      projectRef,
+      projectRevision: 2,
+      name: "Renamed",
+      cwd: second
+    });
     expect(store.current.registryRevision).toBe(2);
 
     store.updateWithProjectOperations(
@@ -148,6 +164,7 @@ describe("user settings and project registry", () => {
       2
     );
     expect(store.projectRegistry.selectableProjects).toEqual([]);
+    expect(store.current.projects[0]).toMatchObject({ projectRef, projectRevision: 3 });
     expect(() => store.resolveProject({ name: "Renamed", registryRevision: 3 }))
       .toThrow(PROJECT_NOT_FOUND);
 
@@ -157,7 +174,13 @@ describe("user settings and project registry", () => {
       undefined,
       3
     );
-    expect(store.current.projects[0]).toMatchObject({ id, name: "Restored", cwd: first });
+    expect(store.current.projects[0]).toMatchObject({
+      id,
+      projectRef,
+      projectRevision: 4,
+      name: "Restored",
+      cwd: first
+    });
     expect(store.current.projects[0]).not.toHaveProperty("archivedAt");
     expect(store.current.registryRevision).toBe(4);
     state.close();
@@ -174,7 +197,8 @@ describe("user settings and project registry", () => {
       undefined,
       0
     );
-    const originalId = store.current.projects[0]!.id;
+    const original = store.current.projects[0]!;
+    const originalId = original.id;
     store.updateWithProjectOperations(
       {},
       [{ kind: "rename", projectId: originalId, name: "New Name" }],
@@ -192,6 +216,12 @@ describe("user settings and project registry", () => {
       .toThrow(PROJECT_REGISTRY_CHANGED);
     const reused = store.resolveProject({ name: "Old Name", registryRevision: 3 });
     expect(reused.id).not.toBe(originalId);
+    expect(reused.projectRef).not.toBe(original.projectRef);
+    expect(() => store.resolveProject({
+      name: "Old Name",
+      projectRef: original.projectRef,
+      projectRevision: original.projectRevision
+    })).toThrow(PROJECT_REGISTRY_CHANGED);
     state.close();
   });
 
@@ -216,6 +246,60 @@ describe("user settings and project registry", () => {
     expect(selected.cwd).toBe(second);
     // The registry protects stale mappings; it cannot infer natural-language
     // intent when the caller supplies another valid name in the same revision.
+  });
+
+  it("keeps an unaffected project selector valid across unrelated registry mutations", () => {
+    const first = temporaryDirectory("settings-independent-first-");
+    const second = temporaryDirectory("settings-independent-second-");
+    const store = new UserSettingsStore(configFor());
+    store.updateWithProjectOperations(
+      {},
+      [
+        { kind: "add", project: { name: "Alpha", cwd: first } },
+        { kind: "add", project: { name: "Beta", cwd: second } }
+      ],
+      undefined,
+      0
+    );
+    const alpha = store.current.projects.find(({ name }) => name === "Alpha")!;
+    const beta = store.current.projects.find(({ name }) => name === "Beta")!;
+    const alphaSelection = {
+      name: alpha.name,
+      projectRef: alpha.projectRef,
+      projectRevision: alpha.projectRevision
+    };
+
+    store.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: beta.id, name: "Beta Renamed" }],
+      undefined,
+      1
+    );
+
+    expect(store.current.registryRevision).toBe(2);
+    expect(store.resolveProject(alphaSelection)).toMatchObject({
+      id: alpha.id,
+      projectRef: alpha.projectRef,
+      projectRevision: 1
+    });
+    expect(store.current.projects.find(({ id }) => id === beta.id)).toMatchObject({
+      projectRevision: 2
+    });
+
+    store.updateWithProjectOperations(
+      {},
+      [{ kind: "reorder", projectIds: [beta.id, alpha.id] }],
+      undefined,
+      2
+    );
+    expect(store.current.registryRevision).toBe(3);
+    expect(store.current.projects.find(({ id }) => id === alpha.id)).toMatchObject({
+      projectRevision: 1
+    });
+    expect(store.current.projects.find(({ id }) => id === beta.id)).toMatchObject({
+      projectRevision: 2
+    });
+    expect(store.resolveProject(alphaSelection).id).toBe(alpha.id);
   });
 
   it("rejects active restore conflicts without changing UUID or revision", () => {
@@ -331,7 +415,7 @@ describe("user settings and project registry", () => {
     state.close();
   });
 
-  it("persists the split v3 state privately and does not migrate legacy project aliases", () => {
+  it("persists the split v4 state and upgrades v3 project selectors exactly once", () => {
     const root = temporaryDirectory("settings-persist-root-");
     const stateFile = path.join(temporaryDirectory("settings-state-"), "settings.json");
     const config = configFor();
@@ -345,13 +429,15 @@ describe("user settings and project registry", () => {
 
     const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(persisted).toMatchObject({
-      version: 3,
+      version: 4,
       settings: { settingsRevision: 1, uiLocalePreference: "ko" },
       projectRegistry: { registryRevision: 1 }
     });
     expect(persisted.settings).not.toHaveProperty("projects");
     expect(persisted.projectRegistry.projects[0]).toMatchObject({
       id: expect.stringMatching(UUID_PATTERN),
+      projectRef: expect.stringMatching(/^prj_[A-Za-z0-9_-]{22}$/),
+      projectRevision: 1,
       name: "Persisted",
       cwd: root
     });
@@ -360,6 +446,30 @@ describe("user settings and project registry", () => {
     const restored = new UserSettingsStore(config, { stateFile });
     expect(restored.current).toMatchObject({ settingsRevision: 1, registryRevision: 1 });
     expect(restored.current.projects[0]).toMatchObject({ name: "Persisted", cwd: root });
+
+    const v3File = path.join(temporaryDirectory("settings-v3-selector-"), "settings.json");
+    const v3 = structuredClone(persisted);
+    v3.version = 3;
+    delete v3.projectRegistry.projects[0].projectRef;
+    delete v3.projectRegistry.projects[0].projectRevision;
+    writeFileSync(v3File, JSON.stringify(v3));
+    const migrated = new UserSettingsStore(config, { stateFile: v3File });
+    const migratedProject = migrated.current.projects[0]!;
+    expect(migratedProject).toMatchObject({
+      id: persisted.projectRegistry.projects[0].id,
+      projectRevision: 1
+    });
+    expect(migratedProject.projectRef).toMatch(/^prj_[A-Za-z0-9_-]{22}$/);
+    const rewrittenV3 = JSON.parse(readFileSync(v3File, "utf8"));
+    expect(rewrittenV3).toMatchObject({
+      version: 4,
+      projectRegistry: {
+        projects: [expect.objectContaining({
+          projectRef: migratedProject.projectRef,
+          projectRevision: 1
+        })]
+      }
+    });
 
     const legacyFile = path.join(temporaryDirectory("settings-legacy-"), "settings.json");
     const legacy = structuredClone(persisted);
@@ -401,6 +511,63 @@ describe("user settings and project registry", () => {
     const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(rewritten.settings.modelPolicy).toHaveProperty("fallbackSelection");
     expect(rewritten.settings.modelPolicy).not.toHaveProperty("preferredSelection");
+  });
+
+  it("replaces a migrated model-only preference with an exact fallback policy", () => {
+    const stateFile = path.join(temporaryDirectory("settings-model-only-"), "settings.json");
+    const config = configFor();
+    const original = new UserSettingsStore(config, { stateFile, now: () => 6_000 });
+    original.update({ uiLocalePreference: "ko" }, 0);
+
+    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
+    persisted.settings.legacyPreferredModel = "gpt-5.6-sol";
+    persisted.settings.modelPolicy = {
+      mode: "automatic",
+      allowedSelections: { kind: "catalog-visible" },
+      constraints: { allowDelegation: true }
+    };
+    writeFileSync(stateFile, JSON.stringify(persisted));
+
+    const restored = new UserSettingsStore(config, { stateFile, now: () => 7_000 });
+    const updated = restored.update({
+      modelPolicy: {
+        mode: "automatic",
+        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        allowedSelections: { kind: "catalog-visible" },
+        constraints: { allowDelegation: true }
+      }
+    }, restored.current.settingsRevision);
+
+    expect(updated.modelPolicy).toMatchObject({
+      mode: "automatic",
+      fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+    });
+    expect(updated).not.toHaveProperty("legacyPreferredModel");
+  });
+
+  it("persists the configured exact seed when a saved automatic policy lacks a fallback", () => {
+    const stateFile = path.join(temporaryDirectory("settings-fallback-seed-"), "settings.json");
+    const original = new UserSettingsStore(configFor(), { stateFile, now: () => 8_000 });
+    original.update({ uiLocalePreference: "ko" }, 0);
+
+    const restored = new UserSettingsStore(configFor({
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    }), { stateFile, now: () => 9_000 });
+
+    expect(restored.current).toMatchObject({
+      settingsRevision: 2,
+      modelPolicy: {
+        mode: "automatic",
+        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(restored.loadWarnings.join(" ")).toContain("missing an exact fallback");
+    const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
+    expect(rewritten.settings.modelPolicy.fallbackSelection).toEqual({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "max"
+    });
   });
 
   it("safely narrows saved capability settings in one ordinary generation", () => {

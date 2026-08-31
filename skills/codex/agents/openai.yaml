@@ -1,2 +1,5 @@
+interface:
+  display_name: Codex Bridge Orchestrator
+  short_description: Coordinate Codex bridge work with verified runtime state
 policy:
   allow_implicit_invocation: false

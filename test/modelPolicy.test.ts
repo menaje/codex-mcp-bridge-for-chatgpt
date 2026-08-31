@@ -139,7 +139,7 @@ describe("model policy resolver", () => {
     expect(listAllowedModelSelections(explicit, catalog())).toEqual([SOL_MAX, TERRA_MEDIUM]);
     expectPolicyError(
       () => decide({ policy: explicit, requestedSelection: TERRA_HIGH }),
-      "MODEL_SELECTION_FORBIDDEN"
+      "MODEL_POLICY_CHANGED"
     );
     expect(listAllowedModelSelections(AUTOMATIC_POLICY, catalog())).toContainEqual(TERRA_HIGH);
   });
@@ -147,7 +147,7 @@ describe("model policy resolver", () => {
   it("intersects user policy with the exact operator ceiling and delegation constraint", () => {
     expectPolicyError(
       () => decide({ policy: AUTOMATIC_POLICY, requestedSelection: SOL_HIGH, operatorCeiling: [SOL_MAX] }),
-      "MODEL_SELECTION_FORBIDDEN"
+      "MODEL_POLICY_CHANGED"
     );
     const delegationDisabled: ModelPolicy = {
       mode: "automatic",
@@ -163,7 +163,7 @@ describe("model policy resolver", () => {
         policy: delegationDisabled,
         requestedSelection: { model: "gpt-5.6-sol", reasoningEffort: "ultra" }
       }),
-      "MODEL_SELECTION_FORBIDDEN"
+      "MODEL_POLICY_CHANGED"
     );
   });
 
@@ -205,12 +205,32 @@ describe("model policy resolver", () => {
       expect(error).toMatchObject({
         code: "MODEL_POLICY_CHANGED",
         policyRevision: 7,
-        nextActions: [expect.stringContaining("Refresh")]
+        nextActions: [
+          expect.stringContaining("codex_models"),
+          expect.stringContaining("developer-mode connection")
+        ]
       });
     }
   });
 
   it("applies App Server changes at turn start and rejects unsupported MCP continuation changes", () => {
+    for (const [backendKind, backendCapabilities] of [
+      ["app-server", APP_CAPABILITIES],
+      ["mcp-server", MCP_CAPABILITIES]
+    ] as const) {
+      expect(decide({
+        policy: AUTOMATIC_POLICY,
+        operation: "continue",
+        backendKind,
+        backendCapabilities,
+        currentSelection: SOL_MAX
+      })).toMatchObject({
+        source: "thread-inherited",
+        appliedAt: "thread-start",
+        effectiveSelection: SOL_MAX
+      });
+    }
+
     expect(decide({
       policy: AUTOMATIC_POLICY,
       operation: "continue",
@@ -314,7 +334,7 @@ describe("model policy resolver", () => {
         if (projected.some((entry) => JSON.stringify(entry) === JSON.stringify(selection))) continue;
         expectPolicyError(
           () => decide({ policy, requestedSelection: selection }),
-          "MODEL_SELECTION_FORBIDDEN"
+          "MODEL_POLICY_CHANGED"
         );
       }
     }

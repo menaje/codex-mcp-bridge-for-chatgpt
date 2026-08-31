@@ -14,20 +14,67 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   model-authoritative `answer`; summary queries expose exact-Job retrieval actions
   and never answer bodies. The expired flat query envelope is rejected. Explicit
   compatibility scope and the all-scope operator audit remain runtime-only.
-- `codex_task` conditionally binds the Activity UI according to the saved card
-  visibility setting and exposes a delivered foreground result through a bounded
-  structured `answer`; the widget consumes only the task's scoped Activity identity
-  and obtains its feed through the app-private `codex_activity_snapshot` contract.
-  That contract establishes or renews an exact Activity/generation/presentation
-  lease correlated to the mounted widget session. Automatic snapshots contain
-  only current/action-needed Activity rows plus exact terminal/idle counts;
-  `codex_activity` explicitly opens the scoped, cursor-paginated full view. Its
+- `codex_dashboard` is an explicit read-only cross-scope view for the bridge's
+  single trusted user; it needs no separate operator flag. Its model-visible
+  result contains only a redacted aggregate summary, while bounded app-private
+  metadata contains opaque hashed row, conversation, and project correlation keys,
+  compatibility conversation aliases, user-defined project labels, display Agent names, optional Activity titles,
+  Codex-runtime status, timestamps, and background-process counts. For a
+  UUID-shaped ChatGPT session value only, it may also contain a best-effort
+  `https://chatgpt.com/c/<uuid>` route candidate used by the card's **Open conversation**
+  link. The host contract does not guarantee that this correlation value is
+  navigable. The raw value is not printed as text, but the route necessarily contains it.
+  Rows may additionally expose only
+  the associated retained Job's effective model/reasoning-effort selection and
+  an evidence-backed runtime model reroute; this presentation metadata does not
+  affect status. Raw project, Job, Activity, Agent, thread, worker, and
+  process IDs; paths; prompts; results; events; errors; and diagnostics are not
+  projected. User-defined project, Agent, and Activity display text can still
+  disclose task context across conversations, so the Dashboard must remain on
+  this single-user trust boundary. Status is derived only from Codex Job state,
+  worker liveness, Agent lifecycle, Codex-originated input/approval interactions,
+  and bounded read-only App Server runtime probes—not Activity verification,
+  waiting, handoff, or GPT goal judgment. “All conversations” means scopes still
+  known from retained bridge state, not the account's complete ChatGPT history.
+  Ordinary Job pruning retains only a result-free Dashboard summary: terminal
+  status/update time, optional start time, and exact effective selection/reroute
+  when known. Prompt, result, error, command, and event bodies are omitted; older
+  summaries without these additive fields remain explicitly unknown. The view
+  reads at most 10,000 such summaries and sends at most 12 older turns per
+  visible Agent.
+  The public card-open call defers runtime probes; a mounted snapshot probes at
+  most 100 recently updated App Server Agents, including Agents without a
+  retained latest Job only when a non-loading thread probe is available, with
+  a 1.5-second per-Agent timeout and nine-second total budget. It
+  reports unknown and skipped counts and does not load a `notLoaded` historical
+  thread merely for the overview. App-only
+  `codex_dashboard_snapshot` requires a mounted widget correlation ID but grants
+  no watcher, completion-handoff, or control lease and exposes no mutation.
+  Web and desktop hosts can omit `openai/session` on an app-initiated remount;
+  because this projection is already bridge-wide and limited to the single-user
+  connection, missing scope metadata does not block mounted recovery. Any host
+  or explicit compatibility scope that is supplied is still validated. That
+  widget UUID is correlation evidence rather than authentication. A hydrated
+  card keeps its last snapshot after refresh failure and stops automatic retry
+  until an explicit refresh; a timed-out standard call that was already
+  dispatched is never duplicated through the compatibility alias.
+- `codex_task` is execution-only, has no UI binding or presentation input, and
+  exposes a delivered foreground result through a bounded structured `answer`.
+  After any number of Task calls, one dedicated `codex_activity` compact-monitor
+  call may mount a card according to the saved visibility policy; this structural
+  boundary prevents per-Agent card shells. The widget obtains its feed through
+  the app-private `codex_activity_snapshot` contract, which establishes or renews
+  an exact Activity/generation/presentation lease correlated to the mounted widget
+  session. Compact snapshots contain only current/action-needed Activity rows plus
+  exact terminal/idle counts; default full-history `codex_activity` explicitly
+  opens the scoped, cursor-paginated full view. Its
   private metadata remains bounded and redacted; rendered rows omit Agent/job/thread
   IDs, expose each Agent's current or latest effective model/effort selection, and
   show only final folder names when multiple projects must be distinguished, never
   full working paths.
-- `codex_activity_rehydrate` is app-private and read-only. A cold-remounted Task
-  shell may submit its public `jobId + requestId` only as lookup hints; the bridge
+- `codex_activity_rehydrate` is app-private and read-only. A cold-remounted
+  retained pre-decoupling Task shell may submit its public `jobId + requestId`
+  only as lookup hints; the bridge
   derives the host conversation scope and revalidates the retained logical call,
   linked Activity, visibility setting, mounted widget, and elected sibling. The
   result is one-shot historical state with no watcher, handoff ownership, card
@@ -103,17 +150,31 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   retired rather than accepted as weak compatibility paths.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
-  sandbox is exposed only for adaptive policy and only within owner-enabled
-  capabilities. Its exact model/effort decision is resolved again at runtime.
+  sandbox has one stable operator-bounded shape; fixed access modes reject an
+  explicit override and enforce the saved policy, while adaptive mode accepts
+  only owner-enabled capabilities. Its exact model/effort decision is resolved
+  again at runtime.
   The user's independent Priority preference is then applied privately by the
-  bridge and the effective downstream selection is retained with the job. New
-  admissions use canonical request-hash v5 over the caller's exact project
-  name/generation and the internally resolved UUID/canonical folder, backend,
-  sandbox, execution/context mode, immutable source
-  thread, effective model selection, prompt, and creation metadata. Presentation
-  and mutable policy/catalog revision state are excluded. Exact v5 request replay
-  is checked before current-registry resolution and therefore preserves the
-  original admission/result after rename, relocate, archive, or restore.
+  bridge and the effective downstream selection is retained with the job. The
+  v2 descriptor requires `taskContractVersion: "2"` and an exact 64-hex,
+  installation-keyed `executionEnvelopeRef` over the stable contract generation
+  and operator-owned maximum/static envelope: prompt bound, command/backend,
+  roots, sandbox capabilities, approval policy, model ceiling, and secret
+  preflight. The HMAC key remains private in bridge state. Saved settings,
+  projects, availability, and model catalog are intentionally excluded so those
+  runtime changes cannot invalidate an existing conversation's v2 descriptor.
+  Every new call privately captures an exact mutable execution-policy HMAC,
+  including the saved concurrency ceiling, and
+  rechecks it before filesystem preflight and inside serialized admission using
+  the same resolved catalog fingerprint. A race fails before side effects and
+  retries without connection Refresh. New v2 admissions use canonical
+  request-hash v7 over the stable contract/envelope plus the caller's exact
+  project selector, internally resolved UUID/canonical folder, backend, sandbox,
+  execution/context mode, immutable source thread, effective model selection,
+  prompt, and creation metadata. Exact replay—v7, cached pre-v2 v6, and frozen v5
+  migration—is checked before current project and execution-policy resolution,
+  preserving the original admission/result after later settings, catalog,
+  rename, relocate, archive, or restore changes without creating work.
 
 The bridge does not expose a raw shell tool, arbitrary process control,
 arbitrary Codex config, or a general Responses API proxy. Process termination is
@@ -125,16 +186,18 @@ the network as the current macOS user.
 ## Enforced defaults
 
 - Loopback host binding.
-- A single settings-managed registry of server-generated immutable UUIDs,
+- A single settings-managed registry of server-generated immutable private UUIDs,
+  opaque non-reused public refs, per-project admission revisions,
   normalized Unicode names, and canonical existing folders. A normal fresh
   install starts with no project; no first/sole/default/slug/alias fallback is
-  created. `codex_task` accepts only an exact projected `{name,
-  registryRevision}` object and resolves UUID/cwd internally. Every new Activity
-  or fresh Agent context requires it; only existing Activity continue/fork calls
-  omit it and inherit their pinned UUID plus cwd snapshot. Per-call cwd is absent
-  from and rejected by the strict Task contract. With an empty registry, the task
-  returns structured `PROJECT_SETUP_REQUIRED` and directs GPT to
-  `codex_settings`.
+  created. `codex_task` advertises a generic closed `{ name, projectRef,
+  projectRevision }` selector plus a same-tool no-work `projectLookup`, never a
+  registry inventory. The global `registryRevision` remains a Settings CAS
+  generation. Every new Activity or fresh Agent context requires the exact
+  current object; only existing Activity continue/fork calls omit it and inherit
+  their pinned UUID plus cwd snapshot. Per-call cwd is absent from and rejected
+  by the strict Task contract. With an empty registry, the task returns
+  structured `PROJECT_SETUP_REQUIRED` and directs GPT to `codex_settings`.
 - Project names reject control, surrogate, bidi-control, and Unicode
   default-ignorable code points before and after NFC normalization; Unicode
   whitespace is collapsed and trimmed. Active uniqueness and exact lookup use a
@@ -149,13 +212,33 @@ the network as the current macOS user.
   name/cwd collision checks. A cwd snapshot still referenced by a resumable
   Activity, current Agent thread, or active Job cannot be reassigned to another
   UUID.
-- Runtime name/generation resolution and the final registry recheck occur in the
-  same SQLite transaction as Activity, Agent creation/assignment, replay, and Job
+- Runtime ref/revision/name, active/available state, canonical root, and
+  execution-policy checks plus the final project recheck occur in the same
+  SQLite transaction as Activity, Agent creation/assignment, replay, and Job
   admission. The Activity and Job receive one UUID/cwd pin; a backend-assigned
   resumable thread receives the same pin before later continue/fork admission.
-  `tools/list_changed` and schema refresh are discovery optimizations, never an
-  authorization boundary. Stale generations fail without upstream calls or
-  partial rows. Continue/fork revalidates the pinned canonical cwd and returns
+  Descriptor discovery is never an authorization boundary. Ordinary saved
+  settings, catalog, registry, and availability changes leave the v2 descriptor
+  byte-identical and therefore need no notification or Refresh. Stateless
+  Streamable HTTP remains the default; experimental stateful mode still uses
+  bounded in-memory sessions and per-session replay logs for genuine static
+  descriptor or UI changes. A session that never sends
+  `notifications/initialized` is reclaimed after a 10-second handshake grace;
+  ready sessions retain the configured idle TTL. Notification attempts, replay,
+  reconnect signals, and inbound relists do not prove host adoption. A one-time
+  Developer-mode Refresh is required to migrate a cached pre-v2 conversation or
+  adopt an operator/static envelope change; stale selectors and v2 policy races
+  fail without upstream calls or partial rows and recover on the same contract.
+  Notification sends observe the protocol transport Promise directly; an
+  asynchronous failure is counted and retried once with a bounded delay rather
+  than escaping as an unhandled rejection. A successful send still proves only
+  transport acceptance, never host re-list or descriptor adoption.
+  The separate persistent-stdio candidate uses one tunnel-owned process and no
+  HTTP session registry. Its coordinator uses reversible presence projection
+  instead of the SDK's irreversible registration removal and records successful
+  `tools/list` responses independently from notification attempts; neither is
+  authorization or proof of later descriptor use.
+  Continue/fork revalidates the pinned canonical cwd and returns
   `PROJECT_UNAVAILABLE` without another-project or configured-root fallback.
 - Read-only sandbox.
 - `on-request` approval policy.
@@ -182,10 +265,16 @@ the network as the current macOS user.
   one SQLite transaction, so failed admission leaves no partial identity or policy.
 - Operator model ceiling ∩ versioned user policy ∩ backend catalog/capability ∩
   request intent is the only model execution authority. Fixed mode rejects
-  stale overrides; automatic mode requires a task-selected exact nested
-  selection for every new Activity, new Agent, or fresh context. Its configured
-  fallback applies only to compatible callers that omit selection and is not a
-  recommendation. No bridge-maintained model aliases are interpreted.
+  stale overrides; automatic mode requires an exact nested selection for every
+  new Activity, new Agent, or fresh context at the GPT orchestration layer. The
+  schema exposes only current allowed pairs and only upstream catalog
+  descriptions for their exact model and effort values; it adds no local task
+  mapping, ranking, recommendation, or effort glossary. Every newly saved
+  automatic policy also has one exact omission fallback; it applies only to
+  compatible callers that omit selection and is neither a schema default nor a
+  recommendation. Continue/fork omission inherits the retained thread while an
+  explicit selection requests an allowed backend override. No bridge-maintained
+  model aliases are interpreted.
 - 50,000 characters per prompt.
 - Discriminated nested Activity + Agent routing with exact existing IDs and optional
   `continue`, `fork`, or `fresh` intent; ambiguous candidates and arbitrary public
@@ -212,20 +301,15 @@ the network as the current macOS user.
   after exit evidence. `termination-failed` remains an active slot. A runtime
   invariant rejects App Server interruption or worker termination without a
   typed cancellation or assignment-containment correlation.
-- Automatic Activity render reservations are in-memory and keyed by the
-  host-derived conversation scope plus an explicit assistant-response
-  `activityPresentationId`. Documented ChatGPT MCP metadata does not expose an
-  assistant-response ID, so automatic UI fails closed when neither the current
-  public input nor verified host metadata supplies one. An unconfirmed mount
-  reservation is short-lived: an exact logical-call retry stays eligible and
-  each later sibling becomes the newest candidate. Its iframe must match its
-  invocation `requestId` to the delivered result `requestId`, which selects the
-  last-call shell when the host hydrates multiple same-response widgets with one
-  last result. Server-side admission also verifies the candidate job owner,
-  confirms one widget, and collapses the rest. A previously confirmed card is
-  retained until the replacement mounts, and the candidate expires if no snapshot
-  lease confirms it. Activity id/generation remains a validity check, not the
-  presentation boundary. Only the newest confirmed mounted automatic
+- Compact Activity render reservations are in-memory and keyed by the
+  host-derived conversation scope plus the dedicated presenter's explicit
+  `presentationId` (stored privately as `activityPresentationId`). Task calls
+  cannot reserve or mount presentation state. An unconfirmed presenter mount is
+  short-lived: an exact presentation retry stays eligible, the server confirms
+  one widget, and racing mounts collapse. A previously confirmed card is retained
+  until a replacement mounts, and the candidate expires if no snapshot lease
+  confirms it. Activity id/generation remains a validity check, not the
+  presentation boundary. Only the newest confirmed mounted compact
   presentation owns scope watch and completion handoff. A racing duplicate
   widget for that presentation is collapsed, while superseded cards stop
   normally and release admission; at most three explicit user-opened cards may
@@ -270,8 +354,12 @@ When exposing the HTTP endpoint through another mechanism, configure a long bear
 
 Conversation `scopeId` values are routing labels, not identities or secrets.
 ChatGPT calls derive them from the anonymous organization/subject/session tuple;
-raw identifiers are not stored, and a model-provided scope cannot override the
-host-derived value. A compatibility/admin caller without ChatGPT session
+raw organization and subject identifiers and arbitrary session values are not
+stored, and a model-provided scope cannot override the host-derived value. The
+one deliberate exception is a UUID-shaped ChatGPT session correlation value:
+the personal Dashboard retains at most 1,000 private scope-to-value mappings so it
+can construct a best-effort **Open conversation** route candidate. It cannot
+backfill scopes observed before capture because their raw values were not stored. A compatibility/admin caller without ChatGPT session
 metadata can still use explicit scopes or the bridge-wide audit view. Do not
 treat scope filtering as authorization.
 
@@ -296,10 +384,10 @@ identity.
 
 ## Remaining risks
 
-- The project generation token guarantees freshness of the name-to-UUID/cwd
-  mapping. It cannot distinguish an intended project from a different exact,
-  active project name that is also valid in the same current revision. That is
-  a semantic-intent problem, not a stale-mapping bypass. A future fresh-user
+- The project ref/revision tuple guarantees freshness of the selected
+  name-to-UUID/cwd mapping. It cannot distinguish an intended project from a
+  different complete selector that is also currently valid. That is a
+  semantic-intent problem, not a stale-mapping bypass. A future fresh-user
   confirmation boundary for multi-project write/full-access admission must be
   app-private and non-replayable; this release intentionally does not accept a
   model-visible `confirmed` boolean as evidence.
@@ -456,8 +544,11 @@ identity.
   but not prompts or results. Historical decisions remain on job rows. Pre-scope records are
   migrated into deterministic Legacy Agents or a quarantined legacy scope that
   automatic routing ignores; obsolete v2 task-lane labels are not authorization.
-- Bridge metadata contains the conversation-scope HMAC key. Protect database
-  files and backups even though the raw host identifiers are not stored.
+- Bridge metadata contains the conversation-scope HMAC key and may contain the
+  bounded UUID-shaped ChatGPT session mapping used by best-effort Dashboard links.
+  Protect database files and backups; raw organization, subject, and arbitrary
+  session values are not stored, but a retained ChatGPT conversation UUID is
+  sensitive navigation metadata.
 - Persisted job rows contain local paths, lifecycle metadata, progress
   messages, errors, and bounded Codex results. Results can include repository
   content even though the job record does not separately store the submitted
