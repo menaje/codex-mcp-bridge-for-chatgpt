@@ -139,6 +139,10 @@ export type UpstreamWorkerAssignment = {
   processGroupId?: number;
   upstreamRequestId?: string;
   threadId?: string;
+  /** App Server session-tree identity known as soon as the thread is admitted. */
+  sessionId?: string;
+  /** Direct source thread when the admitted App Server thread is a fork. */
+  forkedFromThreadId?: string;
 };
 
 export type CodexBackgroundTerminal = {
@@ -178,10 +182,25 @@ export type CodexThreadForkRequest = {
   ephemeral?: boolean;
 };
 
+export type CodexWeeklyUsage = {
+  /** App Server account rate-limit bucket, normally `codex`. */
+  limitId: string;
+  usedPercent: number;
+  remainingPercent: number;
+  /** The selected rolling-window duration. Weekly Codex usage is 10,080 minutes. */
+  windowDurationMins: number;
+  /** Unix timestamp in seconds, or null when the upstream omits the reset time. */
+  resetsAt: number | null;
+  /** Local observation time in Unix milliseconds. */
+  observedAt: number;
+};
+
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
   capabilities?(backendKind?: CodexBackendKind): BackendCapabilities;
   listModels?(backendKind?: CodexBackendKind): Promise<unknown>;
+  /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
+  readAccountRateLimits?(): Promise<CodexWeeklyUsage | null>;
   startThread?(
     input: CodexThreadStartRequest,
     onProgress?: (progress: CodexProgress) => void,

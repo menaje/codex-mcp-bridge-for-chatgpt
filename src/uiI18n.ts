@@ -1,3 +1,5 @@
+import { LOCALIZATION_AUDIT_OVERRIDES } from "./uiI18nAudit.js";
+
 export const SUPPORTED_UI_LOCALES = [
   "en",
   "ko",
@@ -20,6 +22,15 @@ const ENGLISH = {
   "common.cancel": "Cancel",
   "common.confirm": "Confirm",
   "common.error": "The request failed.",
+  "common.errorCode": "The request failed ({code}).",
+  "usage.weeklyRemaining": "Account-wide Codex weekly remaining",
+  "usage.resetsAt": "Resets {time}",
+  "cancellation.reason": "Cancellation reason",
+  "cancellation.requestReason": "Cancellation request reason",
+  "cancellation.attemptReason": "Cancellation attempt reason",
+  "cancellation.reasons": "Cancellation reasons · {count}",
+  "cancellation.target.job": "Job",
+  "cancellation.target.activity": "Activity",
   "settings.title": "Codex Bridge settings",
   "settings.scope": "Shared by every conversation using this bridge connection.",
   "settings.access": "Access strategy",
@@ -92,9 +103,13 @@ const ENGLISH = {
   "settings.archiveProject": "Archive",
   "settings.restoreProject": "Restore",
   "settings.removeProject": "Remove",
+  "settings.deleteProject": "Delete",
+  "settings.cancelDeleteProject": "Cancel deletion",
+  "settings.deleteProjectConfirm": "Remove this project from bridge tracking? The folder, files, and existing work history will not be deleted. This cannot be undone.",
   "settings.projectArchived": "Archived",
   "settings.projectArchivePending": "Archive on save",
   "settings.projectRestorePending": "Restore on save",
+  "settings.projectDeletePending": "Delete on save",
   "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project name.",
   "settings.projectInvalidCwd": "Enter an existing absolute folder path.",
   "settings.projectDuplicatePath": "Each project must use a different canonical folder.",
@@ -131,6 +146,23 @@ const ENGLISH = {
   "settings.invalidResponse": "The settings tool returned an invalid response.",
   "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed here.",
   "settings.appServerExperimental": "MCP Server is the stable default backend. App Server is experimental and unsupported for production. If App Server is enabled, use it only for personal or development work, monitor failures, and roll back to MCP Server by restoring the backend setting and restarting the bridge.",
+  "settings.warning.backendRouting": "Backend routing: {backend} applies only to new or deliberately fresh Agent threads. Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
+  "settings.warning.catalogStale": "The model catalog could not be refreshed. The last successfully verified catalog is shown temporarily.",
+  "settings.warning.catalogUnavailable": "The model catalog is unavailable. Restore backend access and retry model lookup.",
+  "settings.warning.legacyRoots": "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. Remove it to manage project folders only from Codex settings.",
+  "settings.warning.fastReturnRetired": "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately.",
+  "settings.warning.upstreamTimeoutRetired": "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution has no time limit; use supervised force-stop when needed.",
+  "settings.warning.defaultSessionRetired": "CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE is retired and ignored. Each Activity manages its own session selection.",
+  "settings.warning.autoResumeRetired": "CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS is retired and ignored. Exact Activity thread continuation has no age limit.",
+  "settings.warning.legacyProjects": "Legacy project IDs and default aliases were not migrated. Register projects by name in Settings.",
+  "settings.warning.automaticFallbackSeeded": "The automatic model policy had no exact fallback, so the configured model and effort were saved as its fallback when GPT omits a selection.",
+  "settings.warning.fullAccessDowngraded": "The saved full-access mode was changed to read-only because bridge security policy disables danger-full-access.",
+  "settings.warning.concurrentLimitReduced": "The saved concurrent-job limit was reduced to the current bridge maximum.",
+  "settings.warning.projectUnavailable": "Saved project “{project}” is unavailable and cannot accept new work.",
+  "settings.warning.legacyModel": "The legacy model-only preference “{model}” is still active. Its exact default effort comes from the backend catalog, while Priority remains a separate preference.",
+  "settings.warning.legacyAutomatic": "The legacy automatic model policy has no exact saved fallback. The backend catalog default remains in use until a default model and reasoning effort are saved in Settings.",
+  "settings.warning.modelPolicy": "The saved model policy is incompatible with the current catalog or constraints. Review it and save a valid selection{codeSuffix}.",
+  "settings.warning.generic": "A bridge warning requires attention. Review the bridge diagnostics for details.",
   "activity.title": "Codex activities",
   "activity.currentActivities": "Current activity",
   "activity.noCurrent": "No current Codex activity in this conversation.",
@@ -146,6 +178,9 @@ const ENGLISH = {
   "activity.verify": "Verify",
   "activity.retry": "Retry",
   "activity.followUpSent": "A GPT follow-up was added to this conversation.",
+  "activity.prompt.verify": "Verify Codex Activity {activityId}. Query the Activity with codex_status, then query every relevant exact Job ID and read each Job item's answer; Activity summaries never contain Job answers. Inspect files, diffs, tests, and artifacts independently, then perform the exact verification transition. Do not infer success from Codex output alone.",
+  "activity.prompt.retry": "Retry or recover Codex Activity {activityId}. Retrieve authoritative status with codex_status; when a completed Job result is needed, query its exact Job ID and read its answer. Explain the failure or interruption, and ask before materially changing scope.",
+  "activity.prompt.handoff": "Codex Activity completion handoff. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. Activity IDs: {activityIds}. Job IDs: {jobIds}. For every listed Job ID, call codex_status with one exact Job query and read the Job item's answer; Activity and overview queries never contain Job answers. Distinguish delivered, omitted, and unavailable results. Do not start another codex_task merely to reconstruct a delivered result. Independently verify files, diffs, tests, and artifacts when verification is required. Do not create another automatic handoff from this handoff.",
   "activity.moreActivities": "Additional completed activities:",
   "activity.allActivities": "All activities",
   "activity.pastRecords": "Past records",
@@ -226,6 +261,7 @@ const ENGLISH = {
   "verification.not-required": "Verification not required", "verification.pending": "Verification pending", "verification.verifying": "Verifying", "verification.verified": "Verified", "verification.failed": "Verification failed",
   "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled",
   "dashboard.title": "Codex overview",
+  "dashboard.countsLabel": "Overview counts",
   "dashboard.restoreFailed": "This client could not restore the card. Ask ChatGPT in this conversation to open the Codex overview again.",
   "dashboard.scopeNotice": "Conversations currently known to this personal bridge through retained Jobs, Agents, or threads; not all ChatGPT history.",
   "dashboard.runtimeOnly": "Status comes only from Codex runtime evidence. Recent App Server process state uses bounded read-only probes; refresh is not a live health check of every historical thread. GPT verification and completion judgment are excluded.",
@@ -273,6 +309,7 @@ const ENGLISH = {
   "dashboard.unknownProject": "Project unavailable",
   "dashboard.conversation": "GPT conversation",
   "dashboard.openConversation": "Open conversation",
+  "dashboard.openCodexSession": "Open in Codex",
   "dashboard.agentCount": "{count} agents",
   "dashboard.agentShownCount": "Showing {count} on this page",
   "dashboard.lastActivity": "Last activity {relative}",
@@ -309,7 +346,7 @@ const ENGLISH = {
   "dashboard.status.orphaned": "Thread unavailable"
 } as const;
 
-type UiTranslationKey = keyof typeof ENGLISH;
+export type UiTranslationKey = keyof typeof ENGLISH;
 type UiTranslationBundle = Record<UiTranslationKey, string>;
 
 const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
@@ -1403,7 +1440,7 @@ const ISSUE22_OVERRIDES: Record<
     "settings.projectsHint": "Codex가 작업을 시작할 폴더를 등록하세요. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있으며 내부 ID는 자동으로 관리됩니다.",
     "settings.allowedRoots": "브리지 허용 루트",
     "settings.allowedRootsHint": "프로젝트 실경로는 이 보안 상한 중 하나 안에 있어야 합니다. 프로젝트를 등록해도 범위는 넓어지지 않습니다.",
-    "settings.addProject": "프로젝트 추가",
+    "settings.addProject": "추가",
     "settings.addFirstProject": "첫 프로젝트 등록",
     "settings.noProjects": "먼저 프로젝트를 등록하세요. Codex가 작업을 시작할 폴더가 필요합니다. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있습니다.",
     "settings.projectLabel": "프로젝트 이름",
@@ -1650,65 +1687,97 @@ const ISSUE33_OVERRIDES: Record<
   ko: {
     "settings.archiveProject": "보관",
     "settings.restoreProject": "복원",
+    "settings.deleteProject": "삭제",
+    "settings.cancelDeleteProject": "삭제 취소",
+    "settings.deleteProjectConfirm": "이 프로젝트를 브리지 추적 대상에서 제거할까요? 실제 폴더와 파일, 기존 작업 기록은 삭제되지 않습니다. 이 작업은 되돌릴 수 없습니다.",
     "settings.projectArchived": "보관됨",
     "settings.projectArchivePending": "저장 시 보관",
     "settings.projectRestorePending": "저장 시 복원",
+    "settings.projectDeletePending": "저장 시 삭제",
     "settings.projectUnavailableSave": "복구가 필요한 프로젝트를 수정하거나 보관한 뒤 저장하세요."
   },
   ja: {
     "settings.archiveProject": "アーカイブ",
     "settings.restoreProject": "復元",
+    "settings.deleteProject": "削除",
+    "settings.cancelDeleteProject": "削除を取り消す",
+    "settings.deleteProjectConfirm": "このプロジェクトをブリッジの追跡対象から削除しますか？実際のフォルダー、ファイル、既存の作業履歴は削除されません。この操作は元に戻せません。",
     "settings.projectArchived": "アーカイブ済み",
     "settings.projectArchivePending": "保存時にアーカイブ",
     "settings.projectRestorePending": "保存時に復元",
+    "settings.projectDeletePending": "保存時に削除",
     "settings.projectUnavailableSave": "復旧が必要なプロジェクトを修正またはアーカイブしてから保存してください。"
   },
   "zh-Hans": {
     "settings.archiveProject": "归档",
     "settings.restoreProject": "恢复",
+    "settings.deleteProject": "删除",
+    "settings.cancelDeleteProject": "取消删除",
+    "settings.deleteProjectConfirm": "是否从桥接器的跟踪中删除此项目？实际文件夹、文件和现有工作记录不会被删除。此操作无法撤销。",
     "settings.projectArchived": "已归档",
     "settings.projectArchivePending": "保存时归档",
     "settings.projectRestorePending": "保存时恢复",
+    "settings.projectDeletePending": "保存时删除",
     "settings.projectUnavailableSave": "请先修复或归档需要恢复的项目，再保存。"
   },
   "zh-Hant": {
     "settings.archiveProject": "封存",
     "settings.restoreProject": "復原",
+    "settings.deleteProject": "刪除",
+    "settings.cancelDeleteProject": "取消刪除",
+    "settings.deleteProjectConfirm": "是否從橋接器的追蹤中刪除此專案？實際資料夾、檔案和現有工作記錄不會被刪除。此操作無法復原。",
     "settings.projectArchived": "已封存",
     "settings.projectArchivePending": "儲存時封存",
     "settings.projectRestorePending": "儲存時復原",
+    "settings.projectDeletePending": "儲存時刪除",
     "settings.projectUnavailableSave": "請先修正或封存需要復原的專案，再儲存。"
   },
   es: {
     "settings.archiveProject": "Archivar",
     "settings.restoreProject": "Restaurar",
+    "settings.deleteProject": "Eliminar",
+    "settings.cancelDeleteProject": "Cancelar eliminación",
+    "settings.deleteProjectConfirm": "¿Eliminar este proyecto del seguimiento del puente? La carpeta, los archivos y el historial de trabajo existente no se eliminarán. Esta acción no se puede deshacer.",
     "settings.projectArchived": "Archivado",
     "settings.projectArchivePending": "Archivar al guardar",
     "settings.projectRestorePending": "Restaurar al guardar",
+    "settings.projectDeletePending": "Eliminar al guardar",
     "settings.projectUnavailableSave": "Corrige o archiva los proyectos que necesitan recuperación antes de guardar."
   },
   fr: {
     "settings.archiveProject": "Archiver",
     "settings.restoreProject": "Restaurer",
+    "settings.deleteProject": "Supprimer",
+    "settings.cancelDeleteProject": "Annuler la suppression",
+    "settings.deleteProjectConfirm": "Supprimer ce projet du suivi du pont ? Le dossier, les fichiers et l’historique de travail existant ne seront pas supprimés. Cette action est irréversible.",
     "settings.projectArchived": "Archivé",
     "settings.projectArchivePending": "Archiver à l’enregistrement",
     "settings.projectRestorePending": "Restaurer à l’enregistrement",
+    "settings.projectDeletePending": "Supprimer à l’enregistrement",
     "settings.projectUnavailableSave": "Corrigez ou archivez les projets à récupérer avant l’enregistrement."
   },
   de: {
     "settings.archiveProject": "Archivieren",
     "settings.restoreProject": "Wiederherstellen",
+    "settings.deleteProject": "Löschen",
+    "settings.cancelDeleteProject": "Löschen abbrechen",
+    "settings.deleteProjectConfirm": "Dieses Projekt aus der Erfassung der Bridge löschen? Ordner, Dateien und vorhandener Arbeitsverlauf werden nicht gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
     "settings.projectArchived": "Archiviert",
     "settings.projectArchivePending": "Beim Speichern archivieren",
     "settings.projectRestorePending": "Beim Speichern wiederherstellen",
+    "settings.projectDeletePending": "Beim Speichern löschen",
     "settings.projectUnavailableSave": "Korrigieren oder archivieren Sie wiederherzustellende Projekte vor dem Speichern."
   },
   pt: {
     "settings.archiveProject": "Arquivar",
     "settings.restoreProject": "Restaurar",
+    "settings.deleteProject": "Excluir",
+    "settings.cancelDeleteProject": "Cancelar exclusão",
+    "settings.deleteProjectConfirm": "Remover este projeto do rastreamento da ponte? A pasta, os arquivos e o histórico de trabalho existente não serão excluídos. Esta ação não pode ser desfeita.",
     "settings.projectArchived": "Arquivado",
     "settings.projectArchivePending": "Arquivar ao salvar",
     "settings.projectRestorePending": "Restaurar ao salvar",
+    "settings.projectDeletePending": "Excluir ao salvar",
     "settings.projectUnavailableSave": "Corrija ou arquive os projetos que precisam de recuperação antes de salvar."
   }
 };
@@ -1771,6 +1840,14 @@ const DASHBOARD_OVERRIDES: Partial<
   Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>>
 > = {
   ko: {
+    "usage.weeklyRemaining": "계정 전체 Codex 주간 잔여량",
+    "usage.resetsAt": "다음 초기화 {time}",
+    "cancellation.reason": "취소 사유",
+    "cancellation.requestReason": "취소 요청 사유",
+    "cancellation.attemptReason": "중단 시도 사유",
+    "cancellation.reasons": "취소 사유 · {count}건",
+    "cancellation.target.job": "작업",
+    "cancellation.target.activity": "액티비티",
     "dashboard.title": "Codex 전체 현황",
     "dashboard.restoreFailed": "이 클라이언트에서 카드를 복원하지 못했습니다. 이 대화에서 ChatGPT에게 Codex 전체 현황을 다시 열어 달라고 요청하세요.",
     "dashboard.scopeNotice": "이 개인 브리지가 보존 중인 작업·에이전트·스레드로 파악한 대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.",
@@ -1819,6 +1896,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "dashboard.unknownProject": "프로젝트 미확인",
     "dashboard.conversation": "GPT 대화",
     "dashboard.openConversation": "대화 열기",
+    "dashboard.openCodexSession": "Codex에서 열기",
     "dashboard.agentCount": "에이전트 {count}개",
     "dashboard.agentShownCount": "현재 페이지 {count}개",
     "dashboard.lastActivity": "최근 활동 {relative}",
@@ -1855,24 +1933,80 @@ const DASHBOARD_OVERRIDES: Partial<
     "dashboard.status.orphaned": "스레드 사용 불가"
   },
   ja: {
+    "usage.weeklyRemaining": "アカウント全体の Codex 週間残量",
+    "usage.resetsAt": "リセット {time}",
+    "cancellation.reason": "キャンセル理由",
+    "cancellation.requestReason": "キャンセル依頼の理由",
+    "cancellation.attemptReason": "中断を試みた理由",
+    "cancellation.reasons": "キャンセル理由 · {count}件",
+    "cancellation.target.job": "ジョブ",
+    "cancellation.target.activity": "アクティビティ",
     "dashboard.restoreFailed": "このクライアントではカードを復元できませんでした。この会話で ChatGPT に Codex の全体状況をもう一度開くよう依頼してください。"
   },
   "zh-Hans": {
+    "usage.weeklyRemaining": "整个账户的 Codex 每周剩余额度",
+    "usage.resetsAt": "重置时间 {time}",
+    "cancellation.reason": "取消原因",
+    "cancellation.requestReason": "取消请求原因",
+    "cancellation.attemptReason": "中断尝试原因",
+    "cancellation.reasons": "取消原因 · {count} 条",
+    "cancellation.target.job": "任务",
+    "cancellation.target.activity": "活动",
     "dashboard.restoreFailed": "此客户端无法恢复卡片。请在此对话中让 ChatGPT 重新打开 Codex 概览。"
   },
   "zh-Hant": {
+    "usage.weeklyRemaining": "整個帳戶的 Codex 每週剩餘額度",
+    "usage.resetsAt": "重設時間 {time}",
+    "cancellation.reason": "取消原因",
+    "cancellation.requestReason": "取消請求原因",
+    "cancellation.attemptReason": "中斷嘗試原因",
+    "cancellation.reasons": "取消原因 · {count} 筆",
+    "cancellation.target.job": "工作",
+    "cancellation.target.activity": "活動",
     "dashboard.restoreFailed": "此用戶端無法還原卡片。請在此對話中要求 ChatGPT 重新開啟 Codex 概覽。"
   },
   es: {
+    "usage.weeklyRemaining": "Saldo semanal de Codex en toda la cuenta",
+    "usage.resetsAt": "Se restablece el {time}",
+    "cancellation.reason": "Motivo de cancelación",
+    "cancellation.requestReason": "Motivo de la solicitud de cancelación",
+    "cancellation.attemptReason": "Motivo del intento de interrupción",
+    "cancellation.reasons": "Motivos de cancelación · {count}",
+    "cancellation.target.job": "Tarea",
+    "cancellation.target.activity": "Actividad",
     "dashboard.restoreFailed": "Este cliente no pudo restaurar la tarjeta. Pide a ChatGPT en esta conversación que vuelva a abrir el resumen de Codex."
   },
   fr: {
+    "usage.weeklyRemaining": "Solde Codex hebdomadaire du compte",
+    "usage.resetsAt": "Réinitialisation le {time}",
+    "cancellation.reason": "Motif de l’annulation",
+    "cancellation.requestReason": "Motif de la demande d’annulation",
+    "cancellation.attemptReason": "Motif de la tentative d’interruption",
+    "cancellation.reasons": "Motifs d’annulation · {count}",
+    "cancellation.target.job": "Tâche",
+    "cancellation.target.activity": "Activité",
     "dashboard.restoreFailed": "Ce client n’a pas pu restaurer la carte. Demandez à ChatGPT dans cette conversation de rouvrir la vue d’ensemble Codex."
   },
   de: {
+    "usage.weeklyRemaining": "Kontoweites wöchentliches Codex-Restkontingent",
+    "usage.resetsAt": "Zurücksetzung am {time}",
+    "cancellation.reason": "Abbruchgrund",
+    "cancellation.requestReason": "Grund der Abbruchanforderung",
+    "cancellation.attemptReason": "Grund des Unterbrechungsversuchs",
+    "cancellation.reasons": "Abbruchgründe · {count}",
+    "cancellation.target.job": "Auftrag",
+    "cancellation.target.activity": "Aktivität",
     "dashboard.restoreFailed": "Dieser Client konnte die Karte nicht wiederherstellen. Bitte ChatGPT in dieser Unterhaltung, die Codex-Übersicht erneut zu öffnen."
   },
   pt: {
+    "usage.weeklyRemaining": "Saldo semanal do Codex em toda a conta",
+    "usage.resetsAt": "Redefine em {time}",
+    "cancellation.reason": "Motivo do cancelamento",
+    "cancellation.requestReason": "Motivo da solicitação de cancelamento",
+    "cancellation.attemptReason": "Motivo da tentativa de interrupção",
+    "cancellation.reasons": "Motivos de cancelamento · {count}",
+    "cancellation.target.job": "Tarefa",
+    "cancellation.target.activity": "Atividade",
     "dashboard.restoreFailed": "Este cliente não conseguiu restaurar o cartão. Peça ao ChatGPT nesta conversa para abrir novamente a visão geral do Codex."
   }
 };
@@ -1883,10 +2017,93 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
+
+export function uiTranslation(
+  locale: SupportedUiLocale,
+  key: UiTranslationKey,
+  parameters: Readonly<Record<string, string | number>> = {}
+): string {
+  let message = UI_TRANSLATIONS[locale][key];
+  for (const [name, value] of Object.entries(parameters)) {
+    message = message.replaceAll(`{${name}}`, String(value));
+  }
+  return message;
+}
+
+export function localizeSettingsWarning(
+  warning: string,
+  locale: SupportedUiLocale,
+  context: { catalog?: boolean; stale?: boolean } = {}
+): string {
+  if (context.catalog) {
+    return uiTranslation(
+      locale,
+      context.stale ? "settings.warning.catalogStale" : "settings.warning.catalogUnavailable"
+    );
+  }
+
+  const backend = warning.match(/^Backend routing:\s*(\S+)\s+applies only/i)?.[1];
+  if (backend) {
+    return uiTranslation(locale, "settings.warning.backendRouting", { backend });
+  }
+
+  if (warning.startsWith("CODEX_MCP_BRIDGE_ROOTS ")) {
+    return uiTranslation(locale, "settings.warning.legacyRoots");
+  }
+  if (warning.startsWith("CODEX_MCP_BRIDGE_FAST_RETURN_MS ")) {
+    return uiTranslation(locale, "settings.warning.fastReturnRetired");
+  }
+  if (warning.startsWith("CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS ")) {
+    return uiTranslation(locale, "settings.warning.upstreamTimeoutRetired");
+  }
+  if (warning.startsWith("CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE ")) {
+    return uiTranslation(locale, "settings.warning.defaultSessionRetired");
+  }
+  if (warning.startsWith("CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS ")) {
+    return uiTranslation(locale, "settings.warning.autoResumeRetired");
+  }
+  if (warning.startsWith("Legacy project IDs/default aliases ")) {
+    return uiTranslation(locale, "settings.warning.legacyProjects");
+  }
+  if (warning.startsWith("Automatic model policy was missing an exact fallback")) {
+    return uiTranslation(locale, "settings.warning.automaticFallbackSeeded");
+  }
+  if (warning.startsWith("Saved full-access mode was downgraded")) {
+    return uiTranslation(locale, "settings.warning.fullAccessDowngraded");
+  }
+  if (warning.startsWith("Saved concurrent-job limit was reduced")) {
+    return uiTranslation(locale, "settings.warning.concurrentLimitReduced");
+  }
+
+  const unavailableProject = warning.match(
+    /^PROJECT_UNAVAILABLE:\s*Saved project ["“](.+?)["”] is unavailable/i
+  )?.[1];
+  if (unavailableProject) {
+    return uiTranslation(locale, "settings.warning.projectUnavailable", {
+      project: unavailableProject
+    });
+  }
+
+  const legacyModel = warning.match(/^Legacy model-only preference '(.+?)' remains active/i)?.[1];
+  if (legacyModel) {
+    return uiTranslation(locale, "settings.warning.legacyModel", { model: legacyModel });
+  }
+  if (warning.startsWith("Legacy automatic model policy has no exact saved omission fallback")) {
+    return uiTranslation(locale, "settings.warning.legacyAutomatic");
+  }
+
+  const policyCode = warning.match(/\b(MODEL_[A-Z_]+|THREAD_OVERRIDE_UNSUPPORTED)\b/)?.[1];
+  if (policyCode || /model policy|Priority/i.test(warning)) {
+    return uiTranslation(locale, "settings.warning.modelPolicy", {
+      codeSuffix: policyCode ? ` (${policyCode})` : ""
+    });
+  }
+  return uiTranslation(locale, "settings.warning.generic");
+}
 
 export function resolveUiLocale(input?: string | null): SupportedUiLocale {
   const locale = (input || "en").trim().replace(/_/g, "-").toLowerCase();

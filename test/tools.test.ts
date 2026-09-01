@@ -52,6 +52,7 @@ import {
   type CodexThreadResumeProbe,
   type CodexThreadForkRequest,
   type CodexUpstream,
+  type CodexWeeklyUsage,
   type ToolResult,
   type UpstreamWorkerAssignment
 } from "../src/upstream.js";
@@ -78,6 +79,22 @@ class FakeUpstream implements CodexUpstream {
   }
 
   async close(): Promise<void> {}
+}
+
+class WeeklyUsageUpstream extends FakeUpstream {
+  public usageReads = 0;
+
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage> {
+    this.usageReads += 1;
+    return {
+      limitId: "codex",
+      usedPercent: 35.5,
+      remainingPercent: 64.5,
+      windowDurationMins: 10_080,
+      resetsAt: 1_900_604_800,
+      observedAt: 1_900_000_000_000
+    };
+  }
 }
 
 class FailingInventoryUpstream extends FakeUpstream {
@@ -146,6 +163,37 @@ class DeferredUpstream extends FakeUpstream {
     const pending = this.pending.shift();
     if (!pending) throw new Error("No pending upstream call.");
     pending.reject(error);
+  }
+}
+
+class CodexSessionDeferredUpstream extends DeferredUpstream {
+  constructor(
+    readonly threadId: string,
+    readonly sessionId: string
+  ) {
+    super();
+  }
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: "app-session-link-0",
+      workerGeneration: 1,
+      workerPid: 999_101,
+      processGroupId: 999_101,
+      upstreamRequestId: "app-session-link-turn-1",
+      threadId: this.threadId,
+      sessionId: this.sessionId
+    });
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+    });
   }
 }
 
@@ -930,8 +978,10 @@ describe("bridge tools", () => {
     expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("adoptThread");
     expect(byName.get("codex_cancel")?.inputSchema.properties).not.toHaveProperty("scopeId");
     expect(byName.get("codex_cancel")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "jobId", "expectedVersion"])
+      required: expect.arrayContaining(["requestId", "jobId", "expectedVersion", "reason"])
     });
+    expect(byName.get("codex_cancel")?.inputSchema.properties?.reason)
+      .toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
     expect(Object.keys(byName.get("codex_steer")?.inputSchema.properties || {}).sort())
       .toEqual(["expectedJobVersion", "jobId", "prompt", "requestId"]);
     expect(byName.get("codex_steer")?.inputSchema).toMatchObject({
@@ -1211,8 +1261,12 @@ describe("bridge tools", () => {
         "requestId"
       ]);
     expect(byName.get("codex_activity_cancel")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "activityId", "expectedVersion"])
+      required: expect.arrayContaining(["requestId", "activityId", "expectedVersion", "reason"])
     });
+    expect(byName.get("codex_activity_cancel")?.inputSchema.properties?.reason)
+      .toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
+    expect(byName.get("codex_activity_job_cancel")?.inputSchema.properties)
+      .not.toHaveProperty("reason");
     expect(byName.get("codex_settings")?._meta).toMatchObject({
       ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": SETTINGS_CARD_URI,
@@ -1221,6 +1275,12 @@ describe("bridge tools", () => {
     expect(byName.get("codex_update_settings")?._meta).toMatchObject({
       ui: { visibility: ["app"] },
       "openai/visibility": "private"
+    });
+    expect(byName.get("codex_update_settings")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
     });
     const updateSettingsSchema = byName.get("codex_update_settings")?.inputSchema as any;
     expect(Object.keys(updateSettingsSchema.properties).sort()).toEqual([
@@ -1263,7 +1323,7 @@ describe("bridge tools", () => {
     ]));
     expect(settingsPatchSchema.properties.projectOperations.items.oneOf.map(
       (variant: any) => variant.properties.kind.const
-    )).toEqual(["add", "rename", "relocate", "archive", "restore"]);
+    )).toEqual(["add", "rename", "relocate", "archive", "restore", "delete"]);
     expect(settingsPatchSchema.properties).not.toHaveProperty("defaultProjectId");
     expect(updateSettingsSchema.properties).not.toHaveProperty("projects");
     expect(updateSettingsSchema.properties).not.toHaveProperty("defaultCwd");
@@ -1566,10 +1626,11 @@ describe("bridge tools", () => {
             "acknowledgeAffectedJobIds",
             "expectedVersion",
             "jobId",
+            "reason",
             "requestId",
           ],
-          "propertyCount": 4,
-          "schemaBytes": 853,
+          "propertyCount": 5,
+          "schemaBytes": 1083,
           "visibility": {
             "app": false,
             "model": true,
@@ -1711,7 +1772,7 @@ describe("bridge tools", () => {
             "requestId",
           ],
           "propertyCount": 5,
-          "schemaBytes": 971,
+          "schemaBytes": 1158,
           "visibility": {
             "app": false,
             "model": true,
@@ -1758,7 +1819,7 @@ describe("bridge tools", () => {
         },
         {
           "annotations": {
-            "destructive": false,
+            "destructive": true,
             "idempotent": false,
             "openWorld": false,
             "readOnly": false,
@@ -1770,7 +1831,7 @@ describe("bridge tools", () => {
             "operation",
           ],
           "propertyCount": 3,
-          "schemaBytes": 4848,
+          "schemaBytes": 5089,
           "visibility": {
             "app": true,
             "model": false,
@@ -2158,6 +2219,9 @@ describe("bridge tools", () => {
     expect(contents.text).not.toContain('projectField("settings.projectId"');
     expect(contents.text).not.toContain("allocateProjectId");
     expect(contents.text).toContain('operations.push({kind:"add",project:{name:project.name,cwd:project.cwd}})');
+    expect(contents.text).toContain('operations.push({kind:"delete",projectId:project.id})');
+    expect(contents.text).toContain('confirm(t["settings.deleteProjectConfirm"])');
+    expect(contents.text).toContain('t["settings.removeProject"]');
     expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(contents.text).not.toContain("defaultProjectId");
     expect(contents.text).toContain('operation:{kind:"patch",settings}');
@@ -2225,6 +2289,11 @@ describe("bridge tools", () => {
           expect(html).toContain("waitMs");
           expect(html).toContain("consumeToolOutput");
           if (revision.uri === currentUri) {
+            expect(html).toContain('id="weekly-usage"');
+            expect(html).toContain('data-i18n="usage.weeklyRemaining"');
+            expect(html).toContain("renderWeeklyUsage(next.weeklyUsage)");
+            expect(html).toContain("function appendCancellations(parent,row)");
+            expect(html).toContain('node("details","cancellation")');
             expect(html).toContain('callTool("codex_activity_rehydrate"');
             expect(html).toContain('mountedPresentation.kind==="historical"');
             expect(html).toContain('callTool("codex_background_process_terminate"');
@@ -2238,6 +2307,11 @@ describe("bridge tools", () => {
           expect(html).toContain('callTool("codex_dashboard_snapshot"');
           expect(html).toContain('window.addEventListener("pageshow"');
           if (revision.uri === currentUri) {
+            expect(html).toContain('id="weekly-usage"');
+            expect(html).toContain('data-i18n="usage.weeklyRemaining"');
+            expect(html).toContain("renderWeeklyUsage(next.weeklyUsage)");
+            expect(html).toContain("function appendCancellation(parent,cancellation,key)");
+            expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
             expect(html).toContain("function appendExecution(parent,execution,current=false)");
             expect(html).toContain('node("details","history")');
@@ -2267,11 +2341,15 @@ describe("bridge tools", () => {
             expect(html).toContain("function syncDisclosure()");
             expect(html).not.toContain("dashboardViewMode");
             expect(html).not.toContain("api.setWidgetState");
-            expect(html).toContain('api.openExternal({href:url,redirectUrl:false})');
+            expect(html).toContain("function dispatchDashboardExternalUrl(");
+            expect(html).toContain(
+              "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
+            );
+            expect(html).toContain("safeCodexThreadUrl(row.codexThreadUrl)");
             expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
               .toMatchObject({
                 "openai/widgetCSP": {
-                  redirect_domains: ["https://chatgpt.com"]
+                  redirect_domains: ["https://chatgpt.com", "codex://threads"]
                 }
               });
           }
@@ -2345,6 +2423,49 @@ describe("bridge tools", () => {
         card.presentation
       );
     }
+
+    await close();
+  });
+
+  it("hydrates account-wide weekly Codex usage only into Dashboard and Activity cards", async () => {
+    const root = temporaryRoot();
+    const upstream = new WeeklyUsageUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+
+    const dashboardResult = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const dashboardPublic = (dashboardResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    const dashboardPrivate = validateDashboardViewPrivateMetadata(
+      (dashboardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    );
+    expect(dashboardPublic).not.toHaveProperty("weeklyUsage");
+    expect(dashboardPrivate.view.weeklyUsage).toEqual({
+      source: "codex-account-rate-limits",
+      limitId: "codex",
+      usedPercent: 35.5,
+      remainingPercent: 64.5,
+      windowDurationMins: 10_080,
+      resetsAt: new Date(1_900_604_800_000).toISOString(),
+      observedAt: new Date(1_900_000_000_000).toISOString()
+    });
+
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, mode: "full-history" }
+    });
+    const activityPublic = (activityResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    const activityPrivate = validateActivityViewPrivateMetadata(
+      (activityResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    );
+    expect(activityPublic).not.toHaveProperty("weeklyUsage");
+    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardPrivate.view.weeklyUsage);
+    expect(upstream.usageReads).toBe(2);
 
     await close();
   });
@@ -2581,6 +2702,63 @@ describe("bridge tools", () => {
     expect(afterCompletionView.idleRows).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ agentName: "Scope B Agent" })
     ]));
+    await close();
+  });
+
+  it("links an active App Server Agent to its validated local Codex thread", async () => {
+    const root = temporaryRoot();
+    const threadId = "41414141-4141-4141-8141-414141414141";
+    const sessionId = "42424242-4242-4242-8242-424242424242";
+    const upstream = new CodexSessionDeferredUpstream(threadId, sessionId);
+    const { client, rawCallTool, jobs, sessions, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const task = parseToolJson(await runTask(client, {
+      prompt: "keep the Codex deep-link fixture active",
+      executionMode: "background"
+    }));
+    await vi.waitFor(() => {
+      expect(jobs.get(task.jobId)?.threadId).toBe(threadId);
+      expect(sessions.get(threadId)?.sessionId).toBe(sessionId);
+    });
+
+    const opened = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const activeView = validateDashboardViewPrivateMetadata(
+      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    ).view;
+    expect(activeView.activeRows).toEqual([
+      expect.objectContaining({
+        status: "running",
+        codexThreadUrl: `codex://threads/${threadId}`
+      })
+    ]);
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(threadId);
+
+    upstream.resolveNext({
+      content: [{ type: "text", text: "done" }],
+      structuredContent: {
+        threadId,
+        sessionId,
+        backendKind: "app-server",
+        content: "done"
+      }
+    });
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+    const completed = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const completedView = validateDashboardViewPrivateMetadata(
+      (completed as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    ).view;
+    expect(completedView.terminalRows).toEqual([
+      expect.objectContaining({ codexThreadUrl: `codex://threads/${threadId}` })
+    ]);
     await close();
   });
 
@@ -3741,6 +3919,55 @@ describe("bridge tools", () => {
         expect.objectContaining({ id: webProject.id, name: "Web Application", cwd: realpathSync(web) })
       ])
     });
+
+    const activeDelete = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 4,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    expect(activeDelete.isError).toBe(true);
+    expect(JSON.stringify(activeDelete)).toContain("PROJECT_DELETE_REQUIRES_ARCHIVE");
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 4,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "archive", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    const deleted = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 5,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    const deletedView = privateSettingsView(deleted);
+    expect(deletedView.settings).toMatchObject({
+      registryRevision: 6,
+      projects: [expect.objectContaining({ id: apiProject.id })]
+    });
+    expect(deletedView.capabilities.projectAvailability).toEqual([
+      expect.objectContaining({ projectId: apiProject.id })
+    ]);
+    expect(existsSync(web)).toBe(true);
     await close();
   });
 
@@ -4377,7 +4604,12 @@ describe("bridge tools", () => {
       "Legacy model-only preference remains active; its exact value is available only in " +
       "Settings. Save an exact model/reasoning fallback to complete migration."
     );
-    expect(privateView.warnings.join(" ")).toContain("'gpt-private-legacy-default'");
+    expect(privateView.warnings.join(" ")).toContain("gpt-private-legacy-default");
+    expect(privateView.warnings.join(" ")).toContain("이전 모델 전용 설정");
+    expect(privateView.warnings.join(" ")).not.toContain("Legacy model-only preference");
+    expect(privateView.warnings.join(" ")).toContain(
+      "기존 Agent 스레드는 처음 사용한 백엔드에 계속 고정"
+    );
     await close();
   });
 
@@ -7125,7 +7357,8 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "94949494-9494-4494-8494-949494949489",
         jobId: started.jobId,
-        expectedVersion: jobs.get(started.jobId)?.version
+        expectedVersion: jobs.get(started.jobId)?.version,
+        reason: "The user stopped the active App Server job"
       }
     }));
     expect(cancelled).toMatchObject({
@@ -8065,12 +8298,24 @@ describe("bridge tools", () => {
     expect(upstream.aborts).toBe(0);
 
     const activityVersion = jobs.getActivity(running.activityId)?.version as number;
+    const missingReason = await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: {
+        requestId: "61616161-6161-4161-8161-616161616161",
+        activityId: running.activityId,
+        expectedVersion: activityVersion
+      }
+    });
+    expect(missingReason.isError).toBe(true);
+    expect(JSON.stringify(missingReason)).toContain("reason");
+    expect(upstream.aborts).toBe(0);
     const stale = await client.callTool({
       name: "codex_activity_cancel",
       arguments: {
         requestId: "62626262-6262-4262-8262-626262626262",
         activityId: running.activityId,
-        expectedVersion: activityVersion + 1
+        expectedVersion: activityVersion + 1,
+        reason: "The user stopped this Activity"
       }
     });
     expect(stale.isError).toBe(true);
@@ -8082,7 +8327,8 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "63636363-6363-4363-8363-636363636362",
         activityId: running.activityId,
-        expectedVersion: activityVersion
+        expectedVersion: activityVersion,
+        reason: "The user stopped this Activity"
       }
     });
     expect(crossScope.isError).toBe(true);
@@ -8121,6 +8367,12 @@ describe("bridge tools", () => {
       lifecycle: "cancelled",
       waitingOn: "none"
     });
+    expect(jobs.getCancellationOperation(SCOPE_A, cancellationArguments.requestId))
+      .toMatchObject({
+        source: "model-tool",
+        reason: cancellationArguments.reason,
+        status: "completed"
+      });
     const cascadeIntents = jobs.listCancellationIntents({
       requestId: cancellationArguments.requestId
     });
@@ -8169,6 +8421,60 @@ describe("bridge tools", () => {
     expect(childRecorded).toBeGreaterThan(activityTerminating);
     expect(childCancelled).toBeGreaterThan(childRecorded);
     expect(activityCancelled).toBeGreaterThan(childCancelled);
+    expect(cascadeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "cancellation-intent-recorded",
+        payload: expect.objectContaining({ reason: cancellationArguments.reason })
+      })
+    ]));
+
+    const activityCardResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: running.activityId
+      }
+    });
+    const activityCardView = validateActivityViewPrivateMetadata(
+      (activityCardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    ).view;
+    expect(activityCardView.feed).toMatchObject({
+      history: {
+        rows: [expect.objectContaining({
+          activityId: running.activityId,
+          cancellations: [{
+            targetKind: "activity",
+            status: "succeeded",
+            reason: cancellationArguments.reason,
+            requestedAt: expect.any(String)
+          }]
+        })]
+      }
+    });
+
+    const dashboardResult = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const dashboardView = validateDashboardViewPrivateMetadata(
+      (dashboardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    ).view;
+    expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        latestTurn: expect.objectContaining({
+          status: "cancelled",
+          cancellation: {
+            targetKind: "activity",
+            status: "succeeded",
+            reason: cancellationArguments.reason,
+            requestedAt: expect.any(String)
+          }
+        })
+      })
+    ]));
     const changedRetry = await client.callTool({
       name: "codex_activity_cancel",
       arguments: { ...cancellationArguments, reason: "Different cancellation semantics" }
@@ -8243,6 +8549,7 @@ describe("bridge tools", () => {
         requestId: "64646464-6464-4464-8464-646464646464",
         activityId: first.activityId,
         expectedVersion: jobs.getActivity(first.activityId)?.version,
+        reason: "The user stopped every turn in this Activity",
         acknowledgeAffectedJobIds: affected
       }
     }));
@@ -8932,7 +9239,8 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "adadadad-adad-4ada-8ada-adadadadadad",
         jobId: started.jobId,
-        expectedVersion: currentVersion
+        expectedVersion: currentVersion,
+        reason: "The user stopped this job"
       },
       _meta: { "openai/session": "another-cancel-session" }
     });
@@ -8945,7 +9253,8 @@ describe("bridge tools", () => {
         arguments: {
           requestId: "aeaeaeae-aeae-4aea-8aea-aeaeaeaeaeae",
           jobId: started.jobId,
-          expectedVersion: currentVersion
+          expectedVersion: currentVersion,
+          reason: "The user stopped this job"
         },
         _meta: metadata
       })
@@ -11310,6 +11619,13 @@ describe("bridge tools", () => {
           latestActivityTitle: "Render summary",
           activityCount: 1
         })]
+      },
+      idleAgents: {
+        rows: [expect.objectContaining({
+          agentName: "Summary Agent",
+          latestActivityId: activityId,
+          latestActivityTitle: "Render summary"
+        })]
       }
     });
 
@@ -12132,7 +12448,7 @@ describe("bridge tools", () => {
   it("cancels only a job owned by the supplied scope and forwards an abort signal", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, jobs, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
       configFor(root),
       upstream
     );
@@ -12142,13 +12458,27 @@ describe("bridge tools", () => {
     await Promise.resolve();
     const currentVersion = jobs.get(started.jobId)?.version as number;
 
+    const missingReason = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "70707070-7070-4070-8070-707070707070",
+        jobId: started.jobId,
+        expectedVersion: currentVersion
+      }
+    });
+    expect(missingReason.isError).toBe(true);
+    expect(JSON.stringify(missingReason)).toContain("reason");
+    expect(upstream.aborts).toBe(0);
+
     const denied = await client.callTool({
       name: "codex_cancel",
       arguments: {
         scopeId: SCOPE_B,
         requestId: "71717171-7171-4171-8171-717171717171",
         jobId: started.jobId,
-        expectedVersion: currentVersion
+        expectedVersion: currentVersion,
+        reason: "The user stopped this job"
       }
     });
     expect(denied.isError).toBe(true);
@@ -12158,7 +12488,8 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       requestId: "72727272-7272-4272-8272-727272727272",
       jobId: started.jobId,
-      expectedVersion: currentVersion
+      expectedVersion: currentVersion,
+      reason: "The user stopped this job"
     };
     const [cancelledResult, concurrentReplayResult] = await Promise.all([
       client.callTool({ name: "codex_cancel", arguments: cancellationArguments }),
@@ -12192,8 +12523,55 @@ describe("bridge tools", () => {
       .toMatchObject({
         status: "completed",
         source: "model-tool",
+        reason: cancellationArguments.reason,
         result: { status: "cancelled", jobId: started.jobId }
       });
+    const activityCardResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: started.activityId
+      }
+    });
+    const activityCardView = validateActivityViewPrivateMetadata(
+      (activityCardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    ).view;
+    const activityFeed = activityCardView.feed as {
+      active: Array<Record<string, unknown>>;
+      history: { rows: Array<Record<string, unknown>> };
+    };
+    expect([...activityFeed.active, ...activityFeed.history.rows]).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        activityId: started.activityId,
+        cancellations: [{
+          targetKind: "job",
+          status: "succeeded",
+          reason: cancellationArguments.reason,
+          requestedAt: expect.any(String)
+        }]
+      })])
+    );
+    const dashboardResult = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const dashboardView = validateDashboardViewPrivateMetadata(
+      (dashboardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    ).view;
+    expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        latestTurn: expect.objectContaining({
+          cancellation: expect.objectContaining({
+            targetKind: "job",
+            status: "succeeded",
+            reason: cancellationArguments.reason
+          })
+        })
+      })
+    ]));
     const conflictingReplay = await client.callTool({
       name: "codex_cancel",
       arguments: { ...cancellationArguments, expectedVersion: currentVersion + 1 }
@@ -12231,7 +12609,8 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "73737373-7373-4373-8373-737373737373",
         jobId: first.jobId,
-        expectedVersion: current.version - 1
+        expectedVersion: current.version - 1,
+        reason: "The user stopped the target job"
       }
     });
     expect(stale.isError).toBe(true);
@@ -12244,7 +12623,8 @@ describe("bridge tools", () => {
         scopeId: SCOPE_A,
         requestId: "74747474-7474-4474-8474-747474747474",
         jobId: first.jobId,
-        expectedVersion: current.version
+        expectedVersion: current.version,
+        reason: "The user stopped the target job"
       }
     });
     expect(unconfirmed.isError).toBe(true);
@@ -12259,6 +12639,7 @@ describe("bridge tools", () => {
         requestId: "75757575-7575-4575-8575-757575757575",
         jobId: first.jobId,
         expectedVersion: current.version,
+        reason: "The user stopped the target job",
         acknowledgeAffectedJobIds: affected
       }
     }));
@@ -12296,6 +12677,7 @@ describe("bridge tools", () => {
         requestId: "76767676-7676-4676-8676-767676767676",
         jobId: "missing-job",
         expectedVersion: 1,
+        reason: "The user stopped the missing job",
         acknowledgeAffectedJobIds: acknowledged
       }
     });
@@ -12309,6 +12691,7 @@ describe("bridge tools", () => {
         requestId: "65656565-6565-4565-8565-656565656565",
         activityId: SCOPE_B,
         expectedVersion: 1,
+        reason: "The user stopped the missing Activity",
         acknowledgeAffectedJobIds: acknowledged
       }
     });

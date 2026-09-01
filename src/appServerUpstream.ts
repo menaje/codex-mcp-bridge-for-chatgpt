@@ -37,6 +37,7 @@ import {
   type CodexThreadLineage,
   type CodexThreadResumeProbe,
   type CodexUpstream,
+  type CodexWeeklyUsage,
   type ToolResult,
   type UpstreamWorkerAssignment
 } from "./upstream.js";
@@ -51,6 +52,8 @@ const REASONING_NOTIFICATIONS = [
 
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
+export const CODEX_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
+export const ACCOUNT_RATE_LIMITS_CACHE_TTL_MS = 60_000;
 
 export const APP_SERVER_CLIENT_INFO = Object.freeze({
   name: PRODUCT_INFO.runtimeName,
@@ -169,6 +172,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly workerMetricsProbe: WorkerMetricsProbe;
   private compatibilityCheck?: Promise<string>;
   private compatibilityAbort?: AbortController;
+  private accountRateLimitsCache?: {
+    value: CodexWeeklyUsage | null;
+    expiresAt: number;
+  };
+  private accountRateLimitsRequest?: Promise<CodexWeeklyUsage | null>;
   private closing = false;
 
   constructor(
@@ -391,6 +399,26 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
   }
 
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
+    const now = Date.now();
+    if (this.accountRateLimitsCache && now < this.accountRateLimitsCache.expiresAt) {
+      return this.accountRateLimitsCache.value;
+    }
+    if (this.accountRateLimitsRequest) return this.accountRateLimitsRequest;
+
+    const request = this.fetchAccountRateLimits().then((value) => {
+      this.accountRateLimitsCache = {
+        value,
+        expiresAt: Date.now() + ACCOUNT_RATE_LIMITS_CACHE_TTL_MS
+      };
+      return value;
+    }).finally(() => {
+      if (this.accountRateLimitsRequest === request) this.accountRateLimitsRequest = undefined;
+    });
+    this.accountRateLimitsRequest = request;
+    return request;
+  }
+
   canResumeThread(threadId: string): boolean | undefined {
     return this.threadResumeEvidence.get(threadId) ??
       (this.threadWorkers.has(threadId) ? true : undefined);
@@ -509,6 +537,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.accountRateLimitsCache = undefined;
+    this.accountRateLimitsRequest = undefined;
     this.threadWorkers.clear();
     this.threadResumeEvidence.clear();
     const compatibilityCheck = this.compatibilityCheck;
@@ -547,6 +577,25 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     );
   }
 
+  private async fetchAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      const response = await (await this.connectionFor(worker)).readAccountRateLimits();
+      return parseCodexWeeklyUsage(response);
+    } catch {
+      // Usage is supplemental card data. A missing/older endpoint must not
+      // prevent the overview or Activity feed from rendering.
+      return null;
+    } finally {
+      worker.activeCalls -= 1;
+    }
+  }
+
+  private invalidateAccountRateLimits(): void {
+    this.accountRateLimitsCache = undefined;
+  }
+
   private async withThreadWorker<T>(
     threadId: string,
     operation: (connection: AppServerConnection) => Promise<T>
@@ -582,7 +631,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
             ...this.protocolOptions,
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
           },
-          (observation) => this.onWorkerExit(worker, observation)
+          (observation) => this.onWorkerExit(worker, observation),
+          () => this.invalidateAccountRateLimits()
         );
         worker.startingConnection = connection;
         worker.connecting = connection.initializeForAdmission().then(async (initialized) => {
@@ -682,7 +732,8 @@ class AppServerConnection {
     private readonly workerId: string,
     private readonly generation: number,
     private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions,
-    private readonly onExitObserved: (observation: WorkerExitObservation) => void
+    private readonly onExitObserved: (observation: WorkerExitObservation) => void,
+    private readonly onAccountRateLimitsUpdated: () => void
   ) {
     this.rpc = new JsonRpcProcess({
       command,
@@ -709,14 +760,16 @@ class AppServerConnection {
     workerId: string,
     generation: number,
     protocolOptions: ResolvedCodexAppServerProtocolOptions,
-    onExitObserved: (observation: WorkerExitObservation) => void
+    onExitObserved: (observation: WorkerExitObservation) => void,
+    onAccountRateLimitsUpdated: () => void
   ): AppServerConnection {
     return new AppServerConnection(
       command,
       workerId,
       generation,
       protocolOptions,
-      onExitObserved
+      onExitObserved,
+      onAccountRateLimitsUpdated
     );
   }
 
@@ -1022,6 +1075,14 @@ class AppServerConnection {
     return { data, nextCursor: null };
   }
 
+  async readAccountRateLimits(): Promise<Record<string, unknown>> {
+    return this.rpc.request<Record<string, unknown>>(
+      "account/rateLimits/read",
+      undefined,
+      { timeoutMs: this.protocolOptions.requestTimeoutMs }
+    );
+  }
+
   async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
     const turnId = this.threadTurns.get(threadId);
     if (!turnId) throw new Error("The requested Codex thread has no active turn to steer.");
@@ -1285,6 +1346,7 @@ class AppServerConnection {
     upstreamRequestId?: string
   ): UpstreamWorkerAssignment {
     const identity = this.rpc.identity;
+    const lineage = this.threadLineage.get(threadId);
     return {
       backendKind: "app-server",
       workerId: this.workerId,
@@ -1294,11 +1356,19 @@ class AppServerConnection {
         ? { processGroupId: identity.processGroupId }
         : {}),
       ...(upstreamRequestId ? { upstreamRequestId } : {}),
-      threadId
+      threadId,
+      ...(lineage?.sessionId ? { sessionId: lineage.sessionId } : {}),
+      ...(lineage?.forkedFromThreadId
+        ? { forkedFromThreadId: lineage.forkedFromThreadId }
+        : {})
     };
   }
 
   private onNotification(method: string, params: unknown): void {
+    if (method === "account/rateLimits/updated") {
+      this.onAccountRateLimitsUpdated();
+      return;
+    }
     if (!isRecord(params)) return;
     if (method === "configWarning") this.configWarningCount += 1;
     if (method === "mcpServer/startupStatus/updated") {
@@ -2300,6 +2370,53 @@ function modelReasoningEffort(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
+}
+
+export function parseCodexWeeklyUsage(
+  response: unknown,
+  observedAt = Date.now()
+): CodexWeeklyUsage | null {
+  if (!isRecord(response)) return null;
+  const byLimitId = isRecord(response.rateLimitsByLimitId)
+    ? response.rateLimitsByLimitId
+    : undefined;
+  const mappedCodex = byLimitId && isRecord(byLimitId.codex)
+    ? byLimitId.codex
+    : undefined;
+  const legacyCodex = isRecord(response.rateLimits) &&
+    (response.rateLimits.limitId === undefined || response.rateLimits.limitId === "codex")
+    ? response.rateLimits
+    : undefined;
+  const bucket = mappedCodex || legacyCodex;
+  if (!bucket) return null;
+
+  const weeklyWindow = [bucket.primary, bucket.secondary]
+    .find((candidate) =>
+      isRecord(candidate) && candidate.windowDurationMins === CODEX_WEEKLY_WINDOW_MINUTES
+    );
+  if (
+    !isRecord(weeklyWindow) ||
+    typeof weeklyWindow.usedPercent !== "number" ||
+    !Number.isFinite(weeklyWindow.usedPercent)
+  ) {
+    return null;
+  }
+
+  const usedPercent = Math.min(100, Math.max(0, weeklyWindow.usedPercent));
+  const resetsAt = typeof weeklyWindow.resetsAt === "number" &&
+    Number.isFinite(weeklyWindow.resetsAt) && weeklyWindow.resetsAt >= 0
+    ? Math.trunc(weeklyWindow.resetsAt)
+    : null;
+  return {
+    limitId: typeof bucket.limitId === "string" && bucket.limitId
+      ? bucket.limitId
+      : "codex",
+    usedPercent,
+    remainingPercent: Math.max(0, 100 - usedPercent),
+    windowDurationMins: CODEX_WEEKLY_WINDOW_MINUTES,
+    resetsAt,
+    observedAt
+  };
 }
 
 function boundedAppend(current: string, delta: string, max: number): string {

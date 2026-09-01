@@ -126,6 +126,7 @@ import {
   type CodexPublicEvent,
   type CodexThreadResumeProbe,
   type CodexUpstream,
+  type CodexWeeklyUsage,
   type ToolResult,
   type UpstreamWorkerAssignment
 } from "./upstream.js";
@@ -140,12 +141,15 @@ import {
 } from "./userSettings.js";
 import {
   UI_LOCALE_PREFERENCES,
+  localizeSettingsWarning,
   missingReasoningEffortTranslations,
   reasoningEffortPresentation,
-  resolvePreferredUiLocale
+  resolvePreferredUiLocale,
+  uiTranslation
 } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
+  CANCELLATION_REASON_MAX_LENGTH,
   JOB_TERMINAL_ORIGINS,
   cancellationTerminationCorrelation,
   type BeginCancellationOperationInput,
@@ -479,6 +483,13 @@ const dashboardExecutionOutputSchema = z.strictObject({
   isCurrent: z.boolean()
 });
 
+const cancellationDisplayOutputSchema = z.strictObject({
+  targetKind: z.enum(["job", "activity"]),
+  status: z.enum(["requested", "succeeded", "failed"]),
+  reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH),
+  requestedAt: z.iso.datetime()
+});
+
 const dashboardTurnOutputSchema = z.strictObject({
   activityTitle: z.string().nullable(),
   execution: dashboardExecutionOutputSchema.optional(),
@@ -486,11 +497,16 @@ const dashboardTurnOutputSchema = z.strictObject({
   startedAt: z.string().nullable(),
   updatedAt: z.string(),
   endedAt: z.string().nullable(),
-  durationMs: z.number().int().min(0).nullable()
+  durationMs: z.number().int().min(0).nullable(),
+  cancellation: cancellationDisplayOutputSchema.optional()
 });
 
 const dashboardConversationUrlOutputSchema = z.string().regex(
   /^https:\/\/chatgpt\.com\/c\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+);
+
+const dashboardCodexThreadUrlOutputSchema = z.string().regex(
+  /^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 );
 
 const dashboardRowOutputSchema = z.strictObject({
@@ -498,6 +514,7 @@ const dashboardRowOutputSchema = z.strictObject({
   conversationKey: z.string().regex(/^[0-9a-f]{32}$/),
   sessionAlias: z.string(),
   conversationUrl: dashboardConversationUrlOutputSchema.optional(),
+  codexThreadUrl: dashboardCodexThreadUrlOutputSchema.optional(),
   bucket: z.enum(["active", "recent", "idle"]),
   projectKey: z.string().regex(/^[0-9a-f]{32}$/),
   projectName: z.string().nullable(),
@@ -588,6 +605,16 @@ const dashboardCountsOutputSchema = z.strictObject({
   orphanedAgents: z.number().int().min(0)
 });
 
+const codexWeeklyUsageOutputSchema = z.strictObject({
+  source: z.literal("codex-account-rate-limits"),
+  limitId: z.string().trim().min(1).max(100),
+  usedPercent: z.number().min(0).max(100),
+  remainingPercent: z.number().min(0).max(100),
+  windowDurationMins: z.literal(7 * 24 * 60),
+  resetsAt: z.iso.datetime().nullable(),
+  observedAt: z.iso.datetime()
+});
+
 const dashboardModelOutputSchema = z.strictObject({
   kind: z.literal("dashboard"),
   scope: z.literal("bridge-wide"),
@@ -602,6 +629,7 @@ const dashboardViewOutputSchema = z.strictObject({
   scope: z.literal("bridge-wide"),
   statusSource: z.literal("codex-runtime-only"),
   coverage: z.literal("bridge-known-retained"),
+  weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   counts: dashboardCountsOutputSchema,
   projects: z.array(dashboardProjectOutputSchema).optional(),
   conversations: z.array(dashboardConversationOutputSchema).optional(),
@@ -642,6 +670,7 @@ export function validateDashboardViewPrivateMetadata(
 const activityViewOutputSchema = z.strictObject({
   scopeVersion: z.number().int().min(0),
   generatedAt: z.string(),
+  weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   aggregates: opaqueJsonObjectOutputSchema,
   agents: z.array(opaqueJsonObjectOutputSchema),
   archivedAgents: z.array(opaqueJsonObjectOutputSchema),
@@ -2897,6 +2926,10 @@ export class CodexJobRegistry {
     requestId: string
   ): CancellationOperationRecord | undefined {
     return this.activityStore.getCancellationOperation(scopeId, requestId);
+  }
+
+  listCancellationOperations(scopeId?: string): CancellationOperationRecord[] {
+    return this.activityStore.listCancellationOperations(scopeId);
   }
 
   async runCancellationMutation(
@@ -5876,6 +5909,9 @@ export function registerBridgeTools(
     jobId: z.string().trim().min(1).max(200).describe("Active job id returned by codex_task."),
     expectedVersion: z.number().int().min(1)
       .describe("Authoritative job version observed immediately before cancellation."),
+    reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH).describe(
+      "Short user-facing reason for this GPT-requested cancellation. Do not include private reasoning, raw prompts, secrets, or unnecessary file contents."
+    ),
     acknowledgeAffectedJobIds: z
       .array(z.string().trim().min(1).max(200))
       .max(HARD_MAX_CONCURRENT_JOBS)
@@ -5891,7 +5927,7 @@ export function registerBridgeTools(
     {
       title: "Force-stop Codex Job",
       description:
-        "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
+        "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope with a required, short user-facing reason. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
       inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
       outputSchema: cancelMutationOutputSchema,
       annotations: {
@@ -5913,6 +5949,7 @@ export function registerBridgeTools(
           action: "cancel-job",
           jobId: args.jobId,
           expectedVersion: args.expectedVersion,
+          reason: args.reason,
           acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
         }))
         .digest("hex");
@@ -5944,7 +5981,8 @@ export function registerBridgeTools(
             expectedVersion: args.expectedVersion,
             callerPresentation: callerPresentationFromMetadata(_meta),
             callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-            reasonCode: "public-job-cancel"
+            reasonCode: "public-job-cancel",
+            reason: args.reason
           });
           const cancelled = await jobs.cancel(args.jobId, intent, {
             acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
@@ -6546,7 +6584,9 @@ export function registerBridgeTools(
     activityId: scopeIdSchema().describe("Exact Activity id in the current conversation scope."),
     expectedVersion: z.number().int().min(1)
       .describe("Authoritative Activity version observed immediately before cancellation."),
-    reason: z.string().trim().min(1).max(2_000).optional(),
+    reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH).describe(
+      "Short user-facing reason for this GPT-requested whole-Activity cancellation. Do not include private reasoning, raw prompts, secrets, or unnecessary file contents."
+    ),
     acknowledgeAffectedJobIds: z
       .array(z.string().trim().min(1).max(200))
       .max(HARD_MAX_CONCURRENT_JOBS)
@@ -6654,7 +6694,7 @@ export function registerBridgeTools(
     {
       title: "Force-stop Codex Activity",
       description:
-        "Idempotently force-stop every active Codex job in one Activity at an exact authoritative Activity version, then mark the Activity cancelled. Shared workers may interrupt jobs outside the Activity and require confirmation of the exact affected-job set. Partial filesystem changes are not rolled back.",
+        "Idempotently force-stop every active Codex job in one Activity at an exact authoritative Activity version with a required, short user-facing reason, then mark the Activity cancelled. Shared workers may interrupt jobs outside the Activity and require confirmation of the exact affected-job set. Partial filesystem changes are not rolled back.",
       inputSchema: withJsonSchemaProjection(
         codexActivityCancelRuntimeInput,
         codexActivityCancelPublicInput
@@ -6729,7 +6769,8 @@ export function registerBridgeTools(
             expectedVersion: args.expectedVersion,
             callerPresentation,
             callerRequestDigest: correlationDigest("mcp-request", extra.requestId),
-            reasonCode: "activity-cancel"
+            reasonCode: "activity-cancel",
+            reason: args.reason
           });
           jobs.setCancellationIntentStatus(parentIntent.intentId, "dispatched");
           if (activeJobs.length > 0) {
@@ -6976,6 +7017,10 @@ export function registerBridgeTools(
       projectId: scopeIdSchema(),
       name: projectNameInput().optional(),
       cwd: z.string().trim().min(1).max(4_096).optional()
+    }),
+    z.strictObject({
+      kind: z.literal("delete"),
+      projectId: scopeIdSchema()
     })
   ]);
   const activityCardSettingsPatchBase = z.strictObject({
@@ -7031,12 +7076,12 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, and restore operations; add UUIDs are server-generated. Reset restores general preferences only and preserves the registry.",
+        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, restore, and archived-registration delete operations; add UUIDs are server-generated. Deleting a registration never deletes its folder, files, or retained work history. Reset restores general preferences only and preserves the registry.",
       inputSchema: settingsInput,
       outputSchema: compactSettingsOutputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false
       },
@@ -8526,7 +8571,9 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: assignment.backendKind,
-        contextMode: input.contextMode
+        contextMode: input.contextMode,
+        sessionId: assignment.sessionId,
+        forkedFromThreadId: assignment.forkedFromThreadId
       });
     },
     onComplete: (result, agent) => {
@@ -8826,8 +8873,8 @@ async function forkTrackedSession(input: {
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
         contextMode: "fork",
-        sessionId: input.session.sessionId,
-        forkedFromThreadId: input.session.threadId
+        sessionId: assignment.sessionId || input.session.sessionId,
+        forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
       });
     },
     onComplete: (result) => {
@@ -9574,6 +9621,7 @@ function formatCancellationAudit(
       durableDetailsAvailable: false
     };
   }
+  const operation = registry?.getCancellationOperation(intent.scopeId, intent.requestId);
   return {
     intentId: intent.intentId,
     logicalRequestId: intent.requestId,
@@ -9581,6 +9629,9 @@ function formatCancellationAudit(
     tool: intent.toolName,
     action: intent.actionName,
     reasonCode: intent.reasonCode,
+    reason: operation?.reason
+      ? redactSensitiveText(operation.reason).slice(0, CANCELLATION_REASON_MAX_LENGTH)
+      : null,
     status: intent.status,
     expectedVersion: intent.expectedVersion,
     parentIntentId: intent.parentIntentId || null,
@@ -9840,6 +9891,120 @@ type DashboardPage = z.infer<typeof dashboardPageOutputSchema>;
 type DashboardConversationPage = z.infer<typeof dashboardConversationPageOutputSchema>;
 type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
 type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
+type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
+type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
+
+const CANCELLATION_CARD_OPERATION_LIMIT = 100;
+const CANCELLATION_REASONS_PER_ACTIVITY_LIMIT = 20;
+
+function buildCancellationDisplayIndex(
+  jobs: CodexJobRegistry,
+  scopeId?: string
+): {
+  byJobId: Map<string, CancellationDisplay>;
+  byActivityId: Map<string, CancellationDisplay[]>;
+} {
+  const operations = jobs
+    .listCancellationOperations(scopeId)
+    .filter((operation) => operation.source === "model-tool" && Boolean(operation.reason))
+    .slice(-CANCELLATION_CARD_OPERATION_LIMIT);
+  const intents = jobs.listCancellationIntents(scopeId ? { scopeId } : {});
+  const intentById = new Map(intents.map((intent) => [intent.intentId, intent]));
+  const operationByKey = new Map(
+    operations.map((operation) => [
+      `${operation.scopeId}\0${operation.requestId}`,
+      operation
+    ])
+  );
+  const displayByOperationKey = new Map<string, CancellationDisplay>();
+
+  for (const operation of operations) {
+    if (!operation.reason) continue;
+    const rootIntent = intentById.get(operation.rootIntentId);
+    const status: CancellationDisplay["status"] = rootIntent
+      ? rootIntent.status === "failed"
+        ? "failed"
+        : rootIntent.status === "succeeded" || rootIntent.status === "no-op"
+          ? "succeeded"
+          : "requested"
+      : operation.status === "failed"
+        ? "failed"
+        : operation.status === "completed"
+          ? "succeeded"
+          : "requested";
+    const reason = redactSensitiveText(operation.reason).slice(
+      0,
+      CANCELLATION_REASON_MAX_LENGTH
+    ).trim();
+    if (!reason) continue;
+    displayByOperationKey.set(
+      `${operation.scopeId}\0${operation.requestId}`,
+      cancellationDisplayOutputSchema.parse({
+        targetKind: operation.targetKind,
+        status,
+        reason,
+        requestedAt: new Date(operation.createdAt).toISOString()
+      })
+    );
+  }
+
+  const byJobId = new Map<string, CancellationDisplay>();
+  for (const intent of intents) {
+    if (!intent.targetJobId) continue;
+    const operationKey = `${intent.scopeId}\0${intent.requestId}`;
+    if (!operationByKey.has(operationKey)) continue;
+    const display = displayByOperationKey.get(operationKey);
+    if (!display) continue;
+    const current = byJobId.get(intent.targetJobId);
+    if (!current || Date.parse(display.requestedAt) >= Date.parse(current.requestedAt)) {
+      byJobId.set(intent.targetJobId, display);
+    }
+  }
+
+  const byActivityId = new Map<string, CancellationDisplay[]>();
+  for (const operation of operations) {
+    const display = displayByOperationKey.get(`${operation.scopeId}\0${operation.requestId}`);
+    if (!display) continue;
+    const entries = byActivityId.get(operation.targetActivityId) || [];
+    entries.push(display);
+    byActivityId.set(operation.targetActivityId, entries);
+  }
+  for (const [activityId, entries] of byActivityId) {
+    entries.sort((left, right) => Date.parse(right.requestedAt) - Date.parse(left.requestedAt));
+    byActivityId.set(
+      activityId,
+      entries.slice(0, CANCELLATION_REASONS_PER_ACTIVITY_LIMIT)
+    );
+  }
+
+  return { byJobId, byActivityId };
+}
+
+function projectCodexWeeklyUsage(usage: CodexWeeklyUsage): CodexWeeklyUsageView {
+  return codexWeeklyUsageOutputSchema.parse({
+    source: "codex-account-rate-limits",
+    limitId: usage.limitId,
+    usedPercent: usage.usedPercent,
+    remainingPercent: usage.remainingPercent,
+    windowDurationMins: usage.windowDurationMins,
+    resetsAt: usage.resetsAt === null
+      ? null
+      : new Date(usage.resetsAt * 1_000).toISOString(),
+    observedAt: new Date(usage.observedAt).toISOString()
+  });
+}
+
+async function readCodexWeeklyUsage(
+  upstream: CodexUpstream
+): Promise<CodexWeeklyUsageView | null> {
+  if (!upstream.readAccountRateLimits) return null;
+  try {
+    const usage = await upstream.readAccountRateLimits();
+    return usage ? projectCodexWeeklyUsage(usage) : null;
+  } catch {
+    return null;
+  }
+}
 
 type DashboardRuntimeObservation = {
   state: "confirmed" | "idle" | "not-loaded" | "busy" | "orphaned" | "unknown";
@@ -9873,6 +10038,30 @@ function dashboardSessionAlias(scopeId: string): string {
     .slice(0, 8)
     .toUpperCase();
   return `Session ${digest}`;
+}
+
+function dashboardCodexThreadUrl(
+  ...sources: Array<{
+    threadId: string;
+    sessionId?: string;
+    backendKind: string;
+  } | undefined>
+): string | undefined {
+  for (const source of sources) {
+    if (!source || source.backendKind !== "app-server") continue;
+    const threadId = source.threadId.trim().toLowerCase();
+    const sessionId = source.sessionId?.trim().toLowerCase();
+    // Codex deep links address an exact thread. Normal App Server threads use
+    // the same UUID for threadId and sessionId; forks may retain the source
+    // session-tree id, so prefer the exact thread UUID when both are present.
+    const routeId = SCOPE_ID_PATTERN.test(threadId)
+      ? threadId
+      : sessionId && SCOPE_ID_PATTERN.test(sessionId)
+        ? sessionId
+        : undefined;
+    if (routeId) return `codex://threads/${routeId}`;
+  }
+  return undefined;
 }
 
 function dashboardConversationKey(scopeId: string): string {
@@ -10313,7 +10502,20 @@ async function buildDashboardView(
   legacyGrouping?: { projectOffset: number; conversationOffset: number }
 ): Promise<DashboardView> {
   const now = Date.now();
+  const weeklyUsagePromise = readCodexWeeklyUsage(upstream);
   const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0);
+  const cancellationDisplays = buildCancellationDisplayIndex(jobs);
+  const displayedCancellationJobIds = new Set<string>();
+  const cancellationForDashboardJob = (jobId: string): CancellationDisplay | undefined => {
+    const cancellation = cancellationDisplays.byJobId.get(jobId);
+    if (!cancellation) return undefined;
+    if (
+      !displayedCancellationJobIds.has(jobId) &&
+      displayedCancellationJobIds.size >= CANCELLATION_CARD_OPERATION_LIMIT
+    ) return undefined;
+    displayedCancellationJobIds.add(jobId);
+    return cancellation;
+  };
   const archivedJobs = jobs.admissionStateStore.listDashboardRetainedJobs(
     DASHBOARD_ARCHIVED_JOB_LIMIT
   );
@@ -10410,6 +10612,7 @@ async function buildDashboardView(
   const turnForJob = (job: CodexJob): DashboardTurn => {
     const terminal = isTerminalActivityJobStatus(job.status);
     const execution = activityCardExecution(job, modelCatalog);
+    const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityTitle: jobs.getActivity(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
@@ -10417,7 +10620,8 @@ async function buildDashboardView(
       startedAt: new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
       endedAt: terminal ? new Date(job.updatedAt).toISOString() : null,
-      durationMs: Math.max(0, (terminal ? job.updatedAt : now) - job.createdAt)
+      durationMs: Math.max(0, (terminal ? job.updatedAt : now) - job.createdAt),
+      ...(cancellation ? { cancellation } : {})
     };
   };
 
@@ -10431,6 +10635,7 @@ async function buildDashboardView(
           job.execution.reroutedModel
         )
       : undefined;
+    const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityTitle: jobs.getActivity(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
@@ -10440,7 +10645,8 @@ async function buildDashboardView(
       endedAt: new Date(job.updatedAt).toISOString(),
       durationMs: job.createdAt === undefined
         ? null
-        : Math.max(0, job.updatedAt - job.createdAt)
+        : Math.max(0, job.updatedAt - job.createdAt),
+      ...(cancellation ? { cancellation } : {})
     };
   };
 
@@ -10498,12 +10704,14 @@ async function buildDashboardView(
     const latestTurn = turnForJob(job);
     const history = historyForAgent(job.agentId, job.jobId);
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
+    const codexThreadUrl = dashboardCodexThreadUrl(thread, trackedSession);
     const project = dashboardProjectIdentity(job, trackedSession, thread);
     return {
       rowKey: dashboardRowKey(job.agentId, job.jobId),
       conversationKey: dashboardConversationKey(job.scopeId),
       sessionAlias: dashboardSessionAlias(job.scopeId),
       ...(conversationUrl ? { conversationUrl } : {}),
+      ...(codexThreadUrl ? { codexThreadUrl } : {}),
       bucket,
       ...project,
       agentName: dashboardAgentName(agent?.agentName),
@@ -10577,12 +10785,17 @@ async function buildDashboardView(
     );
     const currentExecution = currentExecutionForAgent(agent.agentId);
     const conversationUrl = scopeResolver.conversationUrl(agent.scopeId);
+    const codexThreadUrl = dashboardCodexThreadUrl(
+      thread,
+      currentSessionFor(agent.agentId)
+    );
     const project = dashboardProjectIdentity(thread, latestJob);
     const recoveryRow: DashboardRow = {
       rowKey: dashboardRowKey(agent.agentId),
       conversationKey: dashboardConversationKey(agent.scopeId),
       sessionAlias: dashboardSessionAlias(agent.scopeId),
       ...(conversationUrl ? { conversationUrl } : {}),
+      ...(codexThreadUrl ? { codexThreadUrl } : {}),
       bucket: "active",
       ...project,
       agentName: dashboardAgentName(agent.agentName),
@@ -10648,12 +10861,17 @@ async function buildDashboardView(
       );
       const currentExecution = currentExecutionForAgent(agent.agentId);
       const conversationUrl = scopeResolver.conversationUrl(agent.scopeId);
+      const codexThreadUrl = dashboardCodexThreadUrl(
+        thread,
+        currentSessionFor(agent.agentId)
+      );
       const project = dashboardProjectIdentity(thread, latestJob);
       return {
         rowKey: dashboardRowKey(agent.agentId),
         conversationKey: dashboardConversationKey(agent.scopeId),
         sessionAlias: dashboardSessionAlias(agent.scopeId),
         ...(conversationUrl ? { conversationUrl } : {}),
+        ...(codexThreadUrl ? { codexThreadUrl } : {}),
         bucket: "idle",
         ...project,
         agentName: dashboardAgentName(agent.agentName),
@@ -10723,6 +10941,7 @@ async function buildDashboardView(
     (row) => row.conversationKey
   );
   const idlePage = dashboardPage(idleRows, idleOffset, limit, (row) => row.conversationKey);
+  const weeklyUsage = await weeklyUsagePromise;
 
   return dashboardViewOutputSchema.parse({
     kind: "dashboard",
@@ -10730,6 +10949,7 @@ async function buildDashboardView(
     scope: "bridge-wide",
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
+    weeklyUsage,
     counts: {
       trackedProjects: new Set(dashboardRows.map((row) => row.projectKey)).size,
       trackedConversations: scopeIds.size,
@@ -11204,23 +11424,27 @@ async function buildActivityView(
   focusSelectedActivityPage = true
 ) {
   const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
-  const legacy = await buildLegacyActivityView(
-    jobs,
-    upstream,
-    modelCatalog,
-    config,
-    preferences,
-    scopeId,
-    limit,
-    selectedActivityId,
-    wait,
-    presentation,
-    lease
-  );
+  const [legacy, weeklyUsage] = await Promise.all([
+    buildLegacyActivityView(
+      jobs,
+      upstream,
+      modelCatalog,
+      config,
+      preferences,
+      scopeId,
+      limit,
+      selectedActivityId,
+      wait,
+      presentation,
+      lease
+    ),
+    readCodexWeeklyUsage(upstream)
+  ]);
   const now = Date.now();
   const scopeVersion = jobs.getScopeVersion(scopeId);
   const allActivities = listAllScopedActivities(jobs, scopeId);
   const allAgents = listAllScopedAgents(jobs, scopeId);
+  const cancellationDisplays = buildCancellationDisplayIndex(jobs, scopeId);
   const activityById = new Map(allActivities.map((activity) => [activity.activityId, activity]));
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const scopeJobs = jobs.listForScope(scopeId, config.maxRetainedJobs, 0);
@@ -11379,6 +11603,7 @@ async function buildActivityView(
       displayState,
       counts: activity.counts,
       agents: participants,
+      cancellations: cancellationDisplays.byActivityId.get(activity.activityId) || [],
       workspaceLabels: workspacesFor(activity.activityId),
       continued: Boolean(activity.continuationOfActivityId),
       pendingHandoff,
@@ -11490,6 +11715,7 @@ async function buildActivityView(
       agentId: agent.agentId,
       agentName: agent.agentName,
       role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+      latestActivityId: latestActivity?.activityId || null,
       latestActivityTitle: latestActivity?.title || null,
       workspaceLabels: hasMultipleWorkspaces && latestActivity
         ? workspacesFor(latestActivity.activityId)
@@ -11523,6 +11749,7 @@ async function buildActivityView(
         agentId: agent.agentId,
         agentName: agent.agentName,
         role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
+        latestActivityId: latestActivity?.activityId || null,
         latestActivityTitle: latestActivity?.title || null,
         workspaceLabels: hasMultipleWorkspaces && latestActivity
           ? workspacesFor(latestActivity.activityId)
@@ -11640,6 +11867,7 @@ async function buildActivityView(
     interactionControls: legacy.interactionControls,
     structured: {
       ...projectedLegacy,
+      weeklyUsage,
       feed: {
         mode: feedMode,
         showWorkspaceLabels: hasMultipleWorkspaces,
@@ -12906,8 +13134,18 @@ function settingsViewResult(
   const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
   const localizedView: SettingsView = {
     ...view,
+    warnings: view.warnings.map((warning) =>
+      localizeSettingsWarning(warning, effectiveLocale)
+    ),
+    scopeNotice: uiTranslation(effectiveLocale, "settings.sharedNotice"),
     catalog: {
       ...view.catalog,
+      warning: view.catalog.warning
+        ? localizeSettingsWarning(view.catalog.warning, effectiveLocale, {
+            catalog: true,
+            stale: view.catalog.stale
+          })
+        : null,
       models: view.catalog.models.map((model) => ({
         ...model,
         supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => {
@@ -12927,12 +13165,12 @@ function settingsViewResult(
     }
   };
   const validatedEditorView = settingsViewOutputSchema.parse(localizedView);
-  const unavailableProjectWarnings = localizedView.capabilities.projectAvailability
+  const unavailableProjectWarnings = view.capabilities.projectAvailability
     .filter(({ available, archived }) => !available && !archived)
     .map(({ name }) => `Project '${name}' is unavailable. Relocate, restore, or archive it in Settings.`);
   const actionableWarnings = [...new Set([
-    ...(localizedView.catalog.warning ? [localizedView.catalog.warning] : []),
-    ...localizedView.warnings.filter((warning) =>
+    ...(view.catalog.warning ? [view.catalog.warning] : []),
+    ...view.warnings.filter((warning) =>
       /MODEL_|model policy|Legacy model-only|Priority|Existing Agent threads remain pinned|handoffSummary/i
         .test(warning)
     ).map(modelVisibleSettingsWarning),

@@ -41,6 +41,7 @@ import {
   PROJECT_ARCHIVED,
   PROJECT_CWD_CONFLICT,
   PROJECT_CWD_STILL_PINNED,
+  PROJECT_DELETE_REQUIRES_ARCHIVE,
   PROJECT_LIMIT_EXCEEDED,
   PROJECT_NAME_CONFLICT,
   PROJECT_NOT_FOUND,
@@ -63,6 +64,7 @@ import {
   type ProjectTarget
 } from "./projectRegistry.js";
 import {
+  CANCELLATION_REASON_MAX_LENGTH,
   CANCELLATION_SOURCES,
   JOB_TERMINAL_ORIGINS,
   type BeginCancellationOperationInput,
@@ -77,7 +79,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "10";
+const CURRENT_SCHEMA_VERSION = "12";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -146,8 +148,12 @@ type ProjectStorageRow = {
   created_at: number;
   updated_at: number;
   archived_at: number | null;
+  deleted_at: number | null;
 };
-type LegacyProjectStorageRow = Omit<ProjectStorageRow, "project_ref" | "project_revision">;
+type LegacyProjectStorageRow = Omit<
+  ProjectStorageRow,
+  "project_ref" | "project_revision" | "deleted_at"
+>;
 type ProjectRegistryStorageRow = {
   registry_revision: number;
   updated_at: number;
@@ -444,6 +450,8 @@ export class BridgeStateStore {
       existingVersion !== "7" &&
       existingVersion !== "8" &&
       existingVersion !== "9" &&
+      existingVersion !== "10" &&
+      existingVersion !== "11" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -462,6 +470,8 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "7") this.migrateV7ToV8();
       if (this.getMeta("schema_version") === "8") this.migrateV8ToV9();
       if (this.getMeta("schema_version") === "9") this.migrateV9ToV10();
+      if (this.getMeta("schema_version") === "10") this.migrateV10ToV11();
+      if (this.getMeta("schema_version") === "11") this.migrateV11ToV12();
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -1526,9 +1536,9 @@ export class BridgeStateStore {
             target_agent_id, target_thread_id, target_turn_id, target_presentation_id,
             expected_version, caller_presentation_kind, caller_presentation_id,
             widget_instance_present, widget_instance_digest, card_generation,
-            caller_request_digest, bridge_instance_id, reason_code, status,
+            caller_request_digest, bridge_instance_id, reason_code, reason_text, status,
             result, created_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recorded', NULL, ?, NULL)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'recorded', NULL, ?, NULL)
         `)
         .run(
           normalized.scopeId,
@@ -1554,6 +1564,7 @@ export class BridgeStateStore {
           normalized.callerRequestDigest || null,
           this.currentInstanceId,
           normalized.reasonCode,
+          normalized.reason || null,
           normalized.now
         );
       this.insertCancellationIntent({
@@ -2362,8 +2373,9 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at
+               created_at, updated_at, archived_at, deleted_at
           FROM projects
+         WHERE deleted_at IS NULL
          ORDER BY sort_order ASC, created_at ASC, project_id ASC
       `)
       .all() as ProjectStorageRow[];
@@ -2413,9 +2425,9 @@ export class BridgeStateStore {
         const rows = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, deleted_at
               FROM projects
-             WHERE name_key = ? AND archived_at IS NULL
+             WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
           `)
           .all(nameKey) as ProjectStorageRow[];
         if (rows.length !== 1) {
@@ -2427,9 +2439,9 @@ export class BridgeStateStore {
         const row = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, deleted_at
               FROM projects
-             WHERE project_ref = ?
+             WHERE project_ref = ? AND deleted_at IS NULL
           `)
           .get(projectRef) as ProjectStorageRow | undefined;
         if (!row) {
@@ -2493,8 +2505,10 @@ export class BridgeStateStore {
           kinds.has(operation.kind) ||
           kinds.has("archive") ||
           kinds.has("restore") ||
+          kinds.has("delete") ||
           operation.kind === "archive" && kinds.size > 0 ||
-          operation.kind === "restore" && kinds.size > 0
+          operation.kind === "restore" && kinds.size > 0 ||
+          operation.kind === "delete" && kinds.size > 0
         ) {
           throw new Error(
             `${PROJECT_OPERATION_CONFLICT}: Conflicting operations target one project.`
@@ -2509,7 +2523,7 @@ export class BridgeStateStore {
       for (const operation of operations) {
         if (operation.kind === "add") {
           const count = Number((this.database
-            .prepare("SELECT COUNT(*) AS count FROM projects")
+            .prepare("SELECT COUNT(*) AS count FROM projects WHERE deleted_at IS NULL")
             .get() as CountRow).count);
           if (count >= MAX_REGISTERED_PROJECTS) {
             throw new Error(
@@ -2524,7 +2538,7 @@ export class BridgeStateStore {
           this.assertActiveProjectUniqueness(nameKey, cwd);
           this.assertProjectCwdReusable(cwd, projectId);
           const maxSort = this.database
-            .prepare("SELECT MAX(sort_order) AS value FROM projects")
+            .prepare("SELECT MAX(sort_order) AS value FROM projects WHERE deleted_at IS NULL")
             .get() as { value: number | null };
           this.database
             .prepare(`
@@ -2549,7 +2563,7 @@ export class BridgeStateStore {
 
         if (operation.kind === "reorder") {
           const active = this.database
-            .prepare("SELECT project_id FROM projects WHERE archived_at IS NULL ORDER BY sort_order, created_at")
+            .prepare("SELECT project_id FROM projects WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY sort_order, created_at")
             .all() as Array<{ project_id: string }>;
           const requested = operation.projectIds.map(normalizeProjectId);
           if (
@@ -2613,6 +2627,19 @@ export class BridgeStateStore {
             changed = true;
             changedProjectIds.add(projectId);
           }
+          continue;
+        }
+        if (operation.kind === "delete") {
+          if (row.archived_at === null) {
+            throw new Error(
+              `${PROJECT_DELETE_REQUIRES_ARCHIVE}: Archive the project before deleting its registration.`
+            );
+          }
+          this.database
+            .prepare("UPDATE projects SET deleted_at = ?, updated_at = ? WHERE project_id = ?")
+            .run(now, now, projectId);
+          changed = true;
+          changedProjectIds.add(projectId);
           continue;
         }
 
@@ -2713,8 +2740,8 @@ export class BridgeStateStore {
     const row = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at
-          FROM projects WHERE project_id = ?
+               created_at, updated_at, archived_at, deleted_at
+          FROM projects WHERE project_id = ? AND deleted_at IS NULL
       `)
       .get(projectId) as ProjectStorageRow | undefined;
     if (!row) throw new Error(`${PROJECT_NOT_FOUND}: Unknown project.`);
@@ -2730,7 +2757,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE name_key = ? AND archived_at IS NULL
+           WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -2743,7 +2770,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE cwd = ? AND archived_at IS NULL
+           WHERE cwd = ? AND archived_at IS NULL AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -3737,7 +3764,7 @@ export class BridgeStateStore {
             ON projects(archived_at, sort_order, created_at);
         `);
         const now = Date.now();
-        this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        this.setMeta("schema_version", "10");
         this.setMeta("schema_v10_migrated_at", new Date(now).toISOString());
       });
     } finally {
@@ -3747,6 +3774,48 @@ export class BridgeStateStore {
     if (violations.length > 0) {
       throw new Error("Bridge state schema v10 migration produced foreign-key violations.");
     }
+  }
+
+  private migrateV10ToV11(): void {
+    this.transaction(() => {
+      if (!this.tableHasColumn("cancellation_operations", "reason_text")) {
+        this.database.exec(`
+          ALTER TABLE cancellation_operations
+            ADD COLUMN reason_text TEXT
+            CHECK(
+              reason_text IS NULL OR
+              (length(reason_text) BETWEEN 1 AND ${CANCELLATION_REASON_MAX_LENGTH})
+            );
+        `);
+      }
+      const now = Date.now();
+      this.setMeta("schema_version", "11");
+      this.setMeta("schema_v11_migrated_at", new Date(now).toISOString());
+    });
+  }
+
+  private migrateV11ToV12(): void {
+    this.transaction(() => {
+      if (!this.tableHasColumn("projects", "deleted_at")) {
+        this.database.exec(`
+          ALTER TABLE projects ADD COLUMN deleted_at INTEGER;
+          DROP INDEX projects_active_name;
+          DROP INDEX projects_active_cwd;
+          DROP INDEX projects_ordered;
+          CREATE UNIQUE INDEX projects_active_name
+            ON projects(name_key)
+            WHERE archived_at IS NULL AND deleted_at IS NULL;
+          CREATE UNIQUE INDEX projects_active_cwd
+            ON projects(cwd)
+            WHERE archived_at IS NULL AND deleted_at IS NULL;
+          CREATE INDEX projects_ordered
+            ON projects(deleted_at, archived_at, sort_order, created_at);
+        `);
+      }
+      const now = Date.now();
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v12_migrated_at", new Date(now).toISOString());
+    });
   }
 
   private registerBridgeInstance(): void {
@@ -4621,6 +4690,7 @@ export class BridgeStateStore {
     now: number
   ): void {
     const scopeVersion = this.nextScopeVersion(intent.scopeId, now);
+    const operation = this.getCancellationOperation(intent.scopeId, intent.requestId);
     const payload = {
       cancellationIntentId: intent.intentId,
       cancellationRequestId: intent.requestId,
@@ -4628,6 +4698,7 @@ export class BridgeStateStore {
       tool: intent.toolName,
       action: intent.actionName,
       reasonCode: intent.reasonCode,
+      reason: operation?.reason || null,
       expectedVersion: intent.expectedVersion,
       parentIntentId: intent.parentIntentId || null,
       cascadeId: intent.cascadeId,
@@ -4821,6 +4892,7 @@ function normalizeCancellationOperationInput(
     widgetProof: normalizeCancellationWidgetProof(input.widgetProof),
     callerRequestDigest: normalizeOptionalDigest(input.callerRequestDigest),
     reasonCode: normalizeReasonCode(input.reasonCode),
+    reason: normalizeOptionalBoundedText(input.reason, CANCELLATION_REASON_MAX_LENGTH),
     now: normalizeEventTimestamp(input.now ?? Date.now())
   };
 }
@@ -5009,6 +5081,7 @@ function readCancellationOperationRow(row: Record<string, unknown>): Cancellatio
       : undefined,
     bridgeInstanceId: String(row.bridge_instance_id),
     reasonCode: String(row.reason_code),
+    reason: row.reason_text ? String(row.reason_text) : undefined,
     status: row.status as CancellationOperationStatus,
     result: row.result
       ? parsePayload({ payload: String(row.result) }, "cancellation operation result")

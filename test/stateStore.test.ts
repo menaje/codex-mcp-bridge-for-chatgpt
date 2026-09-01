@@ -78,7 +78,7 @@ describe("BridgeStateStore", () => {
     downgradeProjectTableToV9(file);
     const migrated = new BridgeStateStore({ file });
     const migratedProject = migrated.getProjectRegistrySnapshot().projects[0]!;
-    expect(migrated.schemaVersion).toBe(10);
+    expect(migrated.schemaVersion).toBe(12);
     expect(migratedProject).toMatchObject({
       id: project.id,
       name: "Migrated Project",
@@ -166,7 +166,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(10);
+    expect(reopened.schemaVersion).toBe(12);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -234,7 +234,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(10);
+    expect(restored.schemaVersion).toBe(12);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
@@ -429,6 +429,69 @@ describe("BridgeStateStore", () => {
         cancellationIntentId: intent.intentId
       })
     ]);
+    restored.close();
+  });
+
+  it("persists a bounded user-facing model cancellation reason in the durable root operation", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const activityId = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+    const requestId = "cececece-cece-4ece-8ece-cececececece";
+    const activeJob = {
+      ...job("reasoned-cancel-job", "reasoned-job-request"),
+      activityId,
+      status: "running",
+      updatedAt: 2
+    };
+    store.createActivity({ activityId, scopeId: SCOPE_A, now: 1 });
+    store.upsertJob(activeJob);
+
+    const { intent } = store.beginCancellationOperation({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash: "e".repeat(64),
+      source: "model-tool",
+      toolName: "codex_cancel",
+      actionName: "cancel-job",
+      target: { kind: "job", jobId: activeJob.jobId, activityId },
+      expectedVersion: 1,
+      reasonCode: "public-job-cancel",
+      reason: "  The user changed direction.\nStop the obsolete job.  ",
+      now: 3
+    });
+    expect(store.getCancellationOperation(SCOPE_A, requestId)?.reason).toBe(
+      "The user changed direction. Stop the obsolete job."
+    );
+    expect(store.listJobEvents(activeJob.jobId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "cancellation-intent-recorded",
+        payload: expect.objectContaining({
+          cancellationIntentId: intent.intentId,
+          reason: "The user changed direction. Stop the obsolete job."
+        })
+      })
+    ]));
+    expect(() => store.beginCancellationOperation({
+      scopeId: SCOPE_A,
+      requestId: "cfcfcfcf-cfcf-4fcf-8fcf-cfcfcfcfcfcf",
+      actionHash: "d".repeat(64),
+      source: "model-tool",
+      toolName: "codex_cancel",
+      actionName: "cancel-job",
+      target: { kind: "job", jobId: activeJob.jobId, activityId },
+      expectedVersion: 1,
+      reasonCode: "public-job-cancel",
+      reason: "x".repeat(501),
+      now: 4
+    })).toThrow(/500 characters/);
+    store.close();
+
+    const restored = new BridgeStateStore({ file });
+    expect(restored.schemaVersion).toBe(12);
+    expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
+      source: "model-tool",
+      reason: "The user changed direction. Stop the obsolete job."
+    });
     restored.close();
   });
 

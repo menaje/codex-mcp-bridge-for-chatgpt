@@ -23,6 +23,7 @@ const interruptedTurnCounts = new Map();
 let initialized = false;
 let threadSequence = 0;
 let turnSequence = 0;
+let rateLimitsReadCount = 0;
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const sendBatch = (messages) => process.stdout.write(`${messages.map(JSON.stringify).join("\n")}\n`);
@@ -77,7 +78,40 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "account/rateLimits/read") {
+    rateLimitsReadCount += 1;
+    response(message.id, {
+      rateLimits: {
+        limitId: "codex",
+        primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+        secondary: {
+          usedPercent: 20 + rateLimitsReadCount,
+          windowDurationMins: 10_080,
+          resetsAt: 1_900_604_800
+        }
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+          secondary: {
+            usedPercent: 20 + rateLimitsReadCount,
+            windowDurationMins: 10_080,
+            resetsAt: 1_900_604_800
+          }
+        },
+        codex_spark: {
+          limitId: "codex_spark",
+          primary: { usedPercent: 99, windowDurationMins: 10_080, resetsAt: 1_900_604_800 },
+          secondary: null
+        }
+      }
+    });
+    return;
+  }
+
   if (message.method === "model/list") {
+    if (rateLimitsReadCount > 0) notification("account/rateLimits/updated");
     response(message.id, {
       data: [
         {

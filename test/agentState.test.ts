@@ -163,7 +163,7 @@ describe("scope-level bridge Agents", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(10);
+    expect(restored.schemaVersion).toBe(12);
     expect(restored.getActivity(ACTIVITY_A)).toMatchObject({
       lifecycle: "open",
       projectId: project.id,

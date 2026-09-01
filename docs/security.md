@@ -19,17 +19,21 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   result contains only a redacted aggregate summary, while bounded app-private
   metadata contains opaque hashed row, conversation, and project correlation keys,
   compatibility conversation aliases, user-defined project labels, display Agent names, optional Activity titles,
-  Codex-runtime status, timestamps, and background-process counts. For a
-  UUID-shaped ChatGPT session value only, it may also contain a best-effort
-  `https://chatgpt.com/c/<uuid>` route candidate used by the card's **Open conversation**
-  link. The host contract does not guarantee that this correlation value is
-  navigable. The raw value is not printed as text, but the route necessarily contains it.
+  Codex-runtime status, timestamps, and background-process counts. An App Server
+  row with UUID-shaped lineage may contain a `codex://threads/<uuid>` candidate
+  used by **Open in Codex**. The exact thread UUID is preferred over the
+  session-tree UUID because forks can share the latter. For a UUID-shaped ChatGPT
+  session value only, the row may separately contain a best-effort
+  `https://chatgpt.com/c/<uuid>` candidate used by **Open conversation**; the host
+  contract does not guarantee that correlation value is navigable. Neither raw
+  identifier is printed as text, but each route necessarily contains its UUID.
   Rows may additionally expose only
   the associated retained Job's effective model/reasoning-effort selection and
   an evidence-backed runtime model reroute; this presentation metadata does not
-  affect status. Raw project, Job, Activity, Agent, thread, worker, and
-  process IDs; paths; prompts; results; events; errors; and diagnostics are not
-  projected. User-defined project, Agent, and Activity display text can still
+  affect status. Outside those narrowly validated route targets, raw project,
+  Job, Activity, Agent, thread, worker, and process IDs; paths; prompts; results;
+  events; errors; and diagnostics are not projected. User-defined project, Agent,
+  and Activity display text can still
   disclose task context across conversations, so the Dashboard must remain on
   this single-user trust boundary. Status is derived only from Codex Job state,
   worker liveness, Agent lifecycle, Codex-originated input/approval interactions,
@@ -546,9 +550,11 @@ identity.
   automatic routing ignores; obsolete v2 task-lane labels are not authorization.
 - Bridge metadata contains the conversation-scope HMAC key and may contain the
   bounded UUID-shaped ChatGPT session mapping used by best-effort Dashboard links.
-  Protect database files and backups; raw organization, subject, and arbitrary
-  session values are not stored, but a retained ChatGPT conversation UUID is
-  sensitive navigation metadata.
+  Persisted App Server Agent/session rows also contain the current thread and
+  session-tree UUIDs used to derive local Codex links. Protect database files and
+  backups; raw organization, subject, and arbitrary host session values are not
+  stored, but retained ChatGPT conversation and Codex thread UUIDs are sensitive
+  navigation metadata.
 - Persisted job rows contain local paths, lifecycle metadata, progress
   messages, errors, and bounded Codex results. Results can include repository
   content even though the job record does not separately store the submitted

@@ -12,6 +12,7 @@ import type {
   CodexProgress,
   CodexThreadResumeProbe,
   CodexUpstream,
+  CodexWeeklyUsage,
   ToolResult,
   UpstreamWorkerAssignment
 } from "./upstream.js";
@@ -61,6 +62,12 @@ export class CodexBackendRouter implements CodexUpstream {
       throw new Error(`Codex backend ${backendKind} does not expose model/list.`);
     }
     return backend.listModels(backendKind);
+  }
+
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
+    // Account usage is exposed only by App Server and is independent of the
+    // protocol selected for task execution.
+    return this.appBackend.readAccountRateLimits?.() ?? null;
   }
 
   startThread(

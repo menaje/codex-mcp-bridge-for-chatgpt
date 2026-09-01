@@ -59,6 +59,21 @@ describe("CodexBackendRouter", () => {
     await router.close();
   });
 
+  it("reads account rate limits from App Server regardless of the task backend", async () => {
+    const mcp = fakeBackend("mcp-server");
+    const app = fakeBackend("app-server");
+    const router = new CodexBackendRouter("mcp-server", mcp.backend, app.backend);
+
+    await expect(router.readAccountRateLimits()).resolves.toMatchObject({
+      limitId: "codex",
+      remainingPercent: 75,
+      windowDurationMins: 10_080
+    });
+    expect(app.rateLimitReads).toHaveLength(1);
+    expect(mcp.rateLimitReads).toHaveLength(0);
+    await router.close();
+  });
+
   it("restores persisted backend affinity and rejects a conflicting routing hint", async () => {
     const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");
@@ -117,6 +132,7 @@ function fakeBackend(kind: CodexBackendKind) {
   const forceAssignments: UpstreamWorkerAssignment[] = [];
   const interactions: Array<{ interactionId: string; response: Record<string, unknown> }> = [];
   const steers: Array<{ threadId: string; prompt: string }> = [];
+  const rateLimitReads: number[] = [];
   let sequence = 0;
   const backend: CodexUpstream = {
     async listTools() {
@@ -127,6 +143,17 @@ function fakeBackend(kind: CodexBackendKind) {
     },
     canSteerThread() {
       return kind === "app-server";
+    },
+    async readAccountRateLimits() {
+      rateLimitReads.push(Date.now());
+      return {
+        limitId: "codex",
+        usedPercent: 25,
+        remainingPercent: 75,
+        windowDurationMins: 10_080,
+        resetsAt: 1_900_604_800,
+        observedAt: 1_900_000_000_000
+      };
     },
     async callTool(name, args, _progress, assigned): Promise<ToolResult> {
       calls.push({ name, args });
@@ -165,5 +192,5 @@ function fakeBackend(kind: CodexBackendKind) {
     },
     async close() {}
   };
-  return { backend, calls, forceAssignments, interactions, steers };
+  return { backend, calls, forceAssignments, interactions, steers, rateLimitReads };
 }

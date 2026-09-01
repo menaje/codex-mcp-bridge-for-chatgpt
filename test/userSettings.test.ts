@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import {
   PROJECT_CWD_STILL_PINNED,
+  PROJECT_DELETE_REQUIRES_ARCHIVE,
   PROJECT_NAME_CONFLICT,
   PROJECT_NOT_FOUND,
   PROJECT_REGISTRY_CHANGED
@@ -183,6 +184,64 @@ describe("user settings and project registry", () => {
     });
     expect(store.current.projects[0]).not.toHaveProperty("archivedAt");
     expect(store.current.registryRevision).toBe(4);
+    state.close();
+  });
+
+  it("deletes only archived registrations while retaining pinned work history", () => {
+    const root = temporaryDirectory("settings-delete-project-");
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const store = new UserSettingsStore(configFor(), { stateStore: state });
+    store.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Tracked", cwd: root } }],
+      undefined,
+      0
+    );
+    const project = store.current.projects[0]!;
+    const activityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    state.createActivity({
+      activityId,
+      scopeId: SCOPE,
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: root,
+      now: 1
+    });
+
+    expect(() => store.updateWithProjectOperations(
+      {},
+      [{ kind: "delete", projectId: project.id }],
+      undefined,
+      1
+    )).toThrow(PROJECT_DELETE_REQUIRES_ARCHIVE);
+    expect(store.current.registryRevision).toBe(1);
+
+    store.updateWithProjectOperations(
+      {},
+      [{ kind: "archive", projectId: project.id }],
+      undefined,
+      1
+    );
+    store.updateWithProjectOperations(
+      {},
+      [{ kind: "delete", projectId: project.id }],
+      undefined,
+      2
+    );
+
+    expect(store.current).toMatchObject({ registryRevision: 3, projects: [] });
+    expect(store.projectRegistry.selectableProjects).toEqual([]);
+    expect(state.getActivityProjectAdmission(activityId)).toEqual({
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: root
+    });
+    expect(() => store.resolveProject({
+      name: project.name,
+      projectRef: project.projectRef,
+      projectRevision: project.projectRevision
+    })).toThrow(PROJECT_NOT_FOUND);
+    expect(statSync(root).isDirectory()).toBe(true);
     state.close();
   });
 

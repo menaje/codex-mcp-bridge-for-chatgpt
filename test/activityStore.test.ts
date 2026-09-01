@@ -32,7 +32,7 @@ describe("Activity SQLite state", () => {
     const [activity] = store.listActivities(SCOPE_A);
     const [job] = store.listJobs() as Array<Record<string, unknown>>;
 
-    expect(store.schemaVersion).toBe(10);
+    expect(store.schemaVersion).toBe(12);
     expect(activity).toMatchObject({
       scopeId: SCOPE_A,
       title: "Legacy Codex job legacy-j",

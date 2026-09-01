@@ -2,8 +2,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  ACCOUNT_RATE_LIMITS_CACHE_TTL_MS,
   APP_SERVER_CLIENT_INFO,
+  CODEX_WEEKLY_WINDOW_MINUTES,
   CodexAppServerUpstreamPool,
+  parseCodexWeeklyUsage,
   type CodexAppServerLateResponse
 } from "../src/appServerUpstream.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "../src/appServerCompatibility.js";
@@ -36,6 +39,47 @@ describe("CodexAppServerUpstreamPool", () => {
       version: BRIDGE_BUILD_INFO.version
     });
     expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
+  });
+
+  it("selects, caches, and invalidates the account-wide seven-day Codex limit", async () => {
+    expect(CODEX_WEEKLY_WINDOW_MINUTES).toBe(10_080);
+    expect(ACCOUNT_RATE_LIMITS_CACHE_TTL_MS).toBe(60_000);
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      const first = await pool.readAccountRateLimits();
+      expect(first).toMatchObject({
+        limitId: "codex",
+        usedPercent: 21,
+        remainingPercent: 79,
+        windowDurationMins: 10_080,
+        resetsAt: 1_900_604_800
+      });
+      expect(await pool.readAccountRateLimits()).toEqual(first);
+
+      // The fixture emits account/rateLimits/updated during model/list.
+      await pool.listModels();
+      expect(await pool.readAccountRateLimits()).toMatchObject({
+        usedPercent: 22,
+        remainingPercent: 78
+      });
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it("ignores non-weekly and non-Codex rate-limit buckets", () => {
+    expect(parseCodexWeeklyUsage({
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 123 }
+        },
+        codex_spark: {
+          limitId: "codex_spark",
+          primary: { usedPercent: 34, windowDurationMins: 10_080, resetsAt: 456 }
+        }
+      }
+    }, 1_000)).toBeNull();
   });
 
   it("reports only aggregate App Server worker and resume health", async () => {
@@ -386,7 +430,8 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(assignment).toMatchObject({
         workerId: "app-0",
         workerGeneration: 1,
-        threadId: "durable-crash-thread"
+        threadId: "durable-crash-thread",
+        sessionId: "durable-crash-session"
       });
       await expect(pool.listTools()).resolves.toMatchObject({
         workerHealth: { crashes: { count: 1 } }
@@ -677,6 +722,7 @@ describe("CodexAppServerUpstreamPool", () => {
 
       expect(assignment).toMatchObject({
         threadId: "fake-thread-1",
+        sessionId: "fake-session-1",
         upstreamRequestId: "fake-turn-1"
       });
       await expect(

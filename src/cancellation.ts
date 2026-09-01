@@ -6,6 +6,8 @@ export const CANCELLATION_SOURCES = [
   "assignment-containment"
 ] as const;
 
+export const CANCELLATION_REASON_MAX_LENGTH = 500;
+
 export type CancellationSource = (typeof CANCELLATION_SOURCES)[number];
 export type CancellationTargetKind = "job" | "activity";
 export type CancellationIntentStatus =
@@ -62,6 +64,8 @@ export type BeginCancellationOperationInput = {
   widgetProof?: CancellationWidgetProof;
   callerRequestDigest?: string;
   reasonCode: string;
+  /** Bounded, user-facing rationale. Required by model-visible cancellation tools. */
+  reason?: string;
   now?: number;
 };
 
@@ -88,6 +92,7 @@ export type CancellationOperationRecord = {
   callerRequestDigest?: string;
   bridgeInstanceId: string;
   reasonCode: string;
+  reason?: string;
   status: CancellationOperationStatus;
   result?: unknown;
   createdAt: number;

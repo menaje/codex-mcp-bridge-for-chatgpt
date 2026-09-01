@@ -107,7 +107,8 @@ The server registers each current URI. Non-Activity history is filtered by its
 configured minimum contract generation. Activity resources are immutable mount
 targets, so every retained Activity revision remains registered even after the
 minimum advances; generation 12 is the minimum for new descriptors while the
-generation 7–11 assets continue to resolve and refresh through app-only tools.
+current generation-15 and retained generation 7–15 assets continue to resolve
+and refresh through app-only tools.
 The resource descriptor, `_meta.ui.resourceUri`, and compatibility
 `openai/outputTemplate` must all name the same current URI.
 

@@ -26,6 +26,7 @@ export const PROJECT_CWD_STILL_PINNED = "PROJECT_CWD_STILL_PINNED";
 export const PROJECT_LIMIT_EXCEEDED = "PROJECT_LIMIT_EXCEEDED";
 export const PROJECT_CONTEXT_CONFLICT = "PROJECT_CONTEXT_CONFLICT";
 export const PROJECT_ARCHIVED = "PROJECT_ARCHIVED";
+export const PROJECT_DELETE_REQUIRES_ARCHIVE = "PROJECT_DELETE_REQUIRES_ARCHIVE";
 export const PROJECT_OPERATION_CONFLICT = "PROJECT_OPERATION_CONFLICT";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -83,6 +84,7 @@ export type ProjectRegistryOperation =
   | { kind: "relocate"; projectId: string; cwd: string }
   | { kind: "archive"; projectId: string }
   | { kind: "restore"; projectId: string; name?: string; cwd?: string }
+  | { kind: "delete"; projectId: string }
   | { kind: "reorder"; projectIds: string[] };
 
 export type ProjectRegistryOptions = {
