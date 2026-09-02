@@ -26,6 +26,9 @@ When run from the repository, the app starts the helper directly from the local
 alive when the menu bar UI exits. The helper owns the existing bridge launcher,
 the persistent-stdio Secure MCP Tunnel profile, crash backoff, and the versioned
 private Unix sockets.
+It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical
+per-user launcher lock. A restarted helper can safely adopt a still-healthy
+app-managed runtime instead of duplicating it.
 
 The everyday Settings window contains only the same General and Projects scope
 as the retained Settings card. Connection credentials, Codex login, and Tunnel
@@ -48,6 +51,10 @@ fails. Concurrent edits detected before replacement are not overwritten. A runti
 registered project is rejected. The API key is never
 stored in UserDefaults, a plist, Keychain, command arguments, logs, or the
 pasteboard.
+An existing regular current-user-owned dotenv with only overly broad
+permissions can be restricted to `0700/0600` from the repair UI without
+rewriting its contents. Group/world-writable paths are rejected from automatic
+repair and must be inspected first.
 
 Codex authentication remains the existing `codex login` cache. The app checks
 `codex login status` and can start the browser login flow; it does not copy or
@@ -55,6 +62,8 @@ alter `~/.codex` credentials. Explicit API-key backend selection remains out of
 scope until issue #29 defines that contract. App-managed Codex children do not
 inherit `OPENAI_API_KEY` or `CODEX_API_KEY` merely because an older dotenv or
 parent process contains one.
+The menu status cannot report healthy while login is missing, and login status
+continues to refresh after the browser flow starts.
 
 ## Build an app bundle
 

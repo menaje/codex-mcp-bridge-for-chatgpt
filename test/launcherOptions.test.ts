@@ -18,6 +18,8 @@ describe("bridge launcher options", () => {
       "tunnel_test",
       "--runtime-status-file",
       "/private/run/status.json",
+      "--runtime-lock-directory",
+      "/private/run/launcher.lock",
       "--tunnel-health-url-file",
       "/private/run/tunnel-health.url",
       "--tunnel-pid-file",
@@ -33,6 +35,7 @@ describe("bridge launcher options", () => {
       envFile: "/private/runtime.env",
       tunnelId: "tunnel_test",
       runtimeStatusFile: "/private/run/status.json",
+      runtimeLockDirectory: "/private/run/launcher.lock",
       tunnelHealthUrlFile: "/private/run/tunnel-health.url",
       tunnelPidFile: "/private/run/tunnel.pid",
       profileMetadataFile: "/private/profiles/managed.json",
@@ -64,6 +67,7 @@ describe("bridge launcher options", () => {
       "--tunnel-client",
       "--profile-metadata-file",
       "--runtime-status-file",
+      "--runtime-lock-directory",
       "--tunnel-health-url-file",
       "--tunnel-pid-file"
     ]) {

@@ -77,9 +77,10 @@ public extension DashboardSnapshot {
         _ incoming: [DashboardRow]
     ) -> [DashboardRow] {
         var merged = current
-        var indices = Dictionary(
-            uniqueKeysWithValues: merged.enumerated().map { ($0.element.rowKey, $0.offset) }
-        )
+        var indices: [String: Int] = [:]
+        for (offset, row) in merged.enumerated() {
+            indices[row.rowKey] = offset
+        }
         for row in incoming {
             if let index = indices[row.rowKey] {
                 merged[index] = row

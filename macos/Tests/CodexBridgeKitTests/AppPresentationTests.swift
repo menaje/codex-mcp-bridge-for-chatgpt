@@ -1,0 +1,336 @@
+import XCTest
+@testable import CodexBridgeKit
+@testable import CodexBridgeMenuBar
+
+final class AppPresentationTests: XCTestCase {
+    @MainActor
+    func testHealthyRuntimeStillRequiresCodexAuthentication() throws {
+        let model = AppModel()
+        model.helperStatus = try helperStatus()
+
+        XCTAssertEqual(model.health, .attention)
+        model.authStatus = try loginStatus(installed: true, authenticated: false)
+        XCTAssertEqual(model.health, .attention)
+        model.authStatus = try loginStatus(installed: false, authenticated: false)
+        XCTAssertEqual(model.health, .unavailable)
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        XCTAssertEqual(model.health, .attention)
+        model.dashboard = try dashboardStatus()
+        XCTAssertEqual(model.health, .healthy)
+        model.dashboardErrorMessage = "stale"
+        XCTAssertEqual(model.health, .attention)
+    }
+
+    func testSettingsDraftPreservesUnavailableSavedSelectionUntilPolicyChanges() throws {
+        let saved = ModelChoice(model: "gpt-saved", reasoningEffort: "ultra")
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "fixed",
+                "selection": choiceObject(saved),
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])],
+            operatorCeiling: [ModelChoice(model: "gpt-current", reasoningEffort: "high")]
+        )
+        var draft = SettingsDraft(snapshot: snapshot)
+
+        XCTAssertFalse(draft.modelPolicyDirty)
+        XCTAssertTrue(SettingsDraft.displayedChoices(
+            in: snapshot,
+            allowDelegation: true
+        ).contains(saved))
+        XCTAssertFalse(SettingsDraft.selectableChoices(
+            in: snapshot,
+            allowDelegation: true
+        ).contains(saved))
+
+        draft.accessStrategy = "read-only"
+        XCTAssertFalse(draft.modelPolicyDirty)
+        draft.allowDelegation = false
+        XCTAssertTrue(draft.modelPolicyDirty)
+    }
+
+    func testSettingsDraftProjectsLegacyAutomaticFallbackWithoutDirtyingPolicy() throws {
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            legacyPreferredModel: "gpt-legacy",
+            catalogModels: [catalogModel(id: "gpt-legacy", efforts: ["medium", "high"], defaultEffort: "high")]
+        )
+        let draft = SettingsDraft(snapshot: snapshot)
+
+        XCTAssertEqual(
+            draft.fallbackSelectionKey,
+            ModelChoice(model: "gpt-legacy", reasoningEffort: "high").key
+        )
+        XCTAssertFalse(draft.modelPolicyDirty)
+    }
+
+    func testSettingsDraftSuggestsAndRequiresMissingAutomaticFallback() throws {
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let draft = SettingsDraft(snapshot: snapshot)
+
+        XCTAssertEqual(
+            draft.fallbackSelectionKey,
+            ModelChoice(model: "gpt-current", reasoningEffort: "high").key
+        )
+        XCTAssertTrue(draft.modelPolicyDirty)
+    }
+
+    func testSettingsDraftDeduplicatesCatalogChoices() throws {
+        let duplicate = catalogModel(id: "gpt-current", efforts: ["high"])
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [duplicate, duplicate]
+        )
+
+        XCTAssertEqual(
+            SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true),
+            [ModelChoice(model: "gpt-current", reasoningEffort: "high")]
+        )
+    }
+
+    func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
+        XCTAssertNotNil(DashboardLink.conversation(
+            "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001"
+        ))
+        XCTAssertNil(DashboardLink.conversation(
+            "https://example.com/c/00000000-0000-4000-8000-000000000001"
+        ))
+        XCTAssertNil(DashboardLink.conversation(
+            "https://chatgpt.com:444/c/00000000-0000-4000-8000-000000000001"
+        ))
+        XCTAssertNil(DashboardLink.conversation(
+            "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001/"
+        ))
+        XCTAssertNotNil(DashboardLink.codexThread(
+            "codex://threads/00000000-0000-4000-8000-000000000001"
+        ))
+        XCTAssertNil(DashboardLink.codexThread("file:///private/secrets"))
+    }
+
+    func testNextExecutionComparisonIgnoresPresentationOnlyFields() throws {
+        let current = try dashboardExecution(
+            model: " GPT-5.6 ",
+            displayName: "새 표시 이름",
+            effort: "HIGH",
+            reroutedModel: nil,
+            isCurrent: true
+        )
+        let historical = try dashboardExecution(
+            model: "gpt-5.6",
+            displayName: "Old display name",
+            effort: "high",
+            reroutedModel: nil,
+            isCurrent: false
+        )
+        XCTAssertNil(DashboardExecutionPresentation.next(
+            current: current,
+            latest: historical
+        ))
+        let changed = try dashboardExecution(
+            model: "gpt-5.6-terra",
+            displayName: nil,
+            effort: "high",
+            reroutedModel: nil,
+            isCurrent: true
+        )
+        XCTAssertNotNil(DashboardExecutionPresentation.next(
+            current: changed,
+            latest: historical
+        ))
+        XCTAssertNotNil(DashboardExecutionPresentation.next(
+            current: changed,
+            latest: nil
+        ))
+    }
+}
+
+private func helperStatus() throws -> HelperStatus {
+    let json = #"""
+    {
+      "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
+      "phase":"running","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+      "restartAttempt":0,
+      "configuration":{"path":"/private/.env","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
+      "bridge":{"socketPath":"/private/bridge.sock","connected":true,"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0},
+      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":true,"lastCheckedAt":null,"lastError":null}
+    }
+    """#.data(using: .utf8)!
+    return try JSONDecoder().decode(HelperStatus.self, from: json)
+}
+
+private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLoginStatus {
+    let data = try JSONSerialization.data(withJSONObject: [
+        "installed": installed,
+        "authenticated": authenticated,
+        "summary": authenticated ? "ready" : "login required"
+    ])
+    return try JSONDecoder().decode(CodexLoginStatus.self, from: data)
+}
+
+private func dashboardStatus() throws -> DashboardSnapshot {
+    let counts: [String: Any] = [
+        "trackedProjects": 0,
+        "trackedConversations": 0,
+        "retainedJobs": 0,
+        "active": 0,
+        "running": 0,
+        "inputRequired": 0,
+        "approvalRequired": 0,
+        "terminating": 0,
+        "needsAttention": 0,
+        "backgroundProcesses": 0,
+        "backgroundProcessAgents": 0,
+        "runtimeUnknownAgents": 0,
+        "runtimeProbeSkippedAgents": 0,
+        "completed": 0,
+        "failed": 0,
+        "interrupted": 0,
+        "cancelled": 0,
+        "idleAgents": 0,
+        "orphanedAgents": 0
+    ]
+    let page: [String: Any] = [
+        "offset": 0,
+        "limit": 12,
+        "returned": 0,
+        "total": 0,
+        "returnedConversations": 0,
+        "conversationTotal": 0,
+        "hasPrevious": false,
+        "hasNext": false
+    ]
+    let data = try JSONSerialization.data(withJSONObject: [
+        "kind": "dashboard",
+        "generatedAt": "2026-09-03T00:00:00.000Z",
+        "scope": "bridge-wide",
+        "statusSource": "codex-runtime-only",
+        "coverage": "complete",
+        "counts": counts,
+        "activeRows": [],
+        "terminalRows": [],
+        "idleRows": [],
+        "pagination": ["active": page, "terminal": page, "idle": page],
+        "uiLocalePreference": "auto"
+    ])
+    return try JSONDecoder().decode(DashboardSnapshot.self, from: data)
+}
+
+private func settingsSnapshot(
+    policy: [String: Any],
+    legacyPreferredModel: String? = nil,
+    catalogModels: [[String: Any]],
+    operatorCeiling: [ModelChoice]? = nil
+) throws -> SettingsSnapshot {
+    var settings: [String: Any] = [
+        "schemaVersion": 1,
+        "settingsRevision": 4,
+        "registryRevision": 2,
+        "revision": 4,
+        "accessStrategy": "adaptive",
+        "modelPolicy": policy,
+        "usePriorityServiceTier": false,
+        "projects": [],
+        "uiLocalePreference": "auto",
+        "maxConcurrentJobs": 2,
+        "showBridgeThreadsInCodexApp": true,
+        "activityCardVisibility": "always",
+        "completionHandoff": "off"
+    ]
+    if let legacyPreferredModel {
+        settings["legacyPreferredModel"] = legacyPreferredModel
+    }
+    var capabilities: [String: Any] = [
+        "availableAccessStrategies": ["read-only", "adaptive"],
+        "availableUiLocalePreferences": ["auto", "ko", "en"],
+        "availableActivityCardVisibilities": ["always", "background-only", "never"],
+        "availableCompletionHandoffs": ["off", "auto-handoff"],
+        "projectAvailability": [],
+        "maxConcurrentJobs": 4,
+        "defaultBackend": "mcp-server",
+        "allowWorkspaceWrite": true,
+        "allowDangerFullAccess": false,
+        "persistent": true
+    ]
+    if let operatorCeiling {
+        capabilities["operatorModelCeiling"] = operatorCeiling.map(choiceObject)
+    }
+    let object: [String: Any] = [
+        "settings": settings,
+        "operatorDefaults": settings,
+        "capabilities": capabilities,
+        "catalog": [
+            "cached": false,
+            "stale": false,
+            "lastKnownGood": false,
+            "validation": "valid",
+            "translationCoverage": ["missingEffortIds": []],
+            "models": catalogModels
+        ],
+        "warnings": [],
+        "scopeNotice": "test",
+        "policyActivation": [
+            "policyRevision": 4,
+            "executionPolicyActive": true,
+            "descriptorProjectionUpdated": false,
+            "developerModeRefreshRequired": false
+        ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object)
+    return try JSONDecoder().decode(SettingsSnapshot.self, from: data)
+}
+
+private func choiceObject(_ choice: ModelChoice) -> [String: Any] {
+    ["model": choice.model, "reasoningEffort": choice.reasoningEffort]
+}
+
+private func catalogModel(
+    id: String,
+    efforts: [String],
+    defaultEffort: String? = nil
+) -> [String: Any] {
+    var model: [String: Any] = [
+        "id": id,
+        "displayName": id,
+        "supportedReasoningEfforts": efforts.map { ["effort": $0] },
+        "serviceTiers": [],
+        "inputModalities": ["text"]
+    ]
+    if let defaultEffort { model["defaultReasoningEffort"] = defaultEffort }
+    return model
+}
+
+private func dashboardExecution(
+    model: String,
+    displayName: String?,
+    effort: String,
+    reroutedModel: String?,
+    isCurrent: Bool
+) throws -> DashboardExecution {
+    var object: [String: Any] = [
+        "model": model,
+        "reasoningEffort": effort,
+        "isCurrent": isCurrent
+    ]
+    if let displayName { object["modelDisplayName"] = displayName }
+    if let reroutedModel { object["reroutedModel"] = reroutedModel }
+    return try JSONDecoder().decode(
+        DashboardExecution.self,
+        from: JSONSerialization.data(withJSONObject: object)
+    )
+}

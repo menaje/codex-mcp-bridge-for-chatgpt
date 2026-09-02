@@ -17,6 +17,7 @@ import {
   loadRuntimeEnvFile,
   prepareRuntimeEnvUpdate,
   readRuntimeEnvSubset,
+  repairRuntimeEnvPermissions,
   resolveRuntimeEnvFile,
   rollbackRuntimeEnvUpdate,
   updateRuntimeEnvFile,
@@ -114,6 +115,60 @@ describe("runtime environment", () => {
 
     expect(() => loadRuntimeEnvFile(broad)).toThrow("permissions are too broad");
     expect(() => loadRuntimeEnvFile(link)).toThrow("regular, non-symlink file");
+  });
+
+  it("repairs only an owned regular dotenv and its direct directory permissions", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "private");
+    const file = path.join(directory, ".env");
+    const contents = [
+      "# retained comment",
+      "CONTROL_PLANE_API_KEY=sk-runtime-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "UNRELATED_SETTING=retained",
+      ""
+    ].join("\n");
+    mkdirSync(directory, { mode: 0o700 });
+    writeFileSync(file, contents, { mode: 0o600 });
+    chmodSync(directory, 0o755);
+    expect(inspectRuntimeEnvFile(file)).toMatchObject({
+      valid: false,
+      issue: expect.stringContaining("directory permissions are too broad")
+    });
+    chmodSync(file, 0o644);
+
+    expect(readRuntimeEnvSubset(
+      file,
+      ["UNRELATED_SETTING"],
+      { allowBroadReadOnlyPermissions: true }
+    )).toEqual({ UNRELATED_SETTING: "retained" });
+    expect(repairRuntimeEnvPermissions(file)).toMatchObject({ valid: true });
+    expect(lstatSync(directory).mode & 0o777).toBe(0o700);
+    expect(lstatSync(file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file, "utf8")).toBe(contents);
+  });
+
+  it("does not auto-repair group-writable runtime configuration", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "shared");
+    const file = path.join(directory, ".env");
+    mkdirSync(directory, { mode: 0o700 });
+    writeFileSync(file, [
+      "CONTROL_PLANE_API_KEY=sk-runtime-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      ""
+    ].join("\n"), { mode: 0o600 });
+    chmodSync(directory, 0o770);
+    chmodSync(file, 0o660);
+
+    expect(() => readRuntimeEnvSubset(
+      file,
+      ["CONTROL_PLANE_TUNNEL_ID"],
+      { allowBroadReadOnlyPermissions: true }
+    )).toThrow("permissions are too broad");
+    expect(() => repairRuntimeEnvPermissions(file)).toThrow("group or world writable");
+    expect(lstatSync(directory).mode & 0o777).toBe(0o770);
+    expect(lstatSync(file).mode & 0o777).toBe(0o660);
   });
 
   it("validates secure tunnel values without returning them in errors", () => {

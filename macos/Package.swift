@@ -18,7 +18,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CodexBridgeKitTests",
-            dependencies: ["CodexBridgeKit"]
+            dependencies: ["CodexBridgeKit", "CodexBridgeMenuBar"]
         )
     ]
 )

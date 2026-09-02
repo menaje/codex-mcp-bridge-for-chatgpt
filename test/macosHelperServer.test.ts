@@ -1,8 +1,10 @@
 import {
+  chmodSync,
   mkdirSync,
   lstatSync,
   mkdtempSync,
   readFileSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { createConnection } from "node:net";
@@ -19,6 +21,7 @@ import {
 } from "../src/macosHelperServer.js";
 import type { BridgeCompanionServer } from "../src/companionServer.js";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
+import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
 
 const servers: BridgeCompanionServer[] = [];
 
@@ -81,6 +84,14 @@ describe("macOS runtime helper RPC", () => {
 
     await request(socketPath, {
       jsonrpc: "2.0",
+      id: "repair-permissions",
+      method: "setup.repair-permissions",
+      params: {}
+    });
+    expect(controller.repairConfigurationPermissions).toHaveBeenCalledOnce();
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
       id: "stop",
       method: "runtime.stop",
       params: { mode: "drain", timeoutMs: 30_000 }
@@ -108,7 +119,9 @@ describe("macOS runtime helper RPC", () => {
     const socketPath = temporarySocketPath();
     const controller = fakeController();
     vi.mocked(controller.applyConfiguration).mockRejectedValueOnce(
-      new Error("failed for sk-leaked-1234567890123456 and tunnel_leaked123")
+      new Error(
+        'failed for sk-leaked-1234567890123456, tunnel_leaked123, Bearer abcdefghijklmnop, PASSWORD=hunter2-secret, "access_token":"jwt.payload.signature", Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l=='
+      )
     );
     const server = await startMacOSHelperServer({ socketPath, controller });
     servers.push(server);
@@ -122,6 +135,10 @@ describe("macOS runtime helper RPC", () => {
     expect(response).toMatchObject({ id: "redaction", error: { code: -32602 } });
     expect(JSON.stringify(response)).not.toContain("sk-leaked");
     expect(JSON.stringify(response)).not.toContain("tunnel_leaked123");
+    expect(JSON.stringify(response)).not.toContain("abcdefghijklmnop");
+    expect(JSON.stringify(response)).not.toContain("hunter2-secret");
+    expect(JSON.stringify(response)).not.toContain("jwt.payload.signature");
+    expect(JSON.stringify(response)).not.toContain("YWxhZGRpbjpvcGVuc2VzYW1l");
   });
 
   it("creates a private dotenv and starts the runtime on a fresh install", async () => {
@@ -201,6 +218,41 @@ describe("macOS runtime helper RPC", () => {
       expect(applied.status.phase).toBe("running");
       expect(applied.configuration.tunnelId).toBe("tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr");
       expect(JSON.parse(readFileSync(argumentsFile, "utf8"))).toContain("--reuse-profile");
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("rejects launcher readiness from a different tunnel profile", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, {
+      runtimeProfile: "codex-mcp-bridge"
+    });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      autoRestart: false,
+      startTimeoutMs: 500
+    });
+
+    try {
+      await expect(supervisor.start()).rejects.toThrow(
+        "Timed out waiting for the bridge companion and Secure MCP Tunnel readiness"
+      );
+      expect((await supervisor.snapshot()).phase).toBe("stopped");
     } finally {
       await supervisor.close();
     }
@@ -326,6 +378,170 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it("safely adopts an app-managed runtime left behind by a helper crash", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const runDirectory = path.join(root, "config", "run");
+    const bridgeSocket = path.join(runDirectory, "bridge.sock");
+    const runtimeStatusFile = path.join(runDirectory, "launcher-status.json");
+    const runtimeLockDirectory = path.join(runDirectory, "launcher.lock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, { writeRuntimeLock: true });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const first = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeStatusFile,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+    const replacement = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeStatusFile,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+    const terminator = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeStatusFile,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      const original = await first.start();
+      unlinkSync(configFile);
+      const adopted = await replacement.start();
+      expect(adopted).toMatchObject({
+        phase: "running",
+        pid: original.pid,
+        configuration: { exists: false, valid: false }
+      });
+      expect(replacement.logs(20).map((entry) => entry.message).join("\n"))
+        .toContain("Adopted the existing app-managed runtime");
+      expect(JSON.parse(readFileSync(argumentsFile, "utf8")))
+        .toEqual(expect.arrayContaining(["--profile", "codex-mcp-bridge-macos"]));
+
+      const stopped = await terminator.stop({ mode: "force", timeoutMs: 5_000 });
+      expect(stopped).toMatchObject({ phase: "stopped", pid: null });
+      expect(terminator.logs(20).map((entry) => entry.message).join("\n"))
+        .toContain("Adopted the existing app-managed runtime");
+    } finally {
+      await terminator.close();
+      await replacement.close();
+      await first.close();
+    }
+  });
+
+  it("adopts and drains an existing runtime before changing its dotenv", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const runDirectory = path.join(root, "config", "run");
+    const bridgeSocket = path.join(runDirectory, "bridge.sock");
+    const runtimeStatusFile = path.join(runDirectory, "launcher-status.json");
+    const runtimeLockDirectory = path.join(runDirectory, "launcher.lock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, { writeRuntimeLock: true });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const first = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeStatusFile,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+    const replacement = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeStatusFile,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      const original = await first.start();
+      const applied = await replacement.applyConfiguration({
+        tunnelId: "tunnel_pppppppppppppppppppppppppppppppp",
+        mode: "drain",
+        timeoutMs: 5_000
+      });
+      expect(applied.status.phase).toBe("running");
+      expect(applied.status.pid).not.toBe(original.pid);
+      expect(readFileSync(configFile, "utf8"))
+        .toContain("CONTROL_PLANE_TUNNEL_ID=tunnel_pppppppppppppppppppppppppppppppp");
+    } finally {
+      await replacement.close();
+      await first.close();
+    }
+  });
+
+  it("blocks an older live launcher using the alternate-dotenv lock location", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "alternate", ".env");
+    const bridgeSocket = path.join(root, "canonical", "run", "bridge.sock");
+    const runtimeLockDirectory = path.join(root, "canonical", "run", "launcher.lock");
+    const legacyRuntimeLockDirectory = path.join(root, "alternate", "run", "launcher.lock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile);
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const legacyLock = acquireRuntimeLock(legacyRuntimeLockDirectory);
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeLockDirectory,
+      autoRestart: false,
+      startTimeoutMs: 1_000,
+      registeredProjectRoots: () => []
+    });
+
+    try {
+      await expect(supervisor.start()).rejects.toThrow("LEGACY_RUNTIME_DETECTED");
+    } finally {
+      legacyLock.release();
+      await supervisor.close();
+    }
+  });
+
   it("rejects a configured dotenv inside any registered project", async () => {
     const root = temporaryDirectory();
     const project = path.join(root, "project");
@@ -353,6 +569,13 @@ describe("macOS runtime helper RPC", () => {
       issue: expect.stringContaining("RUNTIME_ENV_PROJECT_CONFLICT")
     });
     await expect(supervisor.start()).rejects.toThrow("RUNTIME_ENV_PROJECT_CONFLICT");
+
+    chmodSync(path.dirname(configFile), 0o755);
+    chmodSync(configFile, 0o644);
+    await expect(supervisor.repairConfigurationPermissions())
+      .rejects.toThrow("RUNTIME_ENV_PROJECT_CONFLICT");
+    expect(lstatSync(path.dirname(configFile)).mode & 0o777).toBe(0o755);
+    expect(lstatSync(configFile).mode & 0o777).toBe(0o644);
   });
 
   it("uses Codex command and CODEX_HOME from dotenv without returning raw CLI output", async () => {
@@ -410,6 +633,7 @@ function fakeController(): MacOSHelperController {
       restarted: true,
       rolledBack: false as const
     })),
+    repairConfigurationPermissions: vi.fn(async () => helperStatus().configuration),
     authStatus: vi.fn(async () => ({
       installed: true,
       authenticated: true,
@@ -474,10 +698,16 @@ function temporaryDirectory(): string {
 function writeFakeLauncher(
   file: string,
   argumentsFile: string,
-  options: { activeJobs?: number; failTunnelId?: string; mutateEnvOnDrain?: string } = {}
+  options: {
+    activeJobs?: number;
+    failTunnelId?: string;
+    mutateEnvOnDrain?: string;
+    writeRuntimeLock?: boolean;
+    runtimeProfile?: string;
+  } = {}
 ): void {
   writeFileSync(file, `
-import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
@@ -485,6 +715,12 @@ const statusIndex = process.argv.indexOf("--runtime-status-file");
 const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
 const envIndex = process.argv.indexOf("--env-file");
 const envFile = envIndex >= 0 ? process.argv[envIndex + 1] : null;
+const lockIndex = process.argv.indexOf("--runtime-lock-directory");
+const runtimeLockDirectory = lockIndex >= 0 ? process.argv[lockIndex + 1] : null;
+const profileIndex = process.argv.indexOf("--profile");
+const profile = profileIndex >= 0 ? process.argv[profileIndex + 1] : null;
+const transportIndex = process.argv.indexOf("--transport");
+const transport = transportIndex >= 0 ? process.argv[transportIndex + 1] : null;
 let mutatedEnv = false;
 if (
   envFile &&
@@ -495,6 +731,14 @@ if (
 }
 mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
 try { unlinkSync(socketPath); } catch (error) { if (error.code !== "ENOENT") throw error; }
+if (${JSON.stringify(Boolean(options.writeRuntimeLock))} && runtimeLockDirectory) {
+  mkdirSync(runtimeLockDirectory, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(runtimeLockDirectory, "owner.json"), JSON.stringify({
+    pid: process.pid,
+    token: "00000000-0000-4000-8000-000000000001",
+    startedAt: new Date().toISOString()
+  }) + "\\n", { mode: 0o600 });
+}
 writeFileSync(${JSON.stringify(argumentsFile)}, JSON.stringify(process.argv.slice(2)));
 if (runtimeStatusFile) {
   writeFileSync(runtimeStatusFile, JSON.stringify({
@@ -506,8 +750,8 @@ if (runtimeStatusFile) {
     runtimeBuildId: "development",
     tunnel: {
       phase: "connected",
-      profile: "test",
-      transport: "stdio",
+      profile: ${JSON.stringify(options.runtimeProfile || null)} || profile,
+      transport,
       doctorPassed: true,
       processRunning: true,
       connected: true,
@@ -529,19 +773,29 @@ const server = createServer((socket) => {
       appendFileSync(envFile, ${JSON.stringify(`${options.mutateEnvOnDrain || ""}\n`)});
       mutatedEnv = true;
     }
+    const result = request.method === "companion.hello" ? {
+      protocol: { name: "codex-mcp-bridge-companion", version: 1 },
+      bridge: { buildId: "development" }
+    } : {
+      acceptingNewJobs: !draining,
+      activeJobs: ${options.activeJobs || 0},
+      pendingAdmissions: 0
+    };
     socket.end(JSON.stringify({
       jsonrpc: "2.0",
       id: request.id,
-      result: {
-        acceptingNewJobs: !draining,
-        activeJobs: ${options.activeJobs || 0},
-        pendingAdmissions: 0
-      }
+      result
     }) + "\\n");
   });
 });
 server.listen(socketPath);
-const stop = () => server.close(() => process.exit(0));
+const stop = () => server.close(() => {
+  if (${JSON.stringify(Boolean(options.writeRuntimeLock))} && runtimeLockDirectory) {
+    try { unlinkSync(path.join(runtimeLockDirectory, "owner.json")); } catch {}
+    try { rmdirSync(runtimeLockDirectory); } catch {}
+  }
+  process.exit(0);
+});
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 `, { mode: 0o700 });

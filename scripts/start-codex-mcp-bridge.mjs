@@ -11,7 +11,10 @@ import {
   resolveRuntimeEnvFile,
   validateSecureTunnelEnvironment
 } from "./runtime-env.mjs";
-import { acquireRuntimeLock } from "./runtime-lock.mjs";
+import {
+  acquireRuntimeLock,
+  defaultRuntimeLockDirectory
+} from "./runtime-lock.mjs";
 import { terminateManagedChildren } from "./child-shutdown.mjs";
 import {
   defaultTunnelProfileMetadataFile,
@@ -55,6 +58,9 @@ const MANAGED_APP_RUNTIME_EXACT_KEYS = new Set([
   "XDG_STATE_HOME"
 ]);
 const args = parseLauncherArgs(process.argv.slice(2));
+// Capture the per-user ownership namespace before an alternate dotenv can
+// modify runtime variables such as XDG_CONFIG_HOME.
+const canonicalRuntimeLockDirectory = defaultRuntimeLockDirectory();
 const runtimeEnvFile = resolveRuntimeEnvFile({
   explicitPath: args.envFile,
   repoRoot
@@ -84,10 +90,11 @@ const tunnelHealthUrlFile = resolve(
 const tunnelPidFile = resolve(
   args.tunnelPidFile || resolve(runtimeDirectory, "tunnel.pid")
 );
+const legacyRuntimeLockDirectory = resolve(runtimeDirectory, "launcher.lock");
 const children = new Set();
 let shuttingDown = false;
 let shutdownPromise;
-let runtimeLock;
+let runtimeLocks = [];
 let ownsRuntimeState = false;
 let tunnelHealthTimer;
 let tunnelHealthProbeRunning = false;
@@ -138,7 +145,10 @@ async function main() {
   ensurePrerequisites();
   ensureBuilt();
   activeRuntimeBuildId = installedRuntimeBuildId();
-  runtimeLock = acquireRuntimeLock(resolve(runtimeDirectory, "launcher.lock"));
+  runtimeLocks = acquireRuntimeOwnershipLocks(
+    resolve(args.runtimeLockDirectory || canonicalRuntimeLockDirectory),
+    legacyRuntimeLockDirectory
+  );
   ownsRuntimeState = true;
   publishRuntimeStatus();
   if (tunnelTransport === "http") {
@@ -166,6 +176,30 @@ function enforceManagedAppAuthenticationBoundary() {
   // inherit an API key merely because an older dotenv contains one.
   delete process.env.OPENAI_API_KEY;
   delete process.env.CODEX_API_KEY;
+}
+
+function acquireRuntimeOwnershipLocks(primaryDirectory, compatibilityDirectory) {
+  const directories = [...new Set([
+    resolve(primaryDirectory),
+    resolve(compatibilityDirectory)
+  ])];
+  const locks = [];
+  try {
+    for (const directory of directories) {
+      locks.push(acquireRuntimeLock(directory));
+    }
+    return locks;
+  } catch (error) {
+    for (const lock of locks.reverse()) {
+      try {
+        lock.release();
+      } catch {
+        // Preserve the ownership acquisition error; a verified lock owned by
+        // this process is best-effort cleanup while startup is already failing.
+      }
+    }
+    throw error;
+  }
 }
 
 function isManagedAppRuntimeKey(name) {
@@ -618,6 +652,7 @@ Options:
   --tunnel-client <path> tunnel-client binary path.
   --profile-metadata-file <path> Managed profile identity record.
   --runtime-status-file <path>   Private launcher/tunnel status record.
+  --runtime-lock-directory <path> Per-user single-runtime ownership lock.
   --tunnel-health-url-file <path> Private tunnel health endpoint locator.
   --tunnel-pid-file <path>       Private tunnel-client PID record.
   --port <port>          Loopback HTTP port. Defaults to 8876.
@@ -659,13 +694,16 @@ function shutdown(code = 0, phase = "stopped") {
     };
     tryPublishRuntimeStatus();
     if (result.exited) {
-      try {
-        runtimeLock?.release();
-        ownsRuntimeState = false;
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 1;
+      for (const lock of runtimeLocks.reverse()) {
+        try {
+          lock.release();
+        } catch (error) {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exitCode = 1;
+        }
       }
+      runtimeLocks = [];
+      ownsRuntimeState = false;
     }
     process.exit(process.exitCode || 0);
   })();

@@ -8,6 +8,7 @@ const VALUE_OPTIONS = new Map([
   ["--tunnel-client", "tunnelClient"],
   ["--profile-metadata-file", "profileMetadataFile"],
   ["--runtime-status-file", "runtimeStatusFile"],
+  ["--runtime-lock-directory", "runtimeLockDirectory"],
   ["--tunnel-health-url-file", "tunnelHealthUrlFile"],
   ["--tunnel-pid-file", "tunnelPidFile"]
 ]);

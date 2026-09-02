@@ -128,6 +128,7 @@ export function inspectRuntimeEnvFile(
     };
   }
   try {
+    assertRuntimeEnvDirectory(dirname(resolvedPath), { platform, uid });
     assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
     const values = readManagedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"));
     validateSecureTunnelEnvironment(values, resolvedPath);
@@ -153,10 +154,49 @@ export function inspectRuntimeEnvFile(
   }
 }
 
+export function repairRuntimeEnvPermissions(
+  filePath,
+  {
+    platform = process.platform,
+    uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  } = {}
+) {
+  const resolvedPath = resolve(filePath);
+  if (!existsSync(resolvedPath)) {
+    throw new Error(`Runtime environment file not found: ${resolvedPath}`);
+  }
+  const directory = dirname(resolvedPath);
+  const directoryStats = lstatSync(directory);
+  if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+    throw new Error(`Runtime environment directory must be a regular directory: ${directory}`);
+  }
+  const fileStats = lstatSync(resolvedPath);
+  if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+    throw new Error(`Runtime environment must be a regular, non-symlink file: ${resolvedPath}`);
+  }
+  if (platform !== "win32") {
+    if (
+      typeof uid === "number" &&
+      (directoryStats.uid !== uid || fileStats.uid !== uid)
+    ) {
+      throw new Error("Runtime environment file and directory must be owned by the current user.");
+    }
+    if ((directoryStats.mode & 0o022) !== 0 || (fileStats.mode & 0o022) !== 0) {
+      throw new Error(
+        "Runtime environment permissions cannot be repaired automatically while group or world writable."
+      );
+    }
+    chmodSync(directory, 0o700);
+    chmodSync(resolvedPath, 0o600);
+  }
+  return inspectRuntimeEnvFile(resolvedPath, { platform, uid });
+}
+
 /**
- * Read only explicitly requested values from a verified private dotenv file.
- * This is used by the native helper to share non-secret runtime location and
- * Codex CLI settings without loading tunnel credentials into the helper
+ * Read only explicitly requested values from a verified dotenv file. Normal
+ * callers require private permissions. Permission-repair preflight may opt in
+ * to an owned, regular, over-readable path, but never a group/world-writable
+ * one. The native helper uses this without loading tunnel credentials into its
  * process environment.
  */
 export function readRuntimeEnvSubset(
@@ -164,12 +204,15 @@ export function readRuntimeEnvSubset(
   keys,
   {
     platform = process.platform,
-    uid = typeof process.getuid === "function" ? process.getuid() : undefined
+    uid = typeof process.getuid === "function" ? process.getuid() : undefined,
+    allowBroadReadOnlyPermissions = false
   } = {}
 ) {
   const resolvedPath = resolve(filePath);
   if (!existsSync(resolvedPath)) return {};
-  assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
+  const verification = { platform, uid, allowBroadReadOnlyPermissions };
+  assertRuntimeEnvDirectory(dirname(resolvedPath), verification);
+  assertPrivateRuntimeEnvFile(resolvedPath, verification);
   if (!Array.isArray(keys) || keys.some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) {
     throw new Error("Runtime environment subset keys must be valid environment names.");
   }
@@ -336,6 +379,13 @@ function assertRuntimeEnvUnchanged(prepared, expectedContents, expectedExists) {
 
 function ensurePrivateRuntimeDirectory(directory, { platform, uid }) {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  assertRuntimeEnvDirectory(directory, { platform, uid });
+}
+
+function assertRuntimeEnvDirectory(
+  directory,
+  { platform, uid, allowBroadReadOnlyPermissions = false }
+) {
   const stats = lstatSync(directory);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`Runtime environment directory must be a regular directory: ${directory}`);
@@ -344,13 +394,19 @@ function ensurePrivateRuntimeDirectory(directory, { platform, uid }) {
     if (typeof uid === "number" && stats.uid !== uid) {
       throw new Error(`Runtime environment directory must be owned by the current user: ${directory}`);
     }
-    if ((stats.mode & 0o077) !== 0) {
+    if (
+      (stats.mode & 0o077) !== 0 &&
+      !(allowBroadReadOnlyPermissions && (stats.mode & 0o022) === 0)
+    ) {
       throw new Error(`Runtime environment directory permissions are too broad: ${directory}`);
     }
   }
 }
 
-function assertPrivateRuntimeEnvFile(filePath, { platform, uid }) {
+function assertPrivateRuntimeEnvFile(
+  filePath,
+  { platform, uid, allowBroadReadOnlyPermissions = false }
+) {
   const stats = lstatSync(filePath);
   if (stats.isSymbolicLink() || !stats.isFile()) {
     throw new Error(`Runtime environment must be a regular, non-symlink file: ${filePath}`);
@@ -359,7 +415,10 @@ function assertPrivateRuntimeEnvFile(filePath, { platform, uid }) {
     if (typeof uid === "number" && stats.uid !== uid) {
       throw new Error(`Runtime environment must be owned by the current user: ${filePath}`);
     }
-    if ((stats.mode & 0o077) !== 0) {
+    if (
+      (stats.mode & 0o077) !== 0 &&
+      !(allowBroadReadOnlyPermissions && (stats.mode & 0o022) === 0)
+    ) {
       throw new Error(`Runtime environment permissions are too broad; run chmod 600 ${filePath}`);
     }
   }

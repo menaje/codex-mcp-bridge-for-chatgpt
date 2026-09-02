@@ -51,17 +51,19 @@ public struct UnixSocketRPCClient: Sendable {
     public func call<Result: Decodable, Parameters: Encodable>(
         _ method: String,
         params: Parameters,
-        as resultType: Result.Type = Result.self
+        as resultType: Result.Type = Result.self,
+        timeout requestTimeout: TimeInterval? = nil
     ) async throws -> Result {
+        let requestID = UUID().uuidString.lowercased()
         let request = RPCRequest(
             jsonrpc: "2.0",
-            id: UUID().uuidString.lowercased(),
+            id: requestID,
             method: method,
             params: params
         )
         let requestData = try JSONEncoder().encode(request)
         let socketPath = self.socketPath
-        let timeout = self.timeout
+        let timeout = requestTimeout ?? self.timeout
         let maximumResponseBytes = self.maximumResponseBytes
         let responseData = try await Task.detached(priority: .userInitiated) {
             try transact(
@@ -73,6 +75,9 @@ public struct UnixSocketRPCClient: Sendable {
         }.value
         do {
             let envelope = try JSONDecoder().decode(RPCResponse<Result>.self, from: responseData)
+            guard envelope.jsonrpc == "2.0", envelope.id == requestID else {
+                throw LocalRPCError.malformedResponse("JSON-RPC response identity did not match the request.")
+            }
             if let error = envelope.error {
                 throw LocalRPCError.remote(code: error.code, message: error.message)
             }

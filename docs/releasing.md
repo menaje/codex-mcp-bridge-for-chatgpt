@@ -212,11 +212,13 @@ recorded for the release candidate:
   clean checkout;
 - the bundled runtime starts through its per-user LaunchAgent and exposes only
   private `0700`/`0600` Unix socket paths;
-- an existing private dotenv, SQLite state, Settings, project registry, and
-  tunnel profile are reused without mutation or credential-store prompts;
+- an existing private dotenv, SQLite state, Settings, and project registry are
+  reused without mutation or credential-store prompts, while a legacy Tunnel
+  profile is left untouched and the dedicated app profile is reused exactly;
 - first-run save, Tunnel profile repair, graceful drain, forced stop, crash
-  backoff/safe mode, and app-only quit are exercised without secret-bearing
-  logs or unexpected Job replay;
+  backoff/safe mode, helper-crash runtime adoption, and app-only quit are
+  exercised without secret-bearing logs, duplicate runtimes, or unexpected Job
+  replay;
 - Dashboard and Settings snapshots decode in the native client and changes are
   observed in both the native UI and retained ChatGPT cards;
 - VoiceOver labels, full keyboard navigation, light/dark appearance, sleep and
@@ -240,7 +242,9 @@ package names:
 - the `CODEX_MCP_BRIDGE_*` environment prefix;
 - the private `~/.config/codex-mcp-bridge/.env` runtime configuration path;
 - `~/.codex-mcp-bridge` and its SQLite/legacy state files;
-- the default tunnel profile;
+- the legacy default tunnel profile (the app-owned
+  `codex-mcp-bridge-macos` profile is a separate migration namespace and must
+  not overwrite it);
 - MCP App resource URIs and the conversation-scope HMAC namespace.
 
 Renaming those values requires a separate credential, state, service, and UI
