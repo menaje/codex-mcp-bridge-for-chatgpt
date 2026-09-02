@@ -2,6 +2,7 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    @MainActor
     func testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions() {
         XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00.000Z"))
         XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00Z"))

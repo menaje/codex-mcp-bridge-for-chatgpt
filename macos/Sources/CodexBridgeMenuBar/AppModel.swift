@@ -93,6 +93,13 @@ struct SettingsDraft: Equatable {
         policyState != originalPolicyState
     }
 
+    mutating func setActivityCardVisibility(_ visibility: String) {
+        activityCardVisibility = visibility
+        if visibility == "never" {
+            completionHandoff = "off"
+        }
+    }
+
     private var policyState: PolicyState {
         PolicyState(
             mode: policyMode,

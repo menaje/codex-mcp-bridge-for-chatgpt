@@ -148,6 +148,30 @@ describe("runtime environment", () => {
     expect(readFileSync(file, "utf8")).toBe(contents);
   });
 
+  it("repairs an owned over-readable configuration directory before first dotenv creation", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "existing-config");
+    const file = path.join(directory, ".env");
+    mkdirSync(directory, { mode: 0o755 });
+
+    expect(inspectRuntimeEnvFile(file)).toMatchObject({
+      exists: false,
+      valid: false,
+      issue: expect.stringContaining("directory permissions are too broad")
+    });
+    expect(repairRuntimeEnvPermissions(file)).toMatchObject({
+      exists: false,
+      valid: false,
+      issue: expect.stringContaining("not configured")
+    });
+    expect(lstatSync(directory).mode & 0o777).toBe(0o700);
+
+    expect(updateRuntimeEnvFile(file, {
+      apiKey: "sk-first-run-1234567890123456",
+      tunnelId: "tunnel_ffffffffffffffffffffffffffffffff"
+    })).toMatchObject({ valid: true });
+  });
+
   it("does not auto-repair group-writable runtime configuration", () => {
     const root = temporaryDirectory();
     const directory = path.join(root, "shared");
@@ -239,6 +263,30 @@ describe("runtime environment", () => {
       "UNKNOWN_SETTING=keep-me",
       "CONTROL_PLANE_API_KEY=sk-existing-1234567890123456",
       "CONTROL_PLANE_TUNNEL_ID=tunnel_pppppppppppppppppppppppppppppppp",
+      ""
+    ].join("\n"));
+  });
+
+  it("accepts quoted values with inline comments and preserves those comments on replacement", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "private");
+    const file = path.join(directory, ".env");
+    mkdirSync(directory, { mode: 0o700 });
+    writeFileSync(file, [
+      "export CONTROL_PLANE_API_KEY = \"sk-existing-1234567890123456\" # runtime key note",
+      "CONTROL_PLANE_TUNNEL_ID = 'tunnel_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' # tunnel note",
+      ""
+    ].join("\n"), { mode: 0o600 });
+
+    expect(inspectRuntimeEnvFile(file)).toMatchObject({ valid: true });
+    updateRuntimeEnvFile(file, {
+      apiKey: "",
+      tunnelId: "tunnel_pppppppppppppppppppppppppppppppp"
+    });
+
+    expect(readFileSync(file, "utf8")).toBe([
+      "export CONTROL_PLANE_API_KEY = \"sk-existing-1234567890123456\" # runtime key note",
+      "CONTROL_PLANE_TUNNEL_ID = tunnel_pppppppppppppppppppppppppppppppp # tunnel note",
       ""
     ].join("\n"));
   });
@@ -376,6 +424,20 @@ describe("runtime environment", () => {
     symlinkSync(target, link);
     expect(() => updateRuntimeEnvFile(link, { apiKey: "", tunnelId: "" }))
       .toThrow("regular, non-symlink file");
+
+    const dangling = path.join(privateDirectory, "dangling.env");
+    symlinkSync(path.join(privateDirectory, "missing-target.env"), dangling);
+    expect(inspectRuntimeEnvFile(dangling)).toMatchObject({
+      exists: true,
+      valid: false,
+      issue: expect.stringContaining("regular, non-symlink file")
+    });
+    expect(() => loadRuntimeEnvFile(dangling)).toThrow("regular, non-symlink file");
+    expect(() => repairRuntimeEnvPermissions(dangling)).toThrow("regular, non-symlink file");
+    expect(() => updateRuntimeEnvFile(dangling, {
+      apiKey: "sk-new-1234567890123456",
+      tunnelId: "tunnel_dddddddddddddddddddddddddddddddd"
+    })).toThrow("regular, non-symlink file");
 
     const broadDirectory = path.join(root, "broad");
     mkdirSync(broadDirectory, { mode: 0o755 });

@@ -109,6 +109,15 @@ private struct GeneralSettingsPane: View {
 
     var body: some View {
         Form {
+            Section {
+                Label(
+                    "이 설정은 이 브리지 연결을 사용하는 모든 대화에 공유됩니다.",
+                    systemImage: "person.2"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Section("접근 권한") {
                 Picker("접근 전략", selection: $draft.accessStrategy) {
                     ForEach(snapshot.capabilities.availableAccessStrategies, id: \.self) {
@@ -118,6 +127,14 @@ private struct GeneralSettingsPane: View {
                 Text(accessDescription(draft.accessStrategy))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if draft.accessStrategy == "always-full" {
+                    Label(
+                        "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다.",
+                        systemImage: "exclamationmark.shield.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
             }
 
             Section("모델 정책") {
@@ -227,7 +244,7 @@ private struct GeneralSettingsPane: View {
                     in: 1...snapshot.capabilities.maxConcurrentJobs
                 )
                 Toggle("Codex 앱에서 bridge thread 표시", isOn: $draft.showBridgeThreadsInCodexApp)
-                Picker("Activity 카드 표시", selection: $draft.activityCardVisibility) {
+                Picker("Activity 카드 표시", selection: activityCardVisibilityBinding) {
                     ForEach(snapshot.capabilities.availableActivityCardVisibilities, id: \.self) {
                         Text(activityVisibilityLabel($0)).tag($0)
                     }
@@ -236,6 +253,12 @@ private struct GeneralSettingsPane: View {
                     ForEach(snapshot.capabilities.availableCompletionHandoffs, id: \.self) {
                         Text(handoffLabel($0)).tag($0)
                     }
+                }
+                .disabled(draft.activityCardVisibility == "never")
+                if draft.activityCardVisibility == "never" {
+                    Text("자동 handoff에는 표시되는 Activity 카드가 필요합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -294,6 +317,13 @@ private struct GeneralSettingsPane: View {
                 if enabled { draft.explicitSelectionKeys.insert(key) }
                 else { draft.explicitSelectionKeys.remove(key) }
             }
+        )
+    }
+
+    private var activityCardVisibilityBinding: Binding<String> {
+        Binding(
+            get: { draft.activityCardVisibility },
+            set: { draft.setActivityCardVisibility($0) }
         )
     }
 

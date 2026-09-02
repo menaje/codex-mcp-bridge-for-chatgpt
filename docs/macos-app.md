@@ -72,10 +72,12 @@ the existing value when a field is blank. The config directory and file must
 be current-user-owned regular non-symlinks with `0700` and `0600` permissions.
 Replacement is same-directory, validated, synced, and atomic.
 If only those permissions are too broad, the repair sheet can restrict the
-existing current-user-owned regular directory and file in place. It never
-follows a symlink or changes the dotenv contents. Automatic repair is limited
-to over-readable paths; group/world-writable paths are rejected so an operator
-can inspect them before changing permissions manually.
+existing current-user-owned regular directory and file in place. It can also
+repair an over-readable pre-existing configuration directory before the first
+dotenv is created. It never follows a symlink or changes dotenv contents.
+Automatic repair is limited to over-readable paths; group/world-writable paths
+are rejected so an operator can inspect them before changing permissions
+manually.
 
 Configuration apply is one serialized operation: prepare the complete dotenv,
 block new work, drain or explicitly force-stop the old runtime, atomically

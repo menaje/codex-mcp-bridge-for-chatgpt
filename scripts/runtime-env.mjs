@@ -1,7 +1,6 @@
 import {
   chmodSync,
   closeSync,
-  existsSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -34,7 +33,7 @@ export function resolveRuntimeEnvFile({
   environment = process.env,
   homeDirectory = homedir(),
   repoRoot = process.cwd(),
-  fileExists = existsSync
+  fileExists = pathEntryExists
 } = {}) {
   const requestedPath = explicitPath || environment.CODEX_MCP_BRIDGE_ENV_FILE;
   if (requestedPath) return resolveFromRepo(requestedPath, repoRoot);
@@ -56,7 +55,7 @@ export function loadRuntimeEnvFile(
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
   } = {}
 ) {
-  if (!existsSync(filePath)) {
+  if (!pathEntryExists(filePath)) {
     if (required) throw new Error(`Runtime environment file not found: ${filePath}`);
     return false;
   }
@@ -116,7 +115,23 @@ export function inspectRuntimeEnvFile(
   } = {}
 ) {
   const resolvedPath = resolve(filePath);
-  if (!existsSync(resolvedPath)) {
+  if (!pathEntryExists(resolvedPath)) {
+    const directory = dirname(resolvedPath);
+    try {
+      if (pathEntryExists(directory)) {
+        assertRuntimeEnvDirectory(directory, { platform, uid });
+      }
+    } catch (error) {
+      return {
+        path: resolvedPath,
+        exists: false,
+        valid: false,
+        hasApiKey: false,
+        hasTunnelId: false,
+        tunnelId: null,
+        issue: safeRuntimeEnvIssue(error)
+      };
+    }
     return {
       path: resolvedPath,
       exists: false,
@@ -162,32 +177,36 @@ export function repairRuntimeEnvPermissions(
   } = {}
 ) {
   const resolvedPath = resolve(filePath);
-  if (!existsSync(resolvedPath)) {
-    throw new Error(`Runtime environment file not found: ${resolvedPath}`);
-  }
   const directory = dirname(resolvedPath);
+  if (!pathEntryExists(directory)) {
+    throw new Error(`Runtime environment directory not found: ${directory}`);
+  }
   const directoryStats = lstatSync(directory);
   if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
     throw new Error(`Runtime environment directory must be a regular directory: ${directory}`);
   }
-  const fileStats = lstatSync(resolvedPath);
-  if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+  const fileExists = pathEntryExists(resolvedPath);
+  const fileStats = fileExists ? lstatSync(resolvedPath) : undefined;
+  if (fileStats && (fileStats.isSymbolicLink() || !fileStats.isFile())) {
     throw new Error(`Runtime environment must be a regular, non-symlink file: ${resolvedPath}`);
   }
   if (platform !== "win32") {
     if (
       typeof uid === "number" &&
-      (directoryStats.uid !== uid || fileStats.uid !== uid)
+      (directoryStats.uid !== uid || (fileStats && fileStats.uid !== uid))
     ) {
       throw new Error("Runtime environment file and directory must be owned by the current user.");
     }
-    if ((directoryStats.mode & 0o022) !== 0 || (fileStats.mode & 0o022) !== 0) {
+    if (
+      (directoryStats.mode & 0o022) !== 0 ||
+      (fileStats !== undefined && (fileStats.mode & 0o022) !== 0)
+    ) {
       throw new Error(
         "Runtime environment permissions cannot be repaired automatically while group or world writable."
       );
     }
     chmodSync(directory, 0o700);
-    chmodSync(resolvedPath, 0o600);
+    if (fileExists) chmodSync(resolvedPath, 0o600);
   }
   return inspectRuntimeEnvFile(resolvedPath, { platform, uid });
 }
@@ -209,7 +228,7 @@ export function readRuntimeEnvSubset(
   } = {}
 ) {
   const resolvedPath = resolve(filePath);
-  if (!existsSync(resolvedPath)) return {};
+  if (!pathEntryExists(resolvedPath)) return {};
   const verification = { platform, uid, allowBroadReadOnlyPermissions };
   assertRuntimeEnvDirectory(dirname(resolvedPath), verification);
   assertPrivateRuntimeEnvFile(resolvedPath, verification);
@@ -237,7 +256,7 @@ export function prepareRuntimeEnvUpdate(
   const directory = dirname(resolvedPath);
   ensurePrivateRuntimeDirectory(directory, { platform, uid });
 
-  const existed = existsSync(resolvedPath);
+  const existed = pathEntryExists(resolvedPath);
   if (existed) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
   const original = existed ? readFileSync(resolvedPath, "utf8") : "";
   const previousValues = readManagedRuntimeEnvValues(original);
@@ -342,7 +361,7 @@ function writeAtomicPrivateRuntimeEnv(filePath, contents, options) {
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     try {
-      if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+      if (pathEntryExists(temporaryPath)) unlinkSync(temporaryPath);
     } catch {
       // Preserve the original error; a same-directory private temp file is safe
       // to remove on the next setup attempt.
@@ -366,7 +385,7 @@ function assertPreparedRuntimeEnvUpdate(prepared) {
 }
 
 function assertRuntimeEnvUnchanged(prepared, expectedContents, expectedExists) {
-  const exists = existsSync(prepared.path);
+  const exists = pathEntryExists(prepared.path);
   if (exists !== expectedExists) {
     throw new Error("RUNTIME_ENV_CHANGED: Runtime environment changed during the operation.");
   }
@@ -432,7 +451,8 @@ function mergeManagedRuntimeEnv(source, updates) {
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index] || "";
     const separator = parts[index + 1] || "";
-    const key = dotenvAssignmentKey(line);
+    const assignment = dotenvAssignment(line);
+    const key = assignment?.key;
     let nextLine = line;
     if (key && RUNTIME_ENV_MANAGED_KEYS.includes(key)) {
       if (seen.has(key)) {
@@ -440,7 +460,7 @@ function mergeManagedRuntimeEnv(source, updates) {
       }
       seen.add(key);
       if (Object.prototype.hasOwnProperty.call(updates, key)) {
-        nextLine = `${key}=${updates[key]}`;
+        nextLine = `${assignment.prefix}${updates[key]}${assignment.commentSuffix}`;
       }
     }
     merged += `${nextLine}${separator}`;
@@ -492,23 +512,48 @@ function readSelectedRuntimeEnvValues(source, selectedKeys) {
 }
 
 function dotenvAssignmentKey(line) {
-  return line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1];
+  return dotenvAssignment(line)?.key;
 }
 
 function parseDotenvValue(raw) {
-  const value = raw.trim();
-  if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
-    return value.slice(1, -1);
+  return parseEnv(`RUNTIME_VALUE=${raw}\n`).RUNTIME_VALUE || "";
+}
+
+function dotenvAssignment(line) {
+  const match = line.match(/^(\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)(.*)$/);
+  if (!match) return undefined;
+  const raw = match[3];
+  const commentIndex = dotenvCommentIndex(raw);
+  let suffixStart = commentIndex;
+  while (suffixStart > 0 && /\s/.test(raw[suffixStart - 1])) suffixStart -= 1;
+  return {
+    key: match[2],
+    prefix: match[1],
+    commentSuffix: commentIndex < raw.length ? raw.slice(suffixStart) : ""
+  };
+}
+
+function dotenvCommentIndex(raw) {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (quote) {
+      if (quote === '"' && character === "\\" && !escaped) {
+        escaped = true;
+        continue;
+      }
+      if (character === quote && !escaped) quote = "";
+      escaped = false;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "#") {
+      return index;
+    }
   }
-  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
-    return value.slice(1, -1)
-      .replaceAll("\\n", "\n")
-      .replaceAll("\\r", "\r")
-      .replaceAll("\\t", "\t")
-      .replaceAll('\\"', '"')
-      .replaceAll("\\\\", "\\");
-  }
-  return value.replace(/\s+#.*$/, "").trim();
+  return raw.length;
 }
 
 function safeRuntimeEnvIssue(error) {
@@ -529,6 +574,16 @@ function syncDirectory(directory) {
     // was already fsynced before the atomic rename.
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function pathEntryExists(filePath) {
+  try {
+    lstatSync(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
   }
 }
 

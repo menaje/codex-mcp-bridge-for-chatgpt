@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 public enum DisplayFormat {
     private static let fractionalISO: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
