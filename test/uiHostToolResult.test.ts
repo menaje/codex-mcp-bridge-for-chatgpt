@@ -16,6 +16,16 @@ describe("ChatGPT host tool-result normalization", () => {
     expect(hostToolResultMetadata(dashboardMetadata)).toBe(dashboardMetadata);
   });
 
+  it("keeps a direct MCP tool result and exposes its private metadata", () => {
+    const result = {
+      structuredContent: { kind: "activity" },
+      _meta: dashboardMetadata
+    };
+
+    expect(normalizeHostToolResult(result)).toBe(result);
+    expect(hostToolResultMetadata(result)).toBe(dashboardMetadata);
+  });
+
   it("unwraps the canonical mcp_tool_result envelope", () => {
     const result = {
       structuredContent: { kind: "dashboard" },
@@ -42,6 +52,15 @@ describe("ChatGPT host tool-result normalization", () => {
 
     expect(normalizeHostToolResult(wrapped)).toEqual(result);
     expect(hostToolResultMetadata(wrapped)).toEqual(dashboardMetadata);
+  });
+
+  it("unwraps a nested tool_result compatibility envelope", () => {
+    const result = {
+      content: [{ type: "text", text: "{}" }],
+      _meta: dashboardMetadata
+    };
+
+    expect(normalizeHostToolResult({ result: { tool_result: result } })).toBe(result);
   });
 
   it("bounds cyclic wrapper traversal and returns a usable fallback", () => {
