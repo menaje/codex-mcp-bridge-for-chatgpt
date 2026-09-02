@@ -51,6 +51,7 @@
     "start": "node dist/cli.js",
     "start:stdio": "node dist/stdio.js",
     "test": "vitest run --maxWorkers=4",
+    "test:activity-browser": "tsx scripts/activity-card-browser-regression.ts",
     "check": "npm run build && npm run test"
   },
   "keywords": [

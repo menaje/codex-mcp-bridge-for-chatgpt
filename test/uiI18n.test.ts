@@ -735,9 +735,13 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('bootstrap.kind!=="codex/activityBootstrap"');
     expect(ACTIVITY_CARD_HTML).toContain('view.kind==="codex/activityView"');
     expect(ACTIVITY_CARD_HTML).toContain("return{requestId:correlation.requestId,bridgeActivity:");
-    expect(ACTIVITY_CARD_HTML).toContain("privateOutput||result&&result.structuredContent||result");
+    expect(ACTIVITY_CARD_HTML).toContain("normalizeHostToolResult(value)");
+    expect(ACTIVITY_CARD_HTML).toContain("hostToolResultMetadata(value)");
     expect(ACTIVITY_CARD_HTML).toContain(
-      "if(initialPrivateOutput)consumeToolOutput(initialPrivateOutput);else if"
+      "privateActivityOutput(metadata)||result&&result.structuredContent||parsedToolText(result)||result"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "if(!window.openai||!applyHostGlobals(window.openai))showHydrationError"
     );
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/initialize"');
     expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
@@ -762,7 +766,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('"render-retry","render-latest"');
     expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId+\"\\u0000\"");
     expect(ACTIVITY_CARD_HTML).toContain("if(taskBootstrapKey===key)return true");
-    expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(false);void reload().catch(showError)");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "setCardVisible(false);void reload().catch((error)=>showHydrationError(error,reload))"
+    );
     expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
     expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
     expect(ACTIVITY_CARD_HTML).toContain("reservationOwnerId");
@@ -776,7 +782,14 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
     expect(ACTIVITY_CARD_HTML).toContain('readOnly=historicalView()');
     expect(ACTIVITY_CARD_HTML).toContain('message.textContent=historicalView()?t["activity.historicalSnapshot"]');
-    expect(ACTIVITY_CARD_HTML).toContain('const action=historicalView()?promoteHistorical():reload()');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "const recovery=recoveryAction;if(recovery)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'const action=historicalView()?promoteHistorical():reload()'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('t["activity.loadFailed"]');
+    expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(true)");
     expect(ACTIVITY_CARD_HTML).toContain('presentation:{kind:"explicit"}');
     expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
     expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');

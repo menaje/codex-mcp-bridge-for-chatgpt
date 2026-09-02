@@ -177,6 +177,7 @@ const ENGLISH = {
   "activity.gptVerificationNeeded": "GPT verification needed",
   "activity.verify": "Verify",
   "activity.retry": "Retry",
+  "activity.loadFailed": "Activity could not be loaded. Retry.",
   "activity.followUpSent": "A GPT follow-up was added to this conversation.",
   "activity.prompt.verify": "Verify Codex Activity {activityId}. Query the Activity with codex_status, then query every relevant exact Job ID and read each Job item's answer; Activity summaries never contain Job answers. Inspect files, diffs, tests, and artifacts independently, then perform the exact verification transition. Do not infer success from Codex output alone.",
   "activity.prompt.retry": "Retry or recover Codex Activity {activityId}. Retrieve authoritative status with codex_status; when a completed Job result is needed, query its exact Job ID and read its answer. Explain the failure or interruption, and ask before materially changing scope.",
@@ -873,6 +874,17 @@ const ISSUE41_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTran
   pt: {
     "activity.allActivities": "Todas as atividades", "activity.pastRecords": "Histórico", "activity.completedActivities": "Concluídas", "activity.endedActivities": "Encerradas", "activity.idleAgentCount": "Agentes ociosos", "activity.history": "Histórico de atividades", "activity.noHistory": "Não há atividades anteriores nesta conversa.", "activity.previousPage": "Anterior", "activity.nextPage": "Próxima"
   }
+};
+
+const ISSUE46_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
+  ko: { "activity.loadFailed": "Activity를 불러오지 못했습니다. 다시 시도하세요." },
+  ja: { "activity.loadFailed": "アクティビティを読み込めませんでした。再試行してください。" },
+  "zh-Hans": { "activity.loadFailed": "无法加载活动。请重试。" },
+  "zh-Hant": { "activity.loadFailed": "無法載入活動。請重試。" },
+  es: { "activity.loadFailed": "No se pudo cargar la actividad. Inténtalo de nuevo." },
+  fr: { "activity.loadFailed": "Impossible de charger l’activité. Réessayez." },
+  de: { "activity.loadFailed": "Die Aktivität konnte nicht geladen werden. Versuchen Sie es erneut." },
+  pt: { "activity.loadFailed": "Não foi possível carregar a atividade. Tente novamente." }
 };
 
 const STATE_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
@@ -2017,8 +2029,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
