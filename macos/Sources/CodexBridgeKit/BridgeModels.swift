@@ -508,6 +508,18 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
     public let acceptingNewJobs: Bool
     public let activeJobs: Int
     public let pendingAdmissions: Int
+    public let backgroundProcessState: String
+    public let backgroundProcesses: Int
+    public let backgroundProcessAgents: Int
+    public let backgroundProcessUnknownAgents: Int
+}
+
+public struct RuntimeSnapshotParameters: Codable, Sendable {
+    public let inspectBackgroundProcesses: Bool
+
+    public init(inspectBackgroundProcesses: Bool) {
+        self.inspectBackgroundProcesses = inspectBackgroundProcesses
+    }
 }
 
 public struct RuntimeConfigurationStatus: Codable, Sendable {
@@ -526,6 +538,10 @@ public struct HelperBridgeStatus: Codable, Sendable {
     public let acceptingNewJobs: Bool?
     public let activeJobs: Int?
     public let pendingAdmissions: Int?
+    public let backgroundProcessState: String?
+    public let backgroundProcesses: Int?
+    public let backgroundProcessAgents: Int?
+    public let backgroundProcessUnknownAgents: Int?
 }
 
 public struct HelperTunnelStatus: Codable, Sendable {

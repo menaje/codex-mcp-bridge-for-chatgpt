@@ -372,10 +372,14 @@ replaced, and stale cleanup verifies ownership and inode identity.
 
 The helper is the only app-managed owner of the bridge and tunnel process tree.
 A private runtime lock rejects a concurrent CLI or helper launcher against the
-same default runtime. Drain stops new Job admission, waits for active Jobs, and
-cancels the drain if its bounded timeout expires. Force stop remains an
-explicit destructive UI action and does not claim to roll back filesystem
-changes or replay interrupted work.
+same default runtime. Drain stops new Job admission, waits for active Jobs and
+pending admissions, and then verifies every current retained App Server Agent
+thread for background processes. A positive or unknown background impact cancels the
+drain. Force stop remains an explicit destructive UI action, refreshes the
+impact before confirmation, and does not claim to roll back filesystem changes
+or replay interrupted work. LaunchAgent definition replacement restores the
+previous plist and service when `bootout`, `bootstrap`, `kickstart`, or
+new-helper readiness validation fails.
 
 The setup surface may update only `CONTROL_PLANE_API_KEY` and
 `CONTROL_PLANE_TUNNEL_ID`. It validates the complete candidate, writes a
@@ -395,6 +399,9 @@ Codex login remains a separate boundary: the helper runs only `codex login
 status` and an explicit user-requested `codex login` browser flow. It does not
 copy, overwrite, delete, log out, or change the storage choice of shared Codex
 credentials. A missing ChatGPT/Codex login never falls back to an API key.
+The app itself never calls an operating-system credential store for Tunnel
+credentials; the external Codex CLI may still use the store already selected
+by the user.
 In app-managed mode, API-key environment variables from a legacy dotenv or the
 parent process are removed before Codex child startup; explicit API-key mode
 remains deferred to issue #29.

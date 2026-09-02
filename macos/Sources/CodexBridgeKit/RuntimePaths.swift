@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct RuntimePaths: Sendable {
@@ -52,7 +53,7 @@ public struct RuntimePaths: Sendable {
         )) ?? [])
             .sorted { $0.lastPathComponent.compare($1.lastPathComponent, options: .numeric) == .orderedDescending }
             .map { $0.appendingPathComponent("bin/node") }
-        let candidates = [
+        let rawCandidates = [
             explicitNode,
             bundledNode,
             URL(fileURLWithPath: "/opt/homebrew/bin/node"),
@@ -60,6 +61,10 @@ public struct RuntimePaths: Sendable {
             homeNode,
             URL(fileURLWithPath: "/usr/bin/node")
         ].compactMap { $0 } + pathNodes + nvmNodes
+        var seenNodePaths = Set<String>()
+        let candidates = rawCandidates.filter {
+            seenNodePaths.insert($0.standardizedFileURL.path).inserted
+        }
         self.nodeExecutable = candidates.first {
             FileManager.default.isExecutableFile(atPath: $0.path) &&
                 Self.supportsRequiredNodeVersion($0)
@@ -110,7 +115,10 @@ public struct RuntimePaths: Sendable {
             try process.run()
             if completion.wait(timeout: .now() + 2) == .timedOut {
                 process.terminate()
-                _ = completion.wait(timeout: .now() + 1)
+                if completion.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = completion.wait(timeout: .now() + 1)
+                }
                 return false
             }
             guard process.terminationStatus == 0 else { return false }

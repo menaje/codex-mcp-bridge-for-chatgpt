@@ -35,8 +35,16 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
     }
 
-    public func runtimeStatus() async throws -> RuntimeAdmissionSnapshot {
-        try await rpc.call("runtime.snapshot", params: EmptyParameters(), timeout: 15)
+    public func runtimeStatus(
+        inspectBackgroundProcesses: Bool = false
+    ) async throws -> RuntimeAdmissionSnapshot {
+        try await rpc.call(
+            "runtime.snapshot",
+            params: RuntimeSnapshotParameters(
+                inspectBackgroundProcesses: inspectBackgroundProcesses
+            ),
+            timeout: 15
+        )
     }
 }
 

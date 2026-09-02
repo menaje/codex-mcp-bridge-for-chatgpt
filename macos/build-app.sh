@@ -10,8 +10,9 @@ runtime_directory="$contents_directory/Resources/Runtime"
 
 cd "$repository_root"
 npm run build
-swift test --package-path "$script_directory"
-swift build --package-path "$script_directory" -c release --product CodexBridgeMenuBar
+npm run macos:check
+swift build --package-path "$script_directory" -c release --product CodexBridgeMenuBar \
+  -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
 swift_binary_directory="$(swift build --package-path "$script_directory" -c release --show-bin-path)"
 
 rm -rf "$app_bundle"

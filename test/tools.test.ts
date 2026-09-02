@@ -736,33 +736,49 @@ describe("bridge tools", () => {
     try {
       const task = runTask(bridge.client, { prompt: "wait in model-policy admission" });
       await catalog.entered;
-      expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+      expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
         acceptingNewJobs: true,
         activeJobs: 0,
-        pendingAdmissions: 1
+        pendingAdmissions: 1,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
       });
-      expect(bridge.applicationService.beginDrain()).toEqual({
+      expect(await bridge.applicationService.beginDrain()).toEqual({
         acceptingNewJobs: false,
         activeJobs: 0,
-        pendingAdmissions: 1
+        pendingAdmissions: 1,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
       });
 
       catalog.release();
-      await vi.waitFor(() => {
-        expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+      await vi.waitFor(async () => {
+        expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
           acceptingNewJobs: false,
           activeJobs: 1,
-          pendingAdmissions: 0
+          pendingAdmissions: 0,
+          backgroundProcessState: "unknown",
+          backgroundProcesses: 0,
+          backgroundProcessAgents: 0,
+          backgroundProcessUnknownAgents: 0
         });
       });
       upstream.resolveNext();
       await task;
-      expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+      expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
         acceptingNewJobs: false,
         activeJobs: 0,
-        pendingAdmissions: 0
+        pendingAdmissions: 0,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
       });
-      bridge.applicationService.cancelDrain();
+      await bridge.applicationService.cancelDrain();
     } finally {
       catalog.release();
       await bridge.close();
@@ -7244,7 +7260,7 @@ describe("bridge tools", () => {
   it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
     const root = temporaryRoot();
     const upstream = new BackgroundTerminalUpstream();
-    const { client, rawCallTool, jobs, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
@@ -7321,6 +7337,14 @@ describe("bridge tools", () => {
       backgroundProcessAgents: 1,
       runtimeUnknownAgents: 0,
       runtimeProbeSkippedAgents: 0
+    });
+    await expect(applicationService.runtimeSnapshot({
+      inspectBackgroundProcesses: true
+    })).resolves.toMatchObject({
+      backgroundProcessState: "confirmed",
+      backgroundProcesses: 2,
+      backgroundProcessAgents: 1,
+      backgroundProcessUnknownAgents: 0
     });
     expect(dashboardView.activeRows).toEqual(expect.arrayContaining([
       expect.objectContaining({

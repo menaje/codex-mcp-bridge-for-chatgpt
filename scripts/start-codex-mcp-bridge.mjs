@@ -620,7 +620,7 @@ function removeStaleRuntimeFile(filePath) {
 
 function safeStatusText(value) {
   return String(value || "unknown")
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED_API_KEY]")
+    .replace(/sk-[^\s]{8,}/g, "[REDACTED_API_KEY]")
     .replace(/tunnel_[A-Za-z0-9_-]{8,}/g, "[REDACTED_TUNNEL_ID]")
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")

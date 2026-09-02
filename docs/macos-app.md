@@ -32,9 +32,12 @@ instead of becoming additional everyday Settings tabs.
 
 The helper owns the app-managed bridge and tunnel process tree. Closing the
 popover, Settings window, or menu bar UI leaves its LaunchAgent and runtime
-running. Graceful stop/restart first blocks new Job admission and waits for
-active Jobs; force actions are separately labelled and never replay work or
-roll back filesystem changes. A process lock rejects a second launcher, and
+running. Graceful stop/restart first blocks new Job admission, waits for active
+Jobs and pending admissions, and then verifies every current retained App
+Server Agent thread for background processes. It refuses to stop when a background
+process exists or that impact cannot be confirmed. Force actions refresh and
+show the active/background impact immediately before confirmation; they never
+replay work or roll back filesystem changes. A process lock rejects a second launcher, and
 unexpected exits use bounded exponential backoff before safe mode.
 The lock stays in one canonical per-user namespace even when a CLI selects an
 alternate dotenv. If the helper crashes while its detached runtime remains
@@ -108,6 +111,11 @@ compatible.
 Login state is polled independently from bridge health. A running bridge with a
 missing or expired Codex login is shown as needing attention, never as healthy,
 and the browser flow remains pending until a later check confirms authentication.
+The app itself does not call Keychain for Tunnel credentials. `codex login
+status` still follows the user's existing Codex credential-store configuration,
+so any operating-system prompt caused by that external configuration belongs in
+the physical release test rather than being claimed away by the Tunnel dotenv
+contract.
 
 After the tunnel is running, ChatGPT setup remains unchanged: enable Developer
 mode, select the matching Secure MCP Tunnel, and connect it with `No Auth`.
@@ -136,6 +144,10 @@ the plist is changed, so a drain timeout leaves the installed helper and plist
 in place for a later retry. If an incompatible helper cannot be reached while
 its runtime lock still exists, automatic replacement fails closed instead of
 interrupting an unobserved process tree.
+LaunchAgent replacement is transactional: `bootout`, `bootstrap`, `kickstart`,
+and new-helper readiness failures restore the previous plist and best-effort
+restart the previous service. A fresh failed install removes its unusable plist. The
+LaunchAgent also grants the helper 45 seconds to perform its bounded shutdown.
 
 The Tunnel runtime key is not returned by status, written to UserDefaults or a
 plist, passed in argv, copied to the pasteboard, or stored in helper logs. The
@@ -148,6 +160,14 @@ while an unrelated general-setting save omits an untouched model policy instead
 of silently dropping or revalidating it. Loading, mutation, Dashboard,
 authentication, runtime, and diagnostic failures keep independent UI state so
 one successful poll cannot hide another failed action.
+While the Settings window is open it refreshes the shared snapshot every ten
+seconds. A newer card-side revision replaces an untouched form, but never
+overwrites a locally edited draft. Conflicts retain the draft for review or
+copying and require an explicit, confirmed reload before another save.
+
+Runtime/Node discovery starts off the main actor so a slow or broken executable
+cannot freeze the menu bar UI. Duplicate candidates are ignored and a candidate
+that ignores normal termination is killed after the bounded probe timeout.
 
 ## Build and verification
 
@@ -175,8 +195,10 @@ Node dependencies. Node.js, Codex CLI, and `tunnel-client` currently remain
 external prerequisites.
 
 `macos/build-app.sh` produces a host-architecture, ad-hoc-signed development
-bundle. Before distributing it, complete the Developer ID/notarization/update
-and rollback design, choose the Node/Codex/tunnel-client bundling boundary,
+bundle. Swift tests and release compilation run with strict concurrency and
+warnings-as-errors. Before distributing it, complete the Developer
+ID/notarization/installer-update rollback design, choose the
+Node/Codex/tunnel-client bundling boundary,
 verify Apple Silicon and Intel support, and run the physical accessibility,
 appearance, sleep/wake, network-recovery, and helper-crash matrix listed in
 [releasing.md](releasing.md).

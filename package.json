@@ -38,7 +38,7 @@
     "skills:package": "node scripts/build-skills-release.mjs build",
     "skills:check": "node scripts/build-skills-release.mjs check",
     "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
-    "macos:check": "swift test --package-path macos",
+    "macos:check": "swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
     "macos:bundle": "./macos/build-app.sh",
     "bridge:local": "node scripts/start-codex-mcp-bridge.mjs --mode local",
     "bridge:secure": "node scripts/start-codex-mcp-bridge.mjs --mode secure",

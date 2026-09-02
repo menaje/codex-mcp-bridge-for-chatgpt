@@ -125,6 +125,48 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(draft.completionHandoff, "off")
     }
 
+    func testSettingsRefreshPreservesDirtyDraftUntilExplicitReload() throws {
+        let original = try settingsSnapshot(
+            policy: [
+                "mode": "fixed",
+                "selection": choiceObject(
+                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
+                ),
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let externallyChanged = try settingsSnapshot(
+            settingsRevision: 5,
+            accessStrategy: "read-only",
+            policy: [
+                "mode": "fixed",
+                "selection": choiceObject(
+                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
+                ),
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        var state = SettingsDraftSyncState()
+        state.synchronize(with: original)
+        var edited = try XCTUnwrap(state.draft)
+        edited.maxConcurrentJobs = 3
+        state.updateDraft(edited)
+
+        state.synchronize(with: externallyChanged)
+
+        XCTAssertEqual(state.draft?.maxConcurrentJobs, 3)
+        XCTAssertEqual(state.draft?.accessStrategy, "adaptive")
+        XCTAssertEqual(state.draft?.expectedSettingsRevision, 4)
+        XCTAssertTrue(state.externalChangeDetected)
+        state.synchronize(with: externallyChanged, force: true)
+        XCTAssertEqual(state.draft?.accessStrategy, "read-only")
+        XCTAssertEqual(state.draft?.maxConcurrentJobs, 2)
+        XCTAssertEqual(state.draft?.expectedSettingsRevision, 5)
+        XCTAssertFalse(state.externalChangeDetected)
+    }
+
     func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
         XCTAssertNotNil(DashboardLink.conversation(
             "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001"
@@ -188,7 +230,7 @@ private func helperStatus() throws -> HelperStatus {
       "phase":"running","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":true,"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0},
+      "bridge":{"socketPath":"/private/bridge.sock","connected":true,"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
       "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":true,"lastCheckedAt":null,"lastError":null}
     }
     """#.data(using: .utf8)!
@@ -253,6 +295,8 @@ private func dashboardStatus() throws -> DashboardSnapshot {
 }
 
 private func settingsSnapshot(
+    settingsRevision: Int = 4,
+    accessStrategy: String = "adaptive",
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     catalogModels: [[String: Any]],
@@ -260,10 +304,10 @@ private func settingsSnapshot(
 ) throws -> SettingsSnapshot {
     var settings: [String: Any] = [
         "schemaVersion": 1,
-        "settingsRevision": 4,
+        "settingsRevision": settingsRevision,
         "registryRevision": 2,
-        "revision": 4,
-        "accessStrategy": "adaptive",
+        "revision": settingsRevision,
+        "accessStrategy": accessStrategy,
         "modelPolicy": policy,
         "usePriorityServiceTier": false,
         "projects": [],
@@ -306,7 +350,7 @@ private func settingsSnapshot(
         "warnings": [],
         "scopeNotice": "test",
         "policyActivation": [
-            "policyRevision": 4,
+            "policyRevision": settingsRevision,
             "executionPolicyActive": true,
             "descriptorProjectionUpdated": false,
             "developerModeRefreshRequired": false

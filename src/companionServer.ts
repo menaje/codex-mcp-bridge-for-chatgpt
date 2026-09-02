@@ -56,6 +56,9 @@ const dashboardParamsSchema = z.strictObject({
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional()
 });
+const runtimeSnapshotParamsSchema = z.strictObject({
+  inspectBackgroundProcesses: z.boolean().optional()
+});
 
 type CompanionRequest = z.infer<typeof requestSchema>;
 type JsonRpcId = z.infer<typeof requestIdSchema> | null;
@@ -226,11 +229,13 @@ async function dispatchRequest(
         request.params as BridgeSettingsMutationInput
       );
     case "runtime.snapshot":
-      emptyParamsSchema.parse(request.params || {});
-      return applicationService.runtimeSnapshot();
+      return applicationService.runtimeSnapshot(
+        runtimeSnapshotParamsSchema.parse(request.params || {})
+      );
     case "runtime.beginDrain":
-      emptyParamsSchema.parse(request.params || {});
-      return applicationService.beginDrain();
+      return applicationService.beginDrain(
+        runtimeSnapshotParamsSchema.parse(request.params || {})
+      );
     case "runtime.cancelDrain":
       emptyParamsSchema.parse(request.params || {});
       return applicationService.cancelDrain();

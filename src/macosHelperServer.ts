@@ -139,6 +139,10 @@ export type MacOSHelperStatus = {
     acceptingNewJobs: boolean | null;
     activeJobs: number | null;
     pendingAdmissions: number | null;
+    backgroundProcessState: "confirmed" | "unknown" | null;
+    backgroundProcesses: number | null;
+    backgroundProcessAgents: number | null;
+    backgroundProcessUnknownAgents: number | null;
   };
   tunnel: {
     phase: string;
@@ -278,7 +282,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         connected: bridgeAdmission !== null,
         acceptingNewJobs: bridgeAdmission?.acceptingNewJobs ?? null,
         activeJobs: bridgeAdmission?.activeJobs ?? null,
-        pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null
+        pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null,
+        backgroundProcessState: bridgeAdmission?.backgroundProcessState ?? null,
+        backgroundProcesses: bridgeAdmission?.backgroundProcesses ?? null,
+        backgroundProcessAgents: bridgeAdmission?.backgroundProcessAgents ?? null,
+        backgroundProcessUnknownAgents: bridgeAdmission?.backgroundProcessUnknownAgents ?? null
       },
       tunnel
     };
@@ -639,7 +647,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       const state = await bridgeRequest<RuntimeAdmissionSnapshot>(
         this.bridgeSocketPath,
         "runtime.beginDrain",
-        {}
+        { inspectBackgroundProcesses: false }
       );
       drainStarted = true;
       if (options.mode === "drain") {
@@ -659,6 +667,25 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         if (activeJobs + pendingAdmissions > 0) {
           throw new Error(
             `DRAIN_TIMEOUT: ${activeJobs} active job(s) and ${pendingAdmissions} pending admission(s) did not finish before the timeout.`
+          );
+        }
+        const impact = await bridgeRequest<RuntimeAdmissionSnapshot>(
+          this.bridgeSocketPath,
+          "runtime.snapshot",
+          { inspectBackgroundProcesses: true },
+          15_000
+        );
+        if (
+          impact.backgroundProcessState !== "confirmed" ||
+          impact.backgroundProcessUnknownAgents > 0
+        ) {
+          throw new Error(
+            `BACKGROUND_PROCESS_STATE_UNKNOWN: Could not verify background processes for ${impact.backgroundProcessUnknownAgents || 1} agent(s). Use force only after reviewing the global status card.`
+          );
+        }
+        if (impact.backgroundProcesses > 0) {
+          throw new Error(
+            `BACKGROUND_PROCESSES_ACTIVE: ${impact.backgroundProcesses} background process(es) across ${impact.backgroundProcessAgents} agent(s) would be interrupted. Use force only after reviewing the global status card.`
           );
         }
       }
@@ -1041,6 +1068,10 @@ type RuntimeAdmissionSnapshot = {
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
+  backgroundProcessState: "confirmed" | "unknown";
+  backgroundProcesses: number;
+  backgroundProcessAgents: number;
+  backgroundProcessUnknownAgents: number;
 };
 
 type CompanionHello = z.infer<typeof companionHelloSchema>;
@@ -1529,7 +1560,10 @@ function removePrivateMarker(filePath: string): void {
 
 function redactRuntimeText(value: string): string {
   return value
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED_API_KEY]")
+    // Runtime configuration deliberately accepts any non-whitespace suffix so
+    // future API-key formats do not require an app update. Keep the log
+    // boundary at least as broad as that validation contract.
+    .replace(/sk-[^\s]{8,}/g, "[REDACTED_API_KEY]")
     .replace(/tunnel_[A-Za-z0-9_-]{8,}/g, "[REDACTED_TUNNEL_ID]")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=\-]{8,}/gi, "$1 [REDACTED]")
     .replace(
