@@ -80,6 +80,16 @@ final class BridgeModelsTests: XCTestCase {
             "acceptingNewJobs":true,
             "activeJobs":2,
             "pendingAdmissions":0
+          },
+          "tunnel":{
+            "phase":"connected",
+            "profile":"codex-mcp-bridge-stdio",
+            "transport":"stdio",
+            "doctorPassed":true,
+            "processRunning":true,
+            "connected":true,
+            "lastCheckedAt":"2026-09-02T00:00:00.000Z",
+            "lastError":null
           }
         }
         """#.data(using: .utf8)!
@@ -87,7 +97,53 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(status.phase, "running")
         XCTAssertTrue(status.configuration.hasApiKey)
         XCTAssertEqual(status.bridge.activeJobs, 2)
+        XCTAssertTrue(status.tunnel.connected)
         XCTAssertFalse(String(data: json, encoding: .utf8)!.contains("CONTROL_PLANE_API_KEY"))
+    }
+
+    func testHelperCompatibilityRequiresProtocolBuildAndAtomicSetupCapability() throws {
+        let statusData = #"""
+        {
+          "kind":"helper-status","generatedAt":"2026-09-02T00:00:00.000Z",
+          "phase":"running","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+          "restartAttempt":0,
+          "configuration":{"path":"/private/.env","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
+          "bridge":{"socketPath":"/private/bridge.sock","connected":true,"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0},
+          "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":true,"lastCheckedAt":null,"lastError":null}
+        }
+        """#.data(using: .utf8)!
+        let status = try JSONDecoder().decode(HelperStatus.self, from: statusData)
+        func hello(name: String, version: Int, buildID: String, capabilities: [String]) throws -> HelperHello {
+            let statusObject = try JSONSerialization.jsonObject(with: statusData)
+            let object: [String: Any] = [
+                "protocol": ["name": name, "version": version],
+                "runtime": ["buildId": buildID, "version": "0.3.0"],
+                "capabilities": capabilities,
+                "status": statusObject
+            ]
+            return try JSONDecoder().decode(
+                HelperHello.self,
+                from: JSONSerialization.data(withJSONObject: object)
+            )
+        }
+        let compatible = try hello(
+            name: HelperHello.expectedProtocolName,
+            version: HelperHello.expectedProtocolVersion,
+            buildID: "build-current",
+            capabilities: ["setup.dotenv.atomic-apply"]
+        )
+        XCTAssertTrue(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-current"))
+        XCTAssertFalse(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-old"))
+        XCTAssertFalse(HelperBootstrap.isCompatible(
+            try hello(
+                name: HelperHello.expectedProtocolName,
+                version: 1,
+                buildID: "build-current",
+                capabilities: ["setup.dotenv.atomic-apply"]
+            ),
+            runtimeBuildID: "build-current"
+        ))
+        XCTAssertEqual(status.phase, "running")
     }
 
     func testDashboardLoadMoreRetainsIndependentPageCaches() {

@@ -6,6 +6,7 @@ public struct RuntimePaths: Sendable {
     public let helperSocket: URL
     public let bridgeSocket: URL
     public let bridgeRoot: URL?
+    public let runtimeBuildID: String?
     public let nodeExecutable: URL?
     private let launchAgentDisabled: Bool
 
@@ -32,9 +33,11 @@ public struct RuntimePaths: Sendable {
 
         let explicitRoot = environment["CODEX_MCP_BRIDGE_ROOT"].map(URL.init(fileURLWithPath:))
         let bundledRoot = bundle.resourceURL?.appendingPathComponent("Runtime", isDirectory: true)
-        self.bridgeRoot = [explicitRoot, bundledRoot, currentDirectory]
+        let selectedBridgeRoot = [explicitRoot, bundledRoot, currentDirectory]
             .compactMap { $0 }
             .first(where: Self.isRuntimeRoot)
+        self.bridgeRoot = selectedBridgeRoot
+        self.runtimeBuildID = selectedBridgeRoot.flatMap(Self.readRuntimeBuildID)
 
         let explicitNode = environment["CODEX_MCP_BRIDGE_NODE"].map(URL.init(fileURLWithPath:))
         let bundledNode = bundledRoot?.appendingPathComponent("node/bin/node")
@@ -80,6 +83,17 @@ public struct RuntimePaths: Sendable {
             && fileManager.fileExists(
                 atPath: url.appendingPathComponent("scripts/start-codex-mcp-bridge.mjs").path
             )
+    }
+
+    private static func readRuntimeBuildID(_ root: URL) -> String? {
+        let file = root.appendingPathComponent("dist/build-info.json")
+        guard let data = try? Data(contentsOf: file),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let buildID = object["id"] as? String,
+              !buildID.isEmpty else {
+            return nil
+        }
+        return buildID
     }
 
     private static func supportsRequiredNodeVersion(_ executable: URL) -> Bool {

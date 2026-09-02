@@ -527,6 +527,17 @@ public struct HelperBridgeStatus: Codable, Sendable {
     public let pendingAdmissions: Int?
 }
 
+public struct HelperTunnelStatus: Codable, Sendable {
+    public let phase: String
+    public let profile: String?
+    public let transport: String?
+    public let doctorPassed: Bool
+    public let processRunning: Bool
+    public let connected: Bool
+    public let lastCheckedAt: String?
+    public let lastError: String?
+}
+
 public struct HelperExitStatus: Codable, Sendable {
     public let at: String
     public let code: Int?
@@ -544,31 +555,51 @@ public struct HelperStatus: Codable, Sendable {
     public let restartAttempt: Int
     public let configuration: RuntimeConfigurationStatus
     public let bridge: HelperBridgeStatus
+    public let tunnel: HelperTunnelStatus
 }
 
 public struct HelperHello: Codable, Sendable {
+    public static let expectedProtocolName = "codex-mcp-bridge-macos-helper"
+    public static let expectedProtocolVersion = 2
+
     public struct ProtocolInfo: Codable, Sendable {
         public let name: String
         public let version: Int
     }
+    public struct RuntimeInfo: Codable, Sendable {
+        public let buildId: String
+        public let version: String
+    }
     public let `protocol`: ProtocolInfo
+    public let runtime: RuntimeInfo
     public let capabilities: [String]
     public let status: HelperStatus
 }
 
-public struct SetupSaveParameters: Codable, Sendable {
+public struct SetupApplyParameters: Codable, Sendable {
     public let apiKey: String?
     public let tunnelId: String?
+    public let mode: String
+    public let timeoutMs: Int
 
-    public init(apiKey: String?, tunnelId: String?) {
+    public init(
+        apiKey: String?,
+        tunnelId: String?,
+        force: Bool,
+        timeoutMilliseconds: Int
+    ) {
         self.apiKey = apiKey
         self.tunnelId = tunnelId
+        self.mode = force ? "force" : "drain"
+        self.timeoutMs = timeoutMilliseconds
     }
 }
 
-public struct SetupSaveResponse: Codable, Sendable {
+public struct SetupApplyResponse: Codable, Sendable {
     public let configuration: RuntimeConfigurationStatus
-    public let restartRequired: Bool
+    public let status: HelperStatus
+    public let restarted: Bool
+    public let rolledBack: Bool
 }
 
 public struct CodexLoginStatus: Codable, Sendable {

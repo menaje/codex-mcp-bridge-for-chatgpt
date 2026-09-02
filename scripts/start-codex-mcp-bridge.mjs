@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,9 +12,48 @@ import {
   validateSecureTunnelEnvironment
 } from "./runtime-env.mjs";
 import { acquireRuntimeLock } from "./runtime-lock.mjs";
+import { terminateManagedChildren } from "./child-shutdown.mjs";
+import {
+  defaultTunnelProfileMetadataFile,
+  expectedTunnelProfileIdentity,
+  inspectReusableTunnelProfile,
+  readTunnelClientVersion,
+  recordTunnelProfileMetadata
+} from "./tunnel-profile.mjs";
+import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
+const MANAGED_APP_RUNTIME_EXACT_KEYS = new Set([
+  "CA_BUNDLE",
+  "CLOUDFLARED_MANAGED",
+  "CLOUDFLARED_PATH",
+  "CLOUDFLARED_READY_TIMEOUT",
+  "CLOUDFLARED_TUNNEL_TOKEN",
+  "CODEX_HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOG_LEVEL",
+  "NODE_EXTRA_CA_CERTS",
+  "PROXY_CHECK_INTERVAL",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "TUNNEL_CLIENT",
+  "TUNNEL_CLIENT_CONFIG",
+  "TUNNEL_CLIENT_PROFILE",
+  "TUNNEL_CLIENT_PROFILE_DIR",
+  "XDG_CONFIG_HOME",
+  "XDG_STATE_HOME"
+]);
 const args = parseLauncherArgs(process.argv.slice(2));
 const runtimeEnvFile = resolveRuntimeEnvFile({
   explicitPath: args.envFile,
@@ -23,7 +62,10 @@ const runtimeEnvFile = resolveRuntimeEnvFile({
 const runtimeEnvLoaded = args.help
   ? false
   : loadRuntimeEnvFile(runtimeEnvFile, {
-      required: Boolean(args.envFile || process.env.CODEX_MCP_BRIDGE_ENV_FILE)
+      required: Boolean(args.envFile || process.env.CODEX_MCP_BRIDGE_ENV_FILE),
+      allowedKey: process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1"
+        ? isManagedAppRuntimeKey
+        : undefined
     });
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
 const tunnelTransport =
@@ -32,13 +74,39 @@ const port = String(args.port || process.env.CODEX_MCP_BRIDGE_PORT || "8876");
 const host = "127.0.0.1";
 const localOriginUrl = `http://${host}:${port}`;
 const localMcpUrl = `${localOriginUrl}/mcp`;
+const runtimeDirectory = resolve(dirname(runtimeEnvFile), "run");
+const runtimeStatusFile = resolve(
+  args.runtimeStatusFile || resolve(runtimeDirectory, "launcher-status.json")
+);
+const tunnelHealthUrlFile = resolve(
+  args.tunnelHealthUrlFile || resolve(runtimeDirectory, "tunnel-health.url")
+);
+const tunnelPidFile = resolve(
+  args.tunnelPidFile || resolve(runtimeDirectory, "tunnel.pid")
+);
 const children = new Set();
 let shuttingDown = false;
+let shutdownPromise;
 let runtimeLock;
+let ownsRuntimeState = false;
+let tunnelHealthTimer;
+let tunnelHealthProbeRunning = false;
+let runtimePhase = "starting";
+let activeRuntimeBuildId = "unbuilt";
+let tunnelState = {
+  phase: mode === "secure" ? "stopped" : "not-applicable",
+  profile: null,
+  transport: mode === "secure" ? tunnelTransport : null,
+  doctorPassed: false,
+  processRunning: false,
+  connected: false,
+  lastCheckedAt: null,
+  lastError: null
+};
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  cleanup(1);
+  void shutdown(1, "failed");
 });
 
 async function main() {
@@ -66,15 +134,21 @@ async function main() {
           runtimeEnvFile
         )
       : undefined;
+  enforceManagedAppAuthenticationBoundary();
   ensurePrerequisites();
   ensureBuilt();
-  runtimeLock = acquireRuntimeLock();
+  activeRuntimeBuildId = installedRuntimeBuildId();
+  runtimeLock = acquireRuntimeLock(resolve(runtimeDirectory, "launcher.lock"));
+  ownsRuntimeState = true;
+  publishRuntimeStatus();
   if (tunnelTransport === "http") {
     startBridge();
     await waitForHealth(`${localOriginUrl}/healthz`);
   }
 
   if (mode === "local") {
+    runtimePhase = "running";
+    publishRuntimeStatus();
     console.log(`Local MCP endpoint: ${localMcpUrl}`);
     console.log("This endpoint is loopback-only. Press Ctrl-C to stop.");
     await waitForever();
@@ -82,6 +156,28 @@ async function main() {
   }
 
   await startSecureTunnel(secureTunnelEnvironment);
+}
+
+function enforceManagedAppAuthenticationBoundary() {
+  if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP !== "1") return;
+  // Issue #29 keeps execution authentication separate from the Tunnel key.
+  // Until the native app exposes an explicit API-key auth mode, app-managed
+  // Codex children must use the existing ChatGPT login cache and must never
+  // inherit an API key merely because an older dotenv contains one.
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.CODEX_API_KEY;
+}
+
+function isManagedAppRuntimeKey(name) {
+  if (
+    name.startsWith("CODEX_MCP_BRIDGE_") ||
+    name.startsWith("CODEX_GPT_BRIDGE_") ||
+    name.startsWith("CONTROL_PLANE_") ||
+    name.startsWith("MCP_")
+  ) {
+    return true;
+  }
+  return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name);
 }
 
 function ensurePrerequisites() {
@@ -147,20 +243,51 @@ async function startSecureTunnel({ tunnelId }) {
         "127.0.0.1:0"
       ];
   const childEnvironment = bridgeEnvironment();
-  const reuseExistingProfile = args.reuseProfile &&
-    tunnelProfileExists(tunnelClient, profile, childEnvironment);
-  if (reuseExistingProfile) {
+  const runtimeBuildId = activeRuntimeBuildId;
+  const tunnelClientVersion = readTunnelClientVersion(
+    tunnelClient,
+    childEnvironment,
+    repoRoot
+  );
+  const profileMetadataFile = resolve(
+    args.profileMetadataFile || defaultTunnelProfileMetadataFile(runtimeEnvFile, profile)
+  );
+  const identity = expectedTunnelProfileIdentity({
+    profile,
+    tunnelId,
+    transport: tunnelTransport,
+    endpoint: tunnelTransport === "stdio" ? stdioBridgeCommand() : localMcpUrl,
+    runtimeBuildId,
+    runtimeRoot: repoRoot,
+    nodeExecutable: process.execPath,
+    tunnelClient,
+    tunnelClientVersion
+  });
+  const reuse = args.reuseProfile
+    ? inspectReusableTunnelProfile({
+        tunnelClient,
+        profile,
+        environment: childEnvironment,
+        cwd: repoRoot,
+        metadataFile: profileMetadataFile,
+        expected: identity
+      })
+    : { reusable: false, reason: "profile rebuild was requested" };
+  if (reuse.reusable) {
     console.log(`Reusing existing tunnel-client profile ${profile}.`);
   } else {
+    if (args.reuseProfile) {
+      console.log(`Rebuilding tunnel-client profile ${profile}: ${safeStatusText(reuse.reason)}.`);
+    }
     const initArguments = [
       "init",
       "--profile",
       profile,
       "--tunnel-id",
       tunnelId,
-      ...endpointArguments
+      ...endpointArguments,
+      "--force"
     ];
-    if (!args.reuseProfile) initArguments.push("--force");
     const init = spawnSync(
       tunnelClient,
       initArguments,
@@ -179,6 +306,14 @@ async function startSecureTunnel({ tunnelId }) {
   if (doctor.status !== 0 && !isIgnorableNoAuthDoctorFailure(`${doctor.stdout || ""}\n${doctor.stderr || ""}`)) {
     throw new Error("tunnel-client doctor failed. Fix the tunnel or API-key setup first.");
   }
+  recordTunnelProfileMetadata({
+    tunnelClient,
+    profile,
+    environment: childEnvironment,
+    cwd: repoRoot,
+    metadataFile: profileMetadataFile,
+    identity
+  });
 
   const mcpConcurrency =
     process.env.MCP_MAX_CONCURRENT_REQUESTS ||
@@ -186,10 +321,29 @@ async function startSecureTunnel({ tunnelId }) {
     "30";
   const controlPlaneInflight = process.env.CONTROL_PLANE_MAX_INFLIGHT_REQUESTS || mcpConcurrency;
   const logLevel = process.env.LOG_LEVEL || "warn";
-  spawnChild(tunnelClient, [
+  removeStaleRuntimeFile(tunnelHealthUrlFile);
+  removeStaleRuntimeFile(tunnelPidFile);
+  tunnelState = {
+    phase: "starting",
+    profile,
+    transport: tunnelTransport,
+    doctorPassed: true,
+    processRunning: false,
+    connected: false,
+    lastCheckedAt: new Date().toISOString(),
+    lastError: null
+  };
+  publishRuntimeStatus();
+  const tunnel = spawnChild(tunnelClient, [
     "run",
     "--profile",
     profile,
+    "--health.listen-addr",
+    "127.0.0.1:0",
+    "--health.url-file",
+    tunnelHealthUrlFile,
+    "--pid.file",
+    tunnelPidFile,
     "--mcp.max-concurrent-requests",
     mcpConcurrency,
     "--control-plane.max-inflight",
@@ -197,6 +351,20 @@ async function startSecureTunnel({ tunnelId }) {
     "--log.level",
     logLevel
   ], { env: childEnvironment });
+  tunnelState = { ...tunnelState, processRunning: true };
+  publishRuntimeStatus();
+  await waitForTunnelReady(tunnelClient, childEnvironment, tunnel);
+  runtimePhase = "running";
+  tunnelState = {
+    ...tunnelState,
+    phase: "connected",
+    processRunning: true,
+    connected: true,
+    lastCheckedAt: new Date().toISOString(),
+    lastError: null
+  };
+  publishRuntimeStatus();
+  beginTunnelHealthMonitoring(tunnelClient, childEnvironment, tunnel);
   console.log(
     `Secure MCP Tunnel is running with profile ${profile} over ${tunnelTransport}.`
   );
@@ -238,7 +406,11 @@ function bridgeEnvironment() {
 }
 
 function stdioBridgeCommand() {
-  return [process.execPath, resolve(repoRoot, "dist/stdio.js")]
+  const command = [process.execPath, resolve(repoRoot, "dist/stdio.js")];
+  if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1") {
+    command.unshift("/usr/bin/env", "-u", "CONTROL_PLANE_API_KEY");
+  }
+  return command
     .map(shellQuote)
     .join(" ");
 }
@@ -260,13 +432,24 @@ function spawnChild(command, childArgs, options = {}) {
     children.delete(child);
     if (!shuttingDown) {
       console.error(`${command} exited unexpectedly with code ${code ?? "unknown"}.`);
-      cleanup(typeof code === "number" && code > 0 ? code : 1);
+      if (command === (args.tunnelClient || process.env.TUNNEL_CLIENT || defaultTunnelClient())) {
+        tunnelState = {
+          ...tunnelState,
+          phase: "failed",
+          processRunning: false,
+          connected: false,
+          lastCheckedAt: new Date().toISOString(),
+          lastError: "The tunnel-client process exited unexpectedly."
+        };
+        tryPublishRuntimeStatus();
+      }
+      void shutdown(typeof code === "number" && code > 0 ? code : 1, "failed");
     }
   });
   child.on("error", (error) => {
     if (!shuttingDown) {
       console.error(`Could not start ${command}: ${error.message}`);
-      cleanup(1);
+      void shutdown(1, "failed");
     }
   });
   return child;
@@ -287,23 +470,128 @@ function defaultTunnelClient() {
   return existsSync(localBinary) ? localBinary : "tunnel-client";
 }
 
-function tunnelProfileExists(tunnelClient, profile, environment) {
-  const result = spawnSync(
-    tunnelClient,
-    ["profiles", "list", "--json"],
-    { cwd: repoRoot, env: environment, encoding: "utf8" }
-  );
-  if (result.status !== 0) {
-    throw new Error("Could not inspect existing tunnel-client profiles.");
-  }
+function installedRuntimeBuildId() {
   try {
-    const profiles = JSON.parse(result.stdout || "[]");
-    return Array.isArray(profiles) && profiles.some(
-      (entry) => entry && typeof entry === "object" && entry.name === profile
-    );
+    const build = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    if (typeof build.id === "string" && build.id) return build.id;
   } catch {
-    throw new Error("tunnel-client returned an invalid profile inventory.");
+    // ensureBuilt reports missing installed output before secure startup.
   }
+  return "unbuilt";
+}
+
+async function waitForTunnelReady(tunnelClient, environment, child) {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error("tunnel-client exited before the control-plane connection became ready.");
+    }
+    const connected = probeTunnelHealth(tunnelClient, environment);
+    tunnelState = {
+      ...tunnelState,
+      phase: connected ? "connected" : "starting",
+      processRunning: true,
+      connected,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: connected ? null : "Waiting for a successful control-plane poll."
+    };
+    publishRuntimeStatus();
+    if (connected) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  }
+  throw new Error("Timed out waiting for a successful Secure MCP Tunnel control-plane poll.");
+}
+
+function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
+  tunnelHealthTimer = setInterval(() => {
+    if (shuttingDown || tunnelHealthProbeRunning) return;
+    tunnelHealthProbeRunning = true;
+    try {
+      const processRunning = child.exitCode === null && child.signalCode === null;
+      const connected = processRunning && probeTunnelHealth(tunnelClient, environment);
+      tunnelState = {
+        ...tunnelState,
+        phase: connected ? "connected" : "degraded",
+        processRunning,
+        connected,
+        lastCheckedAt: new Date().toISOString(),
+        lastError: connected
+          ? null
+          : processRunning
+            ? "The tunnel readiness probe is failing; reconnecting may be in progress."
+            : "The tunnel-client process is not running."
+      };
+      publishRuntimeStatus();
+    } catch (error) {
+      tunnelState = {
+        ...tunnelState,
+        phase: "degraded",
+        connected: false,
+        lastCheckedAt: new Date().toISOString(),
+        lastError: safeStatusText(error instanceof Error ? error.message : String(error))
+      };
+      tryPublishRuntimeStatus();
+    } finally {
+      tunnelHealthProbeRunning = false;
+    }
+  }, 5_000);
+  tunnelHealthTimer.unref();
+}
+
+function probeTunnelHealth(tunnelClient, environment) {
+  if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) return false;
+  const result = spawnSync(tunnelClient, [
+    "health",
+    "--json",
+    "--url-file",
+    tunnelHealthUrlFile,
+    "--pid-file",
+    tunnelPidFile,
+    "--require-control-plane-poll"
+  ], {
+    cwd: repoRoot,
+    env: environment,
+    encoding: "utf8",
+    timeout: 5_000
+  });
+  return result.status === 0;
+}
+
+function publishRuntimeStatus() {
+  if (!ownsRuntimeState) return;
+  writeManagedRuntimeStatus(runtimeStatusFile, {
+    phase: runtimePhase,
+    runtimeBuildId: activeRuntimeBuildId,
+    tunnel: tunnelState
+  });
+}
+
+function tryPublishRuntimeStatus() {
+  try {
+    publishRuntimeStatus();
+  } catch (error) {
+    console.error(`Could not write managed runtime status: ${safeStatusText(error)}`);
+    process.exitCode = 1;
+  }
+}
+
+function removeStaleRuntimeFile(filePath) {
+  if (!existsSync(filePath)) return;
+  const stats = lstatSync(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`Managed runtime state must be a regular, non-symlink file: ${filePath}`);
+  }
+  unlinkSync(filePath);
+}
+
+function safeStatusText(value) {
+  return String(value || "unknown")
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED_API_KEY]")
+    .replace(/tunnel_[A-Za-z0-9_-]{8,}/g, "[REDACTED_TUNNEL_ID]")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
 }
 
 function isIgnorableNoAuthDoctorFailure(output) {
@@ -328,31 +616,65 @@ Options:
   --tunnel-id <id>       OpenAI Secure MCP Tunnel id.
   --profile <name>       tunnel-client profile name.
   --tunnel-client <path> tunnel-client binary path.
+  --profile-metadata-file <path> Managed profile identity record.
+  --runtime-status-file <path>   Private launcher/tunnel status record.
+  --tunnel-health-url-file <path> Private tunnel health endpoint locator.
+  --tunnel-pid-file <path>       Private tunnel-client PID record.
   --port <port>          Loopback HTTP port. Defaults to 8876.
   --no-build             Reuse dist only when its source fingerprint is current.
   --require-built        Require installed dist output and never invoke npm or rebuild.
-  --reuse-profile        Reuse an existing tunnel profile; create it only when absent.`);
+  --reuse-profile        Reuse only when the managed identity and profile contents match.`);
 }
 
-function cleanup(code = 0) {
-  if (shuttingDown) return;
+function shutdown(code = 0, phase = "stopped") {
+  process.exitCode = Math.max(process.exitCode || 0, code);
+  if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
-  process.exitCode = code;
-  for (const child of children) child.kill("SIGINT");
-  setTimeout(() => {
-    try {
-      runtimeLock?.release();
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+  shutdownPromise = (async () => {
+    if (tunnelHealthTimer) {
+      clearInterval(tunnelHealthTimer);
+      tunnelHealthTimer = undefined;
+    }
+    runtimePhase = "stopping";
+    tunnelState = {
+      ...tunnelState,
+      phase: tunnelState.phase === "not-applicable" ? "not-applicable" : "stopping",
+      connected: false,
+      lastCheckedAt: new Date().toISOString()
+    };
+    tryPublishRuntimeStatus();
+
+    const result = await terminateManagedChildren(children);
+    if (!result.exited) {
+      console.error("Managed child processes did not exit after SIGKILL; retaining the runtime lock.");
       process.exitCode = 1;
     }
+    runtimePhase = phase;
+    tunnelState = {
+      ...tunnelState,
+      phase: tunnelState.phase === "not-applicable" ? "not-applicable" : phase,
+      processRunning: false,
+      connected: false,
+      lastCheckedAt: new Date().toISOString()
+    };
+    tryPublishRuntimeStatus();
+    if (result.exited) {
+      try {
+        runtimeLock?.release();
+        ownsRuntimeState = false;
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+    }
     process.exit(process.exitCode || 0);
-  }, 200);
+  })();
+  return shutdownPromise;
 }
 
 function waitForever() {
   return new Promise(() => {});
 }
 
-process.on("SIGINT", () => cleanup(0));
-process.on("SIGTERM", () => cleanup(0));
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));

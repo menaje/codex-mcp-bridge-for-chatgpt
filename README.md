@@ -222,11 +222,13 @@ resource URIs, and SQLite state remain supported and unchanged.
 
 The app and its per-user helper manage the persistent-stdio bridge and Secure
 MCP Tunnel process. Existing `~/.config/codex-mcp-bridge/.env`, bridge state,
-project registry, settings, and tunnel profile are reused. Tunnel credentials
+project registry, and settings are reused. A managed tunnel profile is reused
+only when its recorded runtime identity and contents still match. Tunnel credentials
 remain only in that private dotenv; the app does not copy or migrate them to a
 system credential store. Codex authentication remains the existing `codex login` cache. The
 explicit API-key execution mode described by issue #29 is not selected or
-enabled automatically.
+enabled automatically, and app-managed Codex children do not inherit legacy
+API-key environment variables.
 
 Build and verify the current host-architecture development app with:
 

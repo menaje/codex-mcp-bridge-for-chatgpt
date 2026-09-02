@@ -27,6 +27,10 @@ alive when the menu bar UI exits. The helper owns the existing bridge launcher,
 the persistent-stdio Secure MCP Tunnel profile, crash backoff, and the versioned
 private Unix sockets.
 
+The everyday Settings window contains only the same General and Projects scope
+as the retained Settings card. Connection credentials, Codex login, and Tunnel
+repair stay in a separate first-run/repair surface.
+
 ## Local data and credentials
 
 - Runtime dotenv: `~/.config/codex-mcp-bridge/.env`
@@ -38,14 +42,19 @@ private Unix sockets.
 The setup UI writes only `CONTROL_PLANE_API_KEY` and
 `CONTROL_PLANE_TUNNEL_ID`. Existing comments, ordering, and unknown dotenv keys
 are retained. The directory and file are validated as current-user-owned
-`0700`/`0600` non-symlinks and replacement is atomic. The API key is never
+`0700`/`0600` non-symlinks and replacement is atomic. Apply drains the old
+runtime before commit and restores the old dotenv/runtime if new readiness
+fails. Concurrent edits detected before replacement are not overwritten. A runtime dotenv inside a
+registered project is rejected. The API key is never
 stored in UserDefaults, a plist, Keychain, command arguments, logs, or the
 pasteboard.
 
 Codex authentication remains the existing `codex login` cache. The app checks
 `codex login status` and can start the browser login flow; it does not copy or
 alter `~/.codex` credentials. Explicit API-key backend selection remains out of
-scope until issue #29 defines that contract.
+scope until issue #29 defines that contract. App-managed Codex children do not
+inherit `OPENAI_API_KEY` or `CODEX_API_KEY` merely because an older dotenv or
+parent process contains one.
 
 ## Build an app bundle
 

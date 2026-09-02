@@ -11,20 +11,28 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  commitRuntimeEnvUpdate,
   defaultRuntimeEnvFile,
   inspectRuntimeEnvFile,
   loadRuntimeEnvFile,
+  prepareRuntimeEnvUpdate,
+  readRuntimeEnvSubset,
   resolveRuntimeEnvFile,
+  rollbackRuntimeEnvUpdate,
   updateRuntimeEnvFile,
   validateSecureTunnelEnvironment
 } from "../scripts/runtime-env.mjs";
 
 const originalApiKey = process.env.CONTROL_PLANE_API_KEY;
 const originalTunnelId = process.env.CONTROL_PLANE_TUNNEL_ID;
+const originalAllowedTest = process.env.APP_ALLOWED_TEST;
+const originalBlockedTest = process.env.APP_BLOCKED_TEST;
 
 afterEach(() => {
   restoreEnvironment("CONTROL_PLANE_API_KEY", originalApiKey);
   restoreEnvironment("CONTROL_PLANE_TUNNEL_ID", originalTunnelId);
+  restoreEnvironment("APP_ALLOWED_TEST", originalAllowedTest);
+  restoreEnvironment("APP_BLOCKED_TEST", originalBlockedTest);
 });
 
 describe("runtime environment", () => {
@@ -39,7 +47,7 @@ describe("runtime environment", () => {
     expect(operatorFile).toBe(path.join(home, ".config", "codex-mcp-bridge", ".env"));
     expect(resolveRuntimeEnvFile({ environment: {}, homeDirectory: home, repoRoot: repo })).toBe(operatorFile);
 
-    writeFileSync(path.join(repo, ".env"), "CONTROL_PLANE_TUNNEL_ID=tunnel_repo123\n", { mode: 0o600 });
+    writeFileSync(path.join(repo, ".env"), "CONTROL_PLANE_TUNNEL_ID=tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\n", { mode: 0o600 });
     expect(resolveRuntimeEnvFile({ environment: {}, homeDirectory: home, repoRoot: repo })).toBe(
       path.join(repo, ".env")
     );
@@ -63,7 +71,7 @@ describe("runtime environment", () => {
     const file = path.join(root, ".env");
     writeFileSync(
       file,
-      "CONTROL_PLANE_API_KEY=sk-file-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_file1234\n",
+      "CONTROL_PLANE_API_KEY=sk-file-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_ffffffffffffffffffffffffffffffff\n",
       { mode: 0o600 }
     );
     process.env.CONTROL_PLANE_API_KEY = "sk-exported-1234567890123456";
@@ -71,7 +79,27 @@ describe("runtime environment", () => {
 
     expect(loadRuntimeEnvFile(file)).toBe(true);
     expect(process.env.CONTROL_PLANE_API_KEY).toBe("sk-exported-1234567890123456");
-    expect(process.env.CONTROL_PLANE_TUNNEL_ID).toBe("tunnel_file1234");
+    expect(process.env.CONTROL_PLANE_TUNNEL_ID).toBe("tunnel_ffffffffffffffffffffffffffffffff");
+  });
+
+  it("can load only an app-managed allowlist while preserving the file", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, ".env");
+    const contents = [
+      "APP_ALLOWED_TEST='selected value'",
+      "APP_BLOCKED_TEST=must-not-load",
+      ""
+    ].join("\n");
+    writeFileSync(file, contents, { mode: 0o600 });
+    delete process.env.APP_ALLOWED_TEST;
+    delete process.env.APP_BLOCKED_TEST;
+
+    expect(loadRuntimeEnvFile(file, {
+      allowedKey: (key: string) => key === "APP_ALLOWED_TEST"
+    })).toBe(true);
+    expect(process.env.APP_ALLOWED_TEST).toBe("selected value");
+    expect(process.env.APP_BLOCKED_TEST).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(contents);
   });
 
   it("rejects broad permissions and symlinks", () => {
@@ -91,16 +119,20 @@ describe("runtime environment", () => {
   it("validates secure tunnel values without returning them in errors", () => {
     expect(validateSecureTunnelEnvironment({
       CONTROL_PLANE_API_KEY: "sk-runtime-1234567890123456",
-      CONTROL_PLANE_TUNNEL_ID: "tunnel_runtime123"
+      CONTROL_PLANE_TUNNEL_ID: "tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
     }, "/private/.env")).toEqual({
       apiKey: "sk-runtime-1234567890123456",
-      tunnelId: "tunnel_runtime123"
+      tunnelId: "tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
     });
 
     expect(() => validateSecureTunnelEnvironment({
       CONTROL_PLANE_API_KEY: "<runtime-key>",
-      CONTROL_PLANE_TUNNEL_ID: "tunnel_runtime123"
+      CONTROL_PLANE_TUNNEL_ID: "tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
     }, "/private/.env")).toThrow("malformed or still a placeholder");
+    expect(() => validateSecureTunnelEnvironment({
+      CONTROL_PLANE_API_KEY: "sk-runtime-1234567890123456",
+      CONTROL_PLANE_TUNNEL_ID: "tunnel_too-short"
+    }, "/private/.env")).toThrow("32 lowercase letters or digits");
   });
 
   it("atomically creates a private dotenv and reports only redacted presence", () => {
@@ -108,7 +140,7 @@ describe("runtime environment", () => {
     const file = path.join(root, "private", ".env");
     const status = updateRuntimeEnvFile(file, {
       apiKey: "sk-native-1234567890123456",
-      tunnelId: "tunnel_native123"
+      tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
     });
 
     expect(lstatSync(path.dirname(file)).mode & 0o777).toBe(0o700);
@@ -119,7 +151,7 @@ describe("runtime environment", () => {
       valid: true,
       hasApiKey: true,
       hasTunnelId: true,
-      tunnelId: "tunnel_native123",
+      tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
       issue: null
     });
     expect(JSON.stringify(status)).not.toContain("sk-native");
@@ -136,7 +168,7 @@ describe("runtime environment", () => {
         "# operator note",
         "UNKNOWN_SETTING=keep-me",
         "CONTROL_PLANE_API_KEY=sk-existing-1234567890123456",
-        "CONTROL_PLANE_TUNNEL_ID=tunnel_existing123",
+        "CONTROL_PLANE_TUNNEL_ID=tunnel_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ""
       ].join("\n"),
       { mode: 0o600 }
@@ -144,14 +176,14 @@ describe("runtime environment", () => {
 
     updateRuntimeEnvFile(file, {
       apiKey: "",
-      tunnelId: "tunnel_replaced123"
+      tunnelId: "tunnel_pppppppppppppppppppppppppppppppp"
     });
 
     expect(readFileSync(file, "utf8")).toBe([
       "# operator note",
       "UNKNOWN_SETTING=keep-me",
       "CONTROL_PLANE_API_KEY=sk-existing-1234567890123456",
-      "CONTROL_PLANE_TUNNEL_ID=tunnel_replaced123",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_pppppppppppppppppppppppppppppppp",
       ""
     ].join("\n"));
   });
@@ -165,7 +197,7 @@ describe("runtime environment", () => {
       "# windows-style operator note",
       "UNKNOWN_SETTING=keep-me",
       "CONTROL_PLANE_API_KEY=sk-existing-1234567890123456",
-      "CONTROL_PLANE_TUNNEL_ID=tunnel_existing123"
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     ].join("\r\n");
     writeFileSync(file, original, { mode: 0o600 });
 
@@ -178,7 +210,7 @@ describe("runtime environment", () => {
       "# windows-style operator note",
       "UNKNOWN_SETTING=keep-me",
       "CONTROL_PLANE_API_KEY=sk-replaced-1234567890123456",
-      "CONTROL_PLANE_TUNNEL_ID=tunnel_existing123"
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     ].join("\r\n"));
   });
 
@@ -189,7 +221,7 @@ describe("runtime environment", () => {
     mkdirSync(directory, { mode: 0o700 });
     const original = [
       "CONTROL_PLANE_API_KEY=sk-original-1234567890123456",
-      "CONTROL_PLANE_TUNNEL_ID=tunnel_original123",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
       ""
     ].join("\n");
     writeFileSync(file, original, { mode: 0o600 });
@@ -203,6 +235,78 @@ describe("runtime environment", () => {
     expect(inspectRuntimeEnvFile(file).valid).toBe(true);
   });
 
+  it("stages without changing disk and can roll back a committed replacement", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "private");
+    const file = path.join(directory, ".env");
+    mkdirSync(directory, { mode: 0o700 });
+    const original = [
+      "CODEX_HOME=/private/codex-home",
+      "CONTROL_PLANE_API_KEY=sk-original-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
+      ""
+    ].join("\n");
+    writeFileSync(file, original, { mode: 0o600 });
+
+    const prepared = prepareRuntimeEnvUpdate(file, {
+      apiKey: "sk-next-12345678901234567890",
+      tunnelId: "tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    });
+    expect(prepared.changed).toBe(true);
+    expect(prepared.tunnelIdChanged).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(original);
+
+    commitRuntimeEnvUpdate(prepared);
+    expect(readFileSync(file, "utf8")).toContain("tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    rollbackRuntimeEnvUpdate(prepared);
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("rejects a staged commit or rollback when another writer changed the file", () => {
+    const root = temporaryDirectory();
+    const directory = path.join(root, "private");
+    const file = path.join(directory, ".env");
+    mkdirSync(directory, { mode: 0o700 });
+    writeFileSync(
+      file,
+      "CONTROL_PLANE_API_KEY=sk-original-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo\n",
+      { mode: 0o600 }
+    );
+    const prepared = prepareRuntimeEnvUpdate(file, { tunnelId: "tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
+    writeFileSync(
+      file,
+      "CONTROL_PLANE_API_KEY=sk-external-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n",
+      { mode: 0o600 }
+    );
+    expect(() => commitRuntimeEnvUpdate(prepared)).toThrow("RUNTIME_ENV_CHANGED");
+
+    const committed = prepareRuntimeEnvUpdate(file, { tunnelId: "tunnel_cccccccccccccccccccccccccccccccc" });
+    commitRuntimeEnvUpdate(committed);
+    writeFileSync(
+      file,
+      "CONTROL_PLANE_API_KEY=sk-third-party-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_tttttttttttttttttttttttttttttttt\n",
+      { mode: 0o600 }
+    );
+    expect(() => rollbackRuntimeEnvUpdate(committed)).toThrow("RUNTIME_ENV_CHANGED");
+  });
+
+  it("reads only requested helper settings from the private dotenv", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, ".env");
+    writeFileSync(file, [
+      "CONTROL_PLANE_API_KEY=sk-secret-1234567890123456",
+      "CODEX_HOME='/private/codex home'",
+      "CODEX_MCP_BRIDGE_CODEX=/opt/custom/codex",
+      ""
+    ].join("\n"), { mode: 0o600 });
+
+    expect(readRuntimeEnvSubset(file, ["CODEX_HOME", "CODEX_MCP_BRIDGE_CODEX"]))
+      .toEqual({
+        CODEX_HOME: "/private/codex home",
+        CODEX_MCP_BRIDGE_CODEX: "/opt/custom/codex"
+      });
+  });
+
   it("rejects a symlinked dotenv and an overly broad config directory", () => {
     const root = temporaryDirectory();
     const privateDirectory = path.join(root, "private");
@@ -211,7 +315,7 @@ describe("runtime environment", () => {
     mkdirSync(privateDirectory, { mode: 0o700 });
     writeFileSync(
       target,
-      "CONTROL_PLANE_API_KEY=sk-target-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_target123\n",
+      "CONTROL_PLANE_API_KEY=sk-target-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_gggggggggggggggggggggggggggggggg\n",
       { mode: 0o600 }
     );
     symlinkSync(target, link);
@@ -222,7 +326,7 @@ describe("runtime environment", () => {
     mkdirSync(broadDirectory, { mode: 0o755 });
     expect(() => updateRuntimeEnvFile(path.join(broadDirectory, ".env"), {
       apiKey: "sk-new-1234567890123456",
-      tunnelId: "tunnel_new123"
+      tunnelId: "tunnel_wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
     })).toThrow("directory permissions are too broad");
   });
 });

@@ -5,7 +5,11 @@ const VALUE_OPTIONS = new Map([
   ["--env-file", "envFile"],
   ["--tunnel-id", "tunnelId"],
   ["--profile", "profile"],
-  ["--tunnel-client", "tunnelClient"]
+  ["--tunnel-client", "tunnelClient"],
+  ["--profile-metadata-file", "profileMetadataFile"],
+  ["--runtime-status-file", "runtimeStatusFile"],
+  ["--tunnel-health-url-file", "tunnelHealthUrlFile"],
+  ["--tunnel-pid-file", "tunnelPidFile"]
 ]);
 
 export function parseLauncherArgs(rawArgs) {
@@ -35,8 +39,10 @@ export function parseLauncherArgs(rawArgs) {
 }
 
 export function requiredBuildOutputs(transport) {
-  if (transport === "http") return ["dist/cli.js"];
-  if (transport === "stdio") return ["dist/stdio.js", "dist/stdioServer.js"];
+  if (transport === "http") return ["dist/cli.js", "dist/build-info.json"];
+  if (transport === "stdio") {
+    return ["dist/stdio.js", "dist/stdioServer.js", "dist/build-info.json"];
+  }
   throw new Error(`Unknown transport: ${transport}. Use http or stdio.`);
 }
 

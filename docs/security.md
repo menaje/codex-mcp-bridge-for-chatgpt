@@ -381,7 +381,12 @@ The setup surface may update only `CONTROL_PLANE_API_KEY` and
 `CONTROL_PLANE_TUNNEL_ID`. It validates the complete candidate, writes a
 same-directory `0600` temporary file, syncs it, and atomically replaces the
 dotenv while preserving comments, ordering, unknown entries, line endings,
-and the prior file on failure. A blank field retains the saved value. The API
+and the prior file on failure. It drains before commit; failed new-runtime
+readiness rolls the dotenv and prior runtime back, while a concurrent dotenv
+edit aborts without overwrite and restarts that unchanged runtime. Runtime
+dotenv paths inside registered projects are rejected both during helper startup
+and during project add/relocate/restore operations. A blank field retains the
+saved value. The API
 key is never returned by helper status, persisted in Swift preferences, placed
 in a plist or command argument, copied to the pasteboard, or included in the
 bounded helper log. The non-secret Tunnel ID may be copied for ChatGPT setup.
@@ -390,6 +395,9 @@ Codex login remains a separate boundary: the helper runs only `codex login
 status` and an explicit user-requested `codex login` browser flow. It does not
 copy, overwrite, delete, log out, or change the storage choice of shared Codex
 credentials. A missing ChatGPT/Codex login never falls back to an API key.
+In app-managed mode, API-key environment variables from a legacy dotenv or the
+parent process are removed before Codex child startup; explicit API-key mode
+remains deferred to issue #29.
 
 When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
 

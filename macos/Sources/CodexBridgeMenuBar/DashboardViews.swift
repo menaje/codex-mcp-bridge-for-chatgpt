@@ -152,6 +152,15 @@ struct DashboardPopoverView: View {
     private func dashboardContent(_ dashboard: DashboardSnapshot) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
+                if model.helperStatus?.tunnel.connected != true {
+                    Label(
+                        model.helperStatus?.tunnel.lastError ?? "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                        systemImage: "network.slash"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                }
                 if let usage = dashboard.weeklyUsage {
                     WeeklyUsageView(usage: usage)
                 }
@@ -204,6 +213,13 @@ struct DashboardPopoverView: View {
                 }
                 Button("강제 재시작…", role: .destructive) {
                     showForceRestartConfirmation = true
+                }
+                Divider()
+                Button("연결 정보 및 로그인…") {
+                    ConnectionRepairWindowController.shared.show(model: model)
+                }
+                Button("Tunnel 프로필 복구…") {
+                    showRepairConfirmation = true
                 }
                 Divider()
                 Button("작업을 마치고 중지") {
@@ -497,6 +513,29 @@ struct ConnectionRepairView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
+                GroupBox("연결 상태") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        LabeledContent(
+                            "Bridge",
+                            value: model.helperStatus?.bridge.connected == true ? "준비됨" : "연결 안 됨"
+                        )
+                        LabeledContent(
+                            "Secure MCP Tunnel",
+                            value: model.helperStatus?.tunnel.connected == true ? "연결됨" : "연결 안 됨"
+                        )
+                        if let profile = model.helperStatus?.tunnel.profile {
+                            LabeledContent("프로필", value: profile)
+                        }
+                        if let error = model.helperStatus?.tunnel.lastError {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+
                 GroupBox("Secure MCP Tunnel") {
                     VStack(alignment: .leading, spacing: 10) {
                         SecureField(
@@ -506,6 +545,9 @@ struct ConnectionRepairView: View {
                             text: $apiKey
                         )
                         TextField("tunnel_…", text: $tunnelId)
+                        Text("Tunnel ID는 tunnel_ 다음에 영문 소문자 또는 숫자 32자로 입력합니다.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         Text("저장 위치: \(model.helperStatus?.configuration.path ?? "~/.config/codex-mcp-bridge/.env")")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -519,6 +561,7 @@ struct ConnectionRepairView: View {
                             Task {
                                 if await model.saveSetup(apiKey: apiKey, tunnelId: tunnelId) {
                                     apiKey = ""
+                                    tunnelId = ""
                                 }
                             }
                         }
@@ -526,7 +569,7 @@ struct ConnectionRepairView: View {
                         .disabled(
                             model.isBusy ||
                             (!(model.helperStatus?.configuration.hasApiKey ?? false) && apiKey.isEmpty) ||
-                            (!(model.helperStatus?.configuration.hasTunnelId ?? false) && tunnelId.isEmpty)
+                            !tunnelIDInputIsValid
                         )
                     }
                     .padding(.top, 4)
@@ -568,6 +611,17 @@ struct ConnectionRepairView: View {
             }
             .padding(18)
         }
+    }
+
+    private var tunnelIDInputIsValid: Bool {
+        let candidate = tunnelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.isEmpty {
+            return model.helperStatus?.configuration.hasTunnelId ?? false
+        }
+        return candidate.range(
+            of: #"^tunnel_[a-z0-9]{32}$"#,
+            options: .regularExpression
+        ) != nil
     }
 }
 

@@ -166,6 +166,7 @@ import {
   type CreateCancellationIntentInput,
   type JobTerminalOrigin
 } from "./cancellation.js";
+import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
 import {
   TOOL_CONTENT_BYTE_CAPS,
   TOOL_STRUCTURED_BYTE_CAPS,
@@ -7231,6 +7232,28 @@ export function registerBridgeTools(
         }
       }
       projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
+    }
+
+    const managedRuntimeEnv = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+    if (managedRuntimeEnv && projectOperations.length > 0) {
+      const currentProjects = userSettings.current.projects;
+      const candidateRoots = projectOperations.flatMap((operation) => {
+        switch (operation.kind) {
+          case "add":
+            return [operation.project.cwd];
+          case "relocate":
+            return [operation.cwd];
+          case "restore":
+            return operation.cwd
+              ? [operation.cwd]
+              : currentProjects
+                  .filter((project) => project.id === operation.projectId)
+                  .map((project) => project.cwd);
+          default:
+            return [];
+        }
+      });
+      assertRuntimeEnvOutsideProjectRoots(managedRuntimeEnv, candidateRoots);
     }
 
     // Fail stale native clients/cards before any external catalog lookup. The

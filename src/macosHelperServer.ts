@@ -1,27 +1,46 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  unlinkSync
+} from "node:fs";
 import { createConnection } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import * as z from "zod/v4";
 import {
+  commitRuntimeEnvUpdate,
   defaultRuntimeEnvFile,
   inspectRuntimeEnvFile,
-  updateRuntimeEnvFile,
+  prepareRuntimeEnvUpdate,
+  readRuntimeEnvSubset,
+  rollbackRuntimeEnvUpdate,
+  type PreparedRuntimeEnvUpdate,
   type RuntimeEnvStatus
 } from "../scripts/runtime-env.mjs";
+import { writePrivateFileAtomic } from "../scripts/managed-file.mjs";
+import {
+  readManagedRuntimeStatus,
+  type ManagedTunnelStatus
+} from "../scripts/runtime-status.mjs";
 import {
   startPrivateJsonLineServer,
   type BridgeCompanionServer
 } from "./companionServer.js";
+import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
 
 export const MACOS_HELPER_PROTOCOL_NAME = "codex-mcp-bridge-macos-helper";
-export const MACOS_HELPER_PROTOCOL_VERSION = 1;
+export const MACOS_HELPER_PROTOCOL_VERSION = 2;
 const HELPER_MAX_REQUEST_BYTES = 256 * 1_024;
 const HELPER_MAX_RESPONSE_BYTES = 512 * 1_024;
 const HELPER_LOG_LIMIT = 200;
 const DEFAULT_START_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const MAX_DRAIN_TIMEOUT_MS = 5 * 60_000;
+const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
 
@@ -35,7 +54,7 @@ const helperRequestSchema = z.strictObject({
   method: z.enum([
     "helper.hello",
     "helper.status",
-    "setup.save",
+    "setup.apply",
     "auth.status",
     "auth.login",
     "runtime.start",
@@ -47,9 +66,12 @@ const helperRequestSchema = z.strictObject({
   params: z.unknown().optional()
 });
 const emptyParamsSchema = z.strictObject({});
-const setupSaveParamsSchema = z.strictObject({
+const setupApplyParamsSchema = z.strictObject({
   apiKey: z.string().max(4_096).optional(),
-  tunnelId: z.string().max(200).optional()
+  tunnelId: z.string().max(200).optional(),
+  mode: z.enum(["drain", "force"]).default("drain"),
+  timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
+    .default(DEFAULT_DRAIN_TIMEOUT_MS)
 });
 const stopParamsSchema = z.strictObject({
   mode: z.enum(["drain", "force"]).default("drain"),
@@ -93,6 +115,16 @@ export type MacOSHelperStatus = {
     activeJobs: number | null;
     pendingAdmissions: number | null;
   };
+  tunnel: {
+    phase: string;
+    profile: string | null;
+    transport: string | null;
+    doctorPassed: boolean;
+    processRunning: boolean;
+    connected: boolean;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+  };
 };
 
 export type CodexLoginStatus = {
@@ -103,9 +135,16 @@ export type CodexLoginStatus = {
 
 export type MacOSHelperController = {
   snapshot(): Promise<MacOSHelperStatus>;
-  saveConfiguration(values: { apiKey?: string; tunnelId?: string }): Promise<{
+  applyConfiguration(values: {
+    apiKey?: string;
+    tunnelId?: string;
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<{
     configuration: RuntimeEnvStatus;
-    restartRequired: boolean;
+    status: MacOSHelperStatus;
+    restarted: boolean;
+    rolledBack: false;
   }>;
   authStatus(): Promise<CodexLoginStatus>;
   startLogin(): Promise<{ started: true }>;
@@ -121,6 +160,9 @@ export type MacOSBridgeSupervisorOptions = {
   envFile?: string;
   bridgeSocketPath: string;
   launcherPath?: string;
+  runtimeStatusFile?: string;
+  profileRebuildMarker?: string;
+  registeredProjectRoots?: () => string[] | Promise<string[]>;
   autoRestart?: boolean;
   startTimeoutMs?: number;
 };
@@ -130,6 +172,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private readonly envFile: string;
   private readonly bridgeSocketPath: string;
   private readonly launcherPath: string;
+  private readonly runtimeStatusFile: string;
+  private readonly profileRebuildMarker: string;
+  private readonly registeredProjectRoots: () => string[] | Promise<string[]>;
   private readonly autoRestart: boolean;
   private readonly startTimeoutMs: number;
   private child: ChildProcess | undefined;
@@ -142,7 +187,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private restartTimer: NodeJS.Timeout | undefined;
   private stabilityTimer: NodeJS.Timeout | undefined;
   private manualStop = false;
-  private reinitializeTunnelProfile = false;
   private readonly logEntries: MacOSHelperLogEntry[] = [];
   private operation: Promise<unknown> = Promise.resolve();
 
@@ -153,12 +197,29 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.launcherPath = path.resolve(
       options.launcherPath || path.join(this.bridgeRoot, "scripts", "start-codex-mcp-bridge.mjs")
     );
+    const runDirectory = path.dirname(this.bridgeSocketPath);
+    this.runtimeStatusFile = path.resolve(
+      options.runtimeStatusFile || path.join(runDirectory, "launcher-status.json")
+    );
+    this.profileRebuildMarker = path.resolve(
+      options.profileRebuildMarker || path.join(path.dirname(this.envFile), "profile-rebuild-required")
+    );
+    this.registeredProjectRoots = options.registeredProjectRoots || (() =>
+      readRegisteredProjectRoots(this.envFile)
+    );
     this.autoRestart = options.autoRestart !== false;
     this.startTimeoutMs = options.startTimeoutMs || DEFAULT_START_TIMEOUT_MS;
   }
 
   async snapshot(): Promise<MacOSHelperStatus> {
     const bridgeAdmission = await readBridgeAdmission(this.bridgeSocketPath);
+    const configuration = await this.configurationStatus();
+    const managedRuntime = readManagedRuntimeStatus(this.runtimeStatusFile);
+    const tunnel = normalizeTunnelStatus(
+      managedRuntime,
+      this.child?.pid || null,
+      BRIDGE_BUILD_INFO.id
+    );
     return {
       kind: "helper-status",
       generatedAt: new Date().toISOString(),
@@ -168,42 +229,139 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       lastExit: this.lastExit,
       lastError: this.lastError,
       restartAttempt: this.restartAttempt,
-      configuration: inspectRuntimeEnvFile(this.envFile),
+      configuration,
       bridge: {
         socketPath: this.bridgeSocketPath,
         connected: bridgeAdmission !== null,
         acceptingNewJobs: bridgeAdmission?.acceptingNewJobs ?? null,
         activeJobs: bridgeAdmission?.activeJobs ?? null,
         pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null
-      }
+      },
+      tunnel
     };
   }
 
-  async saveConfiguration(values: {
+  applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
-  }): Promise<{ configuration: RuntimeEnvStatus; restartRequired: boolean }> {
-    const previous = inspectRuntimeEnvFile(this.envFile);
-    const configuration = updateRuntimeEnvFile(this.envFile, values);
-    if (
-      typeof values.tunnelId === "string" &&
-      values.tunnelId.trim() &&
-      values.tunnelId.trim() !== previous.tunnelId
-    ) {
-      this.reinitializeTunnelProfile = true;
-      this.appendLog("helper", "Tunnel identity changed; the managed profile will be rebuilt on restart.");
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<{
+    configuration: RuntimeEnvStatus;
+    status: MacOSHelperStatus;
+    restarted: boolean;
+    rolledBack: false;
+  }> {
+    return this.exclusive(async () => {
+      await this.assertEnvironmentLocation();
+      const prepared = prepareRuntimeEnvUpdate(this.envFile, values);
+      const wasRunning = isChildRunning(this.child);
+      if (!prepared.changed) {
+        const status = wasRunning
+          ? await this.snapshot()
+          : await this.startUnlocked(true);
+        return {
+          configuration: status.configuration,
+          status,
+          restarted: !wasRunning,
+          rolledBack: false
+        };
+      }
+
+      if (wasRunning) {
+        await this.stopUnlocked({ mode: values.mode, timeoutMs: values.timeoutMs });
+      }
+      let committed = false;
+      try {
+        const configuration = commitRuntimeEnvUpdate(prepared);
+        committed = true;
+        if (prepared.tunnelIdChanged) {
+          this.appendLog(
+            "helper",
+            "Tunnel identity changed; managed profile identity will be revalidated before reuse."
+          );
+        }
+        this.appendLog("helper", "Runtime configuration was atomically committed.");
+        const status = await this.startUnlocked(true);
+        return {
+          configuration,
+          status,
+          restarted: true,
+          rolledBack: false
+        };
+      } catch (error) {
+        await this.recoverConfigurationApply(prepared, committed, wasRunning, error);
+        const recoveryMessage = committed
+          ? "Previous runtime configuration was restored."
+          : "Runtime configuration was not changed and the existing runtime was restarted.";
+        throw new Error(
+          `CONFIG_APPLY_FAILED: ${safeErrorMessage(error)} ${recoveryMessage}`
+        );
+      }
+    });
+  }
+
+  private async configurationStatus(): Promise<RuntimeEnvStatus> {
+    const status = inspectRuntimeEnvFile(this.envFile);
+    if (!status.valid) return status;
+    try {
+      await this.assertEnvironmentLocation();
+      return status;
+    } catch (error) {
+      return {
+        ...status,
+        valid: false,
+        issue: safeErrorMessage(error)
+      };
     }
-    this.appendLog("helper", "Runtime configuration was saved with private file permissions.");
-    return {
-      configuration,
-      restartRequired: Boolean(this.child && this.child.exitCode === null)
-    };
+  }
+
+  private async assertEnvironmentLocation(): Promise<void> {
+    const projectRoots = await this.registeredProjectRoots();
+    assertRuntimeEnvOutsideProjectRoots(this.envFile, projectRoots);
+  }
+
+  private async recoverConfigurationApply(
+    prepared: PreparedRuntimeEnvUpdate,
+    committed: boolean,
+    wasRunning: boolean,
+    applyError: unknown
+  ): Promise<void> {
+    if (committed) {
+      try {
+        rollbackRuntimeEnvUpdate(prepared);
+        this.appendLog("helper", "Configuration apply failed; the previous private dotenv was restored.");
+      } catch (rollbackError) {
+        this.lastError = `CONFIG_ROLLBACK_FAILED: ${safeErrorMessage(rollbackError)}`;
+        this.appendLog("helper", this.lastError);
+        throw new Error(
+          `${safeErrorMessage(applyError)} ${this.lastError}`
+        );
+      }
+    }
+    if (!wasRunning) return;
+    try {
+      await this.startUnlocked(true);
+      this.appendLog(
+        "helper",
+        committed
+          ? "The previous runtime configuration was restarted successfully."
+          : "The unchanged runtime configuration was restarted successfully."
+      );
+    } catch (restartError) {
+      this.lastError = `CONFIG_ROLLBACK_RESTART_FAILED: ${safeErrorMessage(restartError)}`;
+      this.appendLog("helper", this.lastError);
+      throw new Error(
+        `${safeErrorMessage(applyError)} ${this.lastError}`
+      );
+    }
   }
 
   async authStatus(): Promise<CodexLoginStatus> {
-    const result = spawnSync(resolveCommand("codex"), ["login", "status"], {
+    const environment = commandEnvironment(this.envFile);
+    const result = spawnSync(resolveCommand("codex", environment), ["login", "status"], {
       encoding: "utf8",
-      env: commandEnvironment(),
+      env: environment,
       timeout: 15_000
     });
     if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -213,19 +371,21 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         summary: "Codex CLI is not installed or is not available in PATH."
       };
     }
-    const output = redactRuntimeText(`${result.stdout || ""}\n${result.stderr || ""}`);
     return {
       installed: !result.error,
       authenticated: result.status === 0,
-      summary: output || (result.status === 0 ? "Codex login is available." : "Codex login is required.")
+      summary: result.status === 0
+        ? "Codex login is available."
+        : "Codex login is required."
     };
   }
 
   async startLogin(): Promise<{ started: true }> {
+    const environment = commandEnvironment(this.envFile);
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(resolveCommand("codex"), ["login"], {
+      const child = spawn(resolveCommand("codex", environment), ["login"], {
         detached: true,
-        env: commandEnvironment(),
+        env: environment,
         stdio: "ignore"
       });
       child.once("spawn", () => {
@@ -260,7 +420,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   repair(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
       await this.stopUnlocked(options);
-      this.reinitializeTunnelProfile = true;
+      writePrivateFileAtomic(
+        this.profileRebuildMarker,
+        `${JSON.stringify({ requestedAt: new Date().toISOString() })}\n`,
+        { encoding: "utf8" }
+      );
       this.appendLog("helper", "Rebuilding the managed Secure MCP Tunnel profile.");
       return this.startUnlocked(true);
     });
@@ -277,7 +441,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
-    if (this.child && this.child.exitCode === null) return this.snapshot();
+    if (isChildRunning(this.child)) return this.snapshot();
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
@@ -290,6 +454,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.unexpectedExits = [];
       this.restartAttempt = 0;
     }
+    await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
     if (!configuration.valid) {
       throw new Error(`SETUP_REQUIRED: ${configuration.issue || "Runtime configuration is missing."}`);
@@ -313,12 +478,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       "stdio",
       "--env-file",
       this.envFile,
-      "--require-built"
+      "--require-built",
+      "--runtime-status-file",
+      this.runtimeStatusFile
     ];
-    if (!this.reinitializeTunnelProfile) launcherArguments.push("--reuse-profile");
+    if (!existsSync(this.profileRebuildMarker)) launcherArguments.push("--reuse-profile");
     const child = spawn(process.execPath, launcherArguments, {
       cwd: this.bridgeRoot,
       env: runtimeEnvironment(this.envFile, this.bridgeSocketPath),
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"]
     });
     this.child = child;
@@ -333,17 +501,34 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     child.once("exit", (code, signal) => this.observeExit(child, code, signal));
 
     try {
-      await waitForBridge(this.bridgeSocketPath, this.startTimeoutMs, () => child.exitCode !== null);
-      if (this.child === child && child.exitCode === null) {
+      await waitForManagedRuntime(
+        this.bridgeSocketPath,
+        this.runtimeStatusFile,
+        child,
+        BRIDGE_BUILD_INFO.id,
+        this.startTimeoutMs
+      );
+      if (this.child === child && isChildRunning(child)) {
         this.phase = "running";
-        this.reinitializeTunnelProfile = false;
+        removePrivateMarker(this.profileRebuildMarker);
         this.scheduleStabilityReset(child);
-        this.appendLog("helper", "The bridge companion channel is ready.");
+        this.appendLog("helper", "The bridge companion and Secure MCP Tunnel are ready.");
       }
     } catch (error) {
       this.lastError = safeErrorMessage(error);
       this.appendLog("helper", this.lastError);
-      if (child.exitCode === null) child.kill("SIGTERM");
+      this.manualStop = true;
+      if (isChildRunning(child)) {
+        child.kill("SIGTERM");
+        const exited = await waitForExit(child, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS);
+        if (!exited && isChildRunning(child)) {
+          killManagedRuntimeGroup(child, "SIGKILL");
+          await waitForExit(child, 2_000);
+        }
+      }
+      if (this.child === child) this.child = undefined;
+      this.phase = "stopped";
+      this.startedAt = null;
       throw error;
     }
     return this.snapshot();
@@ -362,7 +547,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.stabilityTimer = undefined;
     }
     const child = this.child;
-    if (!child || child.exitCode !== null) {
+    if (!isChildRunning(child)) {
       this.phase = "stopped";
       this.child = undefined;
       return this.snapshot();
@@ -402,7 +587,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         }
       }
     } catch (error) {
-      if (options.mode === "drain") throw error;
+      if (options.mode === "drain") {
+        this.phase = isChildRunning(child) ? "running" : "stopped";
+        this.manualStop = isChildRunning(child) ? false : this.manualStop;
+        throw error;
+      }
       this.appendLog("helper", `Force stop continuing without a drain acknowledgement: ${safeErrorMessage(error)}`);
     }
 
@@ -414,12 +603,18 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         : "Force-stopping the managed runtime; active work may be interrupted."
     );
     child.kill("SIGTERM");
-    const exited = await waitForExit(child, options.mode === "force" ? 3_000 : 10_000);
-    if (!exited && child.exitCode === null) {
-      child.kill("SIGKILL");
-      await waitForExit(child, 2_000);
+    const exited = await waitForExit(child, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS);
+    if (!exited && isChildRunning(child)) {
+      killManagedRuntimeGroup(child, "SIGKILL");
+      const killed = await waitForExit(child, 2_000);
+      if (!killed && isChildRunning(child)) {
+        if (drainStarted) {
+          await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
+        }
+        throw new Error("RUNTIME_STOP_FAILED: Managed runtime did not exit after SIGKILL.");
+      }
     }
-    if (drainStarted && child.exitCode === null) {
+    if (drainStarted && isChildRunning(child)) {
       await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
     }
     if (this.child === child) this.child = undefined;
@@ -447,6 +642,14 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       return;
     }
     this.lastError = `Managed runtime exited unexpectedly (${code ?? signal ?? "unknown"}).`;
+    try {
+      killManagedRuntimeGroup(child, "SIGKILL");
+    } catch (error) {
+      this.lastError = `RUNTIME_TREE_CLEANUP_FAILED: ${safeErrorMessage(error)}`;
+      this.phase = "safe-mode";
+      this.appendLog("helper", this.lastError);
+      return;
+    }
     this.scheduleAutomaticRestart();
   }
 
@@ -476,7 +679,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private scheduleStabilityReset(child: ChildProcess): void {
     this.stabilityTimer = setTimeout(() => {
       this.stabilityTimer = undefined;
-      if (this.child !== child || child.exitCode !== null || this.phase !== "running") return;
+      if (this.child !== child || !isChildRunning(child) || this.phase !== "running") return;
       this.unexpectedExits = [];
       this.restartAttempt = 0;
       this.appendLog("helper", "Managed runtime remained stable; crash backoff was reset.");
@@ -547,6 +750,10 @@ async function dispatchHelperLine(
             name: MACOS_HELPER_PROTOCOL_NAME,
             version: MACOS_HELPER_PROTOCOL_VERSION
           },
+          runtime: {
+            buildId: BRIDGE_BUILD_INFO.id,
+            version: BRIDGE_BUILD_INFO.version
+          },
           capabilities: [
             "runtime.read",
             "runtime.start",
@@ -554,7 +761,7 @@ async function dispatchHelperLine(
             "runtime.restart",
             "runtime.repair-profile",
             "runtime.logs.redacted",
-            "setup.dotenv",
+            "setup.dotenv.atomic-apply",
             "auth.codex-browser-login"
           ],
           status: await controller.snapshot()
@@ -564,8 +771,8 @@ async function dispatchHelperLine(
         emptyParamsSchema.parse(request.params || {});
         result = await controller.snapshot();
         break;
-      case "setup.save":
-        result = await controller.saveConfiguration(setupSaveParamsSchema.parse(request.params || {}));
+      case "setup.apply":
+        result = await controller.applyConfiguration(setupApplyParamsSchema.parse(request.params || {}));
         break;
       case "auth.status":
         emptyParamsSchema.parse(request.params || {});
@@ -606,6 +813,48 @@ type RuntimeAdmissionSnapshot = {
   pendingAdmissions: number;
 };
 
+function normalizeTunnelStatus(
+  runtime: ReturnType<typeof readManagedRuntimeStatus>,
+  childPid: number | null,
+  expectedBuildId: string
+): MacOSHelperStatus["tunnel"] {
+  const unavailable: MacOSHelperStatus["tunnel"] = {
+    phase: childPid === null ? "stopped" : "unknown",
+    profile: null,
+    transport: null,
+    doctorPassed: false,
+    processRunning: false,
+    connected: false,
+    lastCheckedAt: null,
+    lastError: childPid === null
+      ? null
+      : "Managed tunnel status is not available yet."
+  };
+  if (!runtime) return unavailable;
+  const belongsToChild = childPid !== null && runtime.launcherPid === childPid;
+  const buildMatches = runtime.runtimeBuildId === expectedBuildId;
+  const current = belongsToChild && buildMatches && !runtime.stale;
+  const tunnel = runtime.tunnel as ManagedTunnelStatus;
+  return {
+    phase: current ? tunnel.phase : childPid === null ? "stopped" : "stale",
+    profile: tunnel.profile,
+    transport: tunnel.transport,
+    doctorPassed: current && tunnel.doctorPassed,
+    processRunning: current && tunnel.processRunning,
+    connected: current && tunnel.processRunning && tunnel.connected,
+    lastCheckedAt: tunnel.lastCheckedAt,
+    lastError: current
+      ? tunnel.lastError && safeErrorMessage(tunnel.lastError)
+      : childPid === null
+        ? null
+        : !belongsToChild
+          ? "Tunnel status belongs to a previous launcher process."
+          : !buildMatches
+            ? "Tunnel status belongs to a different runtime build."
+            : "Tunnel status is stale."
+  };
+}
+
 function helperError(
   id: string | number | null,
   code: number,
@@ -618,10 +867,6 @@ function helperRequestId(value: unknown): string | number | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const id = (value as Record<string, unknown>).id;
   return requestIdSchema.safeParse(id).success ? id as string | number : null;
-}
-
-async function probeBridge(socketPath: string): Promise<boolean> {
-  return (await readBridgeAdmission(socketPath)) !== null;
 }
 
 async function readBridgeAdmission(
@@ -639,18 +884,28 @@ async function readBridgeAdmission(
   }
 }
 
-async function waitForBridge(
+async function waitForManagedRuntime(
   socketPath: string,
-  timeoutMs: number,
-  exited: () => boolean
+  runtimeStatusFile: string,
+  child: ChildProcess,
+  expectedBuildId: string,
+  timeoutMs: number
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (exited()) throw new Error("Managed runtime exited before the bridge became ready.");
-    if (await probeBridge(socketPath)) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error("Managed runtime exited before the bridge and tunnel became ready.");
+    }
+    const bridge = await readBridgeAdmission(socketPath);
+    const tunnel = normalizeTunnelStatus(
+      readManagedRuntimeStatus(runtimeStatusFile),
+      child.pid || null,
+      expectedBuildId
+    );
+    if (bridge && tunnel.connected) return;
     await delay(250);
   }
-  throw new Error("Timed out waiting for the bridge companion channel.");
+  throw new Error("Timed out waiting for the bridge companion and Secure MCP Tunnel readiness.");
 }
 
 function bridgeRequest<T = unknown>(
@@ -702,7 +957,7 @@ function bridgeRequest<T = unknown>(
 }
 
 function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null) return Promise.resolve(true);
+  if (!isChildRunning(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       child.removeListener("exit", onExit);
@@ -716,27 +971,47 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
+function isChildRunning(child: ChildProcess | undefined): child is ChildProcess {
+  return Boolean(child && child.exitCode === null && child.signalCode === null);
+}
+
+function killManagedRuntimeGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 function runtimeEnvironment(envFile: string, bridgeSocketPath: string): NodeJS.ProcessEnv {
-  const environment = commandEnvironment();
-  const passthrough = [
-    "CODEX_MCP_BRIDGE_ALLOWED_ROOTS",
-    "CODEX_MCP_BRIDGE_ALLOW_WRITE",
-    "CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS",
-    "CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY",
-    "CODEX_MCP_BRIDGE_DEFAULT_BACKEND",
-    "CODEX_MCP_BRIDGE_DEFAULT_MODEL",
-    "CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT",
-    "CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS",
-    "CODEX_MCP_BRIDGE_STATE_DB",
-    "CODEX_MCP_BRIDGE_CODEX",
+  const environment = commandEnvironment(envFile);
+  const explicitNames = new Set([
     "TUNNEL_CLIENT",
     "TUNNEL_CLIENT_PROFILE",
+    "TUNNEL_CLIENT_PROFILE_DIR",
     "MCP_MAX_CONCURRENT_REQUESTS",
-    "CONTROL_PLANE_MAX_INFLIGHT_REQUESTS",
     "LOG_LEVEL"
-  ];
-  for (const name of passthrough) {
-    if (process.env[name] !== undefined) environment[name] = process.env[name];
+  ]);
+  for (const [name, value] of Object.entries(process.env)) {
+    if (
+      value !== undefined &&
+      (
+        name.startsWith("CODEX_MCP_BRIDGE_") ||
+        name.startsWith("CODEX_GPT_BRIDGE_") ||
+        (name.startsWith("CONTROL_PLANE_") && name !== "CONTROL_PLANE_API_KEY") ||
+        explicitNames.has(name)
+      )
+    ) {
+      environment[name] = value;
+    }
   }
   environment.CODEX_MCP_BRIDGE_ENV_FILE = envFile;
   environment.CODEX_MCP_BRIDGE_COMPANION_SOCKET = bridgeSocketPath;
@@ -746,7 +1021,7 @@ function runtimeEnvironment(envFile: string, bridgeSocketPath: string): NodeJS.P
   return environment;
 }
 
-function commandEnvironment(): NodeJS.ProcessEnv {
+function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
   const names = [
     "PATH",
     "HOME",
@@ -764,6 +1039,18 @@ function commandEnvironment(): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of names) {
     if (process.env[name] !== undefined) environment[name] = process.env[name];
+  }
+  if (envFile) {
+    const fileValues = readRuntimeEnvSubset(envFile, [
+      "CODEX_HOME",
+      "CODEX_MCP_BRIDGE_CODEX",
+      "CODEX_GPT_BRIDGE_CODEX"
+    ]);
+    for (const [name, value] of Object.entries(fileValues)) {
+      if (environment[name] === undefined && process.env[name] === undefined) {
+        environment[name] = value;
+      }
+    }
   }
   const home = process.env.HOME || "";
   const pathEntries = [
@@ -783,10 +1070,112 @@ function commandEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
-function resolveCommand(command: string): string {
-  return process.env.CODEX_MCP_BRIDGE_CODEX && command === "codex"
-    ? process.env.CODEX_MCP_BRIDGE_CODEX
+function resolveCommand(command: string, environment: NodeJS.ProcessEnv): string {
+  const configured = environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX;
+  return configured && command === "codex"
+    ? configured
     : command;
+}
+
+function readRegisteredProjectRoots(envFile: string): string[] {
+  const fileValues = readRuntimeEnvSubset(envFile, [
+    "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE",
+    "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE",
+    "CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE",
+    "CODEX_GPT_BRIDGE_SETTINGS_STATE_FILE"
+  ]);
+  const stateDatabaseFile = configuredRuntimePath(
+    fileValues,
+    "STATE_DATABASE_FILE",
+    path.join(homedir(), ".codex-mcp-bridge", "state.sqlite")
+  );
+  if (existsSync(stateDatabaseFile)) {
+    assertRegularStateFile(stateDatabaseFile);
+    const database = new Database(stateDatabaseFile, {
+      readonly: true,
+      fileMustExist: true
+    });
+    try {
+      const columns = database.pragma("table_info(projects)") as Array<{ name?: unknown }>;
+      if (!columns.some((column) => column.name === "cwd")) {
+        throw new Error("Project registry table is unavailable.");
+      }
+      const hasDeletedAt = columns.some((column) => column.name === "deleted_at");
+      const rows = database.prepare(
+        hasDeletedAt
+          ? "SELECT cwd FROM projects WHERE deleted_at IS NULL"
+          : "SELECT cwd FROM projects"
+      ).all() as Array<{ cwd?: unknown }>;
+      if (rows.some((row) => typeof row.cwd !== "string" || !path.isAbsolute(row.cwd))) {
+        throw new Error("Project registry contains an invalid folder path.");
+      }
+      return [...new Set(rows.map((row) => row.cwd as string))];
+    } finally {
+      database.close();
+    }
+  }
+
+  const settingsStateFile = configuredRuntimePath(
+    fileValues,
+    "SETTINGS_STATE_FILE",
+    path.join(homedir(), ".codex-mcp-bridge", "settings.json")
+  );
+  if (!existsSync(settingsStateFile)) return [];
+  assertRegularStateFile(settingsStateFile);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(settingsStateFile, "utf8"));
+  } catch {
+    throw new Error("Could not inspect the registered project folders.");
+  }
+  const record = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+  const registry = record.projectRegistry && typeof record.projectRegistry === "object"
+    ? record.projectRegistry as Record<string, unknown>
+    : undefined;
+  const projects = Array.isArray(registry?.projects) ? registry.projects : [];
+  const roots = projects.map((project) =>
+    project && typeof project === "object" && !Array.isArray(project)
+      ? (project as Record<string, unknown>).cwd
+      : undefined
+  );
+  if (roots.some((root) => typeof root !== "string" || !path.isAbsolute(root))) {
+    throw new Error("Stored project registry contains an invalid folder path.");
+  }
+  return [...new Set(roots as string[])];
+}
+
+function configuredRuntimePath(
+  fileValues: Record<string, string>,
+  suffix: string,
+  fallback: string
+): string {
+  const currentName = `CODEX_MCP_BRIDGE_${suffix}`;
+  const legacyName = `CODEX_GPT_BRIDGE_${suffix}`;
+  const configured = process.env[currentName] || process.env[legacyName] ||
+    fileValues[currentName] || fileValues[legacyName];
+  if (!configured) return fallback;
+  if (!path.isAbsolute(configured)) {
+    throw new Error(`${currentName} must be an absolute file path.`);
+  }
+  return path.resolve(configured);
+}
+
+function assertRegularStateFile(filePath: string): void {
+  const stats = lstatSync(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`Project registry state must be a regular, non-symlink file: ${filePath}`);
+  }
+}
+
+function removePrivateMarker(filePath: string): void {
+  if (!existsSync(filePath)) return;
+  const stats = lstatSync(filePath);
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`Profile rebuild marker must be a regular, non-symlink file: ${filePath}`);
+  }
+  unlinkSync(filePath);
 }
 
 function redactRuntimeText(value: string): string {
