@@ -120,7 +120,7 @@ describe("macOS runtime helper RPC", () => {
     const controller = fakeController();
     vi.mocked(controller.applyConfiguration).mockRejectedValueOnce(
       new Error(
-        'failed for sk-leaked-1234567890123456, tunnel_leaked123, Bearer abcdefghijklmnop, PASSWORD=hunter2-secret, "access_token":"jwt.payload.signature", Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l=='
+        'failed for sk-leaked.1234567890123456+suffix=secret, tunnel_leaked123, Bearer abcdefghijklmnop, PASSWORD=hunter2-secret, "access_token":"jwt.payload.signature", Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l=='
       )
     );
     const server = await startMacOSHelperServer({ socketPath, controller });
@@ -134,6 +134,7 @@ describe("macOS runtime helper RPC", () => {
     });
     expect(response).toMatchObject({ id: "redaction", error: { code: -32602 } });
     expect(JSON.stringify(response)).not.toContain("sk-leaked");
+    expect(JSON.stringify(response)).not.toContain("suffix=secret");
     expect(JSON.stringify(response)).not.toContain("tunnel_leaked123");
     expect(JSON.stringify(response)).not.toContain("abcdefghijklmnop");
     expect(JSON.stringify(response)).not.toContain("hunter2-secret");
@@ -194,7 +195,7 @@ describe("macOS runtime helper RPC", () => {
     writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile);
     updateRuntimeEnvFile(configFile, {
-      apiKey: "sk-supervisor-1234567890123456",
+      apiKey: "sk-supervisor.1234567890123456+suffix=secret",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
     });
     const supervisor = new MacOSBridgeSupervisor({
@@ -251,8 +252,9 @@ describe("macOS runtime helper RPC", () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
       const logs = supervisor.logs(200).map((entry) => entry.message).join("\n");
       expect(logs).toContain("[REDACTED_API_KEY]");
-      expect(logs).not.toContain("sk-split-secret");
+      expect(logs).not.toContain("sk-split.secret");
       expect(logs).not.toContain("1234567890123456");
+      expect(logs).not.toContain("=suffix");
     } finally {
       await supervisor.close();
     }
@@ -325,6 +327,81 @@ describe("macOS runtime helper RPC", () => {
         timeoutMs: 1_000
       })).rejects.toThrow("DRAIN_TIMEOUT");
       expect(readFileSync(configFile, "utf8")).toBe(original);
+      expect((await supervisor.snapshot()).phase).toBe("running");
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("requires force when verified background processes would be interrupted", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, { backgroundProcesses: 2 });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      await supervisor.start();
+      await expect(supervisor.stop({ mode: "drain", timeoutMs: 5_000 }))
+        .rejects.toThrow("BACKGROUND_PROCESSES_ACTIVE");
+      expect((await supervisor.snapshot()).phase).toBe("running");
+      expect(await request(bridgeSocket, {
+        jsonrpc: "2.0",
+        id: "admission-after-background-block",
+        method: "runtime.snapshot",
+        params: {}
+      })).toMatchObject({ result: { acceptingNewJobs: true } });
+
+      const stopped = await supervisor.stop({ mode: "force", timeoutMs: 5_000 });
+      expect(stopped).toMatchObject({ phase: "stopped", pid: null });
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("blocks graceful stop when background process impact cannot be verified", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, { backgroundProcessUnknownAgents: 1 });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      await supervisor.start();
+      await expect(supervisor.stop({ mode: "drain", timeoutMs: 5_000 }))
+        .rejects.toThrow("BACKGROUND_PROCESS_STATE_UNKNOWN");
       expect((await supervisor.snapshot()).phase).toBe("running");
     } finally {
       await supervisor.close();
@@ -749,7 +826,11 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
       connected: true,
       acceptingNewJobs: true,
       activeJobs: 2,
-      pendingAdmissions: 0
+      pendingAdmissions: 0,
+      backgroundProcessState: "confirmed",
+      backgroundProcesses: 0,
+      backgroundProcessAgents: 0,
+      backgroundProcessUnknownAgents: 0
     },
     tunnel: {
       phase: "connected",
@@ -777,6 +858,8 @@ function writeFakeLauncher(
   argumentsFile: string,
   options: {
     activeJobs?: number;
+    backgroundProcesses?: number;
+    backgroundProcessUnknownAgents?: number;
     failTunnelId?: string;
     mutateEnvOnDrain?: string;
     failSnapshotAfterDrain?: boolean;
@@ -804,8 +887,8 @@ let mutatedEnv = false;
 let acceptingNewJobs = true;
 let failedSnapshotAfterDrain = false;
 if (${JSON.stringify(Boolean(options.splitRuntimeSecret))}) {
-  process.stdout.write("credential=sk-split-secret-");
-  setTimeout(() => process.stdout.write("1234567890123456\\n"), 50);
+  process.stdout.write("credential=sk-split.secret+");
+  setTimeout(() => process.stdout.write("1234567890123456=suffix\\n"), 50);
 }
 if (
   envFile &&
@@ -876,7 +959,11 @@ const server = createServer((socket) => {
     } : {
       acceptingNewJobs,
       activeJobs: ${options.activeJobs || 0},
-      pendingAdmissions: 0
+      pendingAdmissions: 0,
+      backgroundProcessState: ${options.backgroundProcessUnknownAgents || 0} > 0 ? "unknown" : "confirmed",
+      backgroundProcesses: ${options.backgroundProcesses || 0},
+      backgroundProcessAgents: ${options.backgroundProcesses || 0} > 0 ? 1 : 0,
+      backgroundProcessUnknownAgents: ${options.backgroundProcessUnknownAgents || 0}
     };
     socket.end(JSON.stringify({
       jsonrpc: "2.0",

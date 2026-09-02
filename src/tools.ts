@@ -4422,11 +4422,28 @@ export function registerBridgeTools(
   };
   let acceptingNewJobs = true;
   let pendingAdmissions = 0;
-  const runtimeAdmissionSnapshot = (): BridgeRuntimeAdmissionSnapshot => ({
-    acceptingNewJobs,
-    activeJobs: jobs.runningCount(),
-    pendingAdmissions
-  });
+  let backgroundProcessImpact: BridgeBackgroundProcessImpact = {
+    state: "unknown",
+    processes: 0,
+    agents: 0,
+    unknownAgents: 0
+  };
+  const runtimeAdmissionSnapshot = async (
+    options: BridgeRuntimeSnapshotOptions = {}
+  ): Promise<BridgeRuntimeAdmissionSnapshot> => {
+    if (options.inspectBackgroundProcesses) {
+      backgroundProcessImpact = await inspectBridgeBackgroundProcessImpact(jobs, upstream);
+    }
+    return {
+      acceptingNewJobs,
+      activeJobs: jobs.runningCount(),
+      pendingAdmissions,
+      backgroundProcessState: backgroundProcessImpact.state,
+      backgroundProcesses: backgroundProcessImpact.processes,
+      backgroundProcessAgents: backgroundProcessImpact.agents,
+      backgroundProcessUnknownAgents: backgroundProcessImpact.unknownAgents
+    };
+  };
   const acquireRuntimeAdmission = (): (() => void) => {
     if (!acceptingNewJobs) {
       throw new Error(
@@ -4478,12 +4495,12 @@ export function registerBridgeTools(
     updateSettings(input) {
       return applySettingsMutation(input);
     },
-    runtimeSnapshot() {
-      return runtimeAdmissionSnapshot();
+    runtimeSnapshot(options) {
+      return runtimeAdmissionSnapshot(options);
     },
-    beginDrain() {
+    beginDrain(options) {
       acceptingNewJobs = false;
-      return runtimeAdmissionSnapshot();
+      return runtimeAdmissionSnapshot(options);
     },
     cancelDrain() {
       acceptingNewJobs = true;
@@ -10107,6 +10124,14 @@ export type BridgeRuntimeAdmissionSnapshot = {
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
+  backgroundProcessState: "confirmed" | "unknown";
+  backgroundProcesses: number;
+  backgroundProcessAgents: number;
+  backgroundProcessUnknownAgents: number;
+};
+
+export type BridgeRuntimeSnapshotOptions = {
+  inspectBackgroundProcesses?: boolean;
 };
 
 /**
@@ -10117,9 +10142,9 @@ export type BridgeApplicationService = {
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
-  runtimeSnapshot(): BridgeRuntimeAdmissionSnapshot;
-  beginDrain(): BridgeRuntimeAdmissionSnapshot;
-  cancelDrain(): BridgeRuntimeAdmissionSnapshot;
+  runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
+  beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
+  cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
 };
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
@@ -10245,6 +10270,13 @@ type DashboardRuntimeObservation = {
   state: "confirmed" | "idle" | "not-loaded" | "busy" | "orphaned" | "unknown";
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcessCount: number;
+};
+
+type BridgeBackgroundProcessImpact = {
+  state: "confirmed" | "unknown";
+  processes: number;
+  agents: number;
+  unknownAgents: number;
 };
 
 const DASHBOARD_RUNTIME_PROBE_LIMIT = 100;
@@ -10699,6 +10731,88 @@ function listAllDashboardAgents(jobs: CodexJobRegistry): BridgeAgent[] {
     agents.push(...page);
   }
   return agents;
+}
+
+async function inspectBridgeBackgroundProcessImpact(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream
+): Promise<BridgeBackgroundProcessImpact> {
+  const threads = new Map<string, Pick<BridgeAgentThread, "threadId" | "backendKind">>();
+  for (const agent of listAllDashboardAgents(jobs)) {
+    const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
+    if (thread?.backendKind !== "app-server") continue;
+    threads.set(`${thread.backendKind}\0${thread.threadId}`, thread);
+  }
+  const candidates = [...threads.values()];
+  if (candidates.length === 0) {
+    return { state: "confirmed", processes: 0, agents: 0, unknownAgents: 0 };
+  }
+  if (!upstream.listBackgroundTerminals) {
+    return {
+      state: "unknown",
+      processes: 0,
+      agents: 0,
+      unknownAgents: candidates.length
+    };
+  }
+
+  const deadline = Date.now() + DASHBOARD_RUNTIME_BUDGET_MS;
+  let nextIndex = 0;
+  let processes = 0;
+  let agents = 0;
+  let unknownAgents = 0;
+  const inspect = (
+    thread: Pick<BridgeAgentThread, "threadId" | "backendKind">,
+    timeoutMs: number
+  ): Promise<number | null> =>
+    new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: number | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      void upstream.listBackgroundTerminals!(
+        thread.threadId,
+        thread.backendKind as CodexBackendKind
+      ).then(
+        (terminals) => finish(terminals.length),
+        () => finish(null)
+      );
+    });
+  const worker = async (): Promise<void> => {
+    while (nextIndex < candidates.length) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return;
+      const thread = candidates[nextIndex++];
+      if (!thread) return;
+      const count = await inspect(
+        thread,
+        Math.max(1, Math.min(DASHBOARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
+      );
+      if (count === null) {
+        unknownAgents += 1;
+      } else {
+        processes += count;
+        if (count > 0) agents += 1;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(DASHBOARD_RUNTIME_PROBE_CONCURRENCY, candidates.length) },
+      () => worker()
+    )
+  );
+  unknownAgents += Math.max(0, candidates.length - nextIndex);
+  return {
+    state: unknownAgents === 0 ? "confirmed" : "unknown",
+    processes,
+    agents,
+    unknownAgents
+  };
 }
 
 async function inspectDashboardRuntime(

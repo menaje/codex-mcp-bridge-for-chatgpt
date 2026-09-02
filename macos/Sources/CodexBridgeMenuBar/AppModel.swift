@@ -26,6 +26,7 @@ enum MenuBarHealth: Equatable {
 }
 
 struct SettingsDraft: Equatable {
+    let expectedSettingsRevision: Int
     var accessStrategy: String
     var policyMode: String
     var fixedSelectionKey: String
@@ -52,6 +53,7 @@ struct SettingsDraft: Equatable {
 
     init(snapshot: SettingsSnapshot) {
         let settings = snapshot.settings
+        expectedSettingsRevision = settings.settingsRevision
         accessStrategy = settings.accessStrategy
         policyMode = settings.modelPolicy.mode
         fixedSelectionKey = settings.modelPolicy.selection?.key ?? ""
@@ -181,6 +183,31 @@ struct SettingsDraft: Equatable {
     }
 }
 
+struct SettingsDraftSyncState: Equatable {
+    private(set) var draft: SettingsDraft?
+    private(set) var baseline: SettingsDraft?
+    private(set) var loadedRevision = -1
+    private(set) var externalChangeDetected = false
+
+    mutating func updateDraft(_ value: SettingsDraft) {
+        draft = value
+    }
+
+    mutating func synchronize(with snapshot: SettingsSnapshot, force: Bool = false) {
+        let next = SettingsDraft(snapshot: snapshot)
+        let revisionChanged = loadedRevision != snapshot.settings.settingsRevision
+        let hasLocalEdits = draft != nil && baseline != nil && draft != baseline
+        if force || draft == nil || baseline == nil || !hasLocalEdits {
+            draft = next
+            baseline = next
+            externalChangeDetected = false
+        } else if revisionChanged {
+            externalChangeDetected = true
+        }
+        loadedRevision = snapshot.settings.settingsRevision
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var helperStatus: HelperStatus?
@@ -200,22 +227,43 @@ final class AppModel: ObservableObject {
     @Published var isBusy = false
     @Published var loginInProgress = false
     @Published var lastDashboardRefresh: Date?
+    @Published var runtimeImpact: RuntimeAdmissionSnapshot?
+    @Published var runtimeImpactErrorMessage: String?
 
-    let paths = RuntimePaths()
     private let bootstrapper = HelperBootstrap()
     private let pageLimit = 12
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "app-model")
     private var pollingTask: Task<Void, Never>?
+    private var settingsPollingTask: Task<Void, Never>?
     private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
+    private var paths: RuntimePaths?
+    private var pathResolutionTask: Task<RuntimePaths, Never>?
 
-    private var helperClient: MacOSHelperClient {
-        MacOSHelperClient(socketPath: paths.helperSocket.path)
+    init(paths: RuntimePaths? = nil) {
+        self.paths = paths
     }
 
-    private var bridgeClient: BridgeCompanionClient {
-        BridgeCompanionClient(socketPath: paths.bridgeSocket.path)
+    private func resolvedPaths() async -> RuntimePaths {
+        if let paths { return paths }
+        if let pathResolutionTask { return await pathResolutionTask.value }
+        let task = Task.detached(priority: .userInitiated) { RuntimePaths() }
+        pathResolutionTask = task
+        let resolved = await task.value
+        paths = resolved
+        pathResolutionTask = nil
+        return resolved
+    }
+
+    private func helperClient() async -> MacOSHelperClient {
+        let paths = await resolvedPaths()
+        return MacOSHelperClient(socketPath: paths.helperSocket.path)
+    }
+
+    private func bridgeClient() async -> BridgeCompanionClient {
+        let paths = await resolvedPaths()
+        return BridgeCompanionClient(socketPath: paths.bridgeSocket.path)
     }
 
     var health: MenuBarHealth {
@@ -261,6 +309,7 @@ final class AppModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
+            let paths = await resolvedPaths()
             try await bootstrapper.ensureRunning(paths: paths)
             logger.info("helper bootstrap completed")
             startupErrorMessage = nil
@@ -281,7 +330,8 @@ final class AppModel: ObservableObject {
 
     func refreshStatus() async {
         do {
-            helperStatus = try await helperClient.status()
+            let client = await helperClient()
+            helperStatus = try await client.status()
             statusErrorMessage = nil
         } catch {
             helperStatus = nil
@@ -296,7 +346,8 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            dashboard = try await bridgeClient.dashboard(
+            let client = await bridgeClient()
+            dashboard = try await client.dashboard(
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0
@@ -315,10 +366,42 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            settings = try await bridgeClient.settings(refreshModels: refreshModels)
+            let client = await bridgeClient()
+            settings = try await client.settings(refreshModels: refreshModels)
             settingsLoadErrorMessage = nil
         } catch {
             settingsLoadErrorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshRuntimeImpact() async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let client = await bridgeClient()
+            runtimeImpact = try await client.runtimeStatus(inspectBackgroundProcesses: true)
+            runtimeImpactErrorMessage = nil
+        } catch {
+            runtimeImpact = nil
+            runtimeImpactErrorMessage = error.localizedDescription
+        }
+    }
+
+    func setSettingsWindowVisible(_ visible: Bool) {
+        if !visible {
+            settingsPollingTask?.cancel()
+            settingsPollingTask = nil
+            return
+        }
+        guard settingsPollingTask == nil else { return }
+        settingsPollingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                if !self.isBusy {
+                    await self.refreshSettings()
+                }
+            }
         }
     }
 
@@ -341,7 +424,8 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            authStatus = try await helperClient.authStatus()
+            let client = await helperClient()
+            authStatus = try await client.authStatus()
             authErrorMessage = nil
             if authStatus?.authenticated == true {
                 loginInProgress = false
@@ -356,7 +440,8 @@ final class AppModel: ObservableObject {
 
     func saveSetup(apiKey: String, tunnelId: String) async -> Bool {
         await performRuntime {
-            let result = try await self.helperClient.applySetup(
+            let client = await self.helperClient()
+            let result = try await client.applySetup(
                 apiKey: apiKey.isEmpty ? nil : apiKey,
                 tunnelId: tunnelId.isEmpty ? nil : tunnelId,
                 force: false,
@@ -369,10 +454,11 @@ final class AppModel: ObservableObject {
 
     func repairConfigurationPermissions() async -> Bool {
         await performRuntime {
-            _ = try await self.helperClient.repairConfigurationPermissions()
+            let client = await self.helperClient()
+            _ = try await client.repairConfigurationPermissions()
             await self.refreshStatus()
             if self.helperStatus?.configuration.valid == true {
-                self.helperStatus = try await self.helperClient.startRuntime()
+                self.helperStatus = try await client.startRuntime()
                 await self.refreshAll()
             }
         }
@@ -383,7 +469,8 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         authErrorMessage = nil
         do {
-            _ = try await self.helperClient.startLogin()
+            let client = await helperClient()
+            _ = try await client.startLogin()
             loginInProgress = true
             beginLoginPolling()
             return true
@@ -395,40 +482,59 @@ final class AppModel: ObservableObject {
 
     func startRuntime() async -> Bool {
         await performRuntime {
-            self.helperStatus = try await self.helperClient.startRuntime()
+            let client = await self.helperClient()
+            self.helperStatus = try await client.startRuntime()
             await self.refreshAll()
         }
     }
 
     func stopRuntime(force: Bool) async -> Bool {
-        await performRuntime {
-            self.helperStatus = try await self.helperClient.stopRuntime(
+        let succeeded = await performRuntime {
+            let client = await self.helperClient()
+            self.helperStatus = try await client.stopRuntime(
                 force: force,
                 timeoutMilliseconds: 60_000
             )
             self.dashboard = nil
             self.settings = nil
         }
+        if !succeeded {
+            await refreshStatus()
+            await refreshDashboard()
+        }
+        return succeeded
     }
 
     func restartRuntime(force: Bool) async -> Bool {
-        await performRuntime {
-            self.helperStatus = try await self.helperClient.restartRuntime(
+        let succeeded = await performRuntime {
+            let client = await self.helperClient()
+            self.helperStatus = try await client.restartRuntime(
                 force: force,
                 timeoutMilliseconds: 60_000
             )
             await self.refreshAll()
         }
+        if !succeeded {
+            await refreshStatus()
+            await refreshDashboard()
+        }
+        return succeeded
     }
 
     func repairTunnelProfile(force: Bool = false) async -> Bool {
-        await performRuntime {
-            self.helperStatus = try await self.helperClient.repairRuntime(
+        let succeeded = await performRuntime {
+            let client = await self.helperClient()
+            self.helperStatus = try await client.repairRuntime(
                 force: force,
                 timeoutMilliseconds: 60_000
             )
             await self.refreshAll()
         }
+        if !succeeded {
+            await refreshStatus()
+            await refreshDashboard()
+        }
+        return succeeded
     }
 
     func saveSettings(_ draft: SettingsDraft) async -> Bool {
@@ -500,7 +606,7 @@ final class AppModel: ObservableObject {
         }
 
         let mutation = SettingsMutation(
-            expectedSettingsRevision: snapshot.settings.settingsRevision,
+            expectedSettingsRevision: draft.expectedSettingsRevision,
             expectedRegistryRevision: nil,
             operation: .patch(SettingsPatch(
                 accessStrategy: draft.accessStrategy,
@@ -540,7 +646,8 @@ final class AppModel: ObservableObject {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
         let nextOffset = current.pagination.terminal.offset + current.pagination.terminal.returned
         _ = await performDashboard {
-            let page = try await self.bridgeClient.dashboard(
+            let client = await self.bridgeClient()
+            let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 idleOffset: 0
@@ -558,7 +665,8 @@ final class AppModel: ObservableObject {
         guard let current = dashboard, current.pagination.idle.hasNext else { return }
         let nextOffset = current.pagination.idle.offset + current.pagination.idle.returned
         _ = await performDashboard {
-            let page = try await self.bridgeClient.dashboard(
+            let client = await self.bridgeClient()
+            let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset
@@ -574,7 +682,8 @@ final class AppModel: ObservableObject {
 
     func refreshLogs() async {
         do {
-            logs = try await helperClient.logs(limit: 100).entries
+            let client = await helperClient()
+            logs = try await client.logs(limit: 100).entries
             logsErrorMessage = nil
         } catch {
             logsErrorMessage = error.localizedDescription
@@ -586,14 +695,15 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         settingsErrorMessage = nil
         do {
-            settings = try await bridgeClient.updateSettings(mutation)
+            let client = await bridgeClient()
+            settings = try await client.updateSettings(mutation)
             settingsConflictMessage = nil
             return true
         } catch {
             let message = error.localizedDescription
             if message.contains("REVISION_CONFLICT") {
                 settingsConflictMessage =
-                    "다른 화면에서 설정이 변경되었습니다. 최신 값을 불러왔으니 내용을 확인한 뒤 다시 저장해 주세요."
+                    "다른 화면에서 설정이 변경되었습니다. 편집 중인 값은 유지했습니다. 필요한 내용을 확인하거나 복사한 뒤 최신 값으로 되돌려 다시 적용해 주세요."
                 await refreshSettings()
             }
             settingsErrorMessage = message
@@ -651,7 +761,7 @@ final class AppModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 await self.refreshStatus()
                 ticks += 1
-                if self.authStatus?.authenticated != true || ticks.isMultiple(of: 3) {
+                if ticks.isMultiple(of: 6) {
                     await self.refreshAuthStatus()
                 }
                 if ticks.isMultiple(of: 3) {

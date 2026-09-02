@@ -17,7 +17,7 @@ Requirements:
 
 ```bash
 npm run build
-swift test --package-path macos
+npm run macos:check
 swift run --package-path macos CodexBridgeMenuBar
 ```
 
@@ -64,6 +64,17 @@ inherit `OPENAI_API_KEY` or `CODEX_API_KEY` merely because an older dotenv or
 parent process contains one.
 The menu status cannot report healthy while login is missing, and login status
 continues to refresh after the browser flow starts.
+
+Graceful stop and replacement wait for Jobs, then refuse to proceed if known
+background processes remain or their state cannot be verified. Force actions
+perform a fresh impact check and show active/background counts before the user
+confirms. If LaunchAgent replacement fails after changing its plist, the prior
+definition and service are restored.
+
+The Settings window polls the shared revision while visible. Untouched values
+follow changes from the retained Settings card; locally edited drafts are kept
+until save or an explicitly confirmed reload. Runtime discovery runs away from
+the menu-bar UI thread.
 
 ## Build an app bundle
 

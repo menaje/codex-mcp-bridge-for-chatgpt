@@ -134,11 +134,19 @@ describe("native companion server", () => {
       jsonrpc: "2.0",
       id: "drain-1",
       method: "runtime.beginDrain",
-      params: {}
+      params: { inspectBackgroundProcesses: true }
     });
-    expect(applicationService.beginDrain).toHaveBeenCalledOnce();
+    expect(applicationService.beginDrain).toHaveBeenCalledWith({
+      inspectBackgroundProcesses: true
+    });
     expect(begin).toMatchObject({
-      result: { acceptingNewJobs: false, activeJobs: 2, pendingAdmissions: 0 }
+      result: {
+        acceptingNewJobs: false,
+        activeJobs: 2,
+        pendingAdmissions: 0,
+        backgroundProcessState: "confirmed",
+        backgroundProcesses: 1
+      }
     });
 
     await request(socketPath, {
@@ -178,20 +186,32 @@ function fakeApplicationService(): BridgeApplicationService {
     updateSettings: vi.fn(async () => ({
       settings: { settingsRevision: 3 }
     }) as SettingsView),
-    runtimeSnapshot: vi.fn(() => ({
+    runtimeSnapshot: vi.fn(async () => ({
       acceptingNewJobs: true,
       activeJobs: 2,
-      pendingAdmissions: 0
+      pendingAdmissions: 0,
+      backgroundProcessState: "confirmed" as const,
+      backgroundProcesses: 1,
+      backgroundProcessAgents: 1,
+      backgroundProcessUnknownAgents: 0
     })),
-    beginDrain: vi.fn(() => ({
+    beginDrain: vi.fn(async () => ({
       acceptingNewJobs: false,
       activeJobs: 2,
-      pendingAdmissions: 0
+      pendingAdmissions: 0,
+      backgroundProcessState: "confirmed" as const,
+      backgroundProcesses: 1,
+      backgroundProcessAgents: 1,
+      backgroundProcessUnknownAgents: 0
     })),
-    cancelDrain: vi.fn(() => ({
+    cancelDrain: vi.fn(async () => ({
       acceptingNewJobs: true,
       activeJobs: 2,
-      pendingAdmissions: 0
+      pendingAdmissions: 0,
+      backgroundProcessState: "confirmed" as const,
+      backgroundProcesses: 1,
+      backgroundProcessAgents: 1,
+      backgroundProcessUnknownAgents: 0
     }))
   };
 }

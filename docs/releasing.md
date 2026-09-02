@@ -213,8 +213,10 @@ recorded for the release candidate:
 - the bundled runtime starts through its per-user LaunchAgent and exposes only
   private `0700`/`0600` Unix socket paths;
 - an existing private dotenv, SQLite state, Settings, and project registry are
-  reused without mutation or credential-store prompts, while a legacy Tunnel
-  profile is left untouched and the dedicated app profile is reused exactly;
+  reused without mutation, while a legacy Tunnel profile is left untouched and
+  the dedicated app profile is reused exactly; the Tunnel path causes no
+  operating-system credential-store prompt, and the configured Codex store is tested
+  separately;
 - first-run save, Tunnel profile repair, graceful drain, forced stop, crash
   backoff/safe mode, helper-crash runtime adoption, and app-only quit are
   exercised without secret-bearing logs, duplicate runtimes, or unexpected Job
@@ -226,8 +228,13 @@ recorded for the release candidate:
   physical Mac;
 - the supported Apple Silicon/Intel matrix and any bundled native artifacts are
   recorded;
-- Developer ID signing, notarization, installer/update behavior, rollback, and
-  LaunchAgent replacement semantics are documented and tested.
+- Developer ID signing, notarization, and installer/update rollback behavior are
+  documented and tested; transactional LaunchAgent replacement remains covered
+  by the automated suite.
+- installer removal unloads and removes the per-user helper LaunchAgent without
+  deleting the private dotenv, SQLite state, project registry, or Codex login;
+- the release records whether the menu-bar UI itself opens at login separately
+  from the helper's existing `RunAtLoad` server behavior.
 
 The current `macos/build-app.sh` output is host-architecture and ad-hoc signed.
 It is suitable for local development validation, not a published binary.

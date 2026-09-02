@@ -39,24 +39,24 @@ struct DashboardPopoverView: View {
             }
         }
         .confirmationDialog(
-            "실행 중인 작업을 중단하고 서버를 강제 종료할까요?",
+            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 종료할까요?",
             isPresented: $showForceStopConfirmation
         ) {
             Button("강제 종료", role: .destructive) {
                 Task { await model.stopRuntime(force: true) }
             }
         } message: {
-            Text("파일 변경은 되돌아가지 않으며, 활성 작업 \(activeJobCount)개가 중단될 수 있습니다.")
+            Text(forceImpactMessage(restarting: false))
         }
         .confirmationDialog(
-            "실행 중인 작업을 중단하고 서버를 강제 재시작할까요?",
+            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 재시작할까요?",
             isPresented: $showForceRestartConfirmation
         ) {
             Button("강제 재시작", role: .destructive) {
                 Task { await model.restartRuntime(force: true) }
             }
         } message: {
-            Text("활성 작업 \(activeJobCount)개가 중단될 수 있으며, 작업을 자동으로 다시 실행하지 않습니다.")
+            Text(forceImpactMessage(restarting: true))
         }
         .confirmationDialog(
             "Secure MCP Tunnel 프로필을 다시 만들까요?",
@@ -181,6 +181,12 @@ struct DashboardPopoverView: View {
                     .foregroundStyle(.orange)
                     .textSelection(.enabled)
                 }
+                if let error = model.runtimeErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
                 if model.helperStatus?.tunnel.connected != true {
                     Label(
                         model.helperStatus?.tunnel.lastError ?? "Secure MCP Tunnel 연결을 확인하고 있습니다.",
@@ -264,7 +270,10 @@ struct DashboardPopoverView: View {
                     Task { await model.restartRuntime(force: false) }
                 }
                 Button("강제 재시작…", role: .destructive) {
-                    showForceRestartConfirmation = true
+                    Task {
+                        await model.refreshRuntimeImpact()
+                        showForceRestartConfirmation = true
+                    }
                 }
                 Divider()
                 Button("연결 정보 및 로그인…") {
@@ -278,7 +287,10 @@ struct DashboardPopoverView: View {
                     Task { await model.stopRuntime(force: false) }
                 }
                 Button("강제 중지…", role: .destructive) {
-                    showForceStopConfirmation = true
+                    Task {
+                        await model.refreshRuntimeImpact()
+                        showForceStopConfirmation = true
+                    }
                 }
             } label: {
                 Label("서버", systemImage: "server.rack")
@@ -301,10 +313,43 @@ struct DashboardPopoverView: View {
     }
 
     private var activeJobCount: Int {
+        if let runtimeImpact = model.runtimeImpact {
+            return runtimeImpact.activeJobs + runtimeImpact.pendingAdmissions
+        }
         if let bridge = model.helperStatus?.bridge {
             return (bridge.activeJobs ?? 0) + (bridge.pendingAdmissions ?? 0)
         }
         return model.dashboard?.counts.active ?? 0
+    }
+
+    private var backgroundProcessCount: Int {
+        if let runtimeImpact = model.runtimeImpact {
+            return runtimeImpact.backgroundProcesses
+        }
+        if model.helperStatus?.bridge.backgroundProcessState == "confirmed",
+           let count = model.helperStatus?.bridge.backgroundProcesses {
+            return count
+        }
+        return model.dashboard?.counts.backgroundProcesses ?? 0
+    }
+
+    private var backgroundProcessUnknownAgents: Int {
+        model.runtimeImpact?.backgroundProcessUnknownAgents ??
+            model.helperStatus?.bridge.backgroundProcessUnknownAgents ?? 0
+    }
+
+    private func forceImpactMessage(restarting: Bool) -> String {
+        var message = "활성 작업 \(activeJobCount)개와 백그라운드 프로세스 \(backgroundProcessCount)개가 중단될 수 있습니다. 파일 변경은 되돌아가지 않습니다."
+        if backgroundProcessUnknownAgents > 0 {
+            message += " 또한 \(backgroundProcessUnknownAgents)개 Agent의 백그라운드 상태를 확인하지 못했습니다."
+        }
+        if model.runtimeImpactErrorMessage != nil {
+            message += " 최신 백그라운드 영향 범위를 확인하지 못했으므로 표시된 수보다 영향이 클 수 있습니다."
+        }
+        if restarting {
+            message += " 중단된 작업은 자동으로 다시 실행하지 않습니다."
+        }
+        return message
     }
 }
 

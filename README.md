@@ -229,6 +229,10 @@ system credential store. Codex authentication remains the existing `codex login`
 explicit API-key execution mode described by issue #29 is not selected or
 enabled automatically, and app-managed Codex children do not inherit legacy
 API-key environment variables.
+Graceful stop/restart also verifies retained App Server background processes;
+unknown or nonzero impact requires the separately confirmed force action. The
+native Settings window follows card-side revisions while visible without
+overwriting a locally edited draft.
 
 Build and verify the current host-architecture development app with:
 

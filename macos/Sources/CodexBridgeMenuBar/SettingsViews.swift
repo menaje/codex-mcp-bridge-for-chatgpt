@@ -4,21 +4,42 @@ import SwiftUI
 
 struct NativeSettingsView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var draft: SettingsDraft?
-    @State private var loadedRevision = -1
+    @State private var syncState = SettingsDraftSyncState()
+    @State private var showDiscardDraftConfirmation = false
 
     var body: some View {
         Group {
             if model.needsSetup {
                 ConnectionRepairView()
-            } else if let snapshot = model.settings, let draft {
-                TabView {
-                    GeneralSettingsPane(snapshot: snapshot, draft: binding(for: draft))
-                        .environmentObject(model)
-                        .tabItem { Label("일반", systemImage: "gearshape") }
-                    ProjectsSettingsPane(snapshot: snapshot)
-                        .environmentObject(model)
-                        .tabItem { Label("프로젝트", systemImage: "folder") }
+            } else if let snapshot = model.settings, let draft = syncState.draft {
+                VStack(spacing: 10) {
+                    if syncState.externalChangeDetected {
+                        HStack(spacing: 10) {
+                            Label(
+                                "다른 화면의 변경을 확인했습니다. 편집 내용은 유지했지만 저장 전 최신 값을 다시 불러와야 합니다.",
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            Spacer()
+                            Button("최신 값 불러오기…") {
+                                showDiscardDraftConfirmation = true
+                            }
+                        }
+                    }
+                    TabView {
+                        GeneralSettingsPane(
+                            snapshot: snapshot,
+                            draft: binding(for: draft),
+                            saveBlockedByExternalChange: syncState.externalChangeDetected,
+                            didPersist: { synchronizeDraft(force: true) }
+                        )
+                            .environmentObject(model)
+                            .tabItem { Label("일반", systemImage: "gearshape") }
+                        ProjectsSettingsPane(snapshot: snapshot)
+                            .environmentObject(model)
+                            .tabItem { Label("프로젝트", systemImage: "folder") }
+                    }
                 }
                 .padding(18)
             } else if model.helperStatus?.bridge.connected != true {
@@ -62,18 +83,26 @@ struct NativeSettingsView: View {
         } message: {
             Text(model.settingsConflictMessage ?? "")
         }
+        .confirmationDialog(
+            "현재 편집 내용을 버리고 최신 설정을 불러올까요?",
+            isPresented: $showDiscardDraftConfirmation
+        ) {
+            Button("편집 내용 버리기", role: .destructive) {
+                synchronizeDraft(force: true)
+            }
+        }
     }
 
-    private func synchronizeDraft() {
+    private func synchronizeDraft(force: Bool = false) {
         guard let snapshot = model.settings else { return }
-        let revision = snapshot.settings.settingsRevision
-        guard loadedRevision != revision else { return }
-        draft = SettingsDraft(snapshot: snapshot)
-        loadedRevision = revision
+        syncState.synchronize(with: snapshot, force: force)
     }
 
     private func binding(for value: SettingsDraft) -> Binding<SettingsDraft> {
-        Binding(get: { draft ?? value }, set: { draft = $0 })
+        Binding(
+            get: { syncState.draft ?? value },
+            set: { syncState.updateDraft($0) }
+        )
     }
 }
 
@@ -81,6 +110,8 @@ private struct GeneralSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
     @Binding var draft: SettingsDraft
+    let saveBlockedByExternalChange: Bool
+    let didPersist: () -> Void
     @State private var showResetConfirmation = false
 
     private var choices: [ModelChoice] {
@@ -291,10 +322,12 @@ private struct GeneralSettingsPane: View {
                     Spacer()
                     if model.isBusy { ProgressView().controlSize(.small) }
                     Button("변경사항 저장") {
-                        Task { await model.saveSettings(draft) }
+                        Task {
+                            if await model.saveSettings(draft) { didPersist() }
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy)
+                    .disabled(model.isBusy || saveBlockedByExternalChange)
                 }
             } footer: {
                 Text("프로젝트 registry는 일반 설정 초기화에 포함되지 않습니다. 설정은 기존 ChatGPT 카드와 즉시 공유됩니다.")
@@ -303,7 +336,9 @@ private struct GeneralSettingsPane: View {
         .formStyle(.grouped)
         .confirmationDialog("일반 설정을 운영자 기본값으로 되돌릴까요?", isPresented: $showResetConfirmation) {
             Button("일반 설정 초기화", role: .destructive) {
-                Task { await model.resetGeneralSettings() }
+                Task {
+                    if await model.resetGeneralSettings() { didPersist() }
+                }
             }
         } message: {
             Text("등록된 프로젝트는 유지됩니다.")

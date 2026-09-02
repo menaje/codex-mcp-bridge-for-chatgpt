@@ -29,9 +29,20 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
 
 public actor HelperBootstrap {
     public static let launchAgentLabel = "com.menaje.codex-mcp-bridge.helper"
+    typealias LaunchctlResult = (status: Int32, output: String)
+    typealias LaunchctlRunner = @Sendable ([String]) async -> LaunchctlResult
     private var developmentProcess: Process?
+    private let launchctlRunner: LaunchctlRunner
 
-    public init() {}
+    public init() {
+        launchctlRunner = { arguments in
+            await Self.runSystemLaunchctl(arguments)
+        }
+    }
+
+    init(launchctlRunner: @escaping LaunchctlRunner) {
+        self.launchctlRunner = launchctlRunner
+    }
 
     public func ensureRunning(paths: RuntimePaths) async throws {
         let client = MacOSHelperClient(socketPath: paths.helperSocket.path)
@@ -64,6 +75,7 @@ public actor HelperBootstrap {
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
                 runtimeLockDirectory: paths.runtimeLockDirectory,
+                runtimeBuildID: runtimeBuildID,
                 forceRestart: !currentIsCompatible,
                 client: client,
                 helperIsReachable: helperIsReachable
@@ -132,6 +144,7 @@ public actor HelperBootstrap {
         helperSocket: URL,
         bridgeSocket: URL,
         runtimeLockDirectory: URL,
+        runtimeBuildID: String,
         forceRestart: Bool,
         client: MacOSHelperClient,
         helperIsReachable: Bool
@@ -159,6 +172,7 @@ public actor HelperBootstrap {
             "KeepAlive": true,
             "ProcessType": "Background",
             "ThrottleInterval": 10,
+            "ExitTimeOut": 45,
             "StandardOutPath": "/dev/null",
             "StandardErrorPath": "/dev/null",
             "EnvironmentVariables": Self.launchAgentEnvironment(
@@ -171,10 +185,27 @@ public actor HelperBootstrap {
             format: .xml,
             options: 0
         )
-        let previous = try? Data(contentsOf: plistURL)
+        let previous: Data?
+        if FileManager.default.fileExists(atPath: plistURL.path) {
+            let attributes = try FileManager.default.attributesOfItem(atPath: plistURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+                throw HelperBootstrapError.launchFailed(
+                    "기존 LaunchAgent plist가 일반 파일이 아닙니다: \(plistURL.path)"
+                )
+            }
+            previous = try Data(contentsOf: plistURL)
+        } else {
+            previous = nil
+        }
         let domain = "gui/\(getuid())"
         let service = "\(domain)/\(Self.launchAgentLabel)"
-        let loaded = await launchctl(["print", service]).status == 0
+        let serviceState = await launchctl(["print", service])
+        if serviceState.status != 0 && !isMissingService(serviceState) {
+            throw HelperBootstrapError.launchFailed(
+                launchctlFailure("print", serviceState.output)
+            )
+        }
+        let loaded = serviceState.status == 0
         let needsRestart = previous != data || forceRestart
         if loaded && needsRestart && !helperIsReachable &&
             FileManager.default.fileExists(atPath: runtimeLockDirectory.path) {
@@ -189,29 +220,155 @@ public actor HelperBootstrap {
                 throw HelperBootstrapError.replacementBlocked(error.localizedDescription)
             }
         }
-        if previous != data {
-            do {
-                try data.write(to: plistURL, options: .atomic)
-            } catch {
-                if loaded && needsRestart && helperIsReachable {
-                    _ = try? await client.startRuntime()
+        do {
+            try await replaceLaunchAgentDefinition(
+                data: data,
+                previous: previous,
+                plistURL: plistURL,
+                domain: domain,
+                service: service,
+                loaded: loaded,
+                needsRestart: needsRestart,
+                verifyReady: {
+                    for _ in 0..<40 {
+                        if let hello = try? await client.hello(),
+                           Self.isCompatible(hello, runtimeBuildID: runtimeBuildID) {
+                            return true
+                        }
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                    return false
                 }
-                throw error
+            )
+        } catch {
+            if loaded && needsRestart && helperIsReachable {
+                _ = try? await client.startRuntime()
+            }
+            throw error
+        }
+    }
+
+    func replaceLaunchAgentDefinition(
+        data: Data,
+        previous: Data?,
+        plistURL: URL,
+        domain: String,
+        service: String,
+        loaded: Bool,
+        needsRestart: Bool,
+        verifyReady: (@Sendable () async -> Bool)? = nil
+    ) async throws {
+        var definitionChanged = false
+        var oldServiceBootedOut = false
+        var replacementServiceMayBeLoaded = false
+        do {
+            if previous != data {
+                try data.write(to: plistURL, options: .atomic)
+                definitionChanged = true
+            }
+            if loaded && needsRestart {
+                let bootout = await launchctl(["bootout", service])
+                guard bootout.status == 0 else {
+                    throw HelperBootstrapError.launchFailed(
+                        launchctlFailure("bootout", bootout.output)
+                    )
+                }
+                oldServiceBootedOut = true
+            }
+            if !loaded || needsRestart {
+                replacementServiceMayBeLoaded = true
+                let bootstrap = await launchctl(["bootstrap", domain, plistURL.path])
+                guard bootstrap.status == 0 ||
+                        bootstrap.output.localizedCaseInsensitiveContains("already") else {
+                    throw HelperBootstrapError.launchFailed(
+                        launchctlFailure("bootstrap", bootstrap.output)
+                    )
+                }
+            }
+            let kickstart = await launchctl(["kickstart", service])
+            guard kickstart.status == 0 else {
+                throw HelperBootstrapError.launchFailed(
+                    launchctlFailure("kickstart", kickstart.output)
+                )
+            }
+            if let verifyReady, !(await verifyReady()) {
+                throw HelperBootstrapError.readinessTimeout
+            }
+        } catch {
+            let recoveryFailure = await rollbackLaunchAgentDefinition(
+                previous: previous,
+                plistURL: plistURL,
+                domain: domain,
+                service: service,
+                restoreLoadedService: loaded && oldServiceBootedOut,
+                unloadReplacement: replacementServiceMayBeLoaded,
+                restoreDefinition: definitionChanged
+            )
+            guard let recoveryFailure else { throw error }
+            throw HelperBootstrapError.launchFailed(
+                "\(error.localizedDescription) 이전 helper 복구에도 실패했습니다: \(recoveryFailure)"
+            )
+        }
+    }
+
+    private func rollbackLaunchAgentDefinition(
+        previous: Data?,
+        plistURL: URL,
+        domain: String,
+        service: String,
+        restoreLoadedService: Bool,
+        unloadReplacement: Bool,
+        restoreDefinition: Bool
+    ) async -> String? {
+        var failures: [String] = []
+        if unloadReplacement {
+            let bootout = await launchctl(["bootout", service])
+            if bootout.status != 0 &&
+                !bootout.output.localizedCaseInsensitiveContains("not found") &&
+                !bootout.output.localizedCaseInsensitiveContains("no such") {
+                failures.append(launchctlFailure("replacement bootout", bootout.output))
             }
         }
-        if loaded && needsRestart {
-            _ = await launchctl(["bootout", service])
+        if restoreDefinition {
+            do {
+                if let previous {
+                    try previous.write(to: plistURL, options: .atomic)
+                } else if FileManager.default.fileExists(atPath: plistURL.path) {
+                    try FileManager.default.removeItem(at: plistURL)
+                }
+            } catch {
+                failures.append("plist restore: \(error.localizedDescription)")
+            }
         }
-        if !loaded || needsRestart {
+        if restoreLoadedService {
+            guard previous != nil else {
+                failures.append("previous LaunchAgent definition is unavailable")
+                return failures.joined(separator: "; ")
+            }
             let bootstrap = await launchctl(["bootstrap", domain, plistURL.path])
-            if bootstrap.status != 0 && !bootstrap.output.localizedCaseInsensitiveContains("already") {
-                throw HelperBootstrapError.launchFailed(bootstrap.output)
+            if bootstrap.status != 0 &&
+                !bootstrap.output.localizedCaseInsensitiveContains("already") {
+                failures.append(launchctlFailure("previous bootstrap", bootstrap.output))
+            } else {
+                let kickstart = await launchctl(["kickstart", service])
+                if kickstart.status != 0 {
+                    failures.append(launchctlFailure("previous kickstart", kickstart.output))
+                }
             }
         }
-        let kickstart = await launchctl(["kickstart", service])
-        if kickstart.status != 0 {
-            throw HelperBootstrapError.launchFailed(kickstart.output)
-        }
+        return failures.isEmpty ? nil : failures.joined(separator: "; ")
+    }
+
+    private func launchctlFailure(_ operation: String, _ output: String) -> String {
+        let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty ? "launchctl \(operation) failed" : "launchctl \(operation): \(detail)"
+    }
+
+    private func isMissingService(_ result: LaunchctlResult) -> Bool {
+        result.status == 113 ||
+            result.output.localizedCaseInsensitiveContains("could not find service") ||
+            result.output.localizedCaseInsensitiveContains("not found") ||
+            result.output.localizedCaseInsensitiveContains("no such")
     }
 
     static func isCompatible(_ hello: HelperHello, runtimeBuildID: String) -> Bool {
@@ -264,6 +421,10 @@ public actor HelperBootstrap {
     }
 
     private func launchctl(_ arguments: [String]) async -> (status: Int32, output: String) {
+        await launchctlRunner(arguments)
+    }
+
+    private static func runSystemLaunchctl(_ arguments: [String]) async -> LaunchctlResult {
         await Task.detached(priority: .utility) {
             let process = Process()
             let pipe = Pipe()

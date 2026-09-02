@@ -25,8 +25,10 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
+    private weak var model: AppModel?
 
     func show(model: AppModel) {
+        self.model = model
         if window == nil {
             let settingsWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
@@ -48,11 +50,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        model.setSettingsWindowVisible(true)
         Task {
             if model.helperStatus == nil { await model.start() }
             await model.refreshStatus()
             await model.refreshSettings()
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        model?.setSettingsWindowVisible(false)
     }
 }
 
