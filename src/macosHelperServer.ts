@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -16,6 +16,7 @@ import {
   inspectRuntimeEnvFile,
   prepareRuntimeEnvUpdate,
   readRuntimeEnvSubset,
+  repairRuntimeEnvPermissions,
   rollbackRuntimeEnvUpdate,
   type PreparedRuntimeEnvUpdate,
   type RuntimeEnvStatus
@@ -26,6 +27,12 @@ import {
   type ManagedTunnelStatus
 } from "../scripts/runtime-status.mjs";
 import {
+  defaultRuntimeLockDirectory,
+  readRuntimeLockOwner
+} from "../scripts/runtime-lock.mjs";
+import {
+  COMPANION_PROTOCOL_NAME,
+  COMPANION_PROTOCOL_VERSION,
   startPrivateJsonLineServer,
   type BridgeCompanionServer
 } from "./companionServer.js";
@@ -43,6 +50,7 @@ const MAX_DRAIN_TIMEOUT_MS = 5 * 60_000;
 const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
+const MACOS_MANAGED_TUNNEL_PROFILE = "codex-mcp-bridge-macos";
 
 const requestIdSchema = z.union([
   z.string().min(1).max(128),
@@ -55,6 +63,7 @@ const helperRequestSchema = z.strictObject({
     "helper.hello",
     "helper.status",
     "setup.apply",
+    "setup.repair-permissions",
     "auth.status",
     "auth.login",
     "runtime.start",
@@ -81,6 +90,15 @@ const stopParamsSchema = z.strictObject({
 const restartParamsSchema = stopParamsSchema;
 const logsParamsSchema = z.strictObject({
   limit: z.number().int().min(1).max(HELPER_LOG_LIMIT).default(100)
+});
+const companionHelloSchema = z.object({
+  protocol: z.object({
+    name: z.string(),
+    version: z.number().int()
+  }),
+  bridge: z.object({
+    buildId: z.string()
+  })
 });
 
 export type MacOSRuntimePhase =
@@ -146,6 +164,7 @@ export type MacOSHelperController = {
     restarted: boolean;
     rolledBack: false;
   }>;
+  repairConfigurationPermissions(): Promise<RuntimeEnvStatus>;
   authStatus(): Promise<CodexLoginStatus>;
   startLogin(): Promise<{ started: true }>;
   start(): Promise<MacOSHelperStatus>;
@@ -161,6 +180,7 @@ export type MacOSBridgeSupervisorOptions = {
   bridgeSocketPath: string;
   launcherPath?: string;
   runtimeStatusFile?: string;
+  runtimeLockDirectory?: string;
   profileRebuildMarker?: string;
   registeredProjectRoots?: () => string[] | Promise<string[]>;
   autoRestart?: boolean;
@@ -173,11 +193,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private readonly bridgeSocketPath: string;
   private readonly launcherPath: string;
   private readonly runtimeStatusFile: string;
+  private readonly runtimeLockDirectory: string;
+  private readonly legacyRuntimeLockDirectory: string;
   private readonly profileRebuildMarker: string;
   private readonly registeredProjectRoots: () => string[] | Promise<string[]>;
+  private readonly permissionRepairProjectRoots: () => string[] | Promise<string[]>;
   private readonly autoRestart: boolean;
   private readonly startTimeoutMs: number;
   private child: ChildProcess | undefined;
+  private managedPid: number | undefined;
   private phase: MacOSRuntimePhase = "stopped";
   private startedAt: string | null = null;
   private lastExit: MacOSHelperStatus["lastExit"] = null;
@@ -201,30 +225,42 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.runtimeStatusFile = path.resolve(
       options.runtimeStatusFile || path.join(runDirectory, "launcher-status.json")
     );
+    this.runtimeLockDirectory = path.resolve(
+      options.runtimeLockDirectory || defaultRuntimeLockDirectory()
+    );
+    this.legacyRuntimeLockDirectory = path.resolve(
+      path.dirname(this.envFile),
+      "run",
+      "launcher.lock"
+    );
     this.profileRebuildMarker = path.resolve(
       options.profileRebuildMarker || path.join(path.dirname(this.envFile), "profile-rebuild-required")
     );
     this.registeredProjectRoots = options.registeredProjectRoots || (() =>
       readRegisteredProjectRoots(this.envFile)
     );
+    this.permissionRepairProjectRoots = options.registeredProjectRoots || (() =>
+      readRegisteredProjectRoots(this.envFile, { allowBroadReadOnlyPermissions: true })
+    );
     this.autoRestart = options.autoRestart !== false;
     this.startTimeoutMs = options.startTimeoutMs || DEFAULT_START_TIMEOUT_MS;
   }
 
   async snapshot(): Promise<MacOSHelperStatus> {
+    this.reconcileManagedRuntime();
     const bridgeAdmission = await readBridgeAdmission(this.bridgeSocketPath);
     const configuration = await this.configurationStatus();
     const managedRuntime = readManagedRuntimeStatus(this.runtimeStatusFile);
     const tunnel = normalizeTunnelStatus(
       managedRuntime,
-      this.child?.pid || null,
+      this.managedPid || null,
       BRIDGE_BUILD_INFO.id
     );
     return {
       kind: "helper-status",
       generatedAt: new Date().toISOString(),
       phase: this.phase,
-      pid: this.child?.pid || null,
+      pid: this.managedPid || null,
       startedAt: this.startedAt,
       lastExit: this.lastExit,
       lastError: this.lastError,
@@ -254,8 +290,12 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }> {
     return this.exclusive(async () => {
       await this.assertEnvironmentLocation();
+      this.reconcileManagedRuntime();
+      if (!this.isManagedRuntimeRunning()) {
+        await this.adoptExistingRuntime();
+      }
       const prepared = prepareRuntimeEnvUpdate(this.envFile, values);
-      const wasRunning = isChildRunning(this.child);
+      const wasRunning = this.isManagedRuntimeRunning();
       if (!prepared.changed) {
         const status = wasRunning
           ? await this.snapshot()
@@ -357,14 +397,25 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
   }
 
+  repairConfigurationPermissions(): Promise<RuntimeEnvStatus> {
+    return this.exclusive(async () => {
+      const projectRoots = await this.permissionRepairProjectRoots();
+      assertRuntimeEnvOutsideProjectRoots(this.envFile, projectRoots);
+      const status = repairRuntimeEnvPermissions(this.envFile);
+      this.appendLog("helper", "Restricted runtime dotenv permissions to the current user.");
+      return status;
+    });
+  }
+
   async authStatus(): Promise<CodexLoginStatus> {
     const environment = commandEnvironment(this.envFile);
-    const result = spawnSync(resolveCommand("codex", environment), ["login", "status"], {
-      encoding: "utf8",
-      env: environment,
-      timeout: 15_000
-    });
-    if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") {
+    const result = await runCommandStatus(
+      resolveCommand("codex", environment),
+      ["login", "status"],
+      environment,
+      15_000
+    );
+    if (!result.installed) {
       return {
         installed: false,
         authenticated: false,
@@ -372,9 +423,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       };
     }
     return {
-      installed: !result.error,
-      authenticated: result.status === 0,
-      summary: result.status === 0
+      installed: true,
+      authenticated: result.exitCode === 0,
+      summary: result.exitCode === 0
         ? "Codex login is available."
         : "Codex login is required."
     };
@@ -441,7 +492,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
-    if (isChildRunning(this.child)) return this.snapshot();
+    this.reconcileManagedRuntime();
+    if (this.isManagedRuntimeRunning()) return this.snapshot();
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
@@ -454,6 +506,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.unexpectedExits = [];
       this.restartAttempt = 0;
     }
+    if (await this.adoptExistingRuntime()) return this.snapshot();
+
     await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
     if (!configuration.valid) {
@@ -480,7 +534,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.envFile,
       "--require-built",
       "--runtime-status-file",
-      this.runtimeStatusFile
+      this.runtimeStatusFile,
+      "--runtime-lock-directory",
+      this.runtimeLockDirectory,
+      "--profile",
+      MACOS_MANAGED_TUNNEL_PROFILE
     ];
     if (!existsSync(this.profileRebuildMarker)) launcherArguments.push("--reuse-profile");
     const child = spawn(process.execPath, launcherArguments, {
@@ -490,6 +548,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       stdio: ["ignore", "pipe", "pipe"]
     });
     this.child = child;
+    this.managedPid = child.pid;
     this.startedAt = new Date().toISOString();
     child.stdout?.on("data", (chunk: Buffer) => this.captureRuntimeOutput(chunk));
     child.stderr?.on("data", (chunk: Buffer) => this.captureRuntimeOutput(chunk));
@@ -511,7 +570,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       if (this.child === child && isChildRunning(child)) {
         this.phase = "running";
         removePrivateMarker(this.profileRebuildMarker);
-        this.scheduleStabilityReset(child);
+        this.scheduleStabilityReset(child.pid);
         this.appendLog("helper", "The bridge companion and Secure MCP Tunnel are ready.");
       }
     } catch (error) {
@@ -527,6 +586,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         }
       }
       if (this.child === child) this.child = undefined;
+      if (this.managedPid === child.pid) this.managedPid = undefined;
       this.phase = "stopped";
       this.startedAt = null;
       throw error;
@@ -546,10 +606,16 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       clearTimeout(this.stabilityTimer);
       this.stabilityTimer = undefined;
     }
+    this.reconcileManagedRuntime();
+    if (!this.isManagedRuntimeRunning()) {
+      await this.adoptExistingRuntime();
+    }
     const child = this.child;
-    if (!isChildRunning(child)) {
+    const managedPid = this.managedPid;
+    if (!managedPid || !processIsAlive(managedPid)) {
       this.phase = "stopped";
       this.child = undefined;
+      this.managedPid = undefined;
       return this.snapshot();
     }
 
@@ -588,8 +654,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
     } catch (error) {
       if (options.mode === "drain") {
-        this.phase = isChildRunning(child) ? "running" : "stopped";
-        this.manualStop = isChildRunning(child) ? false : this.manualStop;
+        const stillRunning = processIsAlive(managedPid);
+        this.phase = stillRunning ? "running" : "stopped";
+        this.manualStop = stillRunning ? false : this.manualStop;
         throw error;
       }
       this.appendLog("helper", `Force stop continuing without a drain acknowledgement: ${safeErrorMessage(error)}`);
@@ -602,25 +669,114 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         ? "Active work drained; stopping the managed runtime."
         : "Force-stopping the managed runtime; active work may be interrupted."
     );
-    child.kill("SIGTERM");
-    const exited = await waitForExit(child, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS);
-    if (!exited && isChildRunning(child)) {
-      killManagedRuntimeGroup(child, "SIGKILL");
-      const killed = await waitForExit(child, 2_000);
-      if (!killed && isChildRunning(child)) {
+    killManagedRuntimePid(managedPid, "SIGTERM");
+    const exited = child && child.pid === managedPid
+      ? await waitForExit(child, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS)
+      : await waitForPidExit(managedPid, MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS);
+    if (!exited && processIsAlive(managedPid)) {
+      killManagedRuntimePid(managedPid, "SIGKILL");
+      const killed = child && child.pid === managedPid
+        ? await waitForExit(child, 2_000)
+        : await waitForPidExit(managedPid, 2_000);
+      if (!killed && processIsAlive(managedPid)) {
         if (drainStarted) {
           await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
         }
         throw new Error("RUNTIME_STOP_FAILED: Managed runtime did not exit after SIGKILL.");
       }
     }
-    if (drainStarted && isChildRunning(child)) {
+    if (drainStarted && processIsAlive(managedPid)) {
       await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
     }
     if (this.child === child) this.child = undefined;
+    if (this.managedPid === managedPid) this.managedPid = undefined;
     this.phase = "stopped";
     this.startedAt = null;
     return this.snapshot();
+  }
+
+  private async adoptExistingRuntime(): Promise<boolean> {
+    const owner = readRuntimeLockOwner(this.runtimeLockDirectory);
+    const legacyOwner = this.legacyRuntimeLockDirectory === this.runtimeLockDirectory
+      ? null
+      : readRuntimeLockOwner(this.legacyRuntimeLockDirectory);
+    if (
+      legacyOwner &&
+      processIsAlive(legacyOwner.pid) &&
+      legacyOwner.pid !== owner?.pid
+    ) {
+      throw new Error(
+        `LEGACY_RUNTIME_DETECTED: Runtime pid ${legacyOwner.pid} is still using the previous alternate-dotenv lock. Stop the previous CLI bridge, then retry.`
+      );
+    }
+    if (!owner) {
+      const legacyCompanion = await readCompanionHello(this.bridgeSocketPath);
+      if (legacyCompanion) {
+        throw new Error(
+          "LEGACY_RUNTIME_DETECTED: A bridge started outside the macOS app is still using the app socket. Stop the previous CLI bridge, then retry."
+        );
+      }
+      return false;
+    }
+    if (!processIsAlive(owner.pid)) return false;
+
+    const runtime = readManagedRuntimeStatus(this.runtimeStatusFile);
+    const companion = await readCompanionHello(this.bridgeSocketPath);
+    const valid = Boolean(
+      runtime &&
+      !runtime.stale &&
+      runtime.launcherPid === owner.pid &&
+      runtime.runtimeBuildId === BRIDGE_BUILD_INFO.id &&
+      runtime.phase === "running" &&
+      runtime.tunnel.profile === MACOS_MANAGED_TUNNEL_PROFILE &&
+      runtime.tunnel.transport === "stdio" &&
+      companion &&
+      companion.protocol.name === COMPANION_PROTOCOL_NAME &&
+      companion.protocol.version === COMPANION_PROTOCOL_VERSION &&
+      companion.bridge.buildId === BRIDGE_BUILD_INFO.id
+    );
+    if (!valid) {
+      throw new Error(
+        `RUNTIME_OWNERSHIP_CONFLICT: Runtime pid ${owner.pid} holds the per-user lock but cannot be safely adopted. Stop the previous bridge process, then retry.`
+      );
+    }
+
+    this.child = undefined;
+    this.managedPid = owner.pid;
+    this.startedAt = owner.startedAt;
+    this.phase = "running";
+    this.manualStop = false;
+    this.lastError = null;
+    this.scheduleStabilityReset(owner.pid);
+    this.appendLog(
+      "helper",
+      `Adopted the existing app-managed runtime after helper recovery (pid ${owner.pid}).`
+    );
+    return true;
+  }
+
+  private isManagedRuntimeRunning(): boolean {
+    return Boolean(this.managedPid && processIsAlive(this.managedPid));
+  }
+
+  private reconcileManagedRuntime(): void {
+    if (!this.managedPid || processIsAlive(this.managedPid)) return;
+    const exitedPid = this.managedPid;
+    this.managedPid = undefined;
+    this.child = undefined;
+    this.startedAt = null;
+    if (this.manualStop || this.phase === "stopped") {
+      this.phase = "stopped";
+      return;
+    }
+    this.lastExit = {
+      at: new Date().toISOString(),
+      code: null,
+      signal: null
+    };
+    this.lastError = `Managed runtime pid ${exitedPid} exited unexpectedly.`;
+    this.appendLog("runtime", this.lastError);
+    this.scheduleAutomaticRestart();
   }
 
   private observeExit(
@@ -634,6 +790,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.stabilityTimer = undefined;
     }
     this.child = undefined;
+    if (this.managedPid === child.pid) this.managedPid = undefined;
     this.startedAt = null;
     this.lastExit = { at: new Date().toISOString(), code, signal };
     this.appendLog("runtime", `Managed runtime exited (${code ?? signal ?? "unknown"}).`);
@@ -676,10 +833,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.restartTimer.unref();
   }
 
-  private scheduleStabilityReset(child: ChildProcess): void {
+  private scheduleStabilityReset(pid: number | undefined): void {
+    if (!pid) return;
     this.stabilityTimer = setTimeout(() => {
       this.stabilityTimer = undefined;
-      if (this.child !== child || !isChildRunning(child) || this.phase !== "running") return;
+      if (this.managedPid !== pid || !processIsAlive(pid) || this.phase !== "running") return;
       this.unexpectedExits = [];
       this.restartAttempt = 0;
       this.appendLog("helper", "Managed runtime remained stable; crash backoff was reset.");
@@ -762,6 +920,7 @@ async function dispatchHelperLine(
             "runtime.repair-profile",
             "runtime.logs.redacted",
             "setup.dotenv.atomic-apply",
+            "setup.dotenv.repair-permissions",
             "auth.codex-browser-login"
           ],
           status: await controller.snapshot()
@@ -773,6 +932,10 @@ async function dispatchHelperLine(
         break;
       case "setup.apply":
         result = await controller.applyConfiguration(setupApplyParamsSchema.parse(request.params || {}));
+        break;
+      case "setup.repair-permissions":
+        emptyParamsSchema.parse(request.params || {});
+        result = await controller.repairConfigurationPermissions();
         break;
       case "auth.status":
         emptyParamsSchema.parse(request.params || {});
@@ -813,6 +976,8 @@ type RuntimeAdmissionSnapshot = {
   pendingAdmissions: number;
 };
 
+type CompanionHello = z.infer<typeof companionHelloSchema>;
+
 function normalizeTunnelStatus(
   runtime: ReturnType<typeof readManagedRuntimeStatus>,
   childPid: number | null,
@@ -833,8 +998,10 @@ function normalizeTunnelStatus(
   if (!runtime) return unavailable;
   const belongsToChild = childPid !== null && runtime.launcherPid === childPid;
   const buildMatches = runtime.runtimeBuildId === expectedBuildId;
-  const current = belongsToChild && buildMatches && !runtime.stale;
   const tunnel = runtime.tunnel as ManagedTunnelStatus;
+  const identityMatches = tunnel.profile === MACOS_MANAGED_TUNNEL_PROFILE &&
+    tunnel.transport === "stdio";
+  const current = belongsToChild && buildMatches && identityMatches && !runtime.stale;
   return {
     phase: current ? tunnel.phase : childPid === null ? "stopped" : "stale",
     profile: tunnel.profile,
@@ -851,7 +1018,9 @@ function normalizeTunnelStatus(
           ? "Tunnel status belongs to a previous launcher process."
           : !buildMatches
             ? "Tunnel status belongs to a different runtime build."
-            : "Tunnel status is stale."
+            : !identityMatches
+              ? "Tunnel status belongs to a different managed profile or transport."
+              : "Tunnel status is stale."
   };
 }
 
@@ -879,6 +1048,21 @@ async function readBridgeAdmission(
       {},
       500
     );
+  } catch {
+    return null;
+  }
+}
+
+async function readCompanionHello(socketPath: string): Promise<CompanionHello | null> {
+  try {
+    const result = await bridgeRequest<unknown>(
+      socketPath,
+      "companion.hello",
+      {},
+      1_000
+    );
+    const parsed = companionHelloSchema.safeParse(result);
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
@@ -916,6 +1100,7 @@ function bridgeRequest<T = unknown>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
+    const requestId = `helper-${process.pid}-${Date.now()}-${++bridgeRequestSequence}`;
     let buffer = "";
     const timer = setTimeout(() => finish(new Error("Bridge companion request timed out.")), timeoutMs);
     const finish = (error?: Error, value?: T) => {
@@ -928,7 +1113,7 @@ function bridgeRequest<T = unknown>(
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         jsonrpc: "2.0",
-        id: `helper-${Date.now()}`,
+        id: requestId,
         method,
         params
       })}\n`);
@@ -943,10 +1128,14 @@ function bridgeRequest<T = unknown>(
       if (newline < 0) return;
       try {
         const response = JSON.parse(buffer.slice(0, newline)) as {
+          jsonrpc?: unknown;
+          id?: unknown;
           result?: T;
           error?: { message?: string };
         };
-        if (response.error) finish(new Error(response.error.message || "Bridge companion request failed."));
+        if (response.jsonrpc !== "2.0" || response.id !== requestId) {
+          finish(new Error("Bridge companion response identity did not match the request."));
+        } else if (response.error) finish(new Error(response.error.message || "Bridge companion request failed."));
         else finish(undefined, response.result);
       } catch (error) {
         finish(error instanceof Error ? error : new Error(String(error)));
@@ -955,6 +1144,8 @@ function bridgeRequest<T = unknown>(
     socket.once("error", (error) => finish(error));
   });
 }
+
+let bridgeRequestSequence = 0;
 
 function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   if (!isChildRunning(child)) return Promise.resolve(true);
@@ -971,8 +1162,41 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (processIsAlive(pid) && Date.now() < deadline) {
+    await delay(100);
+  }
+  return !processIsAlive(pid);
+}
+
 function isChildRunning(child: ChildProcess | undefined): child is ChildProcess {
   return Boolean(child && child.exitCode === null && child.signalCode === null);
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function killManagedRuntimePid(pid: number, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
 }
 
 function killManagedRuntimeGroup(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -1034,7 +1258,9 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
     "LC_CTYPE",
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
-    "CODEX_HOME"
+    "CODEX_HOME",
+    "CODEX_MCP_BRIDGE_CODEX",
+    "CODEX_GPT_BRIDGE_CODEX"
   ];
   const environment: NodeJS.ProcessEnv = {};
   for (const name of names) {
@@ -1077,13 +1303,59 @@ function resolveCommand(command: string, environment: NodeJS.ProcessEnv): string
     : command;
 }
 
-function readRegisteredProjectRoots(envFile: string): string[] {
+function runCommandStatus(
+  command: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  timeoutMs: number
+): Promise<{ installed: boolean; exitCode: number | null }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: environment,
+      stdio: "ignore"
+    });
+    let settled = false;
+    const finish = (result: { installed: boolean; exitCode: number | null }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The timeout result is authoritative even if the process exited in
+        // the narrow window before the signal was delivered.
+      }
+      if (settled) return;
+      settled = true;
+      reject(new Error("Codex login status check timed out."));
+    }, timeoutMs);
+    timer.unref();
+    child.once("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        finish({ installed: false, exitCode: null });
+      } else if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+    child.once("exit", (code) => finish({ installed: true, exitCode: code }));
+  });
+}
+
+function readRegisteredProjectRoots(
+  envFile: string,
+  options: { allowBroadReadOnlyPermissions?: boolean } = {}
+): string[] {
   const fileValues = readRuntimeEnvSubset(envFile, [
     "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE",
     "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE",
     "CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE",
     "CODEX_GPT_BRIDGE_SETTINGS_STATE_FILE"
-  ]);
+  ], options);
   const stateDatabaseFile = configuredRuntimePath(
     fileValues,
     "STATE_DATABASE_FILE",
@@ -1182,6 +1454,15 @@ function redactRuntimeText(value: string): string {
   return value
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED_API_KEY]")
     .replace(/tunnel_[A-Za-z0-9_-]{8,}/g, "[REDACTED_TUNNEL_ID]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=\-]{8,}/gi, "$1 [REDACTED]")
+    .replace(
+      /(["'])(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)\1\s*:\s*(["'])[^"'\r\n]*\3/gi,
+      '$1$2$1:$3[REDACTED]$3'
+    )
+    .replace(
+      /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)\s*([:=])\s*[^\s,;]+/gi,
+      "$1$2[REDACTED]"
+    )
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
     .trim()

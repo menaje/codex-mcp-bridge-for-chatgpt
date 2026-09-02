@@ -5,6 +5,7 @@ public struct RuntimePaths: Sendable {
     public let environmentFile: URL
     public let helperSocket: URL
     public let bridgeSocket: URL
+    public let runtimeLockDirectory: URL
     public let bridgeRoot: URL?
     public let runtimeBuildID: String?
     public let nodeExecutable: URL?
@@ -24,12 +25,11 @@ public struct RuntimePaths: Sendable {
         self.environmentFile = environment["CODEX_MCP_BRIDGE_ENV_FILE"]
             .map(URL.init(fileURLWithPath:))
             ?? configurationDirectory.appendingPathComponent(".env")
-        self.helperSocket = configurationDirectory
-            .appendingPathComponent("run", isDirectory: true)
-            .appendingPathComponent("helper.sock")
-        self.bridgeSocket = configurationDirectory
-            .appendingPathComponent("run", isDirectory: true)
-            .appendingPathComponent("bridge.sock")
+        let runDirectory = configurationDirectory.appendingPathComponent("run", isDirectory: true)
+        self.helperSocket = runDirectory.appendingPathComponent("helper.sock")
+        self.bridgeSocket = runDirectory.appendingPathComponent("bridge.sock")
+        self.runtimeLockDirectory = runDirectory
+            .appendingPathComponent("launcher.lock", isDirectory: true)
 
         let explicitRoot = environment["CODEX_MCP_BRIDGE_ROOT"].map(URL.init(fileURLWithPath:))
         let bundledRoot = bundle.resourceURL?.appendingPathComponent("Runtime", isDirectory: true)

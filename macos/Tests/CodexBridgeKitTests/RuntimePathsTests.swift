@@ -36,9 +36,34 @@ final class RuntimePathsTests: XCTestCase {
         )
         let entries = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
 
+        XCTAssertEqual(environment["HOME"], home.path)
         XCTAssertEqual(entries.first, "/Users/example/.nvm/versions/node/v24/bin")
         XCTAssertTrue(entries.contains("/opt/homebrew/bin"))
         XCTAssertTrue(entries.contains("/Users/example/.local/bin"))
         XCTAssertEqual(entries.count, Set(entries).count)
+    }
+
+    func testRuntimeLockUsesCanonicalConfigDirectoryWithAlternateDotenv() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-paths-\(UUID().uuidString)", isDirectory: true)
+        let configHome = root.appendingPathComponent("config", isDirectory: true)
+        let alternateEnv = root.appendingPathComponent("alternate/.env")
+        let paths = RuntimePaths(
+            environment: [
+                "XDG_CONFIG_HOME": configHome.path,
+                "CODEX_MCP_BRIDGE_ENV_FILE": alternateEnv.path,
+                "PATH": ""
+            ],
+            bundle: .main,
+            currentDirectory: root
+        )
+
+        XCTAssertEqual(paths.environmentFile.standardizedFileURL, alternateEnv.standardizedFileURL)
+        XCTAssertEqual(
+            paths.runtimeLockDirectory.standardizedFileURL,
+            configHome
+                .appendingPathComponent("codex-mcp-bridge/run/launcher.lock", isDirectory: true)
+                .standardizedFileURL
+        )
     }
 }

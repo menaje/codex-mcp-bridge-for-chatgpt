@@ -2,7 +2,11 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
+import {
+  acquireRuntimeLock,
+  defaultRuntimeLockDirectory,
+  readRuntimeLockOwner
+} from "../scripts/runtime-lock.mjs";
 
 describe("runtime ownership lock", () => {
   it("allows one owner and removes only its own private lock", () => {
@@ -10,10 +14,25 @@ describe("runtime ownership lock", () => {
     const lockPath = path.join(root, "run", "launcher.lock");
     const first = acquireRuntimeLock(lockPath, { pid: 101, processAlive: () => true });
     expect(existsSync(path.join(lockPath, "owner.json"))).toBe(true);
+    expect(readRuntimeLockOwner(lockPath)).toMatchObject({ pid: 101 });
     expect(() => acquireRuntimeLock(lockPath, { pid: 202, processAlive: () => true }))
       .toThrow("already running");
     first.release();
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("uses one canonical per-user lock regardless of an alternate runtime dotenv", () => {
+    const root = temporaryDirectory();
+    const lockPath = defaultRuntimeLockDirectory({
+      environment: {
+        XDG_CONFIG_HOME: path.join(root, "xdg"),
+        CODEX_MCP_BRIDGE_ENV_FILE: path.join(root, "alternate", ".env")
+      },
+      homeDirectory: path.join(root, "home")
+    });
+    expect(lockPath).toBe(
+      path.join(root, "xdg", "codex-mcp-bridge", "run", "launcher.lock")
+    );
   });
 
   it("reclaims a verified stale lock without recursive deletion", () => {
@@ -34,6 +53,23 @@ describe("runtime ownership lock", () => {
     expect(() => acquireRuntimeLock(lockPath, { pid: 202, processAlive: () => false }))
       .toThrow("expected private format");
     expect(existsSync(path.join(lockPath, "unexpected"))).toBe(true);
+  });
+
+  it("rejects lock owners with an invalid start time", () => {
+    const root = temporaryDirectory();
+    const lockPath = path.join(root, "run", "launcher.lock");
+    mkdirSync(lockPath, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      path.join(lockPath, "owner.json"),
+      `${JSON.stringify({
+        pid: 101,
+        token: "00000000-0000-4000-8000-000000000001",
+        startedAt: "not-a-date"
+      })}\n`,
+      { mode: 0o600 }
+    );
+
+    expect(() => readRuntimeLockOwner(lockPath)).toThrow("metadata is invalid");
   });
 });
 

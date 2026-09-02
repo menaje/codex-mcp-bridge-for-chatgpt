@@ -15,6 +15,8 @@ export function defaultRuntimeEnvFile(options?: {
 
 export function inspectRuntimeEnvFile(filePath: string): RuntimeEnvStatus;
 
+export function repairRuntimeEnvPermissions(filePath: string): RuntimeEnvStatus;
+
 export function loadRuntimeEnvFile(
   filePath: string,
   options?: {
@@ -28,7 +30,12 @@ export function loadRuntimeEnvFile(
 
 export function readRuntimeEnvSubset(
   filePath: string,
-  keys: string[]
+  keys: string[],
+  options?: {
+    platform?: NodeJS.Platform;
+    uid?: number;
+    allowBroadReadOnlyPermissions?: boolean;
+  }
 ): Record<string, string>;
 
 export type PreparedRuntimeEnvUpdate = {

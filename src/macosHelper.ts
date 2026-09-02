@@ -21,7 +21,8 @@ const bridgeRoot = path.resolve(args.bridgeRoot || defaultBridgeRoot);
 const supervisor = new MacOSBridgeSupervisor({
   bridgeRoot,
   envFile,
-  bridgeSocketPath
+  bridgeSocketPath,
+  runtimeLockDirectory: args.runtimeLockDirectory
 });
 const server = await startMacOSHelperServer({
   socketPath: helperSocketPath,
@@ -64,6 +65,7 @@ type HelperArguments = {
   bridgeSocket?: string;
   bridgeRoot?: string;
   envFile?: string;
+  runtimeLockDirectory?: string;
   noAutoStart?: boolean;
 };
 
@@ -73,7 +75,8 @@ function parseArguments(raw: string[]): HelperArguments {
     ["--socket", "socket"],
     ["--bridge-socket", "bridgeSocket"],
     ["--bridge-root", "bridgeRoot"],
-    ["--env-file", "envFile"]
+    ["--env-file", "envFile"],
+    ["--runtime-lock-directory", "runtimeLockDirectory"]
   ]);
   for (let index = 0; index < raw.length; index += 1) {
     const argument = raw[index];

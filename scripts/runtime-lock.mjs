@@ -17,6 +17,39 @@ export function defaultRuntimeLockDirectory(options = {}) {
   return resolve(dirname(defaultRuntimeEnvFile(options)), "run", "launcher.lock");
 }
 
+export function readRuntimeLockOwner(
+  lockDirectory = defaultRuntimeLockDirectory(),
+  {
+    platform = process.platform,
+    uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  } = {}
+) {
+  const resolved = resolve(lockDirectory);
+  if (!existsSync(resolved)) return null;
+  assertPrivateDirectory(resolved, { platform, uid });
+  const entries = readdirSync(resolved);
+  if (entries.length !== 1 || entries[0] !== "owner.json") {
+    throw new Error("Runtime lock directory is not in the expected private format.");
+  }
+  const ownerFile = resolve(resolved, "owner.json");
+  const ownerStats = lstatSync(ownerFile);
+  if (ownerStats.isSymbolicLink() || !ownerStats.isFile()) {
+    throw new Error("Runtime lock owner must be a regular, non-symlink file.");
+  }
+  if (ownerStats.size <= 0 || ownerStats.size > 4_096) {
+    throw new Error("Runtime lock owner metadata size is invalid.");
+  }
+  if (platform !== "win32") {
+    if (typeof uid === "number" && ownerStats.uid !== uid) {
+      throw new Error("Runtime lock owner file belongs to another user.");
+    }
+    if ((ownerStats.mode & 0o077) !== 0) {
+      throw new Error("Runtime lock owner file permissions are too broad.");
+    }
+  }
+  return readOwner(ownerFile);
+}
+
 export function acquireRuntimeLock(
   lockDirectory = defaultRuntimeLockDirectory(),
   {
@@ -81,6 +114,9 @@ function reclaimStaleRuntimeLock(lockDirectory, options) {
   if (ownerStats.isSymbolicLink() || !ownerStats.isFile()) {
     throw new Error("Runtime lock owner must be a regular, non-symlink file.");
   }
+  if (ownerStats.size <= 0 || ownerStats.size > 4_096) {
+    throw new Error("Runtime lock owner metadata size is invalid.");
+  }
   if (options.platform !== "win32") {
     if (typeof options.uid === "number" && ownerStats.uid !== options.uid) {
       throw new Error("Runtime lock owner file belongs to another user.");
@@ -127,7 +163,9 @@ function readOwner(ownerFile) {
     !Number.isSafeInteger(parsed.pid) ||
     parsed.pid <= 0 ||
     typeof parsed.token !== "string" ||
-    !/^[0-9a-f-]{36}$/i.test(parsed.token)
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.token) ||
+    typeof parsed.startedAt !== "string" ||
+    !Number.isFinite(Date.parse(parsed.startedAt))
   ) {
     throw new Error("Runtime lock owner metadata is invalid.");
   }

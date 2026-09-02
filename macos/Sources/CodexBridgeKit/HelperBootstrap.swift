@@ -63,6 +63,7 @@ public actor HelperBootstrap {
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
+                runtimeLockDirectory: paths.runtimeLockDirectory,
                 forceRestart: !currentIsCompatible,
                 client: client,
                 helperIsReachable: helperIsReachable
@@ -76,7 +77,8 @@ public actor HelperBootstrap {
                 bridgeRoot: bridgeRoot,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
-                bridgeSocket: paths.bridgeSocket
+                bridgeSocket: paths.bridgeSocket,
+                runtimeLockDirectory: paths.runtimeLockDirectory
             )
         }
 
@@ -96,7 +98,8 @@ public actor HelperBootstrap {
         bridgeRoot: URL,
         environmentFile: URL,
         helperSocket: URL,
-        bridgeSocket: URL
+        bridgeSocket: URL,
+        runtimeLockDirectory: URL
     ) throws {
         if let process = developmentProcess, process.isRunning { return }
         let process = Process()
@@ -106,7 +109,8 @@ public actor HelperBootstrap {
             bridgeRoot: bridgeRoot,
             environmentFile: environmentFile,
             helperSocket: helperSocket,
-            bridgeSocket: bridgeSocket
+            bridgeSocket: bridgeSocket,
+            runtimeLockDirectory: runtimeLockDirectory
         )
         process.currentDirectoryURL = bridgeRoot
         process.standardInput = FileHandle.nullDevice
@@ -127,6 +131,7 @@ public actor HelperBootstrap {
         environmentFile: URL,
         helperSocket: URL,
         bridgeSocket: URL,
+        runtimeLockDirectory: URL,
         forceRestart: Bool,
         client: MacOSHelperClient,
         helperIsReachable: Bool
@@ -146,7 +151,8 @@ public actor HelperBootstrap {
                 bridgeRoot: bridgeRoot,
                 environmentFile: environmentFile,
                 helperSocket: helperSocket,
-                bridgeSocket: bridgeSocket
+                bridgeSocket: bridgeSocket,
+                runtimeLockDirectory: runtimeLockDirectory
             ),
             "WorkingDirectory": bridgeRoot.path,
             "RunAtLoad": true,
@@ -170,11 +176,8 @@ public actor HelperBootstrap {
         let service = "\(domain)/\(Self.launchAgentLabel)"
         let loaded = await launchctl(["print", service]).status == 0
         let needsRestart = previous != data || forceRestart
-        let runtimeLock = environmentFile
-            .deletingLastPathComponent()
-            .appendingPathComponent("run/launcher.lock", isDirectory: true)
         if loaded && needsRestart && !helperIsReachable &&
-            FileManager.default.fileExists(atPath: runtimeLock.path) {
+            FileManager.default.fileExists(atPath: runtimeLockDirectory.path) {
             throw HelperBootstrapError.replacementBlocked(
                 "기존 helper에 연결할 수 없어 활성 작업 여부를 확인하지 못했습니다."
             )
@@ -215,7 +218,8 @@ public actor HelperBootstrap {
         hello.protocol.name == HelperHello.expectedProtocolName &&
             hello.protocol.version == HelperHello.expectedProtocolVersion &&
             hello.runtime.buildId == runtimeBuildID &&
-            hello.capabilities.contains("setup.dotenv.atomic-apply")
+            hello.capabilities.contains("setup.dotenv.atomic-apply") &&
+            hello.capabilities.contains("setup.dotenv.repair-permissions")
     }
 
     private func helperArguments(
@@ -223,14 +227,16 @@ public actor HelperBootstrap {
         bridgeRoot: URL,
         environmentFile: URL,
         helperSocket: URL,
-        bridgeSocket: URL
+        bridgeSocket: URL,
+        runtimeLockDirectory: URL
     ) -> [String] {
         [
             "--", helperScript.path,
             "--bridge-root", bridgeRoot.path,
             "--env-file", environmentFile.path,
             "--socket", helperSocket.path,
-            "--bridge-socket", bridgeSocket.path
+            "--bridge-socket", bridgeSocket.path,
+            "--runtime-lock-directory", runtimeLockDirectory.path
         ]
     }
 
@@ -251,7 +257,10 @@ public actor HelperBootstrap {
         ]
         var seen = Set<String>()
         let path = candidates.filter { seen.insert($0).inserted }.joined(separator: ":")
-        return ["PATH": path]
+        return [
+            "HOME": home.path,
+            "PATH": path
+        ]
     }
 
     private func launchctl(_ arguments: [String]) async -> (status: Int32, output: String) {

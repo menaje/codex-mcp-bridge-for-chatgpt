@@ -50,6 +50,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         Task {
             if model.helperStatus == nil { await model.start() }
+            await model.refreshStatus()
             await model.refreshSettings()
         }
     }

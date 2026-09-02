@@ -36,6 +36,15 @@ running. Graceful stop/restart first blocks new Job admission and waits for
 active Jobs; force actions are separately labelled and never replay work or
 roll back filesystem changes. A process lock rejects a second launcher, and
 unexpected exits use bounded exponential backoff before safe mode.
+The lock stays in one canonical per-user namespace even when a CLI selects an
+alternate dotenv. If the helper crashes while its detached runtime remains
+healthy, the replacement helper adopts it only when the private lock owner,
+fresh launcher status, companion protocol, and exact build identity all agree.
+Otherwise it fails closed instead of starting a second process tree.
+For an alternate dotenv, the helper also checks the previous env-adjacent lock
+location so an already-running older CLI launcher is stopped explicitly before
+the app can take ownership. New launchers hold both namespaces for that
+migration case, closing the concurrent-start race with older launchers.
 The helper accepts launcher readiness only when both the private bridge socket
 and the Tunnel's control-plane readiness probe are current. Status from another
 launcher PID, an older runtime build, an expired heartbeat, or a future-dated
@@ -62,6 +71,11 @@ app-owned editor changes only `CONTROL_PLANE_API_KEY` and
 the existing value when a field is blank. The config directory and file must
 be current-user-owned regular non-symlinks with `0700` and `0600` permissions.
 Replacement is same-directory, validated, synced, and atomic.
+If only those permissions are too broad, the repair sheet can restrict the
+existing current-user-owned regular directory and file in place. It never
+follows a symlink or changes the dotenv contents. Automatic repair is limited
+to over-readable paths; group/world-writable paths are rejected so an operator
+can inspect them before changing permissions manually.
 
 Configuration apply is one serialized operation: prepare the complete dotenv,
 block new work, drain or explicitly force-stop the old runtime, atomically
@@ -72,9 +86,11 @@ restarts the unchanged runtime.
 The helper and project-registry mutation path also reject any dotenv located
 inside a registered project, including paths reached through symlinks.
 
-An existing managed Tunnel profile is reused only when its Tunnel ID, transport,
-bridge command, runtime build, Node executable, tunnel-client version, and
-recorded file digest all match. Otherwise it is rebuilt before use. A separate
+The app uses the dedicated `codex-mcp-bridge-macos` Tunnel profile so a legacy
+CLI profile is never overwritten during migration. An existing app-managed
+profile is reused only when its Tunnel ID, transport, bridge command, runtime
+build, Node executable, tunnel-client version, and recorded file digest all
+match. Otherwise it is rebuilt before use. A separate
 **Tunnel profile repair** action forces that rebuild after active work drains.
 It does not change SQLite, projects, Settings, Codex authentication, or the
 dotenv.
@@ -87,6 +103,9 @@ deferred to issue #29. In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
 from an older dotenv or ambient process are not inherited by Codex children;
 the existing CLI/dotenv launcher behavior outside app-managed mode remains
 compatible.
+Login state is polled independently from bridge health. A running bridge with a
+missing or expired Codex login is shown as needing attention, never as healthy,
+and the browser flow remains pending until a later check confirms authentication.
 
 After the tunnel is running, ChatGPT setup remains unchanged: enable Developer
 mode, select the matching Secure MCP Tunnel, and connect it with `No Auth`.
@@ -99,6 +118,7 @@ card.
 - helper socket: `~/.config/codex-mcp-bridge/run/helper.sock`
 - bridge companion socket: `~/.config/codex-mcp-bridge/run/bridge.sock`
 - launcher ownership lock: `~/.config/codex-mcp-bridge/run/launcher.lock`
+- app Tunnel profile: `codex-mcp-bridge-macos`
 - LaunchAgent label: `com.menaje.codex-mcp-bridge.helper`
 - LaunchAgent plist: `~/Library/LaunchAgents/com.menaje.codex-mcp-bridge.helper.plist`
 
@@ -119,6 +139,13 @@ The Tunnel runtime key is not returned by status, written to UserDefaults or a
 plist, passed in argv, copied to the pasteboard, or stored in helper logs. The
 Tunnel ID is treated as a non-secret connection identifier and may be copied
 for ChatGPT setup. No Keychain API is used for tunnel credentials.
+
+Native Settings preserves the retained card's catalog-drift behavior. Saved
+model/effort choices that are no longer selectable remain visible and labelled,
+while an unrelated general-setting save omits an untouched model policy instead
+of silently dropping or revalidating it. Loading, mutation, Dashboard,
+authentication, runtime, and diagnostic failures keep independent UI state so
+one successful poll cannot hide another failed action.
 
 ## Build and verification
 

@@ -27,6 +27,7 @@ describe("managed launcher lifecycle", () => {
     const runtimeStatusFile = path.join(configDirectory, "run", "launcher-status.json");
     const healthURLFile = path.join(configDirectory, "run", "tunnel-health.url");
     const tunnelPIDFile = path.join(configDirectory, "run", "tunnel.pid");
+    const runtimeLockDirectory = path.join(root, "canonical", "run", "launcher.lock");
     const initializationLog = path.join(root, "initializations.log");
     const shutdownLog = path.join(root, "shutdown.log");
     const codexEnvironmentLog = path.join(root, "codex-environment.json");
@@ -64,7 +65,8 @@ process.exit(2);
       profileMetadataFile,
       runtimeStatusFile,
       healthURLFile,
-      tunnelPIDFile
+      tunnelPIDFile,
+      runtimeLockDirectory
     });
     expect(first.output).not.toContain("sk-launcher-test");
     expect(first.output).not.toContain("sk-platform-key");
@@ -80,6 +82,7 @@ process.exit(2);
     });
     expect(readFileSync(shutdownLog, "utf8").trim().split("\n")).toEqual(["SIGINT"]);
     expect(existsSync(path.join(configDirectory, "run", "launcher.lock"))).toBe(false);
+    expect(existsSync(runtimeLockDirectory)).toBe(false);
     expect(statSync(profileMetadataFile).mode & 0o777).toBe(0o600);
     expect(statSync(runtimeStatusFile).mode & 0o777).toBe(0o600);
     expect(readFileSync(profileFile, "utf8")).toContain(
@@ -93,7 +96,8 @@ process.exit(2);
       profileMetadataFile,
       runtimeStatusFile,
       healthURLFile,
-      tunnelPIDFile
+      tunnelPIDFile,
+      runtimeLockDirectory
     });
     expect(initializationCount(initializationLog)).toBe(1);
 
@@ -105,7 +109,8 @@ process.exit(2);
       profileMetadataFile,
       runtimeStatusFile,
       healthURLFile,
-      tunnelPIDFile
+      tunnelPIDFile,
+      runtimeLockDirectory
     });
     expect(initializationCount(initializationLog)).toBe(2);
   }, 30_000);
@@ -205,6 +210,7 @@ async function runLauncher(paths: {
   runtimeStatusFile: string;
   healthURLFile: string;
   tunnelPIDFile: string;
+  runtimeLockDirectory: string;
 }): Promise<{ output: string }> {
   const environment = { ...process.env };
   delete environment.CONTROL_PLANE_API_KEY;
@@ -223,6 +229,7 @@ async function runLauncher(paths: {
     "--runtime-status-file", paths.runtimeStatusFile,
     "--tunnel-health-url-file", paths.healthURLFile,
     "--tunnel-pid-file", paths.tunnelPIDFile,
+    "--runtime-lock-directory", paths.runtimeLockDirectory,
     "--require-built",
     "--reuse-profile"
   ], {
@@ -235,6 +242,10 @@ async function runLauncher(paths: {
   child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
   try {
     await waitForConnectedStatus(paths.runtimeStatusFile, child);
+    expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
+    expect(existsSync(
+      path.join(path.dirname(paths.envFile), "run", "launcher.lock")
+    )).toBe(true);
     child.kill("SIGTERM");
     const result = await waitForProcessExit(child, 10_000);
     if (result.code !== 0) {

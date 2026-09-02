@@ -2,6 +2,12 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    func testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions() {
+        XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00.000Z"))
+        XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00Z"))
+        XCTAssertNil(DisplayFormat.parseDate("not-a-date"))
+    }
+
     func testSettingsMutationKeepsIndependentRevisionsAndNestedPatch() throws {
         let mutation = SettingsMutation(
             expectedSettingsRevision: 7,
@@ -34,6 +40,24 @@ final class BridgeModelsTests: XCTestCase {
         let policy = try XCTUnwrap(settings["modelPolicy"] as? [String: Any])
         XCTAssertEqual(policy["mode"] as? String, "fixed")
         XCTAssertNil(policy["fallbackSelection"])
+    }
+
+    func testSettingsPatchOmitsUntouchedModelPolicy() throws {
+        let mutation = SettingsMutation(
+            expectedSettingsRevision: 7,
+            expectedRegistryRevision: nil,
+            operation: .patch(SettingsPatch(
+                accessStrategy: "adaptive",
+                modelPolicy: nil,
+                usePriorityServiceTier: false
+            ))
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(mutation)) as? [String: Any]
+        )
+        let operation = try XCTUnwrap(object["operation"] as? [String: Any])
+        let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
+        XCTAssertFalse(settings.keys.contains("modelPolicy"))
     }
 
     func testProjectOperationsUseExplicitDeltaShapes() throws {
@@ -101,7 +125,7 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertFalse(String(data: json, encoding: .utf8)!.contains("CONTROL_PLANE_API_KEY"))
     }
 
-    func testHelperCompatibilityRequiresProtocolBuildAndAtomicSetupCapability() throws {
+    func testHelperCompatibilityRequiresProtocolBuildAndNativeSetupCapabilities() throws {
         let statusData = #"""
         {
           "kind":"helper-status","generatedAt":"2026-09-02T00:00:00.000Z",
@@ -130,7 +154,10 @@ final class BridgeModelsTests: XCTestCase {
             name: HelperHello.expectedProtocolName,
             version: HelperHello.expectedProtocolVersion,
             buildID: "build-current",
-            capabilities: ["setup.dotenv.atomic-apply"]
+            capabilities: [
+                "setup.dotenv.atomic-apply",
+                "setup.dotenv.repair-permissions"
+            ]
         )
         XCTAssertTrue(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-current"))
         XCTAssertFalse(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-old"))
@@ -138,6 +165,18 @@ final class BridgeModelsTests: XCTestCase {
             try hello(
                 name: HelperHello.expectedProtocolName,
                 version: 1,
+                buildID: "build-current",
+                capabilities: [
+                    "setup.dotenv.atomic-apply",
+                    "setup.dotenv.repair-permissions"
+                ]
+            ),
+            runtimeBuildID: "build-current"
+        ))
+        XCTAssertFalse(HelperBootstrap.isCompatible(
+            try hello(
+                name: HelperHello.expectedProtocolName,
+                version: HelperHello.expectedProtocolVersion,
                 buildID: "build-current",
                 capabilities: ["setup.dotenv.atomic-apply"]
             ),

@@ -34,6 +34,7 @@ struct DashboardPopoverView: View {
                 await model.start()
             } else {
                 await model.refreshStatus()
+                await model.refreshAuthStatus()
                 await model.refreshDashboard()
             }
         }
@@ -87,6 +88,7 @@ struct DashboardPopoverView: View {
             Button {
                 Task {
                     await model.refreshStatus()
+                    await model.refreshAuthStatus()
                     await model.refreshDashboard()
                 }
             } label: {
@@ -104,7 +106,7 @@ struct DashboardPopoverView: View {
             ProgressView()
             Text("현황을 불러오는 중…")
                 .foregroundStyle(.secondary)
-            if let error = model.errorMessage {
+            if let error = model.startupErrorMessage ?? model.statusErrorMessage ?? model.dashboardErrorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -128,7 +130,7 @@ struct DashboardPopoverView: View {
                 .accessibilityHidden(true)
             Text("브리지 서버에 연결할 수 없습니다")
                 .font(.headline)
-            Text(model.helperStatus?.lastError ?? model.errorMessage ?? "서버가 중지되었거나 시작 중입니다.")
+            Text(model.helperStatus?.lastError ?? model.runtimeErrorMessage ?? model.statusErrorMessage ?? "서버가 중지되었거나 시작 중입니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -138,7 +140,9 @@ struct DashboardPopoverView: View {
                     .buttonStyle(.borderedProminent)
                 Button("재시작") { Task { await model.restartRuntime(force: false) } }
             }
+            .disabled(model.isBusy)
             Button("Tunnel 프로필 복구…") { showRepairConfirmation = true }
+                .disabled(model.isBusy)
             if model.helperStatus?.phase == "safe-mode" {
                 Label("반복 충돌로 자동 재시작이 중지되었습니다.", systemImage: "exclamationmark.octagon")
                     .font(.caption)
@@ -152,6 +156,28 @@ struct DashboardPopoverView: View {
     private func dashboardContent(_ dashboard: DashboardSnapshot) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
+                if model.authStatus?.authenticated != true {
+                    Button {
+                        ConnectionRepairWindowController.shared.show(model: model)
+                    } label: {
+                        Label(
+                            authenticationNotice,
+                            systemImage: "person.crop.circle.badge.exclamationmark"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                if let error = model.dashboardErrorMessage {
+                    Label(
+                        "최근 현황을 갱신하지 못했습니다: \(error)",
+                        systemImage: "clock.badge.exclamationmark"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                }
                 if model.helperStatus?.tunnel.connected != true {
                     Label(
                         model.helperStatus?.tunnel.lastError ?? "Secure MCP Tunnel 연결을 확인하고 있습니다.",
@@ -177,12 +203,24 @@ struct DashboardPopoverView: View {
                 DashboardSection(
                     title: "활성",
                     emptyText: "현재 활성 Agent가 없습니다.",
-                    rows: dashboard.activeRows
+                    rows: dashboard.activeRows,
+                    total: dashboard.pagination.active.total,
+                    groupsByActivity: true
                 )
+                if dashboard.pagination.active.hasNext {
+                    Label(
+                        "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
+                        systemImage: "ellipsis.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
                 DashboardSection(
                     title: "최근 종료",
                     emptyText: "보존된 최근 실행이 없습니다.",
                     rows: dashboard.terminalRows,
+                    total: dashboard.pagination.terminal.total,
+                    groupsByActivity: true,
                     hasMore: dashboard.pagination.terminal.hasNext,
                     loadMore: { Task { await model.loadMoreRecent() } }
                 )
@@ -190,12 +228,23 @@ struct DashboardPopoverView: View {
                     title: "유휴 Agent",
                     emptyText: "유휴 Agent가 없습니다.",
                     rows: dashboard.idleRows,
+                    total: dashboard.pagination.idle.total,
                     hasMore: dashboard.pagination.idle.hasNext,
                     loadMore: { Task { await model.loadMoreIdle() } }
                 )
             }
             .padding(14)
         }
+    }
+
+    private var authenticationNotice: String {
+        if model.authErrorMessage != nil {
+            return "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+        }
+        if model.authStatus?.installed == false {
+            return "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+        }
+        return "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
     }
 
     private var footer: some View {
@@ -231,7 +280,7 @@ struct DashboardPopoverView: View {
             } label: {
                 Label("서버", systemImage: "server.rack")
             }
-            .disabled(model.needsSetup)
+            .disabled(model.needsSetup || model.isBusy)
 
             Spacer()
             Button("앱 종료") { NSApp.terminate(nil) }
@@ -259,15 +308,19 @@ struct DashboardPopoverView: View {
 private struct WeeklyUsageView: View {
     let usage: WeeklyUsage
 
+    private var remainingPercent: Double {
+        min(100, max(0, usage.remainingPercent))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("주간 사용량").font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(Int(usage.usedPercent.rounded()))% 사용")
+                Text("\(Int(remainingPercent.rounded()))% 남음")
                     .font(.caption.monospacedDigit())
             }
-            ProgressView(value: usage.usedPercent, total: 100)
+            ProgressView(value: remainingPercent, total: 100)
             if let resetsAt = usage.resetsAt {
                 Text("초기화: \(DisplayFormat.dateTime(resetsAt))")
                     .font(.caption)
@@ -330,35 +383,145 @@ private struct CountTile: View {
 }
 
 private struct DashboardSection: View {
+    @EnvironmentObject private var model: AppModel
     let title: String
     let emptyText: String
     let rows: [DashboardRow]
+    var total: Int?
+    var groupsByActivity = false
     var hasMore = false
     var loadMore: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
+            HStack {
+                Text(title).font(.headline)
+                if let total {
+                    Text("\(total)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
             if rows.isEmpty {
                 Text(emptyText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
-                ForEach(rows) { row in
-                    DashboardRowView(row: row)
+                if groupsByActivity {
+                    ForEach(activityGroups) { group in
+                        DashboardActivityGroupView(group: group)
+                    }
+                } else {
+                    ForEach(rows) { row in
+                        DashboardRowView(row: row, presentation: .idle)
+                    }
                 }
             }
             if hasMore {
                 Button("더 보기", action: { loadMore?() })
                     .buttonStyle(.link)
+                    .disabled(model.isBusy)
             }
         }
+    }
+
+    private var activityGroups: [DashboardActivityGroup] {
+        var order: [String] = []
+        var grouped: [String: [DashboardRow]] = [:]
+        for row in rows {
+            if grouped[row.activityKey] == nil { order.append(row.activityKey) }
+            grouped[row.activityKey, default: []].append(row)
+        }
+        return order.compactMap { key in
+            guard let rows = grouped[key] else { return nil }
+            return DashboardActivityGroup(id: key, rows: rows)
+        }
+    }
+}
+
+private struct DashboardActivityGroup: Identifiable {
+    let id: String
+    let rows: [DashboardRow]
+}
+
+private struct DashboardActivityGroupView: View {
+    let group: DashboardActivityGroup
+
+    var body: some View {
+        if let first = group.rows.first {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(activityTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(2)
+                        Text(first.projectName ?? "프로젝트 없음")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if let url = DashboardLink.conversation(first.conversationUrl) {
+                        Link("대화", destination: url)
+                    }
+                }
+                Text("Agent \(group.rows.count)명")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let cancellation = activityCancellation {
+                    CancellationDisclosure(cancellation: cancellation)
+                }
+                ForEach(group.rows) { row in
+                    DashboardRowView(row: row, presentation: .nestedAgent)
+                }
+            }
+            .padding(10)
+            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 11))
+        }
+    }
+
+    private var activityCancellation: CancellationDisplay? {
+        group.rows.compactMap(\.latestTurn?.cancellation).first {
+            $0.targetKind == "activity"
+        }
+    }
+
+    private var activityTitle: String {
+        for row in group.rows {
+            for candidate in [row.activityTitle, row.latestTurn?.activityTitle] {
+                if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return candidate
+                }
+            }
+        }
+        return "제목 없는 Activity"
+    }
+}
+
+private enum DashboardRowPresentation {
+    case nestedAgent
+    case idle
+}
+
+private struct CancellationDisclosure: View {
+    let cancellation: CancellationDisplay
+
+    var body: some View {
+        DisclosureGroup("취소 사유") {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(cancellation.reason).textSelection(.enabled)
+                Text("\(cancellationTargetLabel(cancellation.targetKind)) · \(cancellationStatusLabel(cancellation.status)) · \(DisplayFormat.dateTime(cancellation.requestedAt))")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+        }
+        .font(.caption)
     }
 }
 
 private struct DashboardRowView: View {
     let row: DashboardRow
+    let presentation: DashboardRowPresentation
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -367,10 +530,10 @@ private struct DashboardRowView: View {
                     .foregroundStyle(StatusPresentation.color(row.status))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(row.activityTitle ?? "제목 없는 Activity")
+                    Text(row.agentName)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(2)
-                    Text("\(row.agentName) · \(row.projectName ?? "프로젝트 없음")")
+                    Text(secondaryTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -382,8 +545,14 @@ private struct DashboardRowView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
             }
-            if let execution = row.execution {
-                Text(executionText(execution))
+            if let execution = historicalExecution {
+                Text("\(row.bucket == "idle" ? "최근 실행" : "실행"): \(executionText(execution))")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let next = nextExecution {
+                Text("다음 실행 설정: \(executionText(next))")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -392,31 +561,26 @@ private struct DashboardRowView: View {
                 Text(rowTimeText)
                     .lineLimit(2)
                 HStack(spacing: 10) {
-                if row.backgroundProcessCount > 0 {
-                    Label("\(row.backgroundProcessCount)", systemImage: "terminal")
-                }
-                Spacer()
-                if let url = row.conversationUrl.flatMap(URL.init(string:)) {
-                    Link("대화", destination: url)
-                }
-                if let url = row.codexThreadUrl.flatMap(URL.init(string:)) {
-                    Button("Codex") { NSWorkspace.shared.open(url) }
-                        .buttonStyle(.link)
-                }
+                    if row.backgroundProcessCount > 0 {
+                        Label("\(row.backgroundProcessCount)", systemImage: "terminal")
+                    }
+                    Spacer()
+                    if presentation == .idle {
+                        if let url = DashboardLink.conversation(row.conversationUrl) {
+                            Link("대화", destination: url)
+                        }
+                    }
+                    if let url = DashboardLink.codexThread(row.codexThreadUrl) {
+                        Button("Codex") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.link)
+                    }
                 }
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
-            if let cancellation = row.latestTurn?.cancellation {
-                DisclosureGroup("취소 사유") {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(cancellation.reason).textSelection(.enabled)
-                        Text("\(cancellationTargetLabel(cancellation.targetKind)) · \(cancellationStatusLabel(cancellation.status)) · \(DisplayFormat.dateTime(cancellation.requestedAt))")
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.caption)
-                }
-                .font(.caption)
+            if let cancellation = row.latestTurn?.cancellation,
+               presentation == .idle || cancellation.targetKind != "activity" {
+                CancellationDisclosure(cancellation: cancellation)
             }
             if let history = row.history, !history.isEmpty {
                 DisclosureGroup("최근 실행 기록 \(row.historyCount ?? history.count)") {
@@ -458,9 +622,28 @@ private struct DashboardRowView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(.quaternary, lineWidth: 1)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(row.activityTitle ?? "Activity"), \(row.agentName), \(StatusPresentation.label(row.status))"
+            "\(row.agentName), \(row.activityTitle ?? "Activity"), \(StatusPresentation.label(row.status))"
+        )
+    }
+
+    private var secondaryTitle: String {
+        if presentation == .idle {
+            let activity = row.latestTurn?.activityTitle ?? row.activityTitle ?? "최근 Activity 없음"
+            return "\(activity) · \(row.projectName ?? "프로젝트 없음")"
+        }
+        return row.sessionAlias
+    }
+
+    private var historicalExecution: DashboardExecution? {
+        row.latestTurn?.execution ?? row.execution
+    }
+
+    private var nextExecution: DashboardExecution? {
+        DashboardExecutionPresentation.next(
+            current: row.execution,
+            latest: row.latestTurn?.execution
         )
     }
 
@@ -474,12 +657,19 @@ private struct DashboardRowView: View {
     }
 
     private var rowTimeText: String {
-        var values = ["시작 \(DisplayFormat.dateTime(row.createdAt))"]
+        let startedAt = row.latestTurn?.startedAt ?? row.createdAt
+        var values = ["시작 \(DisplayFormat.dateTime(startedAt))"]
         values.append("변경 \(DisplayFormat.relative(row.updatedAt))")
         if let endedAt = row.latestTurn?.endedAt {
             values.append("종료 \(DisplayFormat.dateTime(endedAt))")
         }
-        values.append("경과 \(DisplayFormat.duration(row.elapsedMs))")
+        if row.bucket == "active" {
+            values.append("경과 \(DisplayFormat.duration(row.elapsedMs))")
+        } else if let duration = row.latestTurn?.durationMs {
+            values.append("경과 \(DisplayFormat.duration(duration))")
+        } else {
+            values.append("경과 확인 불가")
+        }
         return values.joined(separator: " · ")
     }
 
@@ -494,6 +684,8 @@ private struct DashboardRowView: View {
         }
         if let duration = turn.durationMs {
             values.append("경과 \(DisplayFormat.duration(duration))")
+        } else {
+            values.append("경과 확인 불가")
         }
         return values.joined(separator: " · ")
     }
@@ -538,6 +730,24 @@ struct ConnectionRepairView: View {
 
                 GroupBox("Secure MCP Tunnel") {
                     VStack(alignment: .leading, spacing: 10) {
+                        if let currentTunnelID = model.helperStatus?.configuration.tunnelId {
+                            LabeledContent("현재 Tunnel ID") {
+                                HStack(spacing: 8) {
+                                    Text(currentTunnelID)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                    Button {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(currentTunnelID, forType: .string)
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Tunnel ID 복사")
+                                    .accessibilityLabel("Tunnel ID 복사")
+                                }
+                            }
+                        }
                         SecureField(
                             model.helperStatus?.configuration.hasApiKey == true
                                 ? "새 키를 입력할 때만 교체"
@@ -556,6 +766,12 @@ struct ConnectionRepairView: View {
                             Label(runtimeConfigurationIssue(issue), systemImage: "exclamationmark.triangle")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
+                            if issue.contains("permissions are too broad") {
+                                Button("앱 전용 권한으로 복구") {
+                                    Task { await model.repairConfigurationPermissions() }
+                                }
+                                .disabled(model.isBusy)
+                            }
                         }
                         Button("안전하게 저장하고 연결") {
                             Task {
@@ -578,16 +794,34 @@ struct ConnectionRepairView: View {
                 GroupBox("Codex 로그인") {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
-                            model.authStatus?.summary ?? "로그인 상태를 확인하고 있습니다.",
+                            model.loginInProgress
+                                ? "브라우저 로그인을 기다리고 있습니다."
+                                : model.authStatus?.summary ?? "로그인 상태를 확인하고 있습니다.",
                             systemImage: model.authStatus?.authenticated == true
                                 ? "checkmark.circle.fill"
                                 : "person.crop.circle.badge.exclamationmark"
                         )
                         .font(.caption)
-                        Button("Codex 브라우저 로그인 시작") {
-                            Task { await model.launchCodexLogin() }
+                        HStack {
+                            Button("Codex 브라우저 로그인 시작") {
+                                Task { await model.launchCodexLogin() }
+                            }
+                            .disabled(
+                                model.isBusy ||
+                                model.loginInProgress ||
+                                model.authStatus?.authenticated == true
+                            )
+                            Button("상태 새로고침") {
+                                Task { await model.refreshAuthStatus() }
+                            }
+                            .disabled(model.isBusy)
                         }
-                        .disabled(model.isBusy)
+                        if let error = model.authErrorMessage {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
 
@@ -602,7 +836,30 @@ struct ConnectionRepairView: View {
                     .padding(.top, 3)
                 }
 
-                if let error = model.errorMessage {
+                DisclosureGroup("진단 로그 (민감정보 가림)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Button("로그 새로고침") { Task { await model.refreshLogs() } }
+                            Spacer()
+                        }
+                        if model.logs.isEmpty {
+                            Text("표시할 helper 또는 runtime 로그가 없습니다.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(model.logs) { entry in
+                                Text("\(DisplayFormat.dateTime(entry.at)) · \(entry.source): \(entry.message)")
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        if let error = model.logsErrorMessage {
+                            Text(error).foregroundStyle(.red).textSelection(.enabled)
+                        }
+                    }
+                    .font(.caption2.monospaced())
+                    .padding(.top, 4)
+                }
+
+                if let error = model.runtimeErrorMessage ?? model.startupErrorMessage ?? model.statusErrorMessage {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -668,37 +925,73 @@ private enum StatusPresentation {
     }
 }
 
-enum DisplayFormat {
-    private static let iso = ISO8601DateFormatter()
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    static func relative(_ value: String) -> String {
-        guard let date = iso.date(from: value) else { return value }
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+enum DashboardLink {
+    static func conversation(_ value: String?) -> URL? {
+        guard let value,
+              let url = URL(string: value),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "chatgpt.com",
+              url.user == nil,
+              url.password == nil,
+              url.port == nil,
+              url.query == nil,
+              url.fragment == nil,
+              let urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count == 2,
+              components[0] == "c",
+              UUID(uuidString: components[1]) != nil,
+              urlComponents.percentEncodedPath == "/c/\(components[1])" else {
+            return nil
+        }
+        return url
     }
 
-    static func dateTime(_ value: String) -> String {
-        guard let date = iso.date(from: value) else { return value }
-        return dateFormatter.string(from: date)
+    static func codexThread(_ value: String?) -> URL? {
+        guard let value,
+              let url = URL(string: value),
+              url.scheme?.lowercased() == "codex",
+              url.host?.lowercased() == "threads",
+              url.user == nil,
+              url.password == nil,
+              url.port == nil,
+              url.query == nil,
+              url.fragment == nil,
+              let urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count == 1,
+              UUID(uuidString: components[0]) != nil,
+              urlComponents.percentEncodedPath == "/\(components[0])" else {
+            return nil
+        }
+        return url
+    }
+}
+
+enum DashboardExecutionPresentation {
+    static func next(
+        current: DashboardExecution?,
+        latest: DashboardExecution?
+    ) -> DashboardExecution? {
+        guard let current, current.isCurrent else { return nil }
+        guard let latest else { return current }
+        return matches(current, latest) ? nil : current
     }
 
-    static func duration(_ milliseconds: Int) -> String {
-        let seconds = max(0, milliseconds / 1_000)
-        if seconds < 60 { return "\(seconds)초" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)분 \(seconds % 60)초" }
-        let hours = minutes / 60
-        return "\(hours)시간 \(minutes % 60)분"
+    static func matches(_ left: DashboardExecution, _ right: DashboardExecution) -> Bool {
+        normalized(left.model) == normalized(right.model) &&
+            !normalized(left.model).isEmpty &&
+            normalized(left.reasoningEffort) == normalized(right.reasoningEffort) &&
+            !normalized(left.reasoningEffort).isEmpty &&
+            normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
 

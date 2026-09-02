@@ -29,12 +29,27 @@ struct NativeSettingsView: View {
                     Text("설정을 불러오려면 브리지 서버를 시작해 주세요.")
                     Button("서버 시작") { Task { await model.startRuntime() } }
                         .buttonStyle(.borderedProminent)
-                    if let error = model.errorMessage {
+                    if let error = model.runtimeErrorMessage ?? model.statusErrorMessage {
                         Text(error).font(.caption).foregroundStyle(.red)
                     }
                 }
             } else {
-                ProgressView("설정을 불러오는 중…")
+                VStack(spacing: 12) {
+                    if let error = model.settingsLoadErrorMessage {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.orange)
+                        Text("설정을 불러오지 못했습니다.")
+                            .font(.headline)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                        Button("다시 시도") { Task { await model.refreshSettings() } }
+                    } else {
+                        ProgressView("설정을 불러오는 중…")
+                    }
+                }
             }
         }
         .onAppear { synchronizeDraft() }
@@ -68,9 +83,28 @@ private struct GeneralSettingsPane: View {
     @Binding var draft: SettingsDraft
     @State private var showResetConfirmation = false
 
-    private var choices: [ModelChoice] { SettingsDraft.choices(in: snapshot) }
+    private var choices: [ModelChoice] {
+        SettingsDraft.displayedChoices(
+            in: snapshot,
+            allowDelegation: draft.allowDelegation,
+            preservingKeys: draft.explicitSelectionKeys.union([
+                draft.fixedSelectionKey,
+                draft.fallbackSelectionKey
+            ])
+        )
+    }
+    private var selectableChoiceKeys: Set<String> {
+        Set(SettingsDraft.selectableChoices(
+            in: snapshot,
+            allowDelegation: draft.allowDelegation
+        ).map(\.key))
+    }
     private var modelsByID: [String: CatalogModel] {
-        Dictionary(uniqueKeysWithValues: snapshot.catalog.models.map { ($0.id, $0) })
+        snapshot.catalog.models.reduce(into: [:]) { models, model in
+            if models[model.id] == nil {
+                models[model.id] = model
+            }
+        }
     }
 
     var body: some View {
@@ -105,7 +139,6 @@ private struct GeneralSettingsPane: View {
                         Text("명시적으로 선택").tag("explicit")
                     }
                     Picker("기본 fallback", selection: $draft.fallbackSelectionKey) {
-                        Text("백엔드 기본값").tag("")
                         ForEach(choices, id: \.key) { choice in
                             Text(choiceLabel(choice)).tag(choice.key)
                         }
@@ -115,6 +148,10 @@ private struct GeneralSettingsPane: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(choices, id: \.key) { choice in
                                     Toggle(choiceLabel(choice), isOn: explicitBinding(choice.key))
+                                        .disabled(
+                                            !selectableChoiceKeys.contains(choice.key) &&
+                                            !draft.explicitSelectionKeys.contains(choice.key)
+                                        )
                                 }
                             }
                             .padding(.vertical, 4)
@@ -213,11 +250,21 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
+            if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
+                Section("저장하지 못한 이유") {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+            }
+
             Section {
                 HStack {
                     Button("일반 설정 초기화…", role: .destructive) {
                         showResetConfirmation = true
                     }
+                    .disabled(model.isBusy)
                     Spacer()
                     if model.isBusy { ProgressView().controlSize(.small) }
                     Button("변경사항 저장") {
@@ -255,7 +302,15 @@ private struct GeneralSettingsPane: View {
         let effort = model?.supportedReasoningEfforts.first {
             $0.effort == choice.reasoningEffort
         }
-        return "\(model?.displayName ?? choice.model) · \(effort?.label ?? choice.reasoningEffort)"
+        let unavailable: String
+        if selectableChoiceKeys.contains(choice.key) {
+            unavailable = ""
+        } else if SettingsDraft.savedChoiceKeys(in: snapshot).contains(choice.key) {
+            unavailable = " (저장됨 · 현재 선택 불가)"
+        } else {
+            unavailable = " (현재 선택 불가)"
+        }
+        return "\(model?.displayName ?? choice.model) · \(effort?.label ?? choice.reasoningEffort)\(unavailable)"
     }
 }
 
@@ -266,9 +321,11 @@ private struct ProjectsSettingsPane: View {
     @State private var deletionTarget: BridgeProject?
 
     private var availability: [String: ProjectAvailability] {
-        Dictionary(uniqueKeysWithValues: snapshot.capabilities.projectAvailability.map {
-            ($0.projectId, $0)
-        })
+        snapshot.capabilities.projectAvailability.reduce(into: [:]) { availability, item in
+            if availability[item.projectId] == nil {
+                availability[item.projectId] = item
+            }
+        }
     }
 
     var body: some View {
@@ -291,6 +348,7 @@ private struct ProjectsSettingsPane: View {
                     Label("프로젝트 추가", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(model.isBusy)
             }
 
             List {
@@ -334,6 +392,12 @@ private struct ProjectsSettingsPane: View {
             Text("Registry revision \(snapshot.settings.registryRevision) · 삭제는 등록 정보만 제거하며 폴더와 작업 기록은 삭제하지 않습니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let error = model.settingsErrorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
         }
         .sheet(item: $editor) { editor in
             ProjectEditorSheet(editor: editor) { operation in
@@ -374,6 +438,7 @@ private struct ProjectsSettingsPane: View {
 }
 
 private struct ProjectRow: View {
+    @EnvironmentObject private var model: AppModel
     let project: BridgeProject
     let availability: ProjectAvailability?
     let rename: () -> Void
@@ -423,6 +488,7 @@ private struct ProjectRow: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .disabled(model.isBusy)
         }
         .padding(.vertical, 5)
     }
@@ -444,6 +510,7 @@ private enum ProjectEditor: Identifiable {
 
 private struct ProjectEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     let editor: ProjectEditor
     let save: (ProjectOperation) async -> Bool
     @State private var name: String
@@ -479,6 +546,12 @@ private struct ProjectEditorSheet: View {
                         if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
                     }
                 }
+            }
+            if let error = model.settingsErrorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
             HStack {
                 Button("취소", role: .cancel) { dismiss() }
