@@ -793,7 +793,11 @@ async function main() {
     return;
   }
   if (command === "github-output") {
-    printGithubOutput(checkReleaseMetadata());
+    // This command bootstraps the workflow before setup-node/npm ci, so it
+    // must only depend on built-in Node modules and the canonical manifest.
+    // The later build/check step performs the full generated-file/UI drift
+    // validation once development dependencies such as tsx are installed.
+    printGithubOutput(deriveReleaseMetadata(loadReleaseManifest()));
     return;
   }
   throw new Error("Usage: release-manifest.mjs <check|sync|version|github-output> [major|minor|patch|semver]");
