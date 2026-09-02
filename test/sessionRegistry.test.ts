@@ -28,6 +28,7 @@ describe("SessionRegistry", () => {
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
       backendKind: "app-server",
+      visibleInCodexApp: true,
       updatedAt: 200,
       createdAt: 100,
       lastUsedAt: 200
@@ -48,7 +49,8 @@ describe("SessionRegistry", () => {
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
       updatedAt: 200,
-      backendKind: "app-server"
+      backendKind: "app-server",
+      visibleInCodexApp: true
     });
   });
 
@@ -301,7 +303,7 @@ describe("SessionRegistry", () => {
     expect(sessions.get("legacy-thread")).toMatchObject({
       scopeId: LEGACY_SCOPE_ID
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
     expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -329,7 +331,7 @@ describe("SessionRegistry", () => {
     const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
     expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
     expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 7 });
+    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
     expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
   });
 
@@ -358,7 +360,7 @@ describe("SessionRegistry", () => {
       backendKind: "app-server"
     });
     const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 7 });
+    expect(persisted).toMatchObject({ version: 8 });
     expect(persisted.sessions[0]).not.toHaveProperty("model");
     expect(persisted.sessions[0]).not.toHaveProperty("reasoningEffort");
   });

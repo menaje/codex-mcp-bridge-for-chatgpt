@@ -485,12 +485,14 @@ const dashboardExecutionOutputSchema = z.strictObject({
 
 const cancellationDisplayOutputSchema = z.strictObject({
   targetKind: z.enum(["job", "activity"]),
+  agentName: z.string().trim().min(1).max(200).optional(),
   status: z.enum(["requested", "succeeded", "failed"]),
   reason: z.string().trim().min(1).max(CANCELLATION_REASON_MAX_LENGTH),
   requestedAt: z.iso.datetime()
 });
 
 const dashboardTurnOutputSchema = z.strictObject({
+  activityKey: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   activityTitle: z.string().nullable(),
   execution: dashboardExecutionOutputSchema.optional(),
   status: z.enum(DASHBOARD_STATUSES),
@@ -511,6 +513,7 @@ const dashboardCodexThreadUrlOutputSchema = z.string().regex(
 
 const dashboardRowOutputSchema = z.strictObject({
   rowKey: z.string().regex(/^[0-9a-f]{32}$/),
+  activityKey: z.string().regex(/^[0-9a-f]{32}$/),
   conversationKey: z.string().regex(/^[0-9a-f]{32}$/),
   sessionAlias: z.string(),
   conversationUrl: dashboardConversationUrlOutputSchema.optional(),
@@ -1484,6 +1487,7 @@ function structuredByteCapFor(toolName: string): number {
     toolName === "codex_activity_snapshot" ||
     toolName === "codex_activity_rehydrate" ||
     toolName === "codex_dashboard_snapshot" ||
+    toolName === "codex_settings_snapshot" ||
     toolName === "codex_update_settings"
   ) {
     return TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration;
@@ -1522,10 +1526,16 @@ const compactSettingsResultContract = toolOutputContract(
   compactSettingsOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.codex_settings
 );
+const settingsSnapshotResultContract = toolOutputContract(
+  "codex_settings_snapshot",
+  "app-hydration",
+  settingsViewOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
+);
 const settingsEditorResultContract = toolOutputContract(
   "codex_update_settings",
   "app-hydration",
-  compactSettingsOutputSchema,
+  settingsViewOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
 );
 const activityModelResultContract = toolOutputContract(
@@ -1641,7 +1651,8 @@ export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_diagnostics: diagnosticsOutputSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_job_steer: mutationOutputSchema,
-  codex_update_settings: compactSettingsOutputSchema
+  codex_settings_snapshot: settingsViewOutputSchema,
+  codex_update_settings: settingsViewOutputSchema
 });
 
 export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS;
@@ -4520,7 +4531,7 @@ export function registerBridgeTools(
     {
       title: "Refresh Codex Overview",
       description:
-        "App-only read-only refresh for the mounted bridge-wide Codex overview. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
+        "App-only read-only fresh-data source for the mounted bridge-wide Codex overview. Cold mounts render only after this snapshot succeeds. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
       inputSchema: dashboardSnapshotInput,
       outputSchema: dashboardViewOutputSchema,
       annotations: {
@@ -6986,6 +6997,54 @@ export function registerBridgeTools(
     }
   );
 
+  server.registerTool(
+    "codex_settings_snapshot",
+    {
+      title: `Refresh ${PRODUCT_INFO.displayName} Settings`,
+      description:
+        "App-only read-only fresh-data source for the mounted settings card. Cold mounts render only after this tool reads the current persisted settings, project registry, capabilities, and backend model catalog. Set refreshModels only when the model catalog itself must be refreshed.",
+      inputSchema: z.strictObject({
+        refreshModels: z
+          .boolean()
+          .optional()
+          .describe("Force a fresh Codex model catalog lookup for this settings snapshot.")
+      }),
+      outputSchema: settingsViewOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
+      }
+    },
+    async (args, { _meta }) => {
+      const view = await buildSettingsView(
+        config,
+        userSettings,
+        modelCatalog,
+        args.refreshModels
+      );
+      const projectionStatus = publishTaskProjection(
+        modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
+      );
+      view.policyActivation.descriptorProjectionUpdated =
+        projectionStatus.descriptorProjectionUpdated;
+      view.policyActivation.developerModeRefreshRequired =
+        projectionStatus.developerModeRefreshRequired;
+      return settingsViewResult(
+        view,
+        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
+        "snapshot"
+      );
+    }
+  );
+
   const settingsAccessStrategyInput = config.allowDangerFullAccess
     ? z.enum(["read-only", "adaptive", "always-full"])
     : z.enum(["read-only", "adaptive"]);
@@ -7078,7 +7137,7 @@ export function registerBridgeTools(
       description:
         "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, restore, and archived-registration delete operations; add UUIDs are server-generated. Deleting a registration never deletes its folder, files, or retained work history. Reset restores general preferences only and preserves the registry.",
       inputSchema: settingsInput,
-      outputSchema: compactSettingsOutputSchema,
+      outputSchema: settingsViewOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -7245,7 +7304,7 @@ export function registerBridgeTools(
           projectionStatus.developerModeRefreshRequired
         ),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        "app"
+        "mutation"
       );
     }
   );
@@ -8399,6 +8458,7 @@ function recordAdmittedThread(input: {
   selection: ExecutionDecision["effectiveSelection"];
   policyRevision: number;
   backendKind: CodexBackendKind;
+  visibleInCodexApp: boolean;
   contextMode: AgentContextMode;
   sessionId?: string;
   forkedFromThreadId?: string;
@@ -8430,6 +8490,7 @@ function recordAdmittedThread(input: {
         selection: input.selection,
         policyRevision: input.policyRevision,
         backendKind: input.backendKind,
+        visibleInCodexApp: input.visibleInCodexApp,
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
@@ -8571,6 +8632,8 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: assignment.backendKind,
+        visibleInCodexApp:
+          assignment.backendKind === "app-server" && !ephemeralAppServerThread,
         contextMode: input.contextMode,
         sessionId: assignment.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId
@@ -8593,6 +8656,9 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
+        visibleInCodexApp:
+          (extractResultBackendKind(result) || input.config.defaultBackend) === "app-server" &&
+          !ephemeralAppServerThread,
         sessionId: lineage.sessionId,
         forkedFromThreadId: lineage.forkedFromThreadId,
         contextMode: input.contextMode
@@ -8872,6 +8938,9 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        visibleInCodexApp:
+          input.session.backendKind === "app-server" &&
+          input.preferences.showBridgeThreadsInCodexApp,
         contextMode: "fork",
         sessionId: assignment.sessionId || input.session.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
@@ -8894,6 +8963,9 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        visibleInCodexApp:
+          input.session.backendKind === "app-server" &&
+          input.preferences.showBridgeThreadsInCodexApp,
         sessionId: lineage.sessionId,
         contextMode: "fork",
         forkedFromThreadId: lineage.forkedFromThreadId || input.session.threadId
@@ -9921,6 +9993,10 @@ function buildCancellationDisplayIndex(
   for (const operation of operations) {
     if (!operation.reason) continue;
     const rootIntent = intentById.get(operation.rootIntentId);
+    const targetAgentId = operation.targetAgentId || rootIntent?.targetAgentId;
+    const targetAgent = operation.targetKind === "job" && targetAgentId
+      ? jobs.getAgent(targetAgentId)
+      : undefined;
     const status: CancellationDisplay["status"] = rootIntent
       ? rootIntent.status === "failed"
         ? "failed"
@@ -9941,6 +10017,7 @@ function buildCancellationDisplayIndex(
       `${operation.scopeId}\0${operation.requestId}`,
       cancellationDisplayOutputSchema.parse({
         targetKind: operation.targetKind,
+        ...(targetAgent?.agentName ? { agentName: targetAgent.agentName } : {}),
         status,
         reason,
         requestedAt: new Date(operation.createdAt).toISOString()
@@ -10041,12 +10118,14 @@ function dashboardSessionAlias(scopeId: string): string {
 }
 
 function dashboardCodexThreadUrl(
+  visibleInCodexApp: boolean,
   ...sources: Array<{
     threadId: string;
     sessionId?: string;
     backendKind: string;
   } | undefined>
 ): string | undefined {
+  if (!visibleInCodexApp) return undefined;
   for (const source of sources) {
     if (!source || source.backendKind !== "app-server") continue;
     const threadId = source.threadId.trim().toLowerCase();
@@ -10069,6 +10148,18 @@ function dashboardConversationKey(scopeId: string): string {
     .update("codex-dashboard/conversation-key/v1")
     .update("\0")
     .update(scopeId)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function dashboardActivityKey(
+  activityId: string | undefined,
+  fallbackIdentity: string
+): string {
+  return createHash("sha256")
+    .update("codex-dashboard/activity-key/v1")
+    .update("\0")
+    .update(activityId ? `activity:${activityId}` : `fallback:${fallbackIdentity}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -10137,6 +10228,32 @@ function dashboardStatusForJob(job: CodexJob): DashboardStatus {
   return job.status;
 }
 
+function activityParticipantDisplayState(
+  activity: BridgeActivity,
+  assignment: ActivityAgentAssignment | undefined,
+  activityJobs: readonly CodexJob[]
+): string {
+  const activeJobs = activityJobs
+    .filter((job) => isActiveActivityJobStatus(job.status))
+    .sort((left, right) =>
+      dashboardStatusPriority(dashboardStatusForJob(left)) -
+        dashboardStatusPriority(dashboardStatusForJob(right)) ||
+      right.updatedAt - left.updatedAt
+    );
+  const representative = activeJobs[0] || activityJobs.at(-1);
+  if (representative) {
+    const status = dashboardStatusForJob(representative);
+    return status === "cancelled" ? "interrupted" : status;
+  }
+  if (assignment?.releasedAt === undefined && activity.lifecycle === "open") {
+    return "waiting-gpt";
+  }
+  if (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") {
+    return "ended";
+  }
+  return "idle";
+}
+
 function dashboardPage<T>(
   rows: readonly T[],
   requestedOffset: number,
@@ -10158,6 +10275,64 @@ function dashboardPage<T>(
       conversationTotal: new Set(rows.map(conversationKey)).size,
       hasPrevious: offset > 0,
       hasNext: offset + visible.length < total
+    }
+  };
+}
+
+function dashboardActivityPage(
+  rows: readonly DashboardRow[],
+  requestedOffset: number,
+  limit: number
+): { rows: DashboardRow[]; page: DashboardPage } {
+  const groups: DashboardRow[][] = [];
+  const byActivity = new Map<string, DashboardRow[]>();
+  for (const row of rows) {
+    const existing = byActivity.get(row.activityKey);
+    if (existing) {
+      existing.push(row);
+      continue;
+    }
+    const group = [row];
+    byActivity.set(row.activityKey, group);
+    groups.push(group);
+  }
+
+  const pages: Array<{ offset: number; rows: DashboardRow[] }> = [];
+  let pageRows: DashboardRow[] = [];
+  let offset = 0;
+  for (const group of groups) {
+    if (pageRows.length > 0 && pageRows.length + group.length > limit) {
+      pages.push({ offset, rows: pageRows });
+      offset += pageRows.length;
+      pageRows = [];
+    }
+    pageRows.push(...group);
+  }
+  if (pageRows.length > 0 || pages.length === 0) pages.push({ offset, rows: pageRows });
+
+  const requested = Math.max(0, requestedOffset);
+  let pageIndex = pages.findIndex((page) => page.offset === requested);
+  if (pageIndex < 0) {
+    for (let index = pages.length - 1; index >= 0; index -= 1) {
+      if ((pages[index]?.offset || 0) <= requested) {
+        pageIndex = index;
+        break;
+      }
+    }
+  }
+  if (pageIndex < 0) pageIndex = 0;
+  const selected = pages[pageIndex] as { offset: number; rows: DashboardRow[] };
+  return {
+    rows: selected.rows,
+    page: {
+      offset: selected.offset,
+      limit,
+      returned: selected.rows.length,
+      total: rows.length,
+      returnedConversations: new Set(selected.rows.map((row) => row.conversationKey)).size,
+      conversationTotal: new Set(rows.map((row) => row.conversationKey)).size,
+      hasPrevious: pageIndex > 0,
+      hasNext: pageIndex + 1 < pages.length
     }
   };
 }
@@ -10502,7 +10677,9 @@ async function buildDashboardView(
   legacyGrouping?: { projectOffset: number; conversationOffset: number }
 ): Promise<DashboardView> {
   const now = Date.now();
-  const weeklyUsagePromise = readCodexWeeklyUsage(upstream);
+  const weeklyUsagePromise = inspectRuntime
+    ? readCodexWeeklyUsage(upstream)
+    : Promise.resolve(null);
   const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0);
   const cancellationDisplays = buildCancellationDisplayIndex(jobs);
   const displayedCancellationJobIds = new Set<string>();
@@ -10536,6 +10713,28 @@ async function buildDashboardView(
   const currentSessionFor = (agentId: string | undefined): TrackedCodexSession | undefined => {
     const thread = currentThreadFor(agentId);
     return thread ? sessions.get(thread.threadId) : undefined;
+  };
+  const codexThreadUrlFor = (
+    thread: BridgeAgentThread | undefined,
+    ...trackedSessions: Array<TrackedCodexSession | undefined>
+  ): string | undefined => {
+    const target = thread || trackedSessions.find(
+      (session): session is TrackedCodexSession => Boolean(session)
+    );
+    if (!target || target.backendKind !== "app-server") return undefined;
+    const visibilitySession = trackedSessions.find(
+      (session) =>
+        session?.backendKind === "app-server" &&
+        session.threadId.toLowerCase() === target.threadId.toLowerCase()
+    );
+    if (!visibilitySession) return undefined;
+    const visibleInCodexApp = visibilitySession.visibleInCodexApp ??
+      preferences.showBridgeThreadsInCodexApp;
+    return dashboardCodexThreadUrl(
+      visibleInCodexApp,
+      target,
+      visibilitySession
+    );
   };
   const jobsByAgent = new Map<string, CodexJob[]>();
   for (const job of allJobs) {
@@ -10614,6 +10813,7 @@ async function buildDashboardView(
     const execution = activityCardExecution(job, modelCatalog);
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
+      activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: jobs.getActivity(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
       status: statusForJob(job),
@@ -10637,6 +10837,7 @@ async function buildDashboardView(
       : undefined;
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
+      activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: jobs.getActivity(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
       status: job.status as DashboardStatus,
@@ -10694,6 +10895,7 @@ async function buildDashboardView(
   const jobRow = (job: CodexJob, bucket: DashboardRow["bucket"]): DashboardRow => {
     const agent = job.agentId ? agentById.get(job.agentId) : undefined;
     const thread = currentThreadFor(job.agentId);
+    const currentSession = currentSessionFor(job.agentId);
     const trackedSession = job.threadId ? sessions.get(job.threadId) : undefined;
     const isLatestAgentJob = Boolean(
       job.agentId && latestJobByAgent.get(job.agentId)?.jobId === job.jobId
@@ -10704,10 +10906,11 @@ async function buildDashboardView(
     const latestTurn = turnForJob(job);
     const history = historyForAgent(job.agentId, job.jobId);
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
-    const codexThreadUrl = dashboardCodexThreadUrl(thread, trackedSession);
+    const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
     const project = dashboardProjectIdentity(job, trackedSession, thread);
     return {
       rowKey: dashboardRowKey(job.agentId, job.jobId),
+      activityKey: dashboardActivityKey(job.activityId, job.agentId || job.jobId),
       conversationKey: dashboardConversationKey(job.scopeId),
       sessionAlias: dashboardSessionAlias(job.scopeId),
       ...(conversationUrl ? { conversationUrl } : {}),
@@ -10785,13 +10988,15 @@ async function buildDashboardView(
     );
     const currentExecution = currentExecutionForAgent(agent.agentId);
     const conversationUrl = scopeResolver.conversationUrl(agent.scopeId);
-    const codexThreadUrl = dashboardCodexThreadUrl(
-      thread,
-      currentSessionFor(agent.agentId)
-    );
+    const currentSession = currentSessionFor(agent.agentId);
+    const codexThreadUrl = codexThreadUrlFor(thread, currentSession);
     const project = dashboardProjectIdentity(thread, latestJob);
     const recoveryRow: DashboardRow = {
       rowKey: dashboardRowKey(agent.agentId),
+      activityKey: dashboardActivityKey(
+        latestJob?.activityId || latestArchivedJob?.activityId,
+        agent.agentId
+      ),
       conversationKey: dashboardConversationKey(agent.scopeId),
       sessionAlias: dashboardSessionAlias(agent.scopeId),
       ...(conversationUrl ? { conversationUrl } : {}),
@@ -10861,13 +11066,15 @@ async function buildDashboardView(
       );
       const currentExecution = currentExecutionForAgent(agent.agentId);
       const conversationUrl = scopeResolver.conversationUrl(agent.scopeId);
-      const codexThreadUrl = dashboardCodexThreadUrl(
-        thread,
-        currentSessionFor(agent.agentId)
-      );
+      const currentSession = currentSessionFor(agent.agentId);
+      const codexThreadUrl = codexThreadUrlFor(thread, currentSession);
       const project = dashboardProjectIdentity(thread, latestJob);
       return {
         rowKey: dashboardRowKey(agent.agentId),
+        activityKey: dashboardActivityKey(
+          latestJob?.activityId || latestArchivedJob?.activityId,
+          agent.agentId
+        ),
         conversationKey: dashboardConversationKey(agent.scopeId),
         sessionAlias: dashboardSessionAlias(agent.scopeId),
         ...(conversationUrl ? { conversationUrl } : {}),
@@ -10933,15 +11140,19 @@ async function buildDashboardView(
   const legacyConversationPage = legacyGrouping
     ? dashboardConversationPage(dashboardRows, legacyGrouping.conversationOffset, limit)
     : undefined;
-  const activePage = dashboardPage(activeRows, 0, 100, (row) => row.conversationKey);
-  const terminalPage = dashboardPage(
+  const activePage = dashboardActivityPage(activeRows, 0, 100);
+  const terminalPage = dashboardActivityPage(
     terminalRows,
     terminalOffset,
-    limit,
-    (row) => row.conversationKey
+    limit
   );
   const idlePage = dashboardPage(idleRows, idleOffset, limit, (row) => row.conversationKey);
   const weeklyUsage = await weeklyUsagePromise;
+  const trackedProjects = jobs.admissionStateStore
+    .getProjectRegistrySnapshot()
+    .projects
+    .filter((project) => project.archivedAt === undefined)
+    .length;
 
   return dashboardViewOutputSchema.parse({
     kind: "dashboard",
@@ -10951,7 +11162,7 @@ async function buildDashboardView(
     coverage: "bridge-known-retained",
     weeklyUsage,
     counts: {
-      trackedProjects: new Set(dashboardRows.map((row) => row.projectKey)).size,
+      trackedProjects,
       trackedConversations: scopeIds.size,
       retainedJobs: allJobs.length + archivedJobs.length,
       active: activeRows.length,
@@ -11004,14 +11215,7 @@ function dashboardViewResult(
   contract: typeof dashboardModelResultContract | typeof dashboardAppResultContract
 ): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.uiLocalePreference, locale);
-  const privateView = validateDashboardViewPrivateMetadata({
-    kind: "codex/dashboardView",
-    version: DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION,
-    purpose: "bridge-wide-read-only-hydration",
-    view
-  });
-  const appHydration = {
-    [DASHBOARD_VIEW_METADATA_KEY]: privateView,
+  const localeHydration = {
     "openai/locale": effectiveLocale,
     hostLocale: locale || null
   };
@@ -11041,9 +11245,19 @@ function dashboardViewResult(
           `${view.counts.runtimeProbeSkippedAgents} App Server runtime checks deferred. ` +
           "Open the card for bounded details."
       },
-      { appHydration }
+      { appHydration: localeHydration }
     );
   }
+  const privateView = validateDashboardViewPrivateMetadata({
+    kind: "codex/dashboardView",
+    version: DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION,
+    purpose: "bridge-wide-read-only-hydration",
+    view
+  });
+  const appHydration = {
+    [DASHBOARD_VIEW_METADATA_KEY]: privateView,
+    ...localeHydration
+  };
   return contractedToolResult(
     dashboardAppResultContract,
     view,
@@ -11576,12 +11790,17 @@ async function buildActivityView(
         .reverse()
         .find((job) => isActiveActivityJobStatus(job.status));
       const execution = activityCardExecution(activeAgentJob || agentActivityJobs.at(-1), modelCatalog);
+      const participantDisplayState = activityParticipantDisplayState(
+        activity,
+        assignment,
+        agentActivityJobs
+      );
       return {
         agentId,
         agentName: agent.agentName,
         role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
         contextMode: assignment?.contextMode || null,
-        displayState: currentForActivity ? current.displayState : displayState,
+        displayState: participantDisplayState,
         canForceStop: Boolean(currentForActivity && current.canForceStop),
         backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
         backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0,
@@ -13129,7 +13348,7 @@ async function freshCatalogForPolicy(
 function settingsViewResult(
   view: SettingsView,
   locale: string | undefined,
-  audience: "model" | "app"
+  audience: "model" | "snapshot" | "mutation"
 ): ToolResult {
   const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
   const localizedView: SettingsView = {
@@ -13208,19 +13427,25 @@ function settingsViewResult(
       ? ["codex_models"]
       : []
   };
-  const appHydration = {
-    // The full localized editor is validated before entering model-hidden metadata.
-    "codex/settingsView": validatedEditorView,
+  const localeHydration = {
     "openai/locale": effectiveLocale,
     hostLocale: locale || null
   };
-  if (audience === "app") {
+  if (audience === "snapshot" || audience === "mutation") {
+    const appHydration = {
+      // Retained cards can continue reading the private metadata copy. Current
+      // cards use the same-call structured content as their primary data source.
+      "codex/settingsView": validatedEditorView,
+      ...localeHydration
+    };
     return contractedToolResult(
-      settingsEditorResultContract,
+      audience === "snapshot" ? settingsSnapshotResultContract : settingsEditorResultContract,
       view,
-      compactView,
+      validatedEditorView,
       {
-        text: `Settings saved at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
+        text: audience === "snapshot"
+          ? `Settings refreshed at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
+          : `Settings saved at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
       },
       { appHydration }
     );
@@ -13234,7 +13459,7 @@ function settingsViewResult(
         `Settings opened: revision ${localizedView.settings.settingsRevision}, registry ${localizedView.settings.registryRevision}, ` +
         `${compactView.projects.length} project(s), ${compactView.warnings.length} warning(s).`
     },
-    { appHydration }
+    { appHydration: localeHydration }
   );
 }
 

@@ -90,6 +90,7 @@ type SessionRowInput = {
   cwd: string;
   projectId?: string;
   projectLabel?: string;
+  visibleInCodexApp?: boolean;
   lastUsedAt: number;
 };
 

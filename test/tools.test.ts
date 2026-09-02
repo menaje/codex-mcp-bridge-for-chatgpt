@@ -62,6 +62,7 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
 const UPPERCASE_SCOPE = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
 let requestSequence = 0;
+let dashboardWidgetSequence = 0;
 
 class FakeUpstream implements CodexUpstream {
   public calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -720,6 +721,7 @@ describe("bridge tools", () => {
       "codex_job_steer",
       "codex_models",
       "codex_settings",
+      "codex_settings_snapshot",
       "codex_status",
       "codex_steer",
       "codex_task",
@@ -1272,6 +1274,12 @@ describe("bridge tools", () => {
       "openai/outputTemplate": SETTINGS_CARD_URI,
       "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
     });
+    expect(byName.get("codex_settings_snapshot")?._meta).toMatchObject({
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true,
+      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
+    });
     expect(byName.get("codex_update_settings")?._meta).toMatchObject({
       ui: { visibility: ["app"] },
       "openai/visibility": "private"
@@ -1819,6 +1827,25 @@ describe("bridge tools", () => {
         },
         {
           "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": true,
+            "readOnly": true,
+          },
+          "name": "codex_settings_snapshot",
+          "properties": [
+            "refreshModels",
+          ],
+          "propertyCount": 1,
+          "schemaBytes": 233,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
             "destructive": true,
             "idempotent": false,
             "openWorld": false,
@@ -2185,6 +2212,11 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("Codex Bridge 설정");
     expect(contents.text).toContain("window.openai.callTool");
     expect(contents.text).toContain("codex_update_settings");
+    expect(contents.text).toContain('callTool("codex_settings_snapshot"');
+    expect(contents.text).not.toContain('callTool("codex_settings",');
+    expect(contents.text).not.toContain('message.method==="ui/notifications/tool-result"');
+    expect(contents.text).toContain('id="settings-form" hidden');
+    expect(contents.text).toContain('id="settings-loading"');
     expect(contents.text).not.toContain("localStorage");
     expect(contents.text).toContain('id="ui-language"');
     expect(contents.text).toContain('ko:"한국어"');
@@ -2220,7 +2252,11 @@ describe("bridge tools", () => {
     expect(contents.text).not.toContain("allocateProjectId");
     expect(contents.text).toContain('operations.push({kind:"add",project:{name:project.name,cwd:project.cwd}})');
     expect(contents.text).toContain('operations.push({kind:"delete",projectId:project.id})');
-    expect(contents.text).toContain('confirm(t["settings.deleteProjectConfirm"])');
+    expect(contents.text).not.toContain('confirm(t["settings.deleteProjectConfirm"])');
+    expect(contents.text).toContain('className="project-delete-confirm"');
+    expect(contents.text).toContain('className="project-pending-message"');
+    expect(contents.text).toContain('row.dataset.confirmDelete="true"');
+    expect(contents.text).toContain('classList.toggle("project-changes-pending",count>0)');
     expect(contents.text).toContain('t["settings.removeProject"]');
     expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
     expect(contents.text).not.toContain("defaultProjectId");
@@ -2282,6 +2318,11 @@ describe("bridge tools", () => {
         if (name === "settings") {
           expect(html).not.toContain('id="default-project"');
           expect(html).not.toContain("defaultProjectId");
+          if (revision.uri === currentUri) {
+            expect(html).toContain('callTool("codex_settings_snapshot"');
+            expect(html).not.toContain('callTool("codex_settings",');
+            expect(html).not.toContain('message.method==="ui/notifications/tool-result"');
+          }
         }
         if (name === "activity") {
           expect(html).toContain('callTool("codex_activity_snapshot"');
@@ -2313,7 +2354,8 @@ describe("bridge tools", () => {
             expect(html).toContain("function appendCancellation(parent,cancellation,key)");
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
-            expect(html).toContain("function appendExecution(parent,execution,current=false)");
+            expect(html).toContain("function appendExecution(parent,execution,next=false)");
+            expect(html).toContain("function renderActivityRows(parent,rows)");
             expect(html).toContain('node("details","history")');
             expect(html).toContain("new Intl.RelativeTimeFormat");
             expect(html).toContain("function normalizeHostToolResult");
@@ -2326,6 +2368,8 @@ describe("bridge tools", () => {
             expect(html).toContain('id="dashboard-content" hidden');
             expect(html).toContain('data-i18n="common.loading"');
             expect(html).toContain("function createWidgetInstanceId");
+            expect(html).not.toContain("function consumeHostResult(");
+            expect(html).not.toContain('message.method==="ui/notifications/tool-result"');
             expect(html).not.toContain('id="view-project"');
             expect(html).not.toContain('id="view-conversation"');
             expect(html).not.toContain('id="view-status"');
@@ -2438,12 +2482,15 @@ describe("bridge tools", () => {
     });
     const dashboardPublic = (dashboardResult as { structuredContent?: Record<string, unknown> })
       .structuredContent!;
-    const dashboardPrivate = validateDashboardViewPrivateMetadata(
-      (dashboardResult as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    );
     expect(dashboardPublic).not.toHaveProperty("weeklyUsage");
-    expect(dashboardPrivate.view.weeklyUsage).toEqual({
+    expect((dashboardResult as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+    expect(upstream.usageReads).toBe(0);
+
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(dashboardView.weeklyUsage).toEqual({
       source: "codex-account-rate-limits",
       limitId: "codex",
       usedPercent: 35.5,
@@ -2464,7 +2511,7 @@ describe("bridge tools", () => {
         ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
     );
     expect(activityPublic).not.toHaveProperty("weeklyUsage");
-    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardPrivate.view.weeklyUsage);
+    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardView.weeklyUsage);
     expect(upstream.usageReads).toBe(2);
 
     await close();
@@ -2535,10 +2582,9 @@ describe("bridge tools", () => {
         /^2 tracked retained conversations; 1 active; 1 running; 0 needing attention;/
       )
     });
-    const dashboardEnvelope = validateDashboardViewPrivateMetadata(
-      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    );
-    const view = dashboardEnvelope.view;
+    expect((opened as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+    const { view } = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
     expect(view).toMatchObject({
       kind: "dashboard",
       scope: "bridge-wide",
@@ -2588,7 +2634,9 @@ describe("bridge tools", () => {
     expect(view.pagination).not.toHaveProperty("projects");
     expect(view.pagination).not.toHaveProperty("conversations");
     expect([...view.activeRows, ...view.terminalRows].every((row) =>
-      /^[0-9a-f]{32}$/.test(row.rowKey) && /^[0-9a-f]{32}$/.test(row.projectKey)
+      /^[0-9a-f]{32}$/.test(row.rowKey) &&
+      /^[0-9a-f]{32}$/.test(row.activityKey) &&
+      /^[0-9a-f]{32}$/.test(row.projectKey)
     )).toBe(true);
     expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
       .not.toContain("gpt-5.6");
@@ -2627,14 +2675,9 @@ describe("bridge tools", () => {
     }
 
     jobs.startActivityVerification(completed.activityId);
-    const afterGptJudgmentState = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_B }
+    const { view: afterView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_B
     });
-    const afterView = validateDashboardViewPrivateMetadata(
-      (afterGptJudgmentState as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(afterView.terminalRows.find((row) =>
       row.activityTitle === "Scope A completed turn"
     )?.status).toBe("completed");
@@ -2680,13 +2723,9 @@ describe("bridge tools", () => {
 
     upstream.resolveNext(fakeCodexResult("scope-b-private-thread"));
     await vi.waitFor(() => expect(jobs.get(running.jobId)?.status).toBe("completed"));
-    const afterCompletion = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_A }
+    const { view: afterCompletionView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
     });
-    const afterCompletionView = validateDashboardViewPrivateMetadata(
-      (afterCompletion as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(afterCompletionView.terminalRows).toEqual(expect.arrayContaining([
       expect.objectContaining({
         agentName: "Scope B Agent",
@@ -2710,9 +2749,13 @@ describe("bridge tools", () => {
     const threadId = "41414141-4141-4141-8141-414141414141";
     const sessionId = "42424242-4242-4242-8242-424242424242";
     const upstream = new CodexSessionDeferredUpstream(threadId, sessionId);
-    const { client, rawCallTool, jobs, sessions, close } = await connectTestClient(
+    const { client, rawCallTool, jobs, sessions, settings, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
+    );
+    settings.update(
+      { showBridgeThreadsInCodexApp: true },
+      settings.current.revision
     );
     const task = parseToolJson(await runTask(client, {
       prompt: "keep the Codex deep-link fixture active",
@@ -2721,15 +2764,16 @@ describe("bridge tools", () => {
     await vi.waitFor(() => {
       expect(jobs.get(task.jobId)?.threadId).toBe(threadId);
       expect(sessions.get(threadId)?.sessionId).toBe(sessionId);
+      expect(sessions.get(threadId)?.visibleInCodexApp).toBe(true);
     });
 
     const opened = await rawCallTool({
       name: "codex_dashboard",
       arguments: { scopeId: SCOPE_A }
     });
-    const activeView = validateDashboardViewPrivateMetadata(
-      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
+    const { view: activeView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
     expect(activeView.activeRows).toEqual([
       expect.objectContaining({
         status: "running",
@@ -2749,20 +2793,72 @@ describe("bridge tools", () => {
       }
     });
     await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
-    const completed = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_A }
+    const { view: completedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
     });
-    const completedView = validateDashboardViewPrivateMetadata(
-      (completed as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(completedView.terminalRows).toEqual([
       expect.objectContaining({ codexThreadUrl: `codex://threads/${threadId}` })
     ]);
     await close();
   });
 
-  it("keeps GPT conversation and project context on status-first Agent rows", async () => {
+  it("omits a Codex deep link for an App Server Agent created as hidden", async () => {
+    const root = temporaryRoot();
+    const threadId = "43434343-4343-4343-8343-434343434343";
+    const sessionId = "44444444-4444-4444-8444-444444444444";
+    const upstream = new CodexSessionDeferredUpstream(threadId, sessionId);
+    const { client, rawCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    expect(settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    const task = parseToolJson(await runTask(client, {
+      prompt: "keep the hidden Codex thread fixture active",
+      executionMode: "background"
+    }));
+    await vi.waitFor(() => {
+      expect(jobs.get(task.jobId)?.threadId).toBe(threadId);
+      expect(sessions.get(threadId)?.visibleInCodexApp).toBe(false);
+    });
+
+    const { view: activeView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(activeView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+
+    settings.update(
+      { showBridgeThreadsInCodexApp: true },
+      settings.current.revision
+    );
+    const { view: reopenedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(reopenedView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+
+    const hiddenSession = sessions.get(threadId);
+    expect(hiddenSession).toBeDefined();
+    sessions.restoreInMemory(threadId);
+    const { view: missingVisibilityProvenanceView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(missingVisibilityProvenanceView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+    sessions.restoreInMemory(threadId, hiddenSession);
+
+    upstream.resolveNext({
+      content: [{ type: "text", text: "done" }],
+      structuredContent: { threadId, sessionId, backendKind: "app-server", content: "done" }
+    });
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+    await close();
+  });
+
+  it("keeps GPT conversation and project context while grouping Agent rows by Activity", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { rawCallTool, jobs, settings, close } = await connectTestClient(
@@ -2771,8 +2867,14 @@ describe("bridge tools", () => {
     );
     const conversationId = "12121212-1212-4212-8212-121212121212";
     const metadata = { "openai/session": conversationId };
+    expect(settings.current.showBridgeThreadsInCodexApp).toBe(false);
     const project = settings.current.projects[0]!;
-    const start = async (requestId: string, presentationId: string, name: string) =>
+    const start = async (
+      requestId: string,
+      presentationId: string,
+      name: string,
+      activityId?: string
+    ) =>
       parseToolJson(await rawCallTool({
         name: "codex_task",
         arguments: {
@@ -2780,7 +2882,9 @@ describe("bridge tools", () => {
           activityPresentationId: presentationId,
           prompt: `keep ${name} active for conversation grouping`,
           project: { name: project.name, registryRevision: settings.current.registryRevision },
-          activity: { mode: "new", title: `${name} activity` },
+          activity: activityId
+            ? { mode: "existing", id: activityId }
+            : { mode: "new", title: `${name} activity` },
           agent: { mode: "new", name },
           executionMode: "background"
         },
@@ -2794,7 +2898,8 @@ describe("bridge tools", () => {
     const second = await start(
       "15151515-1515-4515-8515-151515151515",
       "16161616-1616-4616-8616-161616161616",
-      "Conversation Agent Two"
+      "Conversation Agent Two",
+      first.activityId
     );
     const additional = [
       await start(
@@ -2825,15 +2930,21 @@ describe("bridge tools", () => {
       arguments: {},
       _meta: metadata
     });
-    const view = validateDashboardViewPrivateMetadata(
-      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
+    const { view } = await freshDashboardSnapshot(rawCallTool, {
+      metadata
+    });
     expect(view.activeRows).toHaveLength(6);
     expect(new Set(view.activeRows.map((row) => row.sessionAlias)).size).toBe(1);
     expect(view.activeRows.map((row) => row.agentName)).toEqual(expect.arrayContaining([
       "Conversation Agent One",
       "Conversation Agent Two"
     ]));
+    const sharedActivityRows = view.activeRows.filter((row) =>
+      row.agentName === "Conversation Agent One" || row.agentName === "Conversation Agent Two"
+    );
+    expect(sharedActivityRows).toHaveLength(2);
+    expect(new Set(sharedActivityRows.map((row) => row.activityKey)).size).toBe(1);
+    expect(new Set(view.activeRows.map((row) => row.activityKey)).size).toBe(5);
     expect(view.activeRows.every((row) =>
       row.conversationUrl === `https://chatgpt.com/c/${conversationId}`
     )).toBe(true);
@@ -2885,6 +2996,31 @@ describe("bridge tools", () => {
     for (const task of tasks) {
       await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
     }
+    let terminalOffset = 0;
+    let foundCompleteSharedActivity = false;
+    for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+      const terminalPageResult = await rawCallTool({
+        name: "codex_dashboard_snapshot",
+        arguments: {
+          widgetInstanceId: "25252525-2525-4525-8525-252525252526",
+          limit: 5,
+          terminalOffset
+        },
+        _meta: metadata
+      });
+      const terminalPage = (terminalPageResult as { structuredContent?: any }).structuredContent;
+      const sharedRows = terminalPage.terminalRows.filter((row: { activityKey: string }) =>
+        row.activityKey === sharedActivityRows[0].activityKey
+      );
+      if (sharedRows.length > 0) {
+        expect(sharedRows).toHaveLength(2);
+        foundCompleteSharedActivity = true;
+      }
+      if (!terminalPage.pagination.terminal.hasNext) break;
+      terminalOffset = terminalPage.pagination.terminal.offset +
+        terminalPage.pagination.terminal.returned;
+    }
+    expect(foundCompleteSharedActivity).toBe(true);
     await close();
   });
 
@@ -2954,14 +3090,7 @@ describe("bridge tools", () => {
     upstream.resolveNext(fakeCodexResult("first-project-thread"));
     await vi.waitFor(() => expect(jobs.get(completed.jobId)?.status).toBe("completed"));
 
-    const opened = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: {},
-      _meta: metadata
-    });
-    const view = validateDashboardViewPrivateMetadata(
-      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
+    const { view } = await freshDashboardSnapshot(rawCallTool, { metadata });
     expect(view.counts).toMatchObject({ trackedProjects: 2, trackedConversations: 1 });
     expect(view.activeRows).toEqual([
       expect.objectContaining({
@@ -2993,6 +3122,97 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("counts only active registered projects while retaining archived and deleted project rows", async () => {
+    const root = temporaryRoot();
+    const unusedRoot = path.join(root, "unused-project");
+    mkdirSync(unusedRoot);
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const retainedProject = settings.current.projects[0]!;
+    const task = parseToolJson(await runTask(client, {
+      prompt: "retain this project row after registry archive and delete",
+      activityTitle: "Retained project history",
+      agentName: "Retained Project Agent",
+      executionMode: "background"
+    }));
+    upstream.resolveNext(fakeCodexResult("retained-project-thread"));
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+
+    const added = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Unused Active Project", cwd: unusedRoot } }
+            ]
+          }
+        }
+      }
+    });
+    expect(added.isError).not.toBe(true);
+    const beforeArchive = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(beforeArchive.view.counts.trackedProjects).toBe(2);
+    expect(beforeArchive.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name,
+        status: "completed"
+      })
+    ]);
+
+    const archived = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "archive", projectId: retainedProject.id }]
+          }
+        }
+      }
+    });
+    expect(archived.isError).not.toBe(true);
+    const afterArchive = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(afterArchive.view.counts.trackedProjects).toBe(1);
+    expect(afterArchive.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name
+      })
+    ]);
+
+    const deleted = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: retainedProject.id }]
+          }
+        }
+      }
+    });
+    expect(deleted.isError).not.toBe(true);
+    const afterDelete = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(afterDelete.view.counts.trackedProjects).toBe(1);
+    expect(afterDelete.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name
+      })
+    ]);
+
+    await close();
+  });
+
   it("defers Dashboard runtime probes until mount and reports not-loaded, unknown, and orphaned evidence", async () => {
     const root = temporaryRoot();
     const upstream = new ProbeAwareUpstream();
@@ -3017,12 +3237,8 @@ describe("bridge tools", () => {
     expect(upstream.probeCalls).toEqual([]);
     expect((opened as { structuredContent?: any }).structuredContent?.summary)
       .toContain("1 App Server runtime checks deferred");
-    expect(validateDashboardViewPrivateMetadata(
-      (opened as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view.counts).toMatchObject({
-      runtimeUnknownAgents: 0,
-      runtimeProbeSkippedAgents: 1
-    });
+    expect((opened as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
 
     const snapshotArguments = {
       scopeId: SCOPE_A,
@@ -3216,10 +3432,9 @@ describe("bridge tools", () => {
     });
     expect((runningOverview as { structuredContent?: any }).structuredContent?.summary)
       .toContain("1 active; 1 running; 0 needing attention");
-    const runningView = validateDashboardViewPrivateMetadata(
-      (runningOverview as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
+    const { view: runningView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
     expect(runningView.activeRows).toEqual([
       expect.objectContaining({
         agentName: "Dashboard retry Agent",
@@ -3247,14 +3462,9 @@ describe("bridge tools", () => {
     const retryJob = jobs.get(retry.jobId)!;
     retryJob.createdAt = observedAt - 10 * 60_000;
     retryJob.updatedAt = observedAt - 2 * 60_000;
-    const completedOverview = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_A }
+    const { view: completedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
     });
-    const completedView = validateDashboardViewPrivateMetadata(
-      (completedOverview as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(completedView.counts).toMatchObject({
       retainedJobs: 2,
       failed: 1,
@@ -3737,7 +3947,12 @@ describe("bridge tools", () => {
       name: "codex_settings",
       arguments: {}
     });
-    const initial = privateSettingsView(initialResult);
+    expect((initialResult as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty("codex/settingsView");
+    const initial = privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }));
     expect(JSON.stringify((initialResult as { structuredContent?: unknown }).structuredContent))
       .not.toContain(realpathSync(root));
     expect(initial.settings).toMatchObject({
@@ -3775,14 +3990,18 @@ describe("bridge tools", () => {
     const [webProject, apiProject] = view.settings.projects as Array<Record<string, any>>;
     expect(webProject.id).toMatch(SCOPE_ID_PATTERN);
     expect(apiProject.id).toMatch(SCOPE_ID_PATTERN);
-    const publicSaved = JSON.stringify({
-      content: saved.content,
-      structuredContent: (saved as { structuredContent?: unknown }).structuredContent
-    });
-    expect(publicSaved).not.toContain(webProject.id);
-    expect(publicSaved).not.toContain(apiProject.id);
-    expect(publicSaved).not.toContain(realpathSync(web));
-    expect(publicSaved).not.toContain(realpathSync(api));
+    const compatibilitySaved = JSON.stringify(saved.content);
+    expect(compatibilitySaved).not.toContain(webProject.id);
+    expect(compatibilitySaved).not.toContain(apiProject.id);
+    expect(compatibilitySaved).not.toContain(realpathSync(web));
+    expect(compatibilitySaved).not.toContain(realpathSync(api));
+    const privateStructuredSaved = JSON.stringify(
+      (saved as { structuredContent?: unknown }).structuredContent
+    );
+    expect(privateStructuredSaved).toContain(webProject.id);
+    expect(privateStructuredSaved).toContain(apiProject.id);
+    expect(privateStructuredSaved).toContain(realpathSync(web));
+    expect(privateStructuredSaved).toContain(realpathSync(api));
     expect(view.capabilities.projectAvailability).toEqual([
       { projectId: webProject.id, name: "웹 앱", available: true, archived: false },
       { projectId: apiProject.id, name: "API 서비스", available: true, archived: false }
@@ -3821,7 +4040,10 @@ describe("bridge tools", () => {
     });
     expect(duplicatePath.isError).toBe(true);
     expect(JSON.stringify(duplicatePath)).toContain("PROJECT_CWD_CONFLICT");
-    expect(privateSettingsView(await client.callTool({ name: "codex_settings", arguments: {} }))
+    expect(privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }))
       .settings.registryRevision).toBe(1);
 
     const retiredDefault = await client.callTool({
@@ -4188,7 +4410,7 @@ describe("bridge tools", () => {
       archived: false
     });
     expect(privateSettingsView(await client.callTool({
-      name: "codex_settings",
+      name: "codex_settings_snapshot",
       arguments: {}
     })).settings.projects).toContainEqual({
       id: expect.stringMatching(SCOPE_ID_PATTERN),
@@ -4598,7 +4820,12 @@ describe("bridge tools", () => {
 
     const result = await client.callTool({ name: "codex_settings", arguments: {} });
     const publicView = (result as { structuredContent?: Record<string, any> }).structuredContent!;
-    const privateView = privateSettingsView(result);
+    expect((result as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty("codex/settingsView");
+    const privateView = privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }));
     expect(JSON.stringify(publicView)).not.toContain("gpt-private-legacy-default");
     expect(publicView.warnings).toContain(
       "Legacy model-only preference remains active; its exact value is available only in " +
@@ -5061,8 +5288,10 @@ describe("bridge tools", () => {
     });
     expect(saved.isError).not.toBe(true);
     expect(parseToolJson(saved)).toMatchObject({
-      revisions: { settings: 1 },
-      policy: { model: { mode: "automatic" } }
+      settings: {
+        settingsRevision: 1,
+        modelPolicy: { mode: "automatic" }
+      }
     });
 
     const task = await runTask(client, { prompt: "use surviving selection", sessionMode: "new" });
@@ -5212,7 +5441,11 @@ describe("bridge tools", () => {
       projects: [{ name: "Test Project", available: true, archived: false }],
       catalog: { stale: false, modelCount: 3 }
     });
-    expect(privateSettingsView(opened)).toMatchObject({
+    const openedSnapshot = await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    });
+    expect(privateSettingsView(openedSnapshot)).toMatchObject({
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
         availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
@@ -5224,7 +5457,7 @@ describe("bridge tools", () => {
     });
     expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
       .not.toContain(realpathSync(root));
-    expect(privateSettingsView(opened).settings).toMatchObject({
+    expect(privateSettingsView(openedSnapshot).settings).toMatchObject({
       settingsRevision: 0,
       registryRevision: 1,
       projects: [{ name: "Test Project", cwd: realpathSync(root) }]
@@ -5247,16 +5480,18 @@ describe("bridge tools", () => {
       }
     });
     expect((saved as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      revisions: { settings: 1 },
-      policy: {
-        access: "always-full",
-        model: {
-        mode: "fixed",
-          model: "gpt-5.6-terra",
-          reasoningEffort: "high"
+      settings: {
+        settingsRevision: 1,
+        accessStrategy: "always-full",
+        modelPolicy: {
+          mode: "fixed",
+          selection: {
+            model: "gpt-5.6-terra",
+            reasoningEffort: "high"
+          }
         },
         maxConcurrentJobs: 12,
-        activityVisibility: "background-only",
+        activityCardVisibility: "background-only",
         completionHandoff: "auto-handoff"
       }
     });
@@ -6082,7 +6317,7 @@ describe("bridge tools", () => {
       additionalProperties: false
     });
     expect(JSON.stringify(task.inputSchema.properties?.selection)).not.toContain("gpt-5.6-sol");
-    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
+    const settings = await client.callTool({ name: "codex_settings_snapshot", arguments: {} });
     expect(privateSettingsView(settings))
       .toMatchObject({
         capabilities: {
@@ -8454,14 +8689,9 @@ describe("bridge tools", () => {
       }
     });
 
-    const dashboardResult = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_A }
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
     });
-    const dashboardView = validateDashboardViewPrivateMetadata(
-      (dashboardResult as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
       expect.objectContaining({
         latestTurn: expect.objectContaining({
@@ -10141,6 +10371,79 @@ describe("bridge tools", () => {
     expect(jobs.get(started.jobId)?.cancellationIntentId).toBeUndefined();
     expect(jobs.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
     expect(upstream.aborts).toBe(0);
+    await close();
+  });
+
+  it("keeps each Agent's own outcome in an older shared Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "complete the first role",
+        activity: { mode: "new", title: "Mixed outcome Activity" },
+        agent: { mode: "new", name: "Completed Participant" },
+        executionMode: "background"
+      }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fail the second role",
+        activity: { mode: "existing", id: first.activityId },
+        agent: { mode: "new", name: "Failed Participant" },
+        executionMode: "background"
+      }
+    }));
+
+    upstream.resolveNext(fakeCodexResult("completed-participant-thread"));
+    upstream.rejectNext(new Error("participant failed"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "failed")
+    ]);
+
+    const later = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "move the completed Agent to later work",
+        activity: { mode: "new", title: "Later Activity" },
+        agent: { mode: "existing", id: first.agentId, context: "fresh" },
+        executionMode: "background"
+      }
+    }));
+    const oldActivityCard = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: first.activityId
+      }
+    });
+    const feed = privateActivityView(oldActivityCard).feed as {
+      active: Array<Record<string, any>>;
+      history: { rows: Array<Record<string, any>> };
+    };
+    const oldActivity = [...feed.active, ...feed.history.rows]
+      .find((row) => row.activityId === first.activityId);
+    expect(oldActivity?.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: "Completed Participant",
+        displayState: "completed"
+      }),
+      expect.objectContaining({
+        agentName: "Failed Participant",
+        displayState: "failed"
+      })
+    ]));
+
+    upstream.resolveNext(fakeCodexResult("later-participant-thread"));
+    await waitForJobStatus(client, later.jobId, "completed");
+    expect(jobs.get(first.jobId)?.status).toBe("completed");
     await close();
   });
 
@@ -12547,20 +12850,16 @@ describe("bridge tools", () => {
         activityId: started.activityId,
         cancellations: [{
           targetKind: "job",
+          agentName: expect.any(String),
           status: "succeeded",
           reason: cancellationArguments.reason,
           requestedAt: expect.any(String)
         }]
       })])
     );
-    const dashboardResult = await rawCallTool({
-      name: "codex_dashboard",
-      arguments: { scopeId: SCOPE_A }
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
     });
-    const dashboardView = validateDashboardViewPrivateMetadata(
-      (dashboardResult as { _meta?: Record<string, unknown> })
-        ._meta?.[DASHBOARD_VIEW_METADATA_KEY]
-    ).view;
     expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
       expect.objectContaining({
         latestTurn: expect.objectContaining({
@@ -14522,12 +14821,49 @@ function parseToolJson(result: unknown): Record<string, any> {
 }
 
 function privateSettingsView(result: unknown): Record<string, any> {
-  const candidate = (result as { _meta?: Record<string, any> } | undefined)
-    ?._meta?.["codex/settingsView"];
+  const toolResult = result as {
+    structuredContent?: Record<string, any>;
+    _meta?: Record<string, any>;
+  } | undefined;
+  const structured = toolResult?.structuredContent;
+  const candidate = structured?.settings && structured?.capabilities && structured?.catalog
+    ? structured
+    : toolResult?._meta?.["codex/settingsView"];
   if (!candidate || typeof candidate !== "object") {
-    throw new Error(`Missing private Settings-card view metadata: ${JSON.stringify(result)}`);
+    throw new Error(`Missing full Settings-card view: ${JSON.stringify(result)}`);
   }
   return candidate;
+}
+
+async function freshDashboardSnapshot(
+  rawCallTool: (request: {
+    name: string;
+    arguments?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }) => Promise<any>,
+  options: {
+    scopeId?: string;
+    metadata?: Record<string, unknown>;
+    limit?: number;
+  } = {}
+): Promise<{ result: any; view: Record<string, any> }> {
+  dashboardWidgetSequence += 1;
+  const widgetSuffix = dashboardWidgetSequence.toString(16).padStart(12, "0");
+  const result = await rawCallTool({
+    name: "codex_dashboard_snapshot",
+    arguments: {
+      ...(options.scopeId ? { scopeId: options.scopeId } : {}),
+      widgetInstanceId: `dddddddd-dddd-4ddd-8ddd-${widgetSuffix}`,
+      limit: options.limit || 20
+    },
+    ...(options.metadata ? { _meta: options.metadata } : {})
+  });
+  expect(result.isError).not.toBe(true);
+  const view = result.structuredContent as Record<string, any>;
+  expect(validateDashboardViewPrivateMetadata(
+    (result as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+  ).view).toEqual(view);
+  return { result, view };
 }
 
 function privateActivityView(result: unknown): Record<string, any> {

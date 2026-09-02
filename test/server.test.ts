@@ -304,9 +304,15 @@ describe("http server", () => {
       }
     });
     expect(parseToolJson(saved)).toMatchObject({
-      revisions: { policy: 1, settings: 1 },
-      policy: {
-        model: { mode: "fixed", model: "gpt-5.6-sol", reasoningEffort: "max" }
+      settings: {
+        settingsRevision: 1,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+        }
+      },
+      policyActivation: {
+        policyRevision: 1
       }
     });
     expect((saved as { _meta?: Record<string, any> })._meta?.["codex/settingsView"])

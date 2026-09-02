@@ -102,6 +102,12 @@ still send them; their presence asks the server to add the older grouped
 projection, while generation 7 omits them and receives the smaller row-only
 snapshot.
 
+`codex_settings_snapshot` is an app-private read-only call with one optional
+`refreshModels` boolean. The current Settings card calls it unconditionally on
+cold mount and after revision conflicts. Its default reads current persisted
+settings and project-registry state while using the normal short-lived catalog
+cache; the contextual catalog retry sets `refreshModels: true`.
+
 `codex_steer` publishes exactly four required properties: `requestId`, `jobId`,
 `expectedJobVersion`, and `prompt`. It does not publish conversation scope,
 Activity/Agent/thread/turn/card identifiers, execution settings, lifecycle or
