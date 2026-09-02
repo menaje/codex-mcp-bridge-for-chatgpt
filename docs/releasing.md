@@ -203,6 +203,33 @@ the release or epic before changing the default backend. Schema compatibility,
 fixture recovery tests, or a maintainer's code review do not substitute for
 those two records.
 
+### Native macOS app distribution gate
+
+The issue #44 app bundle is a developer preview until all of the following are
+recorded for the release candidate:
+
+- `npm run check`, `npm run macos:check`, and `npm run macos:bundle` pass from a
+  clean checkout;
+- the bundled runtime starts through its per-user LaunchAgent and exposes only
+  private `0700`/`0600` Unix socket paths;
+- an existing private dotenv, SQLite state, Settings, project registry, and
+  tunnel profile are reused without mutation or credential-store prompts;
+- first-run save, Tunnel profile repair, graceful drain, forced stop, crash
+  backoff/safe mode, and app-only quit are exercised without secret-bearing
+  logs or unexpected Job replay;
+- Dashboard and Settings snapshots decode in the native client and changes are
+  observed in both the native UI and retained ChatGPT cards;
+- VoiceOver labels, full keyboard navigation, light/dark appearance, sleep and
+  wake, network loss and recovery, and helper crash recovery are checked on a
+  physical Mac;
+- the supported Apple Silicon/Intel matrix and any bundled native artifacts are
+  recorded;
+- Developer ID signing, notarization, installer/update behavior, rollback, and
+  LaunchAgent replacement semantics are documented and tested.
+
+The current `macos/build-app.sh` output is host-architecture and ad-hoc signed.
+It is suitable for local development validation, not a published binary.
+
 ### Legacy runtime namespace
 
 The following compatibility identifiers deliberately retain the bare

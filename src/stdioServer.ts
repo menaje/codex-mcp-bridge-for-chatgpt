@@ -21,7 +21,8 @@ import { SessionRegistry } from "./sessionRegistry.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
   CodexJobRegistry,
-  TaskProjectAvailabilityProjection
+  TaskProjectAvailabilityProjection,
+  type BridgeApplicationService
 } from "./tools.js";
 import type { CodexUpstream } from "./upstream.js";
 import { UserSettingsStore } from "./userSettings.js";
@@ -43,6 +44,7 @@ export type BridgeStdioRuntimeOptions = {
 };
 
 export type BridgeStdioRuntime = {
+  readonly applicationService: BridgeApplicationService;
   readonly descriptorCoordinator: SdkToolDescriptorCoordinator;
   start(): Promise<void>;
   close(): Promise<void>;
@@ -135,6 +137,7 @@ export function createStdioBridgeRuntime(
   let started = false;
   let closePromise: Promise<void> | undefined;
   return {
+    applicationService: server.applicationService,
     descriptorCoordinator,
     async start(): Promise<void> {
       if (started) throw new Error("Persistent stdio bridge is already started.");

@@ -20,6 +20,8 @@ export function parseLauncherArgs(rawArgs) {
     }
     if (arg === "--help" || arg === "-h") parsed.help = true;
     else if (arg === "--no-build") parsed.noBuild = true;
+    else if (arg === "--require-built") parsed.requireBuilt = true;
+    else if (arg === "--reuse-profile") parsed.reuseProfile = true;
     else if (arg === "--write") parsed.write = true;
     else if (arg === "--allow-full-access") parsed.allowFullAccess = true;
     else if (arg === "--allow-write") parsed.allowWrite = true;

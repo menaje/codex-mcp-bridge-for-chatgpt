@@ -16,19 +16,29 @@ describe("bridge launcher options", () => {
       "/private/runtime.env",
       "--tunnel-id",
       "tunnel_test",
-      "--no-build"
+      "--require-built",
+      "--reuse-profile"
     ])).toEqual({
       mode: "secure",
       transport: "stdio",
       allowWrite: true,
       envFile: "/private/runtime.env",
       tunnelId: "tunnel_test",
-      noBuild: true
+      requireBuilt: true,
+      reuseProfile: true
     });
   });
 
   it("rejects the retired --root option so projects are configured only in Settings", () => {
     expect(() => parseLauncherArgs(["--root", "/one"])).toThrow("Unknown argument: --root");
+  });
+
+  it("keeps development no-build distinct from installed-runtime mode", () => {
+    expect(parseLauncherArgs(["--no-build"])).toEqual({ noBuild: true });
+    expect(parseLauncherArgs(["--require-built", "--reuse-profile"])).toEqual({
+      requireBuilt: true,
+      reuseProfile: true
+    });
   });
 
   it("fails closed when a supported option value is missing", () => {

@@ -4,6 +4,10 @@ import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { loadConfig } from "./config.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import {
+  startBridgeCompanionServer,
+  type BridgeCompanionServer
+} from "./companionServer.js";
 import { createStdioBridgeRuntime } from "./stdioServer.js";
 import { BridgeStateStore } from "./stateStore.js";
 import { CodexUpstreamPool } from "./upstream.js";
@@ -27,6 +31,7 @@ const upstream = new CodexBackendRouter(
   })
 );
 const runtime = createStdioBridgeRuntime(config, upstream, { stateStore });
+let companionServer: BridgeCompanionServer | undefined;
 let shuttingDown = false;
 
 for (const warning of config.startupWarnings) console.error(`warning: ${warning}`);
@@ -38,6 +43,14 @@ main().catch((error) => {
 
 async function main(): Promise<void> {
   await runtime.start();
+  const companionSocketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET?.trim();
+  if (companionSocketPath) {
+    companionServer = await startBridgeCompanionServer({
+      socketPath: companionSocketPath,
+      applicationService: runtime.applicationService
+    });
+    console.error(`native companion ready at ${companionServer.socketPath}`);
+  }
   console.error(
     `${PRODUCT_INFO.displayName} persistent stdio ready; build ${BRIDGE_BUILD_INFO.id} ` +
     `(${BRIDGE_BUILD_INFO.version})`
@@ -49,6 +62,12 @@ async function shutdown(reason: string, code = 0): Promise<void> {
   shuttingDown = true;
   console.error(`received ${reason}, shutting down persistent stdio`);
   let exitCode = code;
+  try {
+    await companionServer?.close();
+  } catch (error) {
+    exitCode = 1;
+    console.error(`native companion shutdown failed: ${errorMessage(error)}`);
+  }
   try {
     await runtime.close();
   } catch (error) {

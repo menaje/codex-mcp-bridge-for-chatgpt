@@ -28,6 +28,21 @@ npm ci
 npm run check
 ```
 
+On macOS, the issue #44 developer-preview app can perform the same dotenv,
+runtime, Dashboard, and Settings workflow through native SwiftUI controls:
+
+```bash
+npm run macos:bundle
+open "macos/build/Codex MCP Bridge for ChatGPT.app"
+```
+
+If the existing private dotenv is valid, the app reuses it without showing the
+key or asking for Keychain access. On a fresh install, enter the Tunnel runtime
+key and Tunnel ID in the native connection sheet. The app then starts the same
+persistent-stdio bridge and retains the Developer mode + Tunnel + `No Auth`
+ChatGPT connection steps below. See [macos-app.md](macos-app.md) for current
+packaging and release limitations.
+
 ## 2. Create the Secure MCP Tunnel
 
 Create an MCP tunnel in OpenAI Platform and associate it with the ChatGPT workspace that will use it. The operator needs applicable Tunnel Read/Use permissions and ChatGPT Developer mode. Keep the runtime key and tunnel ID outside Git.

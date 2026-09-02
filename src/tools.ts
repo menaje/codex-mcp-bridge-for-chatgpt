@@ -27,7 +27,12 @@ import {
   type BridgeAgent,
   type BridgeAgentThread
 } from "./agent.js";
-import type { BridgeConfig, CodexBackendKind, SandboxMode } from "./config.js";
+import type {
+  AccessStrategy,
+  BridgeConfig,
+  CodexBackendKind,
+  SandboxMode
+} from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
@@ -134,8 +139,10 @@ import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
   ACTIVITY_CARD_VISIBILITIES,
   COMPLETION_HANDOFF_MODES,
+  type ActivityCardVisibility,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
+  type CompletionHandoffMode,
   type ProjectRegistryOperation,
   UserSettingsStore
 } from "./userSettings.js";
@@ -145,7 +152,8 @@ import {
   missingReasoningEffortTranslations,
   reasoningEffortPresentation,
   resolvePreferredUiLocale,
-  uiTranslation
+  uiTranslation,
+  type UiLocalePreference
 } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -1099,7 +1107,7 @@ const compactSettingsOutputSchema = z.strictObject({
   nextActions: z.array(modelNextActionOutputSchema)
 });
 
-type SettingsView = z.infer<typeof settingsViewOutputSchema>;
+export type SettingsView = z.infer<typeof settingsViewOutputSchema>;
 
 const jobWaitOutputSchema = z.strictObject({
   waitFor: z.enum(["change", "terminal"]),
@@ -4374,6 +4382,7 @@ export function registerBridgeTools(
   sharedDescriptorCoordinator?: SdkToolDescriptorCoordinator,
   projectAvailability?: TaskProjectAvailabilityProjection
 ): {
+  applicationService: BridgeApplicationService;
   reconcileTaskDescriptor(catalog?: CodexModelCatalogSnapshot): SdkToolDescriptorProjectionStatus;
   markTaskDescriptorNotificationEligible(): boolean;
   dispose(): void;
@@ -4409,6 +4418,76 @@ export function registerBridgeTools(
   };
   const publishTaskProjection = (catalog?: CodexModelCatalogSnapshot) => {
     return descriptorCoordinator.publish(taskDescriptorSnapshot(userSettings.current, catalog));
+  };
+  let acceptingNewJobs = true;
+  let pendingAdmissions = 0;
+  const runtimeAdmissionSnapshot = (): BridgeRuntimeAdmissionSnapshot => ({
+    acceptingNewJobs,
+    activeJobs: jobs.runningCount(),
+    pendingAdmissions
+  });
+  const acquireRuntimeAdmission = (): (() => void) => {
+    if (!acceptingNewJobs) {
+      throw new Error(
+        "BRIDGE_DRAINING: The app is preparing to stop or restart the bridge. " +
+        "No new Codex work is being admitted; retry after the runtime is available."
+      );
+    }
+    pendingAdmissions += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      pendingAdmissions = Math.max(0, pendingAdmissions - 1);
+    };
+  };
+  const applicationService: BridgeApplicationService = {
+    async dashboardSnapshot(options = {}) {
+      return buildDashboardView(
+        jobs,
+        upstream,
+        modelCatalog,
+        sessions,
+        scopeResolver,
+        config,
+        userSettings.current,
+        options.limit || 20,
+        options.terminalOffset || 0,
+        options.idleOffset || 0,
+        options.inspectRuntime !== false,
+        options.legacyGrouping
+      );
+    },
+    async settingsSnapshot(options = {}) {
+      const view = await buildSettingsView(
+        config,
+        userSettings,
+        modelCatalog,
+        options.refreshModels || false
+      );
+      const projectionStatus = publishTaskProjection(
+        modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
+      );
+      view.policyActivation.descriptorProjectionUpdated =
+        projectionStatus.descriptorProjectionUpdated;
+      view.policyActivation.developerModeRefreshRequired =
+        projectionStatus.developerModeRefreshRequired;
+      return view;
+    },
+    updateSettings(input) {
+      return applySettingsMutation(input);
+    },
+    runtimeSnapshot() {
+      return runtimeAdmissionSnapshot();
+    },
+    beginDrain() {
+      acceptingNewJobs = false;
+      return runtimeAdmissionSnapshot();
+    },
+    cancelDrain() {
+      acceptingNewJobs = true;
+      return runtimeAdmissionSnapshot();
+    }
   };
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
@@ -4505,19 +4584,10 @@ export function registerBridgeTools(
         args.scopeId,
         "Bridge-wide Codex overview"
       );
-      const view = await buildDashboardView(
-        jobs,
-        upstream,
-        modelCatalog,
-        sessions,
-        scopeResolver,
-        config,
-        userSettings.current,
-        20,
-        0,
-        0,
-        false
-      );
+      const view = await applicationService.dashboardSnapshot({
+        limit: 20,
+        inspectRuntime: false
+      });
       return dashboardViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -4559,25 +4629,19 @@ export function registerBridgeTools(
       // mounted snapshot may recover without it. Supplying either scope form is
       // still validated and malformed host metadata must never be ignored.
       scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
-      const view = await buildDashboardView(
-        jobs,
-        upstream,
-        modelCatalog,
-        sessions,
-        scopeResolver,
-        config,
-        userSettings.current,
-        args.limit || 20,
-        args.terminalOffset || 0,
-        args.idleOffset || 0,
-        true,
-        args.projectOffset !== undefined || args.conversationOffset !== undefined
-          ? {
-              projectOffset: args.projectOffset || 0,
-              conversationOffset: args.conversationOffset || 0
-            }
-          : undefined
-      );
+      const view = await applicationService.dashboardSnapshot({
+        limit: args.limit || 20,
+        terminalOffset: args.terminalOffset || 0,
+        idleOffset: args.idleOffset || 0,
+        inspectRuntime: true,
+        legacyGrouping:
+          args.projectOffset !== undefined || args.conversationOffset !== undefined
+            ? {
+                projectOffset: args.projectOffset || 0,
+                conversationOffset: args.conversationOffset || 0
+              }
+            : undefined
+      });
       return dashboardViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -6981,14 +7045,9 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const view = await buildSettingsView(config, userSettings, modelCatalog, args.refreshModels);
-      const projectionStatus = publishTaskProjection(
-        modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
-      );
-      view.policyActivation.descriptorProjectionUpdated =
-        projectionStatus.descriptorProjectionUpdated;
-      view.policyActivation.developerModeRefreshRequired =
-        projectionStatus.developerModeRefreshRequired;
+      const view = await applicationService.settingsSnapshot({
+        refreshModels: args.refreshModels
+      });
       return settingsViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -7024,19 +7083,9 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const view = await buildSettingsView(
-        config,
-        userSettings,
-        modelCatalog,
-        args.refreshModels
-      );
-      const projectionStatus = publishTaskProjection(
-        modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
-      );
-      view.policyActivation.descriptorProjectionUpdated =
-        projectionStatus.descriptorProjectionUpdated;
-      view.policyActivation.developerModeRefreshRequired =
-        projectionStatus.developerModeRefreshRequired;
+      const view = await applicationService.settingsSnapshot({
+        refreshModels: args.refreshModels
+      });
       return settingsViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -7130,6 +7179,162 @@ export function registerBridgeTools(
     )
   });
 
+  async function applySettingsMutation(
+    input: BridgeSettingsMutationInput
+  ): Promise<SettingsView> {
+    const args = settingsInput.parse(input);
+    const resetRequested = args.operation.kind === "reset";
+    const patch: BridgeUserSettingsPatch = {};
+    let projectOperations: ProjectRegistryOperation[] = [];
+
+    if (args.operation.kind === "patch") {
+      const settings = args.operation.settings;
+      const nestedKeys = [
+        "accessStrategy",
+        "modelPolicy",
+        "usePriorityServiceTier",
+        "uiLocalePreference",
+        "maxConcurrentJobs",
+        "showBridgeThreadsInCodexApp",
+        "activityCard",
+        "projectOperations"
+      ] as const;
+      if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
+        throw new Error("SETTINGS_PATCH_EMPTY: Provide at least one setting or project operation.");
+      }
+      for (const key of [
+        "accessStrategy",
+        "modelPolicy",
+        "usePriorityServiceTier",
+        "uiLocalePreference",
+        "maxConcurrentJobs",
+        "showBridgeThreadsInCodexApp"
+      ] as const) {
+        if (settings[key] !== undefined) {
+          (patch as Record<string, unknown>)[key] = settings[key];
+        }
+      }
+      if (settings.activityCard !== undefined) {
+        if (
+          !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
+          !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
+        ) {
+          throw new Error(
+            "SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting."
+          );
+        }
+        if (settings.activityCard.visibility !== undefined) {
+          patch.activityCardVisibility = settings.activityCard.visibility;
+        }
+        if (settings.activityCard.completionHandoff !== undefined) {
+          patch.completionHandoff = settings.activityCard.completionHandoff;
+        }
+      }
+      projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
+    }
+
+    // Fail stale native clients/cards before any external catalog lookup. The
+    // same revisions are checked again immediately before the atomic write.
+    const hasGeneralMutation = resetRequested || Object.keys(patch).length > 0;
+    if (hasGeneralMutation && args.expectedSettingsRevision === undefined) {
+      throw new Error("SETTINGS_REVISION_CONFLICT: expectedSettingsRevision is required.");
+    }
+    if (projectOperations.length > 0 && args.expectedRegistryRevision === undefined) {
+      throw new Error(
+        "PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required."
+      );
+    }
+    if (hasGeneralMutation) {
+      userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
+    }
+    if (projectOperations.length > 0) {
+      userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
+    }
+    const current = userSettings.current;
+    const nextRevision = current.settingsRevision + 1;
+    let validatedCatalog: CodexModelCatalogSnapshot | undefined;
+    if (resetRequested) {
+      const catalog = await freshCatalogForPolicy(
+        modelCatalog,
+        config.defaultBackend,
+        nextRevision
+      );
+      validatedCatalog = catalog;
+      const resetPolicy = materializeAutomaticFallback(
+        userSettings.defaults.modelPolicy,
+        catalog,
+        config.operatorModelCeiling,
+        nextRevision
+      );
+      validatePolicyAgainstCatalog(
+        resetPolicy,
+        catalog,
+        config.operatorModelCeiling,
+        nextRevision
+      );
+      assertPriorityCompatibility(
+        resetPolicy,
+        catalog,
+        config.operatorModelCeiling,
+        userSettings.defaults.usePriorityServiceTier,
+        nextRevision
+      );
+      userSettings.reset(args.expectedSettingsRevision as number, resetPolicy);
+    } else {
+      if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
+        const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
+        if (
+          current.legacyPreferredModel !== undefined ||
+          !sameModelPolicy(policy, current.modelPolicy) ||
+          (
+            patch.usePriorityServiceTier !== undefined &&
+            patch.usePriorityServiceTier !== current.usePriorityServiceTier
+          )
+        ) {
+          const catalog = await freshCatalogForPolicy(
+            modelCatalog,
+            config.defaultBackend,
+            nextRevision
+          );
+          validatedCatalog = catalog;
+          validatePolicyAgainstCatalog(
+            policy,
+            catalog,
+            config.operatorModelCeiling,
+            nextRevision
+          );
+          assertPriorityCompatibility(
+            policy,
+            catalog,
+            config.operatorModelCeiling,
+            patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
+            nextRevision
+          );
+        }
+        if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
+      }
+      if (projectOperations.length > 0) {
+        userSettings.updateWithProjectOperations(
+          patch,
+          projectOperations,
+          hasGeneralMutation ? args.expectedSettingsRevision : undefined,
+          args.expectedRegistryRevision
+        );
+      } else {
+        userSettings.update(patch, args.expectedSettingsRevision as number);
+      }
+    }
+    const projectionStatus = publishTaskProjection(validatedCatalog);
+    return buildSettingsView(
+      config,
+      userSettings,
+      modelCatalog,
+      false,
+      projectionStatus.descriptorProjectionUpdated,
+      projectionStatus.developerModeRefreshRequired
+    );
+  }
+
   server.registerTool(
     "codex_update_settings",
     {
@@ -7154,155 +7359,8 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const resetRequested = args.operation.kind === "reset";
-      const patch: BridgeUserSettingsPatch = {};
-      let projectOperations: ProjectRegistryOperation[] = [];
-
-      if (args.operation.kind === "patch") {
-        const settings = args.operation.settings;
-        const nestedKeys = [
-          "accessStrategy",
-          "modelPolicy",
-          "usePriorityServiceTier",
-          "uiLocalePreference",
-          "maxConcurrentJobs",
-          "showBridgeThreadsInCodexApp",
-          "activityCard",
-          "projectOperations"
-        ] as const;
-        if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
-          throw new Error("SETTINGS_PATCH_EMPTY: Provide at least one setting or project operation.");
-        }
-        for (const key of [
-          "accessStrategy",
-          "modelPolicy",
-          "usePriorityServiceTier",
-          "uiLocalePreference",
-          "maxConcurrentJobs",
-          "showBridgeThreadsInCodexApp"
-        ] as const) {
-          if (settings[key] !== undefined) {
-            (patch as Record<string, unknown>)[key] = settings[key];
-          }
-        }
-        if (settings.activityCard !== undefined) {
-          if (
-            !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
-            !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
-          ) {
-            throw new Error("SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting.");
-          }
-          if (settings.activityCard.visibility !== undefined) {
-            patch.activityCardVisibility = settings.activityCard.visibility;
-          }
-          if (settings.activityCard.completionHandoff !== undefined) {
-            patch.completionHandoff = settings.activityCard.completionHandoff;
-          }
-        }
-        projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
-      }
-
-      // Fail stale cards before any external catalog lookup. reset/update repeat
-      // the same check immediately before persistence after the await boundary.
-      const hasGeneralMutation = resetRequested || Object.keys(patch).length > 0;
-      if (hasGeneralMutation && args.expectedSettingsRevision === undefined) {
-        throw new Error("SETTINGS_REVISION_CONFLICT: expectedSettingsRevision is required.");
-      }
-      if (projectOperations.length > 0 && args.expectedRegistryRevision === undefined) {
-        throw new Error(
-          "PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required."
-        );
-      }
-      if (hasGeneralMutation) {
-        userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
-      }
-      if (projectOperations.length > 0) {
-        userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
-      }
-      const current = userSettings.current;
-      const nextRevision = current.settingsRevision + 1;
-      let validatedCatalog: CodexModelCatalogSnapshot | undefined;
-      if (resetRequested) {
-        const catalog = await freshCatalogForPolicy(
-          modelCatalog,
-          config.defaultBackend,
-          nextRevision
-        );
-        validatedCatalog = catalog;
-        const resetPolicy = materializeAutomaticFallback(
-          userSettings.defaults.modelPolicy,
-          catalog,
-          config.operatorModelCeiling,
-          nextRevision
-        );
-        validatePolicyAgainstCatalog(
-          resetPolicy,
-          catalog,
-          config.operatorModelCeiling,
-          nextRevision
-        );
-        assertPriorityCompatibility(
-          resetPolicy,
-          catalog,
-          config.operatorModelCeiling,
-          userSettings.defaults.usePriorityServiceTier,
-          nextRevision
-        );
-        userSettings.reset(args.expectedSettingsRevision as number, resetPolicy);
-      } else {
-        if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
-          const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
-          if (
-            current.legacyPreferredModel !== undefined ||
-            !sameModelPolicy(policy, current.modelPolicy) ||
-            (
-              patch.usePriorityServiceTier !== undefined &&
-              patch.usePriorityServiceTier !== current.usePriorityServiceTier
-            )
-          ) {
-            const catalog = await freshCatalogForPolicy(
-              modelCatalog,
-              config.defaultBackend,
-              nextRevision
-            );
-            validatedCatalog = catalog;
-            validatePolicyAgainstCatalog(
-              policy,
-              catalog,
-              config.operatorModelCeiling,
-              nextRevision
-            );
-            assertPriorityCompatibility(
-              policy,
-              catalog,
-              config.operatorModelCeiling,
-              patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
-              nextRevision
-            );
-          }
-          if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
-        }
-        if (projectOperations.length > 0) {
-          userSettings.updateWithProjectOperations(
-            patch,
-            projectOperations,
-            hasGeneralMutation ? args.expectedSettingsRevision : undefined,
-            args.expectedRegistryRevision
-          );
-        } else {
-          userSettings.update(patch, args.expectedSettingsRevision as number);
-        }
-      }
-      const projectionStatus = publishTaskProjection(validatedCatalog);
       return settingsViewResult(
-        await buildSettingsView(
-          config,
-          userSettings,
-          modelCatalog,
-          false,
-          projectionStatus.descriptorProjectionUpdated,
-          projectionStatus.developerModeRefreshRequired
-        ),
+        await applicationService.updateSettings(args),
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         "mutation"
       );
@@ -7326,6 +7384,7 @@ export function registerBridgeTools(
     },
     async (args, extra) => {
       let removeTaskAbortObserver: (() => void) | undefined;
+      let releaseRuntimeAdmission: (() => void) | undefined;
       try {
         const { _meta, signal } = extra;
         const preferences = userSettings.current;
@@ -7383,6 +7442,7 @@ export function registerBridgeTools(
           }
           return projectLookupResult(args.projectLookup.name, userSettings);
         }
+        releaseRuntimeAdmission = acquireRuntimeAdmission();
         if (
           preferences.projects.length === 0 &&
           args.project === undefined &&
@@ -7553,7 +7613,11 @@ export function registerBridgeTools(
               admissionCatalogFingerprint:
                 executionResolution.admissionCatalogFingerprint
             },
-            preflightDone: true
+            preflightDone: true,
+            onAdmitted: () => {
+              releaseRuntimeAdmission?.();
+              releaseRuntimeAdmission = undefined;
+            }
           });
         }
 
@@ -7660,7 +7724,11 @@ export function registerBridgeTools(
             userSettings,
             executionPolicyRef: taskAdmissionPolicyRef(args),
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
-            projectRequest: args.project
+            projectRequest: args.project,
+            onAdmitted: () => {
+              releaseRuntimeAdmission?.();
+              releaseRuntimeAdmission = undefined;
+            }
           });
         }
         return await continueTrackedSession({
@@ -7686,7 +7754,11 @@ export function registerBridgeTools(
           userSettings,
           executionPolicyRef: taskAdmissionPolicyRef(args),
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
-          projectRequest: args.project
+          projectRequest: args.project,
+          onAdmitted: () => {
+            releaseRuntimeAdmission?.();
+            releaseRuntimeAdmission = undefined;
+          }
         });
       } catch (error) {
         if (error instanceof ExecutionPolicyChangedError) {
@@ -7739,6 +7811,7 @@ export function registerBridgeTools(
         }
         return taskPreflightErrorResult(errorFromException(error));
       } finally {
+        releaseRuntimeAdmission?.();
         removeTaskAbortObserver?.();
       }
     }
@@ -7761,6 +7834,7 @@ export function registerBridgeTools(
       })
     : undefined;
   return {
+    applicationService,
     reconcileTaskDescriptor: publishTaskProjection,
     markTaskDescriptorNotificationEligible: () =>
       descriptorBinding.setNotificationEligible(true),
@@ -8543,6 +8617,7 @@ async function startNewSession(input: {
   };
   preflightDone?: boolean;
   rejectIfSelectionActive?: boolean;
+  onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const { cwd, sandbox, decision: executionDecision } = input.resolved;
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
@@ -8639,6 +8714,7 @@ async function startNewSession(input: {
         forkedFromThreadId: assignment.forkedFromThreadId
       });
     },
+    onAdmitted: input.onAdmitted,
     onComplete: (result, agent) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
@@ -8713,6 +8789,7 @@ async function continueTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const forcedSandbox = forcedSandboxForStrategy(input.preferences);
   if (forcedSandbox && input.session.sandbox !== forcedSandbox) {
@@ -8762,6 +8839,7 @@ async function continueTrackedSession(input: {
     executionPolicyCatalogFingerprint: input.executionPolicyCatalogFingerprint,
     projectRequest: input.projectRequest,
     sourceThreadId: input.session.threadId,
+    onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
@@ -8863,6 +8941,7 @@ async function forkTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  onAdmitted?: () => void;
 }): Promise<ToolResult> {
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
@@ -8911,6 +8990,7 @@ async function forkTrackedSession(input: {
     executionPolicyCatalogFingerprint: input.executionPolicyCatalogFingerprint,
     projectRequest: input.projectRequest,
     sourceThreadId: input.session.threadId,
+    onAdmitted: input.onAdmitted,
     exclusiveKeys: [threadExclusiveKey(input.session.threadId)],
     run: (onProgress, onAssigned) => input.upstream.forkThread?.(
       {
@@ -8999,6 +9079,7 @@ async function runCodex(input: {
   selectionKey: string;
   executionDecision: ExecutionDecision;
   rejectIfSelectionActive?: boolean;
+  onAdmitted?: () => void;
   exclusiveKeys?: string[];
   run: (
     onProgress: (progress: Progress) => void,
@@ -9122,6 +9203,7 @@ async function runCodex(input: {
   } else {
     admit();
   }
+  input.onAdmitted?.();
   if (job.executionMode === "background") {
     return taskResultForJob(
       job,
@@ -9962,7 +10044,60 @@ type DashboardProject = z.infer<typeof dashboardProjectOutputSchema>;
 type DashboardPage = z.infer<typeof dashboardPageOutputSchema>;
 type DashboardConversationPage = z.infer<typeof dashboardConversationPageOutputSchema>;
 type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
-type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
+export type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
+
+export type BridgeDashboardSnapshotOptions = {
+  limit?: number;
+  terminalOffset?: number;
+  idleOffset?: number;
+  inspectRuntime?: boolean;
+  legacyGrouping?: { projectOffset: number; conversationOffset: number };
+};
+
+export type BridgeSettingsSnapshotOptions = {
+  refreshModels?: boolean;
+};
+
+export type BridgeSettingsPatchInput = {
+  accessStrategy?: AccessStrategy;
+  modelPolicy?: ModelPolicy;
+  usePriorityServiceTier?: boolean;
+  uiLocalePreference?: UiLocalePreference;
+  maxConcurrentJobs?: number;
+  showBridgeThreadsInCodexApp?: boolean;
+  activityCard?: {
+    visibility?: ActivityCardVisibility;
+    completionHandoff?: CompletionHandoffMode;
+  };
+  projectOperations?: ProjectRegistryOperation[];
+};
+
+export type BridgeSettingsMutationInput = {
+  expectedSettingsRevision?: number;
+  expectedRegistryRevision?: number;
+  operation:
+    | { kind: "reset" }
+    | { kind: "patch"; settings: BridgeSettingsPatchInput };
+};
+
+export type BridgeRuntimeAdmissionSnapshot = {
+  acceptingNewJobs: boolean;
+  activeJobs: number;
+  pendingAdmissions: number;
+};
+
+/**
+ * Native companion and MCP card adapters share this application boundary.
+ * It contains no mounted-widget authority and never exposes the SQLite store.
+ */
+export type BridgeApplicationService = {
+  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
+  settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
+  updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
+  runtimeSnapshot(): BridgeRuntimeAdmissionSnapshot;
+  beginDrain(): BridgeRuntimeAdmissionSnapshot;
+  cancelDrain(): BridgeRuntimeAdmissionSnapshot;
+};
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
 

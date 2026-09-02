@@ -360,6 +360,37 @@ through their project root. Exported process variables take precedence only as
 an explicit operator override. Bundled launchers do not query an operating
 system credential store.
 
+### Native macOS control boundary
+
+The native menu bar app introduced by issue #44 does not read SQLite and does
+not invoke private MCP card tools. A per-user helper supervises the existing
+launcher, while a separate bridge companion adapter calls the same Settings
+and Dashboard application service used by the retained MCP handlers. The two
+versioned control surfaces use Unix domain sockets inside the current user's
+`0700` runtime directory; socket nodes are `0600`, active sockets are never
+replaced, and stale cleanup verifies ownership and inode identity.
+
+The helper is the only app-managed owner of the bridge and tunnel process tree.
+A private runtime lock rejects a concurrent CLI or helper launcher against the
+same default runtime. Drain stops new Job admission, waits for active Jobs, and
+cancels the drain if its bounded timeout expires. Force stop remains an
+explicit destructive UI action and does not claim to roll back filesystem
+changes or replay interrupted work.
+
+The setup surface may update only `CONTROL_PLANE_API_KEY` and
+`CONTROL_PLANE_TUNNEL_ID`. It validates the complete candidate, writes a
+same-directory `0600` temporary file, syncs it, and atomically replaces the
+dotenv while preserving comments, ordering, unknown entries, line endings,
+and the prior file on failure. A blank field retains the saved value. The API
+key is never returned by helper status, persisted in Swift preferences, placed
+in a plist or command argument, copied to the pasteboard, or included in the
+bounded helper log. The non-secret Tunnel ID may be copied for ChatGPT setup.
+
+Codex login remains a separate boundary: the helper runs only `codex login
+status` and an explicit user-requested `codex login` browser flow. It does not
+copy, overwrite, delete, log out, or change the storage choice of shared Codex
+credentials. A missing ChatGPT/Codex login never falls back to an API key.
+
 When exposing the HTTP endpoint through another mechanism, configure a long bearer token or place an OAuth 2.1/PKCE-capable proxy in front of it. Bearer authentication is intended for controlled private deployments, not public plugin submission.
 
 Conversation `scopeId` values are routing labels, not identities or secrets.
