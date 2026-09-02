@@ -15,6 +15,47 @@ export function defaultRuntimeEnvFile(options?: {
 
 export function inspectRuntimeEnvFile(filePath: string): RuntimeEnvStatus;
 
+export function loadRuntimeEnvFile(
+  filePath: string,
+  options?: {
+    required?: boolean;
+    apply?: (filePath: string) => void;
+    allowedKey?: (key: string) => boolean;
+    platform?: NodeJS.Platform;
+    uid?: number;
+  }
+): boolean;
+
+export function readRuntimeEnvSubset(
+  filePath: string,
+  keys: string[]
+): Record<string, string>;
+
+export type PreparedRuntimeEnvUpdate = {
+  readonly path: string;
+  readonly directory: string;
+  readonly existed: boolean;
+  readonly original: string;
+  readonly next: string;
+  readonly changed: boolean;
+  readonly tunnelIdChanged: boolean;
+  readonly platform: NodeJS.Platform;
+  readonly uid: number | undefined;
+};
+
+export function prepareRuntimeEnvUpdate(
+  filePath: string,
+  values: { apiKey?: string; tunnelId?: string }
+): PreparedRuntimeEnvUpdate;
+
+export function commitRuntimeEnvUpdate(
+  prepared: PreparedRuntimeEnvUpdate
+): RuntimeEnvStatus;
+
+export function rollbackRuntimeEnvUpdate(
+  prepared: PreparedRuntimeEnvUpdate
+): RuntimeEnvStatus;
+
 export function updateRuntimeEnvFile(
   filePath: string,
   values: { apiKey?: string; tunnelId?: string }

@@ -49,14 +49,41 @@ public struct MacOSHelperClient: Sendable {
         try await rpc.call("helper.hello", params: EmptyParameters())
     }
 
+    public func probe() async throws {
+        let _: EmptyParameters = try await rpc.call(
+            "helper.hello",
+            params: EmptyParameters()
+        )
+    }
+
+    public func prepareForReplacement(timeoutMilliseconds: Int = 60_000) async throws {
+        let _: EmptyParameters = try await rpc.call(
+            "runtime.stop",
+            params: RuntimeControlParameters(
+                mode: "drain",
+                timeoutMs: timeoutMilliseconds
+            )
+        )
+    }
+
     public func status() async throws -> HelperStatus {
         try await rpc.call("helper.status", params: EmptyParameters())
     }
 
-    public func saveSetup(apiKey: String?, tunnelId: String?) async throws -> SetupSaveResponse {
+    public func applySetup(
+        apiKey: String?,
+        tunnelId: String?,
+        force: Bool = false,
+        timeoutMilliseconds: Int = 60_000
+    ) async throws -> SetupApplyResponse {
         try await rpc.call(
-            "setup.save",
-            params: SetupSaveParameters(apiKey: apiKey, tunnelId: tunnelId)
+            "setup.apply",
+            params: SetupApplyParameters(
+                apiKey: apiKey,
+                tunnelId: tunnelId,
+                force: force,
+                timeoutMilliseconds: timeoutMilliseconds
+            )
         )
     }
 

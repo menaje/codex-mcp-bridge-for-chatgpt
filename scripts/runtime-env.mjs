@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { loadEnvFile } from "node:process";
+import { parseEnv } from "node:util";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
@@ -50,6 +51,7 @@ export function loadRuntimeEnvFile(
   {
     required = false,
     apply = loadEnvFile,
+    allowedKey,
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
   } = {}
@@ -72,7 +74,14 @@ export function loadRuntimeEnvFile(
     }
   }
 
-  apply(filePath);
+  if (allowedKey) {
+    const values = parseEnv(readFileSync(filePath, "utf8"));
+    for (const [key, value] of Object.entries(values)) {
+      if (allowedKey(key) && process.env[key] === undefined) process.env[key] = value;
+    }
+  } else {
+    apply(filePath);
+  }
   return true;
 }
 
@@ -90,8 +99,10 @@ export function validateSecureTunnelEnvironment(environment = process.env, fileP
   if (!tunnelId) {
     throw new Error(`Secure mode needs CONTROL_PLANE_TUNNEL_ID${sourceHint}.`);
   }
-  if (!/^tunnel_[A-Za-z0-9_-]{8,}$/.test(tunnelId) || isPlaceholder(tunnelId)) {
-    throw new Error(`CONTROL_PLANE_TUNNEL_ID is malformed or still a placeholder${sourceHint}.`);
+  if (!/^tunnel_[a-z0-9]{32}$/.test(tunnelId) || isPlaceholder(tunnelId)) {
+    throw new Error(
+      `CONTROL_PLANE_TUNNEL_ID must be tunnel_ followed by 32 lowercase letters or digits${sourceHint}.`
+    );
   }
 
   return { apiKey, tunnelId };
@@ -143,6 +154,109 @@ export function inspectRuntimeEnvFile(
 }
 
 /**
+ * Read only explicitly requested values from a verified private dotenv file.
+ * This is used by the native helper to share non-secret runtime location and
+ * Codex CLI settings without loading tunnel credentials into the helper
+ * process environment.
+ */
+export function readRuntimeEnvSubset(
+  filePath,
+  keys,
+  {
+    platform = process.platform,
+    uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  } = {}
+) {
+  const resolvedPath = resolve(filePath);
+  if (!existsSync(resolvedPath)) return {};
+  assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
+  if (!Array.isArray(keys) || keys.some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) {
+    throw new Error("Runtime environment subset keys must be valid environment names.");
+  }
+  return readSelectedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"), new Set(keys));
+}
+
+/**
+ * Prepare and validate a dotenv replacement without changing the file. The
+ * returned value is intentionally opaque to callers outside the helper and
+ * must never be logged or serialized because it retains the prior and next
+ * file contents for rollback.
+ */
+export function prepareRuntimeEnvUpdate(
+  filePath,
+  { apiKey, tunnelId },
+  {
+    platform = process.platform,
+    uid = typeof process.getuid === "function" ? process.getuid() : undefined
+  } = {}
+) {
+  const resolvedPath = resolve(filePath);
+  const directory = dirname(resolvedPath);
+  ensurePrivateRuntimeDirectory(directory, { platform, uid });
+
+  const existed = existsSync(resolvedPath);
+  if (existed) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
+  const original = existed ? readFileSync(resolvedPath, "utf8") : "";
+  const previousValues = readManagedRuntimeEnvValues(original);
+  const updates = {
+    ...(typeof apiKey === "string" && apiKey.trim() ? { CONTROL_PLANE_API_KEY: apiKey.trim() } : {}),
+    ...(typeof tunnelId === "string" && tunnelId.trim()
+      ? { CONTROL_PLANE_TUNNEL_ID: tunnelId.trim() }
+      : {})
+  };
+  const next = mergeManagedRuntimeEnv(original, updates);
+  const nextValues = readManagedRuntimeEnvValues(next);
+  validateSecureTunnelEnvironment(nextValues, resolvedPath);
+
+  return Object.freeze({
+    path: resolvedPath,
+    directory,
+    existed,
+    original,
+    next,
+    changed: next !== original,
+    tunnelIdChanged:
+      previousValues.CONTROL_PLANE_TUNNEL_ID !== nextValues.CONTROL_PLANE_TUNNEL_ID,
+    platform,
+    uid
+  });
+}
+
+export function commitRuntimeEnvUpdate(
+  prepared,
+  { renameFile = renameSync } = {}
+) {
+  assertPreparedRuntimeEnvUpdate(prepared);
+  assertRuntimeEnvUnchanged(prepared, prepared.original, prepared.existed);
+  if (!prepared.changed) {
+    return inspectRuntimeEnvFile(prepared.path, prepared);
+  }
+  writeAtomicPrivateRuntimeEnv(prepared.path, prepared.next, {
+    ...prepared,
+    renameFile,
+    validate: true
+  });
+  return inspectRuntimeEnvFile(prepared.path, prepared);
+}
+
+export function rollbackRuntimeEnvUpdate(prepared) {
+  assertPreparedRuntimeEnvUpdate(prepared);
+  if (!prepared.changed) return inspectRuntimeEnvFile(prepared.path, prepared);
+  assertRuntimeEnvUnchanged(prepared, prepared.next, true);
+  if (!prepared.existed) {
+    unlinkSync(prepared.path);
+    syncDirectory(prepared.directory);
+    return inspectRuntimeEnvFile(prepared.path, prepared);
+  }
+  writeAtomicPrivateRuntimeEnv(prepared.path, prepared.original, {
+    ...prepared,
+    renameFile: renameSync,
+    validate: false
+  });
+  return inspectRuntimeEnvFile(prepared.path, prepared);
+}
+
+/**
  * Atomically update only app-owned tunnel values while retaining every other
  * dotenv line byte-for-byte. Empty inputs intentionally preserve existing
  * values so the native app never has to reveal a saved key again.
@@ -156,39 +270,32 @@ export function updateRuntimeEnvFile(
     renameFile = renameSync
   } = {}
 ) {
-  const resolvedPath = resolve(filePath);
-  const directory = dirname(resolvedPath);
-  ensurePrivateRuntimeDirectory(directory, { platform, uid });
+  const prepared = prepareRuntimeEnvUpdate(filePath, { apiKey, tunnelId }, { platform, uid });
+  return commitRuntimeEnvUpdate(prepared, { renameFile });
+}
 
-  const existing = existsSync(resolvedPath);
-  if (existing) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
-  const original = existing ? readFileSync(resolvedPath, "utf8") : "";
-  const updates = {
-    ...(typeof apiKey === "string" && apiKey.trim() ? { CONTROL_PLANE_API_KEY: apiKey.trim() } : {}),
-    ...(typeof tunnelId === "string" && tunnelId.trim()
-      ? { CONTROL_PLANE_TUNNEL_ID: tunnelId.trim() }
-      : {})
-  };
-  const next = mergeManagedRuntimeEnv(original, updates);
-  const values = readManagedRuntimeEnvValues(next);
-  validateSecureTunnelEnvironment(values, resolvedPath);
-
-  const temporaryPath = resolve(directory, `.${RUNTIME_ENV_FILENAME}.${randomUUID()}.tmp`);
+function writeAtomicPrivateRuntimeEnv(filePath, contents, options) {
+  const temporaryPath = resolve(
+    options.directory,
+    `.${RUNTIME_ENV_FILENAME}.${randomUUID()}.tmp`
+  );
   let descriptor;
   try {
     descriptor = openSync(temporaryPath, "wx", 0o600);
-    writeFileSync(descriptor, next, { encoding: "utf8" });
+    writeFileSync(descriptor, contents, { encoding: "utf8" });
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
     chmodSync(temporaryPath, 0o600);
-    assertPrivateRuntimeEnvFile(temporaryPath, { platform, uid });
-    validateSecureTunnelEnvironment(
-      readManagedRuntimeEnvValues(readFileSync(temporaryPath, "utf8")),
-      resolvedPath
-    );
-    renameFile(temporaryPath, resolvedPath);
-    syncDirectory(directory);
+    assertPrivateRuntimeEnvFile(temporaryPath, options);
+    if (options.validate) {
+      validateSecureTunnelEnvironment(
+        readManagedRuntimeEnvValues(readFileSync(temporaryPath, "utf8")),
+        filePath
+      );
+    }
+    options.renameFile(temporaryPath, filePath);
+    syncDirectory(options.directory);
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     try {
@@ -199,7 +306,32 @@ export function updateRuntimeEnvFile(
     }
     throw error;
   }
-  return inspectRuntimeEnvFile(resolvedPath, { platform, uid });
+}
+
+function assertPreparedRuntimeEnvUpdate(prepared) {
+  if (
+    !prepared ||
+    typeof prepared !== "object" ||
+    typeof prepared.path !== "string" ||
+    typeof prepared.directory !== "string" ||
+    typeof prepared.original !== "string" ||
+    typeof prepared.next !== "string" ||
+    typeof prepared.existed !== "boolean"
+  ) {
+    throw new Error("Invalid prepared runtime environment update.");
+  }
+}
+
+function assertRuntimeEnvUnchanged(prepared, expectedContents, expectedExists) {
+  const exists = existsSync(prepared.path);
+  if (exists !== expectedExists) {
+    throw new Error("RUNTIME_ENV_CHANGED: Runtime environment changed during the operation.");
+  }
+  if (!exists) return;
+  assertPrivateRuntimeEnvFile(prepared.path, prepared);
+  if (readFileSync(prepared.path, "utf8") !== expectedContents) {
+    throw new Error("RUNTIME_ENV_CHANGED: Runtime environment changed during the operation.");
+  }
 }
 
 function ensurePrivateRuntimeDirectory(directory, { platform, uid }) {
@@ -276,6 +408,21 @@ function readManagedRuntimeEnvValues(source) {
   for (const line of source.replace(/\r\n/g, "\n").split("\n")) {
     const key = dotenvAssignmentKey(line);
     if (!key || !RUNTIME_ENV_MANAGED_KEYS.includes(key)) continue;
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      throw new Error(`Runtime environment contains duplicate ${key} entries.`);
+    }
+    const assignment = line.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/);
+    values[key] = parseDotenvValue(assignment?.[1] || "");
+  }
+  return values;
+}
+
+function readSelectedRuntimeEnvValues(source, selectedKeys) {
+  if (source.includes("\0")) throw new Error("Runtime environment contains an invalid NUL byte.");
+  const values = {};
+  for (const line of source.replace(/\r\n/g, "\n").split("\n")) {
+    const key = dotenvAssignmentKey(line);
+    if (!key || !selectedKeys.has(key)) continue;
     if (Object.prototype.hasOwnProperty.call(values, key)) {
       throw new Error(`Runtime environment contains duplicate ${key} entries.`);
     }

@@ -4265,6 +4265,44 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("refuses to register a project that would contain the app-managed runtime dotenv", async () => {
+    const root = temporaryRoot();
+    const privateDirectory = path.join(root, ".private-runtime");
+    mkdirSync(privateDirectory);
+    const previous = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+    process.env.CODEX_MCP_BRIDGE_ENV_FILE = path.join(privateDirectory, ".env");
+    const connection = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+    try {
+      const result = await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 0,
+          operation: {
+            kind: "patch",
+            settings: {
+              projectOperations: [{ kind: "add", project: { name: "Unsafe", cwd: root } }]
+            }
+          }
+        }
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("RUNTIME_ENV_PROJECT_CONFLICT");
+      expect(connection.settings.current.registryRevision).toBe(0);
+    } finally {
+      await connection.close();
+      if (previous === undefined) delete process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+      else process.env.CODEX_MCP_BRIDGE_ENV_FILE = previous;
+    }
+  });
+
   it("uses the registry's Unicode code-point bound for project mutations and task selectors", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();

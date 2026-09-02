@@ -1,9 +1,11 @@
-name: Main CI and Release
+name: CI and Release
 
 on:
+  pull_request:
   push:
     branches:
       - main
+      - dev
 
 permissions:
   contents: read
@@ -14,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    name: Check main
+    name: Check Node runtime
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -35,9 +37,32 @@ jobs:
       - run: npm run check
       - run: npm audit --omit=dev
 
+  macos-check:
+    name: Check native macOS app
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Resolve release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
+          cache: npm
+      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+      - run: npm ci
+      - name: Build and test native app bundle
+        run: npm run macos:bundle
+      - name: Verify app bundle signature
+        run: codesign --verify --deep --strict "macos/build/Codex MCP Bridge for ChatGPT.app"
+
   release:
     name: Release package version
-    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - check
+      - macos-check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

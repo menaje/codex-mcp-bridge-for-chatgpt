@@ -106,6 +106,7 @@ final class AppModel: ObservableObject {
         guard let helperStatus,
               helperStatus.configuration.valid,
               helperStatus.bridge.connected,
+              helperStatus.tunnel.connected,
               helperStatus.phase == "running" else {
             return .unavailable
         }
@@ -195,22 +196,14 @@ final class AppModel: ObservableObject {
 
     func saveSetup(apiKey: String, tunnelId: String) async -> Bool {
         await perform {
-            let result = try await self.helperClient.saveSetup(
+            let result = try await self.helperClient.applySetup(
                 apiKey: apiKey.isEmpty ? nil : apiKey,
-                tunnelId: tunnelId.isEmpty ? nil : tunnelId
+                tunnelId: tunnelId.isEmpty ? nil : tunnelId,
+                force: false,
+                timeoutMilliseconds: 60_000
             )
-            await self.refreshStatus()
-            if result.configuration.valid {
-                if result.restartRequired {
-                    self.helperStatus = try await self.helperClient.restartRuntime(
-                        force: false,
-                        timeoutMilliseconds: 60_000
-                    )
-                } else {
-                    self.helperStatus = try await self.helperClient.startRuntime()
-                }
-                await self.refreshAll()
-            }
+            self.helperStatus = result.status
+            await self.refreshAll()
         }
     }
 

@@ -55,6 +55,41 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+@MainActor
+final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
+    static let shared = ConnectionRepairWindowController()
+    private var window: NSWindow?
+
+    func show(model: AppModel) {
+        if window == nil {
+            let repairWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 660),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            repairWindow.title = "Codex MCP Bridge 연결 및 복구"
+            repairWindow.isReleasedWhenClosed = false
+            repairWindow.delegate = self
+            repairWindow.setFrameAutosaveName("CodexBridgeConnectionRepairWindow")
+            repairWindow.contentView = NSHostingView(
+                rootView: ConnectionRepairView()
+                    .environmentObject(model)
+                    .frame(minWidth: 500, minHeight: 580)
+            )
+            repairWindow.center()
+            window = repairWindow
+        }
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        Task {
+            if model.helperStatus == nil { await model.start() }
+            await model.refreshStatus()
+            await model.refreshAuthStatus()
+        }
+    }
+}
+
 @main
 struct CodexBridgeMenuBarApp: App {
     @NSApplicationDelegateAdaptor(BridgeAppDelegate.self) private var appDelegate

@@ -6,6 +6,8 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
     case nodeMissing
     case launchFailed(String)
     case readinessTimeout
+    case incompatibleHelper
+    case replacementBlocked(String)
 
     public var errorDescription: String? {
         switch self {
@@ -17,6 +19,10 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
             return "브리지 helper를 시작하지 못했습니다: \(message)"
         case .readinessTimeout:
             return "브리지 helper가 제한 시간 안에 준비되지 않았습니다."
+        case .incompatibleHelper:
+            return "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요."
+        case .replacementBlocked(let message):
+            return "실행 중인 작업을 안전하게 마치지 못해 helper 갱신을 중단했습니다: \(message)"
         }
     }
 }
@@ -29,13 +35,24 @@ public actor HelperBootstrap {
 
     public func ensureRunning(paths: RuntimePaths) async throws {
         let client = MacOSHelperClient(socketPath: paths.helperSocket.path)
-        if (try? await client.hello()) != nil { return }
-
         guard let bridgeRoot = paths.bridgeRoot, let helperScript = paths.helperScript else {
+            throw HelperBootstrapError.runtimeMissing
+        }
+        guard let runtimeBuildID = paths.runtimeBuildID else {
             throw HelperBootstrapError.runtimeMissing
         }
         guard let nodeExecutable = paths.nodeExecutable else {
             throw HelperBootstrapError.nodeMissing
+        }
+        let currentHello = try? await client.hello()
+        let currentIsCompatible = currentHello.map {
+            Self.isCompatible($0, runtimeBuildID: runtimeBuildID)
+        } ?? false
+        let helperIsReachable: Bool
+        if currentHello != nil {
+            helperIsReachable = true
+        } else {
+            helperIsReachable = (try? await client.probe()) != nil
         }
 
         if paths.isPackagedRuntime {
@@ -45,9 +62,14 @@ public actor HelperBootstrap {
                 bridgeRoot: bridgeRoot,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
-                bridgeSocket: paths.bridgeSocket
+                bridgeSocket: paths.bridgeSocket,
+                forceRestart: !currentIsCompatible,
+                client: client,
+                helperIsReachable: helperIsReachable
             )
         } else {
+            if currentIsCompatible { return }
+            if currentHello != nil { throw HelperBootstrapError.incompatibleHelper }
             try startDevelopmentHelper(
                 nodeExecutable: nodeExecutable,
                 helperScript: helperScript,
@@ -59,7 +81,10 @@ public actor HelperBootstrap {
         }
 
         for _ in 0..<40 {
-            if (try? await client.hello()) != nil { return }
+            if let hello = try? await client.hello(),
+               Self.isCompatible(hello, runtimeBuildID: runtimeBuildID) {
+                return
+            }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw HelperBootstrapError.readinessTimeout
@@ -101,7 +126,10 @@ public actor HelperBootstrap {
         bridgeRoot: URL,
         environmentFile: URL,
         helperSocket: URL,
-        bridgeSocket: URL
+        bridgeSocket: URL,
+        forceRestart: Bool,
+        client: MacOSHelperClient,
+        helperIsReachable: Bool
     ) async throws {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let launchAgents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
@@ -138,17 +166,40 @@ public actor HelperBootstrap {
             options: 0
         )
         let previous = try? Data(contentsOf: plistURL)
-        if previous != data {
-            try data.write(to: plistURL, options: .atomic)
-        }
-
         let domain = "gui/\(getuid())"
         let service = "\(domain)/\(Self.launchAgentLabel)"
         let loaded = await launchctl(["print", service]).status == 0
-        if loaded && previous != data {
+        let needsRestart = previous != data || forceRestart
+        let runtimeLock = environmentFile
+            .deletingLastPathComponent()
+            .appendingPathComponent("run/launcher.lock", isDirectory: true)
+        if loaded && needsRestart && !helperIsReachable &&
+            FileManager.default.fileExists(atPath: runtimeLock.path) {
+            throw HelperBootstrapError.replacementBlocked(
+                "기존 helper에 연결할 수 없어 활성 작업 여부를 확인하지 못했습니다."
+            )
+        }
+        if loaded && needsRestart && helperIsReachable {
+            do {
+                try await client.prepareForReplacement()
+            } catch {
+                throw HelperBootstrapError.replacementBlocked(error.localizedDescription)
+            }
+        }
+        if previous != data {
+            do {
+                try data.write(to: plistURL, options: .atomic)
+            } catch {
+                if loaded && needsRestart && helperIsReachable {
+                    _ = try? await client.startRuntime()
+                }
+                throw error
+            }
+        }
+        if loaded && needsRestart {
             _ = await launchctl(["bootout", service])
         }
-        if !loaded || previous != data {
+        if !loaded || needsRestart {
             let bootstrap = await launchctl(["bootstrap", domain, plistURL.path])
             if bootstrap.status != 0 && !bootstrap.output.localizedCaseInsensitiveContains("already") {
                 throw HelperBootstrapError.launchFailed(bootstrap.output)
@@ -158,6 +209,13 @@ public actor HelperBootstrap {
         if kickstart.status != 0 {
             throw HelperBootstrapError.launchFailed(kickstart.output)
         }
+    }
+
+    static func isCompatible(_ hello: HelperHello, runtimeBuildID: String) -> Bool {
+        hello.protocol.name == HelperHello.expectedProtocolName &&
+            hello.protocol.version == HelperHello.expectedProtocolVersion &&
+            hello.runtime.buildId == runtimeBuildID &&
+            hello.capabilities.contains("setup.dotenv.atomic-apply")
     }
 
     private func helperArguments(
