@@ -223,6 +223,41 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it("redacts secrets split across runtime output chunks", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, { splitRuntimeSecret: true });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      await supervisor.start();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const logs = supervisor.logs(200).map((entry) => entry.message).join("\n");
+      expect(logs).toContain("[REDACTED_API_KEY]");
+      expect(logs).not.toContain("sk-split-secret");
+      expect(logs).not.toContain("1234567890123456");
+    } finally {
+      await supervisor.close();
+    }
+  });
+
   it("rejects launcher readiness from a different tunnel profile", async () => {
     const root = temporaryDirectory();
     const bridgeRoot = path.join(root, "runtime");
@@ -290,6 +325,48 @@ describe("macOS runtime helper RPC", () => {
         timeoutMs: 1_000
       })).rejects.toThrow("DRAIN_TIMEOUT");
       expect(readFileSync(configFile, "utf8")).toBe(original);
+      expect((await supervisor.snapshot()).phase).toBe("running");
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("re-enables admissions when a graceful-stop status request fails", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, {
+      activeJobs: 1,
+      failSnapshotAfterDrain: true
+    });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      autoRestart: false,
+      startTimeoutMs: 5_000
+    });
+
+    try {
+      await supervisor.start();
+      await expect(supervisor.stop({ mode: "drain", timeoutMs: 5_000 }))
+        .rejects.toThrow();
+      expect(await request(bridgeSocket, {
+        jsonrpc: "2.0",
+        id: "admission-after-failed-drain",
+        method: "runtime.snapshot",
+        params: {}
+      })).toMatchObject({ result: { acceptingNewJobs: true } });
       expect((await supervisor.snapshot()).phase).toBe("running");
     } finally {
       await supervisor.close();
@@ -702,6 +779,8 @@ function writeFakeLauncher(
     activeJobs?: number;
     failTunnelId?: string;
     mutateEnvOnDrain?: string;
+    failSnapshotAfterDrain?: boolean;
+    splitRuntimeSecret?: boolean;
     writeRuntimeLock?: boolean;
     runtimeProfile?: string;
   } = {}
@@ -722,6 +801,12 @@ const profile = profileIndex >= 0 ? process.argv[profileIndex + 1] : null;
 const transportIndex = process.argv.indexOf("--transport");
 const transport = transportIndex >= 0 ? process.argv[transportIndex + 1] : null;
 let mutatedEnv = false;
+let acceptingNewJobs = true;
+let failedSnapshotAfterDrain = false;
+if (${JSON.stringify(Boolean(options.splitRuntimeSecret))}) {
+  process.stdout.write("credential=sk-split-secret-");
+  setTimeout(() => process.stdout.write("1234567890123456\\n"), 50);
+}
 if (
   envFile &&
   ${JSON.stringify(options.failTunnelId || "")} &&
@@ -769,15 +854,27 @@ const server = createServer((socket) => {
     if (newline < 0) return;
     const request = JSON.parse(buffer.slice(0, newline));
     const draining = request.method === "runtime.beginDrain";
+    if (draining) acceptingNewJobs = false;
+    if (request.method === "runtime.cancelDrain") acceptingNewJobs = true;
     if (draining && envFile && !mutatedEnv && ${JSON.stringify(Boolean(options.mutateEnvOnDrain))}) {
       appendFileSync(envFile, ${JSON.stringify(`${options.mutateEnvOnDrain || ""}\n`)});
       mutatedEnv = true;
+    }
+    if (
+      request.method === "runtime.snapshot" &&
+      !acceptingNewJobs &&
+      !failedSnapshotAfterDrain &&
+      ${JSON.stringify(Boolean(options.failSnapshotAfterDrain))}
+    ) {
+      failedSnapshotAfterDrain = true;
+      socket.destroy();
+      return;
     }
     const result = request.method === "companion.hello" ? {
       protocol: { name: "codex-mcp-bridge-companion", version: 1 },
       bridge: { buildId: "development" }
     } : {
-      acceptingNewJobs: !draining,
+      acceptingNewJobs,
       activeJobs: ${options.activeJobs || 0},
       pendingAdmissions: 0
     };

@@ -1,7 +1,6 @@
 import {
   chmodSync,
   closeSync,
-  existsSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -24,7 +23,7 @@ export function writePrivateFileAtomic(filePath, contents, options = {}) {
   const resolved = resolve(filePath);
   const directory = dirname(resolved);
   ensurePrivateDirectory(directory, options);
-  if (existsSync(resolved)) assertPrivateFile(resolved, options);
+  if (pathEntryExists(resolved)) assertPrivateFile(resolved, options);
   const temporary = resolve(directory, `.${randomUUID()}.tmp`);
   let descriptor;
   try {
@@ -40,7 +39,7 @@ export function writePrivateFileAtomic(filePath, contents, options = {}) {
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     try {
-      if (existsSync(temporary)) unlinkSync(temporary);
+      if (pathEntryExists(temporary)) unlinkSync(temporary);
     } catch {
       // Preserve the original error.
     }
@@ -102,5 +101,15 @@ function syncDirectory(directory) {
     // directory fsync.
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function pathEntryExists(filePath) {
+  try {
+    lstatSync(filePath);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
   }
 }

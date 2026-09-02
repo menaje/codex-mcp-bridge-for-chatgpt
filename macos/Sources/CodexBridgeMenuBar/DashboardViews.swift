@@ -156,6 +156,9 @@ struct DashboardPopoverView: View {
     private func dashboardContent(_ dashboard: DashboardSnapshot) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
+                Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 if model.authStatus?.authenticated != true {
                     Button {
                         ConnectionRepairWindowController.shared.show(model: model)

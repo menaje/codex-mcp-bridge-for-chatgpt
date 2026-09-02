@@ -51,6 +51,13 @@ const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
 const MACOS_MANAGED_TUNNEL_PROFILE = "codex-mcp-bridge-macos";
+const MAX_RUNTIME_LOG_LINE_BYTES = 64 * 1_024;
+
+type RuntimeOutputStream = "stdout" | "stderr";
+type RuntimeOutputCapture = {
+  buffers: Record<RuntimeOutputStream, Buffer>;
+  discarding: Set<RuntimeOutputStream>;
+};
 
 const requestIdSchema = z.union([
   z.string().min(1).max(128),
@@ -547,11 +554,17 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"]
     });
+    const outputCapture = createRuntimeOutputCapture();
     this.child = child;
     this.managedPid = child.pid;
     this.startedAt = new Date().toISOString();
-    child.stdout?.on("data", (chunk: Buffer) => this.captureRuntimeOutput(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => this.captureRuntimeOutput(chunk));
+    child.stdout?.on("data", (chunk: Buffer) =>
+      this.captureRuntimeOutput(outputCapture, "stdout", chunk)
+    );
+    child.stderr?.on("data", (chunk: Buffer) =>
+      this.captureRuntimeOutput(outputCapture, "stderr", chunk)
+    );
+    child.once("close", () => this.flushRuntimeOutput(outputCapture));
     child.once("error", (error) => {
       if (this.child !== child) return;
       this.lastError = safeErrorMessage(error);
@@ -644,9 +657,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           pendingAdmissions = current.pendingAdmissions || 0;
         }
         if (activeJobs + pendingAdmissions > 0) {
-          await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
-          this.phase = "running";
-          this.manualStop = false;
           throw new Error(
             `DRAIN_TIMEOUT: ${activeJobs} active job(s) and ${pendingAdmissions} pending admission(s) did not finish before the timeout.`
           );
@@ -655,6 +665,20 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     } catch (error) {
       if (options.mode === "drain") {
         const stillRunning = processIsAlive(managedPid);
+        if (stillRunning) {
+          try {
+            // beginDrain may have reached the bridge even when its response was
+            // lost. Always cancel on a failed graceful stop before reporting
+            // that the existing runtime is available again.
+            await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {});
+          } catch (cancelError) {
+            this.phase = "safe-mode";
+            this.manualStop = false;
+            this.lastError = `DRAIN_CANCEL_FAILED: ${safeErrorMessage(cancelError)}`;
+            this.appendLog("helper", this.lastError);
+            throw new Error(`${safeErrorMessage(error)} ${this.lastError}`);
+          }
+        }
         this.phase = stillRunning ? "running" : "stopped";
         this.manualStop = stillRunning ? false : this.manualStop;
         throw error;
@@ -845,11 +869,54 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.stabilityTimer.unref();
   }
 
-  private captureRuntimeOutput(chunk: Buffer): void {
-    for (const line of chunk.toString("utf8").split(/\r?\n/)) {
-      const message = redactRuntimeText(line);
-      if (message) this.appendLog("runtime", message);
+  private captureRuntimeOutput(
+    capture: RuntimeOutputCapture,
+    stream: RuntimeOutputStream,
+    chunk: Buffer
+  ): void {
+    let pending = Buffer.concat([capture.buffers[stream], chunk]);
+    capture.buffers[stream] = Buffer.alloc(0);
+    while (pending.length > 0) {
+      const newline = pending.indexOf(0x0a);
+      if (capture.discarding.has(stream)) {
+        if (newline < 0) return;
+        capture.discarding.delete(stream);
+        pending = pending.subarray(newline + 1);
+        continue;
+      }
+      if (newline >= 0) {
+        if (newline > MAX_RUNTIME_LOG_LINE_BYTES) {
+          this.appendLog("runtime", "Oversized runtime log line omitted.");
+        } else {
+          this.appendRuntimeLogLine(pending.subarray(0, newline));
+        }
+        pending = pending.subarray(newline + 1);
+        continue;
+      }
+      if (pending.length > MAX_RUNTIME_LOG_LINE_BYTES) {
+        capture.discarding.add(stream);
+        this.appendLog("runtime", "Oversized runtime log line omitted.");
+        return;
+      }
+      capture.buffers[stream] = Buffer.from(pending);
+      return;
     }
+  }
+
+  private flushRuntimeOutput(capture: RuntimeOutputCapture): void {
+    for (const stream of ["stdout", "stderr"] as const) {
+      if (!capture.discarding.has(stream) && capture.buffers[stream].length > 0) {
+        this.appendRuntimeLogLine(capture.buffers[stream]);
+      }
+      capture.buffers[stream] = Buffer.alloc(0);
+      capture.discarding.delete(stream);
+    }
+  }
+
+  private appendRuntimeLogLine(line: Buffer): void {
+    const withoutCarriageReturn = line.at(-1) === 0x0d ? line.subarray(0, -1) : line;
+    const message = redactRuntimeText(withoutCarriageReturn.toString("utf8"));
+    if (message) this.appendLog("runtime", message);
   }
 
   private appendLog(source: MacOSHelperLogEntry["source"], message: string): void {
@@ -1102,13 +1169,20 @@ function bridgeRequest<T = unknown>(
     const socket = createConnection(socketPath);
     const requestId = `helper-${process.pid}-${Date.now()}-${++bridgeRequestSequence}`;
     let buffer = "";
-    const timer = setTimeout(() => finish(new Error("Bridge companion request timed out.")), timeoutMs);
+    let settled = false;
+    let timer: NodeJS.Timeout;
     const finish = (error?: Error, value?: T) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.destroy();
       if (error) reject(error);
       else resolve(value as T);
     };
+    timer = setTimeout(
+      () => finish(new Error("Bridge companion request timed out.")),
+      timeoutMs
+    );
     socket.setEncoding("utf8");
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
@@ -1142,6 +1216,9 @@ function bridgeRequest<T = unknown>(
       }
     });
     socket.once("error", (error) => finish(error));
+    socket.once("close", () => {
+      finish(new Error("Bridge companion closed the connection without a response."));
+    });
   });
 }
 
@@ -1476,4 +1553,14 @@ function safeErrorMessage(error: unknown): string {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function createRuntimeOutputCapture(): RuntimeOutputCapture {
+  return {
+    buffers: {
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0)
+    },
+    discarding: new Set()
+  };
 }

@@ -104,6 +104,27 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    func testHidingActivityCardAlsoDisablesAutomaticHandoff() throws {
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "fallbackSelection": choiceObject(
+                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
+                ),
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        var draft = SettingsDraft(snapshot: snapshot)
+        draft.completionHandoff = "auto-handoff"
+
+        draft.setActivityCardVisibility("never")
+
+        XCTAssertEqual(draft.activityCardVisibility, "never")
+        XCTAssertEqual(draft.completionHandoff, "off")
+    }
+
     func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
         XCTAssertNotNil(DashboardLink.conversation(
             "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001"
