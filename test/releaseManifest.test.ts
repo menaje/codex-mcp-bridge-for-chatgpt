@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,30 @@ import {
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("release manifest", () => {
+  it("bootstraps GitHub workflow metadata before dependencies are installed", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-release-bootstrap-"));
+    const scriptsDirectory = path.join(root, "scripts");
+    mkdirSync(scriptsDirectory);
+    copyFileSync(
+      path.join(REPO_ROOT, "scripts/release-manifest.mjs"),
+      path.join(scriptsDirectory, "release-manifest.mjs")
+    );
+    copyFileSync(
+      path.join(REPO_ROOT, "release-manifest.json"),
+      path.join(root, "release-manifest.json")
+    );
+
+    const output = execFileSync(
+      process.execPath,
+      [realpathSync(path.join(scriptsDirectory, "release-manifest.mjs")), "github-output"],
+      { cwd: realpathSync(root), encoding: "utf8" }
+    );
+
+    expect(output).toContain("node_version=22\n");
+    expect(output).toContain("npm_version=10.9.3\n");
+    expect(output).toContain("codex_cli_version=0.145.0\n");
+  });
+
   it("accepts the legacy manifestVersion 1 release asset contract", () => {
     const legacyManifest = structuredClone(loadReleaseManifest(REPO_ROOT));
     legacyManifest.manifestVersion = 1;

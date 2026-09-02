@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: metadata
-        name: Resolve release manifest
+        name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: metadata
-        name: Resolve release manifest
+        name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
@@ -72,7 +72,7 @@ jobs:
         with:
           fetch-depth: 0
       - id: metadata
-        name: Resolve release manifest
+        name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
