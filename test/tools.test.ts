@@ -567,6 +567,31 @@ class AdmissionMutatingModelCatalog extends FakeModelCatalog {
   }
 }
 
+class DeferredAdmissionModelCatalog extends FakeModelCatalog {
+  readonly entered: Promise<void>;
+  private releaseEntered!: () => void;
+  private readonly gate: Promise<void>;
+  private releaseGate!: () => void;
+
+  constructor() {
+    super();
+    this.entered = new Promise((resolve) => { this.releaseEntered = resolve; });
+    this.gate = new Promise((resolve) => { this.releaseGate = resolve; });
+  }
+
+  override async getCatalog(
+    options: { refresh?: boolean } = {}
+  ): Promise<CodexModelCatalogSnapshot> {
+    this.releaseEntered();
+    await this.gate;
+    return super.getCatalog(options);
+  }
+
+  release(): void {
+    this.releaseGate();
+  }
+}
+
 class DriftingModelCatalog extends FakeModelCatalog {
   override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
     this.calls.push(options);
@@ -697,6 +722,53 @@ class StaleModelCatalog extends FakeModelCatalog {
 }
 
 describe("bridge tools", () => {
+  it("keeps drain open for a new task waiting in asynchronous admission", async () => {
+    const root = temporaryRoot();
+    const catalog = new DeferredAdmissionModelCatalog();
+    const upstream = new DeferredUpstream();
+    const bridge = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+
+    try {
+      const task = runTask(bridge.client, { prompt: "wait in model-policy admission" });
+      await catalog.entered;
+      expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+        acceptingNewJobs: true,
+        activeJobs: 0,
+        pendingAdmissions: 1
+      });
+      expect(bridge.applicationService.beginDrain()).toEqual({
+        acceptingNewJobs: false,
+        activeJobs: 0,
+        pendingAdmissions: 1
+      });
+
+      catalog.release();
+      await vi.waitFor(() => {
+        expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+          acceptingNewJobs: false,
+          activeJobs: 1,
+          pendingAdmissions: 0
+        });
+      });
+      upstream.resolveNext();
+      await task;
+      expect(bridge.applicationService.runtimeSnapshot()).toEqual({
+        acceptingNewJobs: false,
+        activeJobs: 0,
+        pendingAdmissions: 0
+      });
+      bridge.applicationService.cancelDrain();
+    } finally {
+      catalog.release();
+      await bridge.close();
+    }
+  });
+
   it("publishes the consolidated Activity, settings, and Codex tools", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
@@ -14263,6 +14335,7 @@ async function connectTestClient(
   });
   return {
     client,
+    applicationService: server.applicationService,
     rawCallTool,
     bareCallTool,
     jobs: jobRegistry,

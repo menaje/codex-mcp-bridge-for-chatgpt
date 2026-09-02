@@ -8,3 +8,5 @@ output/
 !.env.example
 .DS_Store
 *.log
+macos/.build/
+macos/build/

@@ -11,6 +11,7 @@ import {
   resolveRuntimeEnvFile,
   validateSecureTunnelEnvironment
 } from "./runtime-env.mjs";
+import { acquireRuntimeLock } from "./runtime-lock.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -33,6 +34,7 @@ const localOriginUrl = `http://${host}:${port}`;
 const localMcpUrl = `${localOriginUrl}/mcp`;
 const children = new Set();
 let shuttingDown = false;
+let runtimeLock;
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -66,6 +68,7 @@ async function main() {
       : undefined;
   ensurePrerequisites();
   ensureBuilt();
+  runtimeLock = acquireRuntimeLock();
   if (tunnelTransport === "http") {
     startBridge();
     await waitForHealth(`${localOriginUrl}/healthz`);
@@ -93,6 +96,15 @@ function ensurePrerequisites() {
 function ensureBuilt() {
   const outputPaths = requiredBuildOutputs(tunnelTransport)
     .map((output) => resolve(repoRoot, output));
+  if (args.requireBuilt) {
+    const missing = outputPaths.filter((outputPath) => !existsSync(outputPath));
+    if (missing.length > 0) {
+      throw new Error(
+        `Installed bridge runtime is incomplete; missing ${missing.join(", ")}.`
+      );
+    }
+    return;
+  }
   if (args.noBuild && buildMatchesSource(outputPaths)) return;
   if (args.noBuild && outputPaths.every((outputPath) => existsSync(outputPath))) {
     console.log("Built output does not match the current source; rebuilding before startup.");
@@ -135,20 +147,27 @@ async function startSecureTunnel({ tunnelId }) {
         "127.0.0.1:0"
       ];
   const childEnvironment = bridgeEnvironment();
-  const init = spawnSync(
-    tunnelClient,
-    [
+  const reuseExistingProfile = args.reuseProfile &&
+    tunnelProfileExists(tunnelClient, profile, childEnvironment);
+  if (reuseExistingProfile) {
+    console.log(`Reusing existing tunnel-client profile ${profile}.`);
+  } else {
+    const initArguments = [
       "init",
       "--profile",
       profile,
       "--tunnel-id",
       tunnelId,
-      ...endpointArguments,
-      "--force",
-    ],
-    { cwd: repoRoot, env: childEnvironment, stdio: "inherit" }
-  );
-  if (init.status !== 0) throw new Error("tunnel-client init failed.");
+      ...endpointArguments
+    ];
+    if (!args.reuseProfile) initArguments.push("--force");
+    const init = spawnSync(
+      tunnelClient,
+      initArguments,
+      { cwd: repoRoot, env: childEnvironment, stdio: "inherit" }
+    );
+    if (init.status !== 0) throw new Error("tunnel-client init failed.");
+  }
 
   const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
@@ -268,6 +287,25 @@ function defaultTunnelClient() {
   return existsSync(localBinary) ? localBinary : "tunnel-client";
 }
 
+function tunnelProfileExists(tunnelClient, profile, environment) {
+  const result = spawnSync(
+    tunnelClient,
+    ["profiles", "list", "--json"],
+    { cwd: repoRoot, env: environment, encoding: "utf8" }
+  );
+  if (result.status !== 0) {
+    throw new Error("Could not inspect existing tunnel-client profiles.");
+  }
+  try {
+    const profiles = JSON.parse(result.stdout || "[]");
+    return Array.isArray(profiles) && profiles.some(
+      (entry) => entry && typeof entry === "object" && entry.name === profile
+    );
+  } catch {
+    throw new Error("tunnel-client returned an invalid profile inventory.");
+  }
+}
+
 function isIgnorableNoAuthDoctorFailure(output) {
   const failedChecksLine = output.match(/^FAILED_CHECKS\s+(.+)$/m);
   const failedChecks = failedChecksLine ? failedChecksLine[1].trim().split(/\s+/) : [];
@@ -291,7 +329,9 @@ Options:
   --profile <name>       tunnel-client profile name.
   --tunnel-client <path> tunnel-client binary path.
   --port <port>          Loopback HTTP port. Defaults to 8876.
-  --no-build             Reuse dist only when its source fingerprint is current.`);
+  --no-build             Reuse dist only when its source fingerprint is current.
+  --require-built        Require installed dist output and never invoke npm or rebuild.
+  --reuse-profile        Reuse an existing tunnel profile; create it only when absent.`);
 }
 
 function cleanup(code = 0) {
@@ -299,7 +339,15 @@ function cleanup(code = 0) {
   shuttingDown = true;
   process.exitCode = code;
   for (const child of children) child.kill("SIGINT");
-  setTimeout(() => process.exit(code), 200);
+  setTimeout(() => {
+    try {
+      runtimeLock?.release();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+    process.exit(process.exitCode || 0);
+  }, 200);
 }
 
 function waitForever() {

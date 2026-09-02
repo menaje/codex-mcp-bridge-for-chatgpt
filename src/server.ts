@@ -25,7 +25,8 @@ import type { CodexUpstream } from "./upstream.js";
 import {
   CodexJobRegistry,
   TaskProjectAvailabilityProjection,
-  registerBridgeTools
+  registerBridgeTools,
+  type BridgeApplicationService
 } from "./tools.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import { ScopeResolver } from "./scopeResolver.js";
@@ -70,6 +71,10 @@ export type BridgeHttpServer = HttpServer & {
   sweepMcpSessions(): Promise<void>;
   /** Deterministic out-of-band descriptor reconciliation hook. */
   reconcileMcpDescriptorAvailability(): void;
+};
+
+export type BridgeMcpServer = McpServer & {
+  readonly applicationService: BridgeApplicationService;
 };
 
 type StatefulMcpSession = {
@@ -333,7 +338,7 @@ export function createBridgeMcpServer(
   descriptorCoordinator?: SdkToolDescriptorCoordinator,
   projectAvailability?: TaskProjectAvailabilityProjection,
   onProtocolInitialized?: () => void
-): McpServer {
+): BridgeMcpServer {
   // A directly constructed in-memory server uses one store too, preserving the
   // same registry/admission serialization guarantee as the HTTP runtime.
   const composedStateStore = userSettings?.admissionStateStore ||
@@ -403,6 +408,12 @@ export function createBridgeMcpServer(
     descriptorCoordinator,
     projectAvailability
   );
+  Object.defineProperty(server, "applicationService", {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: toolRegistration.applicationService
+  });
   // A stateful binding becomes notification-ready only after the client sends
   // notifications/initialized. The initialize response alone is not protocol
   // readiness and may still be followed by a descriptor publish.
@@ -419,7 +430,7 @@ export function createBridgeMcpServer(
     }
     return closePromise;
   };
-  return server;
+  return server as BridgeMcpServer;
 }
 
 export function createHttpServer(

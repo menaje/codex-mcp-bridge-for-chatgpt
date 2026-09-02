@@ -211,6 +211,37 @@ Official references:
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [Build MCP Apps for ChatGPT](https://developers.openai.com/plugins/build/chatgpt-ui)
 
+## Native macOS menu bar app (developer preview)
+
+Issue [#44](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/44)
+adds a SwiftUI/AppKit menu bar app without embedding any card in a WebView.
+Its popover reads the same bridge-wide Dashboard snapshot as the existing
+Dashboard card, and its Settings window uses the same revisioned application
+service as the existing Settings card. The ChatGPT cards, tool descriptors,
+resource URIs, and SQLite state remain supported and unchanged.
+
+The app and its per-user helper manage the persistent-stdio bridge and Secure
+MCP Tunnel process. Existing `~/.config/codex-mcp-bridge/.env`, bridge state,
+project registry, settings, and tunnel profile are reused. Tunnel credentials
+remain only in that private dotenv; the app does not copy or migrate them to a
+system credential store. Codex authentication remains the existing `codex login` cache. The
+explicit API-key execution mode described by issue #29 is not selected or
+enabled automatically.
+
+Build and verify the current host-architecture development app with:
+
+```bash
+npm run macos:check
+npm run macos:bundle
+open "macos/build/Codex MCP Bridge for ChatGPT.app"
+```
+
+The generated app is ad-hoc signed for development. Developer ID signing,
+notarization, updater policy, Intel packaging, and physical sleep/wake and
+network-recovery checks remain distribution gates. See
+[docs/macos-app.md](docs/macos-app.md) for the architecture, setup, recovery,
+and release boundary.
+
 ## Start locally or through Secure MCP Tunnel
 
 Local mode creates no public endpoint:
