@@ -262,8 +262,15 @@ an Apple trust chain for this artifact, a quarantined download may require
 one-time approval for this app in **System Settings > Privacy & Security**; the
 user must never be instructed to disable Gatekeeper globally.
 
+Do not overwrite or replace the app bundle while it is running. Use **Quit
+App** first and verify that the menu-bar app, helper, bridge, and tunnel have
+stopped before copying a new bundle into place, then launch the replacement.
+This keeps the helper's in-memory build identity aligned with the bundled
+runtime it supervises.
+
 The initial release manifest supports macOS 13+ on Apple Silicon only. Node.js,
 Codex CLI, and `tunnel-client` remain explicit external prerequisites. Intel or
-universal support, updater/rollback behavior, and the physical accessibility,
+universal support and an automatic updater are outside the initial release
+scope. Manual app replacement/rollback and the physical accessibility,
 appearance, sleep/wake, network-recovery, and helper-crash matrix remain gates
 listed in [releasing.md](releasing.md).

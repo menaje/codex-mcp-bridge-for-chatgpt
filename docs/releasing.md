@@ -211,9 +211,12 @@ recorded for the release candidate:
 - the quarantined-download first-launch path is tested on a clean Mac, including
   the per-app approval in **System Settings > Privacy & Security**; the
   documentation never asks users to disable Gatekeeper globally;
-- installer/update rollback behavior is documented and tested; transactional
-  LaunchAgent replacement remains covered by the automated suite.
-- installer removal unloads and removes the per-user helper LaunchAgent without
+- manual DMG app replacement and rollback behavior is documented and tested:
+  the running app and its helper/runtime are stopped before the app bundle is
+  replaced, and the replacement is launched only after that stop is verified;
+  there is no automatic updater, while transactional LaunchAgent replacement
+  remains covered by the automated suite;
+- app removal unloads and removes the per-user helper LaunchAgent without
   deleting the private dotenv, SQLite state, project registry, or Codex login;
 - the release records whether the menu-bar UI itself opens at login separately
   from the helper's existing `RunAtLoad` server behavior.
