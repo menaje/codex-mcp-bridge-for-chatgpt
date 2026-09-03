@@ -11158,7 +11158,7 @@ async function inspectBridgeBackgroundProcessImpact(
   if (candidates.length === 0) {
     return { state: "confirmed", processes: 0, agents: 0, unknownAgents: 0 };
   }
-  if (!upstream.listBackgroundTerminals) {
+  if (!upstream.listLoadedBackgroundTerminals) {
     return {
       state: "unknown",
       processes: 0,
@@ -11172,25 +11172,33 @@ async function inspectBridgeBackgroundProcessImpact(
   let processes = 0;
   let agents = 0;
   let unknownAgents = 0;
+  type InspectionResult =
+    | { state: "loaded"; count: number }
+    | { state: "unloaded" }
+    | { state: "unknown" };
   const inspect = (
     thread: Pick<BridgeAgentThread, "threadId" | "backendKind">,
     timeoutMs: number
-  ): Promise<number | null> =>
+  ): Promise<InspectionResult> =>
     new Promise((resolve) => {
       let settled = false;
-      const finish = (value: number | null): void => {
+      const finish = (value: InspectionResult): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         resolve(value);
       };
-      const timer = setTimeout(() => finish(null), timeoutMs);
-      void upstream.listBackgroundTerminals!(
+      const timer = setTimeout(() => finish({ state: "unknown" }), timeoutMs);
+      void upstream.listLoadedBackgroundTerminals!(
         thread.threadId,
         thread.backendKind as CodexBackendKind
       ).then(
-        (terminals) => finish(terminals.length),
-        () => finish(null)
+        (terminals) => finish(
+          terminals === null
+            ? { state: "unloaded" }
+            : { state: "loaded", count: terminals.length }
+        ),
+        () => finish({ state: "unknown" })
       );
     });
   const worker = async (): Promise<void> => {
@@ -11199,15 +11207,15 @@ async function inspectBridgeBackgroundProcessImpact(
       if (remainingMs <= 0) return;
       const thread = candidates[nextIndex++];
       if (!thread) return;
-      const count = await inspect(
+      const result = await inspect(
         thread,
         Math.max(1, Math.min(DASHBOARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
       );
-      if (count === null) {
+      if (result.state === "unknown") {
         unknownAgents += 1;
-      } else {
-        processes += count;
-        if (count > 0) agents += 1;
+      } else if (result.state === "loaded") {
+        processes += result.count;
+        if (result.count > 0) agents += 1;
       }
     }
   };

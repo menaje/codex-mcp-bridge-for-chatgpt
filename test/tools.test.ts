@@ -477,6 +477,32 @@ class BackgroundTerminalUpstream extends FakeUpstream {
   }
 }
 
+class ShutdownImpactUpstream extends FakeUpstream {
+  public loadedTerminalReads: string[] = [];
+  public resumedTerminalReads: string[] = [];
+  public loadedState: "unloaded" | "running" | "error" = "unloaded";
+
+  async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    this.resumedTerminalReads.push(threadId);
+    throw new Error("shutdown inspection must not resume an unloaded thread");
+  }
+
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    this.loadedTerminalReads.push(threadId);
+    if (this.loadedState === "error") throw new Error("loaded thread inspection failed");
+    if (this.loadedState === "unloaded") return null;
+    return [{
+      processId: "shutdown-background-process",
+      itemId: "shutdown-background-item",
+      command: "private shutdown fixture command",
+      cwd: "/private/shutdown-fixture",
+      osPid: 12_347
+    }];
+  }
+}
+
 class LargeResultUpstream extends FakeUpstream {
   override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     this.calls.push({ name, args });
@@ -855,6 +881,57 @@ describe("bridge tools", () => {
       await bridge.applicationService.cancelDrain();
     } finally {
       catalog.release();
+      await bridge.close();
+    }
+  });
+
+  it("checks only loaded App Server threads when deciding whether shutdown is safe", async () => {
+    const root = temporaryRoot();
+    const upstream = new ShutdownImpactUpstream();
+    const bridge = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+
+    try {
+      const completed = parseToolJson(await runTask(bridge.client, {
+        prompt: "complete an App Server task before shutdown"
+      }));
+      const threadId = completed.threadId as string;
+      expect(threadId).toBe("thread-1");
+
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "confirmed",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
+      });
+      expect(upstream.loadedTerminalReads).toEqual([threadId]);
+      expect(upstream.resumedTerminalReads).toEqual([]);
+
+      upstream.loadedState = "running";
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "confirmed",
+        backgroundProcesses: 1,
+        backgroundProcessAgents: 1,
+        backgroundProcessUnknownAgents: 0
+      });
+
+      upstream.loadedState = "error";
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 1
+      });
+      expect(upstream.resumedTerminalReads).toEqual([]);
+    } finally {
       await bridge.close();
     }
   });

@@ -731,6 +731,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.phase = "stopped";
       this.child = undefined;
       this.managedPid = undefined;
+      this.lastError = null;
       return this.snapshot();
     }
 
@@ -785,6 +786,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
     } catch (error) {
       if (options.mode === "drain") {
+        const failureMessage = safeErrorMessage(error);
+        this.lastError = failureMessage;
+        this.appendLog("helper", `Graceful runtime stop was blocked: ${failureMessage}`);
         const stillRunning = processIsAlive(managedPid);
         if (stillRunning) {
           try {
@@ -797,7 +801,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             this.manualStop = false;
             this.lastError = `DRAIN_CANCEL_FAILED: ${safeErrorMessage(cancelError)}`;
             this.appendLog("helper", this.lastError);
-            throw new Error(`${safeErrorMessage(error)} ${this.lastError}`);
+            throw new Error(`${failureMessage} ${this.lastError}`);
           }
         }
         this.phase = stillRunning ? "running" : "stopped";
@@ -851,6 +855,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (this.managedPid === managedPid) this.managedPid = undefined;
     this.phase = "stopped";
     this.startedAt = null;
+    this.lastError = null;
     return this.snapshot();
   }
 

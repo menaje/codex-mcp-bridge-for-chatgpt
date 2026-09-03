@@ -129,6 +129,24 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   });
 
+  it("does not start or assign a worker for a loaded-only historical thread lookup", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    try {
+      await expect(
+        pool.listLoadedBackgroundTerminals!("historical-thread", "app-server")
+      ).resolves.toBeNull();
+      await expect(pool.listTools()).resolves.toMatchObject({
+        workerHealth: {
+          live: 0,
+          stickyThreads: 0,
+          startup: { spawnCount: 0 }
+        }
+      });
+    } finally {
+      await pool.close();
+    }
+  });
+
   it("rejects an unsupported configured CLI before admitting an App Server worker", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
       versionProbe: async () => "0.144.0"

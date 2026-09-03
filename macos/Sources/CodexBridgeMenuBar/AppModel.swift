@@ -854,7 +854,9 @@ final class AppModel: ObservableObject {
             authStatus = nil
             return true
         } catch {
-            runtimeErrorMessage = localizedApplicationShutdownError(error)
+            let message = localizedApplicationShutdownError(error)
+            runtimeErrorMessage = message
+            logger.error("application shutdown failed: \(message, privacy: .public)")
             await refreshStatus()
             await refreshDashboard()
             return false

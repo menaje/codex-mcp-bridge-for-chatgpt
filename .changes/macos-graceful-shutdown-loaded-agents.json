@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "macOS 앱 종료 시 현재 런타임에 로드된 Agent만 백그라운드 영향 대상으로 검사합니다.",
+  "breaking": false,
+  "migration": null
+}

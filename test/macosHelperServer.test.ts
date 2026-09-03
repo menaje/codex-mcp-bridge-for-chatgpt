@@ -435,7 +435,19 @@ describe("macOS runtime helper RPC", () => {
       await supervisor.start();
       await expect(supervisor.stop({ mode: "drain", timeoutMs: 5_000 }))
         .rejects.toThrow("BACKGROUND_PROCESS_STATE_UNKNOWN");
-      expect((await supervisor.snapshot()).phase).toBe("running");
+      expect(await supervisor.snapshot()).toMatchObject({
+        phase: "running",
+        lastError: expect.stringContaining("BACKGROUND_PROCESS_STATE_UNKNOWN")
+      });
+      expect(supervisor.logs(20)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source: "helper",
+          message: expect.stringContaining("Graceful runtime stop was blocked")
+        })
+      ]));
+
+      const stopped = await supervisor.stop({ mode: "force", timeoutMs: 5_000 });
+      expect(stopped).toMatchObject({ phase: "stopped", pid: null, lastError: null });
     } finally {
       await supervisor.close();
     }

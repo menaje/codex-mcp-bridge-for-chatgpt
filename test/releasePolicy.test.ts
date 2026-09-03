@@ -36,7 +36,7 @@ describe("release governance policy", () => {
       currentVersion: "0.3.0",
       bump: "minor",
       breaking: true,
-      fragmentCount: 3,
+      fragmentCount: 4,
       targetVersion: "0.4.0",
       candidateVersion: "0.4.0-rc.1",
       releaseBranch: "release/0.4.0"

@@ -383,10 +383,18 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   async listLoadedBackgroundTerminals(
     threadId: string
   ): Promise<CodexBackgroundTerminal[] | null> {
-    return this.withThreadWorker(
-      threadId,
-      (connection) => connection.listLoadedBackgroundTerminals(threadId)
-    );
+    const preferredIndex = this.threadWorkers.get(threadId);
+    if (preferredIndex === undefined) return null;
+    const worker = this.workers[preferredIndex];
+    const connection = worker?.connection;
+    if (!worker || !connection || connection.exited) return null;
+
+    worker.activeCalls += 1;
+    try {
+      return await connection.listLoadedBackgroundTerminals(threadId);
+    } finally {
+      worker.activeCalls -= 1;
+    }
   }
 
   async terminateBackgroundTerminal(
