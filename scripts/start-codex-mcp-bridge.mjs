@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
+import crossSpawn from "cross-spawn";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { probeHttpHealth } from "./http-health.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
@@ -216,7 +216,7 @@ function isManagedAppRuntimeKey(name) {
 }
 
 function ensurePrerequisites() {
-  const codex = spawnSync(process.env.CODEX_MCP_BRIDGE_CODEX || "codex", ["mcp-server", "--help"], {
+  const codex = crossSpawn.sync(process.env.CODEX_MCP_BRIDGE_CODEX || "codex", ["mcp-server", "--help"], {
     encoding: "utf8"
   });
   if (codex.status !== 0) {
@@ -242,7 +242,7 @@ function ensureBuilt() {
   } else if (args.noBuild) {
     console.log("Built output is missing; building once before startup.");
   }
-  const result = spawnSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
+  const result = crossSpawn.sync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error("Build failed. Run npm run build for details.");
   }
@@ -323,7 +323,7 @@ async function startSecureTunnel({ tunnelId }) {
       ...endpointArguments,
       "--force"
     ];
-    const init = spawnSync(
+    const init = crossSpawn.sync(
       tunnelClient,
       initArguments,
       { cwd: repoRoot, env: childEnvironment, stdio: "inherit" }
@@ -331,7 +331,7 @@ async function startSecureTunnel({ tunnelId }) {
     if (init.status !== 0) throw new Error("tunnel-client init failed.");
   }
 
-  const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
+  const doctor = crossSpawn.sync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
     env: childEnvironment,
     encoding: "utf8"
@@ -455,7 +455,7 @@ function shellQuote(value) {
 }
 
 function spawnChild(command, childArgs, options = {}) {
-  const child = spawn(command, childArgs, {
+  const child = crossSpawn(command, childArgs, {
     cwd: repoRoot,
     env: options.env || process.env,
     stdio: ["ignore", "pipe", "pipe"]
@@ -574,7 +574,7 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
 
 function probeTunnelHealth(tunnelClient, environment) {
   if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) return false;
-  const result = spawnSync(tunnelClient, [
+  const result = crossSpawn.sync(tunnelClient, [
     "health",
     "--json",
     "--url-file",

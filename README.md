@@ -261,8 +261,8 @@ and status entrypoints. It preserves
 `%USERPROFILE%\.config\codex-mcp-bridge\.env`, applies a current-user/SYSTEM ACL,
 and officially selects the HTTP Secure MCP Tunnel transport. It verifies the
 bundled Windows SQLite binary without requiring Visual Studio or C++ Build
-Tools. `Ctrl-C` in the foreground PowerShell window performs the managed
-shutdown.
+Tools, and resolves the normal npm-installed `codex.cmd` entrypoint. `Ctrl-C`
+in the foreground PowerShell window performs the managed shutdown.
 
 Build and inspect the deterministic package without publishing anything:
 

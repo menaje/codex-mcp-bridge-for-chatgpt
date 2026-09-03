@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
 import manifest from "../release-manifest.json" with { type: "json" };
+import { executeCommandText } from "./crossPlatformCommand.js";
 import { MAX_JSON_RPC_TIMEOUT_MS } from "./jsonRpcProcess.js";
 
 const CODEX_SEMVER_SOURCE = String.raw`(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`;
@@ -31,30 +31,10 @@ export async function probeCodexCliVersion(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_JSON_RPC_TIMEOUT_MS) {
     throw new Error(`Codex CLI version probe timeout must be between 1 and ${MAX_JSON_RPC_TIMEOUT_MS}ms.`);
   }
-  const stdout = await new Promise<string>((resolve, reject) => {
-    execFile(
-      command,
-      ["--version"],
-      {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024,
-        signal,
-        timeout: timeoutMs,
-        windowsHide: true
-      },
-      (error, commandStdout) => {
-        if (error) {
-          const timedOut = isRecord(error) && (error.killed === true || error.code === "ETIMEDOUT");
-          reject(new Error(
-            timedOut
-              ? `Configured Codex executable version check timed out after ${timeoutMs}ms.`
-              : "Configured Codex executable could not complete a version check."
-          ));
-          return;
-        }
-        resolve(commandStdout);
-      }
-    );
+  const { stdout } = await executeCommandText(command, ["--version"], {
+    timeoutMs,
+    maxBuffer: 64 * 1024,
+    signal
   });
   return parseCodexCliVersion(stdout);
 }
@@ -89,8 +69,4 @@ export async function verifySupportedCodexCli(
   }
   assertSupportedCodexCliVersion(command, observedVersion);
   return observedVersion;
-}
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null;
 }

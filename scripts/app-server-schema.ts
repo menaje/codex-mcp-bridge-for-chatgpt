@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
@@ -12,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import crossSpawn from "cross-spawn";
 import {
   SUPPORTED_CODEX_CLI_VERSION,
   verifySupportedCodexCli
@@ -197,7 +197,7 @@ function generateSchema(
   env: NodeJS.ProcessEnv
 ): void {
   try {
-    execFileSync(
+    const result = crossSpawn.sync(
       codexCommand,
       ["app-server", generator, "--experimental", "--out", outputDirectory],
       {
@@ -209,6 +209,7 @@ function generateSchema(
         windowsHide: true
       }
     );
+    if (result.error || result.status !== 0) throw result.error || new Error("Codex schema command failed.");
   } catch {
     throw new Error(
       `Configured Codex executable ${JSON.stringify(codexCommand)} could not run app-server ${generator} ` +

@@ -279,7 +279,9 @@ The following remain release-candidate gates rather than inferred support:
   independently implemented and tested.
 
 The launcher health check uses Node's built-in HTTP client rather than an
-external `curl` executable.
+external `curl` executable. Runtime Codex process launches use cross-platform
+command resolution so the normal npm-installed `codex.cmd` shim works on
+Windows as well as the executable entrypoint used on macOS and Linux.
 
 ### Legacy runtime namespace
 
