@@ -33,7 +33,9 @@ The manifest controls:
 - immutable Settings and Activity UI cache-key policy, hash algorithm and
   prefix length, retained-generation count, and required logical resources;
 - the synchronized SemVer mirror, tag prefix, stable/prerelease channel, and release title;
-- generated release-note policy and the v1 npm tarball/checksum asset contract.
+- generated release-note policy and the manifest-v2 cross-platform asset contract;
+- the first public targets: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG and a
+  Windows x64 server ZIP using the existing Node runtime over HTTP transport.
 
 ## Skills distribution
 
@@ -42,10 +44,9 @@ Repository `skills/` is the source of truth. GitHub Release publishes
 artifact, while the npm package is runtime-only and deliberately excludes
 `skills/`.
 
-For manifestVersion 1 compatibility, `release.assets` remains exactly
-`["npm-tarball", "sha256"]`. The workflow derives the skills ZIP name from the
-synchronized package version and uploads it as an additional release asset;
-the v1 manifest contract is not widened.
+Manifest version 2 declares the skills ZIP as one member of the complete public
+asset set. It is versioned with the same bridge SemVer as the npm package,
+macOS app, and Windows server package.
 
 Build an installable ZIP explicitly (the output file is intentionally chosen by
 the caller):
@@ -226,18 +227,56 @@ recorded for the release candidate:
 - VoiceOver labels, full keyboard navigation, light/dark appearance, sleep and
   wake, network loss and recovery, and helper crash recovery are checked on a
   physical Mac;
-- the supported Apple Silicon/Intel matrix and any bundled native artifacts are
-  recorded;
-- Developer ID signing, notarization, and installer/update rollback behavior are
-  documented and tested; transactional LaunchAgent replacement remains covered
-  by the automated suite.
+- the supported architecture matrix and any bundled native artifacts are
+  recorded (the initial target is Apple Silicon only);
+- the quarantined-download first-launch path is tested on a clean Mac, including
+  the per-app approval in **System Settings > Privacy & Security**; the
+  documentation never asks users to disable Gatekeeper globally;
+- installer/update rollback behavior is documented and tested; transactional
+  LaunchAgent replacement remains covered by the automated suite.
 - installer removal unloads and removes the per-user helper LaunchAgent without
   deleting the private dotenv, SQLite state, project registry, or Codex login;
 - the release records whether the menu-bar UI itself opens at login separately
   from the helper's existing `RunAtLoad` server behavior.
 
 The current `macos/build-app.sh` output is host-architecture and ad-hoc signed.
-It is suitable for local development validation, not a published binary.
+`macos/package-release.sh` is the separate public packaging boundary: it checks
+the manifest version, minimum macOS version, exact arm64 architecture, app
+signature, and DMG container, then emits a filename containing
+`unnotarized`. It deliberately needs no Apple developer account, certificate,
+App Store Connect key, or GitHub signing secret. Because Apple does not trust or
+notarize this artifact, downloaded copies can require the user's explicit
+per-app approval before first launch.
+
+The initial distribution manifest intentionally supports Apple Silicon only.
+Intel or universal packaging requires an explicit manifest change and a native
+dependency/test matrix; it is not inferred from architecture-neutral Swift
+source.
+
+### Windows direct-server distribution gate
+
+The Windows release keeps the original server operating model and does not add
+a GUI or background service. `scripts/build-windows-release.mjs` wraps the one
+canonical npm tarball with PowerShell prerequisite, install, foreground start,
+and status entrypoints. The archive supports Windows x64 and HTTP Secure MCP
+Tunnel transport only. Installation preserves an existing
+`%USERPROFILE%\.config\codex-mcp-bridge\.env`; a newly created or existing file
+is restricted to the current Windows user and SYSTEM by the explicit installer.
+
+The following remain release-candidate gates rather than inferred support:
+
+- the full Node suite and deterministic Windows package check pass on
+  `windows-latest`;
+- every packaged PowerShell entrypoint parses successfully;
+- a clean Windows x64 VM completes install, Codex login, actual Tunnel
+  connection, foreground `Ctrl-C` shutdown, stale-lock recovery, and upgrade;
+- the HTTP launcher leaves no bridge, Codex, or tunnel process after a managed
+  shutdown;
+- stdio remains unsupported until Windows quoting and process-tree behavior are
+  independently implemented and tested.
+
+The launcher health check uses Node's built-in HTTP client rather than an
+external `curl` executable.
 
 ### Legacy runtime namespace
 
@@ -317,21 +356,37 @@ conversation. See
 
 ## GitHub workflow contract
 
-Only a push to `main` starts `.github/workflows/ci.yml`. The workflow:
+Pull requests and pushes to `dev` or `main` run the shared Ubuntu suite, the
+Windows x64 server suite, and the native macOS arm64 suite. Only a push to
+`main` enables packaging and publication jobs. The workflow then:
 
-1. installs locked dependencies and the manifest-pinned Codex CLI, checks both
-   App Server schema fingerprints, then runs the build, full test suite, and
-   production dependency audit;
-2. derives repository, tag, title, channel, and asset names from synchronized metadata;
-3. refuses to release when the manifest repository differs from
-   `GITHUB_REPOSITORY`;
-4. skips an already published tag instead of replacing the release;
-5. verifies npm produced the exact metadata-derived archive name and creates a
-   deterministic skills ZIP from repository `skills/`;
-6. creates that GitHub Release with the npm archive, its SHA-256 checksum, and
-   `codex-mcp-bridge-skills-<bridgeVersion>.zip`.
+1. builds the canonical npm tarball, its compatibility checksum, and the
+   deterministic skills ZIP once on Ubuntu;
+2. passes that exact npm tarball to Windows and embeds it in the deterministic
+   Windows server ZIP;
+3. builds the macOS app on an arm64 runner, ad-hoc signs the app and DMG, and
+   verifies the version, minimum OS, architecture, signatures, and container;
+4. downloads the common, Windows, and macOS workflow artifacts into one final
+   assembly job;
+5. verifies exact filenames, the Windows embedded npm tarball, skills content,
+   DMG container format, source commit, and the individual npm checksum;
+6. rejects undeclared files and writes one deterministic `SHA256SUMS.txt` for
+   every public binary/archive asset;
+7. refuses a repository mismatch, refuses a conflicting existing tag, and
+   skips an already published release rather than replacing it;
+8. publishes all six assets together and adds `--prerelease` when the SemVer
+   contains a prerelease identifier.
 
-Development pushes stay on `dev`. Never merge, fast-forward, cherry-pick, or
-push development work to `main` unless the user explicitly instructs that
-specific promotion. When instructed, first confirm that the manifest version
-and release policy are ready to publish.
+The macOS job has no Apple signing or notarization secrets. Its public asset is
+intentionally named
+`Codex-MCP-Bridge-for-ChatGPT-<version>-macOS-arm64-unnotarized.dmg`, and the
+release notes must repeat that limitation and the safe first-launch approval
+path. A future move to Developer ID or notarization is a separate product and
+account decision; the workflow must not silently change the trust model.
+
+Development pushes stay on `dev` and cannot execute `gh release create` because
+every packaging/publication job is guarded by the exact `main` push condition.
+Never merge, fast-forward, cherry-pick, or push development work to `main`
+unless the user explicitly instructs that specific promotion. Before that
+promotion, set a new unused SemVer and complete both physical release-candidate
+smoke gates, including the clean-Mac Gatekeeper path.

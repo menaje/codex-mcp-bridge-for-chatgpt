@@ -252,11 +252,18 @@ Disabling **Open menu-bar app at login** prevents only future UI launches; the
 helper continues its existing `RunAtLoad` server behavior so ChatGPT connectivity
 does not depend on the menu-bar process remaining open.
 
-`macos/build-app.sh` produces a host-architecture, ad-hoc-signed development
-bundle. Swift tests and release compilation run with strict concurrency and
-warnings-as-errors. Before distributing it, complete the Developer
-ID/notarization/installer-update rollback design, choose the
-Node/Codex/tunnel-client bundling boundary,
-verify Apple Silicon and Intel support, and run the physical accessibility,
-appearance, sleep/wake, network-recovery, and helper-crash matrix listed in
-[releasing.md](releasing.md).
+`macos/build-app.sh` produces an ad-hoc-signed development bundle by default;
+Swift tests and release compilation run with strict concurrency and
+warnings-as-errors. `macos/package-release.sh` is the publication boundary. It
+verifies the manifest version/minimum OS/arm64 architecture, ad-hoc signs the
+app and DMG, and requires the exact `unnotarized` filename. No Apple developer
+account or signing/notarization secret is required. Since macOS cannot establish
+an Apple trust chain for this artifact, a quarantined download may require
+one-time approval for this app in **System Settings > Privacy & Security**; the
+user must never be instructed to disable Gatekeeper globally.
+
+The initial release manifest supports macOS 13+ on Apple Silicon only. Node.js,
+Codex CLI, and `tunnel-client` remain explicit external prerequisites. Intel or
+universal support, updater/rollback behavior, and the physical accessibility,
+appearance, sleep/wake, network-recovery, and helper-crash matrix remain gates
+listed in [releasing.md](releasing.md).

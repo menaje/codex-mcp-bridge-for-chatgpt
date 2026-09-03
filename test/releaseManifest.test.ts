@@ -42,12 +42,35 @@ describe("release manifest", () => {
     expect(output).toContain("codex_cli_version=0.145.0\n");
   });
 
-  it("accepts the legacy manifestVersion 1 release asset contract", () => {
-    const legacyManifest = structuredClone(loadReleaseManifest(REPO_ROOT));
-    legacyManifest.manifestVersion = 1;
-    legacyManifest.release.assets = ["npm-tarball", "sha256"];
+  it("requires the cross-platform manifestVersion 2 release asset contract", () => {
+    const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+    expect(validateReleaseManifest(manifest)).toBe(manifest);
+    expect(manifest.release.assets).toEqual([
+      "npm-tarball",
+      "npm-sha256",
+      "skills-archive",
+      "macos-app",
+      "windows-server",
+      "release-checksums"
+    ]);
+    expect(manifest.release.targets).toEqual({
+      macos: {
+        architecture: "arm64",
+        format: "dmg",
+        minimumVersion: "13.0",
+        signing: "ad-hoc",
+        notarization: "none"
+      },
+      windows: {
+        architecture: "x64",
+        format: "zip",
+        transport: "http",
+        runtime: "node"
+      }
+    });
 
-    expect(validateReleaseManifest(legacyManifest)).toBe(legacyManifest);
+    manifest.manifestVersion = 1;
+    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 2");
   });
 
   it("derives release metadata from the synchronized package version and manifest policy", () => {
@@ -68,7 +91,14 @@ describe("release manifest", () => {
       pluginDisplayName: "Codex MCP Bridge for ChatGPT",
       pluginDeveloperName: "menaje",
       pluginCategory: "Developer Tools",
-      pluginAppId: "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0"
+      pluginAppId: "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0",
+      macosArchitecture: "arm64",
+      macosMinimumVersion: "13.0",
+      macosArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
+      windowsArchitecture: "x64",
+      windowsTransport: "http",
+      windowsArchiveFilename: "codex-mcp-bridge-for-chatgpt-0.3.0-windows-x64.zip",
+      releaseChecksumsFilename: "SHA256SUMS.txt"
     });
   });
 

@@ -28,6 +28,14 @@ const PLUGIN_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PLUGIN_APP_ID_PATTERN = /^plugin_asdk_app_[A-Za-z0-9]+$/;
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+$/;
+const RELEASE_ASSET_NAMES = [
+  "npm-tarball",
+  "npm-sha256",
+  "skills-archive",
+  "macos-app",
+  "windows-server",
+  "release-checksums"
+];
 
 export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {
   const file = path.join(repoRoot, MANIFEST_FILENAME);
@@ -49,7 +57,7 @@ export function validateReleaseManifest(value) {
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
-  if (root.manifestVersion !== 1) fail("manifestVersion must be 1");
+  if (root.manifestVersion !== 2) fail("manifestVersion must be 2");
 
   const product = requiredRecord(root.product, "product");
   assertKeys(product, ["displayName", "description", "runtimeName"], "product");
@@ -179,7 +187,7 @@ export function validateReleaseManifest(value) {
   }
 
   const release = requiredRecord(root.release, "release");
-  assertKeys(release, ["version", "tagPrefix", "channel", "generateNotes", "assets"], "release");
+  assertKeys(release, ["version", "tagPrefix", "channel", "generateNotes", "targets", "assets"], "release");
   const semver = typeof release.version === "string" ? SEMVER_PATTERN.exec(release.version) : null;
   if (!semver) {
     fail("release.version must be a valid SemVer value");
@@ -194,14 +202,37 @@ export function validateReleaseManifest(value) {
   if (release.channel === "stable" && hasPrerelease) fail("stable releases cannot use a prerelease version");
   if (release.channel === "prerelease" && !hasPrerelease) fail("prerelease channel requires a prerelease version");
   if (typeof release.generateNotes !== "boolean") fail("release.generateNotes must be boolean");
+  const targets = requiredRecord(release.targets, "release.targets");
+  assertKeys(targets, ["macos", "windows"], "release.targets");
+  const macosTarget = requiredRecord(targets.macos, "release.targets.macos");
+  assertKeys(
+    macosTarget,
+    ["architecture", "format", "minimumVersion", "signing", "notarization"],
+    "release.targets.macos"
+  );
+  if (macosTarget.architecture !== "arm64") fail("release.targets.macos.architecture must be arm64");
+  if (macosTarget.format !== "dmg") fail("release.targets.macos.format must be dmg");
+  if (macosTarget.minimumVersion !== "13.0") fail("release.targets.macos.minimumVersion must be 13.0");
+  if (macosTarget.signing !== "ad-hoc") fail("release.targets.macos.signing must be ad-hoc");
+  if (macosTarget.notarization !== "none") fail("release.targets.macos.notarization must be none");
+
+  const windowsTarget = requiredRecord(targets.windows, "release.targets.windows");
+  assertKeys(
+    windowsTarget,
+    ["architecture", "format", "transport", "runtime"],
+    "release.targets.windows"
+  );
+  if (windowsTarget.architecture !== "x64") fail("release.targets.windows.architecture must be x64");
+  if (windowsTarget.format !== "zip") fail("release.targets.windows.format must be zip");
+  if (windowsTarget.transport !== "http") fail("release.targets.windows.transport must be http");
+  if (windowsTarget.runtime !== "node") fail("release.targets.windows.runtime must be node");
   if (
     !Array.isArray(release.assets) ||
-    release.assets.length !== 2 ||
-    !release.assets.includes("npm-tarball") ||
-    !release.assets.includes("sha256") ||
+    release.assets.length !== RELEASE_ASSET_NAMES.length ||
+    RELEASE_ASSET_NAMES.some((name) => !release.assets.includes(name)) ||
     new Set(release.assets).size !== release.assets.length
   ) {
-    fail("release.assets must contain npm-tarball and sha256 exactly once");
+    fail(`release.assets must contain ${RELEASE_ASSET_NAMES.join(", ")} exactly once`);
   }
   return value;
 }
@@ -213,6 +244,8 @@ export function deriveReleaseMetadata(manifest) {
   const version = manifest.release.version;
   const tag = `${manifest.release.tagPrefix}${version}`;
   const packageFilename = `${manifest.package.name}-${version}.tgz`;
+  const macosTarget = manifest.release.targets.macos;
+  const windowsTarget = manifest.release.targets.windows;
   return {
     manifestVersion: manifest.manifestVersion,
     displayName: manifest.product.displayName,
@@ -232,6 +265,18 @@ export function deriveReleaseMetadata(manifest) {
     packageFilename,
     checksumFilename: `${packageFilename}.sha256`,
     skillsArchiveFilename: `codex-mcp-bridge-skills-${version}.zip`,
+    macosArchitecture: macosTarget.architecture,
+    macosFormat: macosTarget.format,
+    macosMinimumVersion: macosTarget.minimumVersion,
+    macosArchiveFilename:
+      `Codex-MCP-Bridge-for-ChatGPT-${version}-macOS-${macosTarget.architecture}-unnotarized.${macosTarget.format}`,
+    windowsArchitecture: windowsTarget.architecture,
+    windowsFormat: windowsTarget.format,
+    windowsTransport: windowsTarget.transport,
+    windowsRuntime: windowsTarget.runtime,
+    windowsArchiveFilename:
+      `codex-mcp-bridge-for-chatgpt-${version}-windows-${windowsTarget.architecture}.${windowsTarget.format}`,
+    releaseChecksumsFilename: "SHA256SUMS.txt",
     repositorySlug,
     repositoryUrl,
     pluginName: manifest.plugin.name,
@@ -769,6 +814,13 @@ function printGithubOutput(metadata) {
     package_filename: metadata.packageFilename,
     checksum_filename: metadata.checksumFilename,
     skills_archive_filename: metadata.skillsArchiveFilename,
+    macos_architecture: metadata.macosArchitecture,
+    macos_minimum_version: metadata.macosMinimumVersion,
+    macos_archive_filename: metadata.macosArchiveFilename,
+    windows_architecture: metadata.windowsArchitecture,
+    windows_transport: metadata.windowsTransport,
+    windows_archive_filename: metadata.windowsArchiveFilename,
+    release_checksums_filename: metadata.releaseChecksumsFilename,
     repository: metadata.repositorySlug,
     repository_url: metadata.repositoryUrl
   };

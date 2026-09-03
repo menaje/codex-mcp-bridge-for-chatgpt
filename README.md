@@ -244,11 +244,35 @@ npm run macos:bundle
 open "macos/build/Codex MCP Bridge for ChatGPT.app"
 ```
 
-The generated app is ad-hoc signed for development. Developer ID signing,
-notarization, updater policy, Intel packaging, and physical sleep/wake and
-network-recovery checks remain distribution gates. See
+The generated app is ad-hoc signed. Public macOS packages deliberately remain
+unnotarized and require no Apple developer account; a downloaded copy may need
+one-time per-app approval in **System Settings > Privacy & Security**. Updater
+policy, Intel packaging, and physical sleep/wake and network-recovery checks
+remain distribution gates. See
 [docs/macos-app.md](docs/macos-app.md) for the architecture, setup, recovery,
 and release boundary.
+
+## Windows server package
+
+Windows keeps the existing direct-server model; there is no Windows GUI in the
+initial cross-platform release. The versioned Windows x64 ZIP contains the
+canonical npm tarball plus PowerShell prerequisite, install, foreground start,
+and status entrypoints. It preserves
+`%USERPROFILE%\.config\codex-mcp-bridge\.env`, applies a current-user/SYSTEM ACL,
+and officially selects the HTTP Secure MCP Tunnel transport. `Ctrl-C` in the
+foreground PowerShell window performs the managed shutdown.
+
+Build and inspect the deterministic package without publishing anything:
+
+```bash
+npm run windows:check
+```
+
+The same GitHub prerelease or stable release will carry this Windows package,
+the ad-hoc-signed and explicitly unnotarized Apple Silicon app, the generic npm
+package, the skills archive, and aggregate checksums. See
+[docs/releasing.md](docs/releasing.md) for the release gates and first-launch
+notice.
 
 ## Start locally or through Secure MCP Tunnel
 
@@ -585,9 +609,16 @@ App Server threads are checked by exact ID with `thread/read` before resume. MCP
 
 ## Development and releases
 
-Work on `dev`. The GitHub workflow runs only on `main`; do not promote or push to `main` without explicit instruction.
+Work on `dev`. CI checks Ubuntu, Windows, and macOS there, but packaging and
+`gh release create` run only for an exact push to `main`; do not promote or push
+to `main` without explicit instruction.
 
-`package.json` is the bridge/runtime and release SemVer source of truth. `release-manifest.json` carries its synchronized version mirror plus the remaining release policy, product/package identity, personal/local plugin metadata, exact supported App Server CLI, toolchain, repository, core v1 release assets, and UI resource policy. Normal version change:
+`package.json` is the bridge/runtime and release SemVer source of truth.
+`release-manifest.json` carries its synchronized version mirror plus the
+remaining release policy, product/package identity, personal/local plugin
+metadata, exact supported App Server CLI, toolchain, repository,
+manifest-v2 cross-platform release targets/assets, and UI resource policy.
+Normal version change:
 
 ```bash
 npm run release:version -- patch

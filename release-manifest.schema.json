@@ -10,7 +10,7 @@
       "const": "./release-manifest.schema.json"
     },
     "manifestVersion": {
-      "const": 1
+      "const": 2
     },
     "product": {
       "type": "object",
@@ -164,7 +164,7 @@
     "release": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "tagPrefix", "channel", "generateNotes", "assets"],
+      "required": ["version", "tagPrefix", "channel", "generateNotes", "targets", "assets"],
       "properties": {
         "version": {
           "type": "string",
@@ -173,15 +173,58 @@
         "tagPrefix": { "type": "string", "pattern": "^[A-Za-z0-9._-]{0,16}$" },
         "channel": { "enum": ["stable", "prerelease"] },
         "generateNotes": { "type": "boolean" },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["macos", "windows"],
+          "properties": {
+            "macos": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["architecture", "format", "minimumVersion", "signing", "notarization"],
+              "properties": {
+                "architecture": { "const": "arm64" },
+                "format": { "const": "dmg" },
+                "minimumVersion": { "const": "13.0" },
+                "signing": { "const": "ad-hoc" },
+                "notarization": { "const": "none" }
+              }
+            },
+            "windows": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["architecture", "format", "transport", "runtime"],
+              "properties": {
+                "architecture": { "const": "x64" },
+                "format": { "const": "zip" },
+                "transport": { "const": "http" },
+                "runtime": { "const": "node" }
+              }
+            }
+          }
+        },
         "assets": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true,
-          "items": { "enum": ["npm-tarball", "sha256"] },
+          "items": {
+            "enum": [
+              "npm-tarball",
+              "npm-sha256",
+              "skills-archive",
+              "macos-app",
+              "windows-server",
+              "release-checksums"
+            ]
+          },
           "allOf": [
             { "contains": { "const": "npm-tarball" } },
-            { "contains": { "const": "sha256" } }
+            { "contains": { "const": "npm-sha256" } },
+            { "contains": { "const": "skills-archive" } },
+            { "contains": { "const": "macos-app" } },
+            { "contains": { "const": "windows-server" } },
+            { "contains": { "const": "release-checksums" } }
           ]
         }
       }

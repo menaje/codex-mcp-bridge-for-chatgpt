@@ -97,7 +97,23 @@ open "macos/build/Codex MCP Bridge for ChatGPT.app"
 
 The current build is an ad-hoc-signed development artifact for the host
 architecture. Node.js, Codex CLI, and `tunnel-client` remain managed external
-prerequisites. A release must still choose and validate the universal/runtime
-bundling boundary, Developer ID signing, notarization, and updater policy before
-distribution. The source is architecture-neutral, but this branch records only
-Apple Silicon build verification; Intel packaging remains a release gate.
+prerequisites. Public packaging is a separate command and requires the exact
+manifest-derived DMG filename:
+
+```bash
+npm run macos:package -- \
+  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg
+```
+
+Public packaging intentionally uses ad-hoc signing and does not submit to Apple
+notarization. It needs no Apple developer account, signing certificate, or
+notarization secret. The packager validates the manifest version, minimum OS,
+arm64 architecture, app signature, and DMG signature. The filename and release
+notes state `unnotarized`; after downloading, a user may need to approve this
+specific app in **System Settings > Privacy & Security**. Do not disable
+Gatekeeper globally.
+
+The initial manifest explicitly supports macOS 13+ on Apple Silicon. Intel and
+universal packaging remain unsupported until a separate architecture/native
+dependency matrix is implemented. Updater policy and the physical
+accessibility, sleep/wake, and network-recovery checks remain release gates.

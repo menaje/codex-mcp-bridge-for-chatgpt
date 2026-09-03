@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
+import { probeHttpHealth } from "./http-health.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
 import {
   loadRuntimeEnvFile,
@@ -492,8 +493,7 @@ function spawnChild(command, childArgs, options = {}) {
 async function waitForHealth(url) {
   const started = Date.now();
   while (Date.now() - started < 30_000) {
-    const result = spawnSync("curl", ["-fsS", "--max-time", "5", url], { encoding: "utf8" });
-    if (result.status === 0) return;
+    if (await probeHttpHealth(url)) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   }
   throw new Error(`Timed out waiting for ${url}.`);

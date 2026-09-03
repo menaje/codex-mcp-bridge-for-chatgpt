@@ -204,7 +204,7 @@ function verifyNpmPackExcludesSkills(repoRoot) {
   if (skillsFile) throw new Error(`npm package unexpectedly includes ${skillsFile.path}.`);
 }
 
-function createDeterministicZip(entries) {
+export function createDeterministicZip(entries) {
   const localRecords = [];
   const centralRecords = [];
   let offset = 0;
@@ -260,7 +260,7 @@ function createDeterministicZip(entries) {
   return Buffer.concat([...localRecords, centralDirectory, footer]);
 }
 
-function readZipEntries(archive) {
+export function readZipEntries(archive) {
   const footerOffset = findEndOfCentralDirectory(archive);
   const count = archive.readUInt16LE(footerOffset + 10);
   const centralOffset = archive.readUInt32LE(footerOffset + 16);

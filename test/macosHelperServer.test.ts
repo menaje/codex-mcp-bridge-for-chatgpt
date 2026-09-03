@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.allSettled(servers.splice(0).map((server) => server.close()));
 });
 
-describe("macOS runtime helper RPC", () => {
+describe.skipIf(process.platform === "win32")("macOS runtime helper RPC", () => {
   it("serves a versioned, private control surface", async () => {
     const socketPath = temporarySocketPath();
     const server = await startMacOSHelperServer({

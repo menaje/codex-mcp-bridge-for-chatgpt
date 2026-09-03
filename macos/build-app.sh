@@ -10,6 +10,14 @@ resources_directory="$contents_directory/Resources"
 runtime_directory="$resources_directory/Runtime"
 app_icon_source="$script_directory/Resources/AppIcon/app-icon-1024.png"
 app_iconset_directory="$output_directory/AppIcon.iconset"
+signing_identity="${CODE_SIGN_IDENTITY:--}"
+bundle_version="${MACOS_BUNDLE_VERSION:-1}"
+expected_architecture="${MACOS_EXPECTED_ARCHITECTURE:-}"
+
+if [[ ! "$bundle_version" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MACOS_BUNDLE_VERSION must be a positive integer." >&2
+  exit 1
+fi
 
 cd "$repository_root"
 npm run build
@@ -48,6 +56,7 @@ cp "$repository_root/package.json" "$repository_root/package-lock.json" "$runtim
 cp "$repository_root/release-manifest.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/child-shutdown.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/http-health.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/launcher-options.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.d.mts" "$runtime_directory/scripts/"
@@ -60,11 +69,25 @@ cp "$repository_root/scripts/tunnel-profile.mjs" "$runtime_directory/scripts/"
 
 package_version="$(node -p "require('./package.json').version")"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $package_version" "$contents_directory/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$contents_directory/Info.plist"
 
 (
   cd "$runtime_directory"
   npm ci --omit=dev --no-audit --no-fund
 )
 
-codesign --force --deep --sign - "$app_bundle"
+if [[ -n "$expected_architecture" ]]; then
+  built_architectures="$(lipo -archs "$contents_directory/MacOS/CodexBridgeMenuBar")"
+  if [[ " $built_architectures " != *" $expected_architecture "* ]] || [[ "$built_architectures" == *" "* ]]; then
+    echo "Expected one $expected_architecture app binary; built: $built_architectures" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$signing_identity" == "-" ]]; then
+  codesign --force --deep --sign - "$app_bundle"
+else
+  codesign --force --deep --options runtime --timestamp --sign "$signing_identity" "$app_bundle"
+fi
+codesign --verify --deep --strict "$app_bundle"
 echo "$app_bundle"
