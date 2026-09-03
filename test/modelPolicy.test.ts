@@ -45,7 +45,6 @@ const FIXED_POLICY: ModelPolicy = {
 
 const AUTOMATIC_POLICY: ModelPolicy = {
   mode: "automatic",
-  fallbackSelection: TERRA_MEDIUM,
   allowedSelections: { kind: "catalog-visible" },
   constraints: { allowDelegation: true }
 };
@@ -66,38 +65,20 @@ describe("model policy resolver", () => {
     );
   });
 
-  it("resolves automatic caller, configured-fallback, and backend-default selections deterministically", () => {
-    expect(decide({ policy: AUTOMATIC_POLICY }).source).toBe("configured-fallback");
-    expect(decide({ policy: AUTOMATIC_POLICY }).effectiveSelection).toEqual(TERRA_MEDIUM);
+  it("requires explicit caller authority for automatic new work", () => {
+    const required = expectPolicyError(
+      () => decide({ policy: AUTOMATIC_POLICY }),
+      "MODEL_SELECTION_REQUIRED"
+    );
+    expect(required.message).toBe(
+      "MODEL_SELECTION_REQUIRED: Automatic policy requires an exact model and reasoning effort."
+    );
+    expect(required.nextActions).toEqual(["codex_models"]);
     expect(decide({ policy: AUTOMATIC_POLICY, requestedSelection: SOL_HIGH })).toMatchObject({
       source: "caller",
       requestedSelection: SOL_HIGH,
       effectiveSelection: SOL_HIGH
     });
-    const withoutPreferred: ModelPolicy = {
-      mode: "automatic",
-      allowedSelections: { kind: "catalog-visible" },
-      constraints: { allowDelegation: true }
-    };
-    expect(decide({ policy: withoutPreferred })).toMatchObject({
-      source: "backend-default",
-      effectiveSelection: SOL_MAX
-    });
-    expect(decide({ policy: withoutPreferred }).effectiveSelection).toEqual(SOL_MAX);
-  });
-
-  it("falls back from a drifted automatic preference to the validated backend default", () => {
-    const withoutPreferredModel = catalog({
-      models: catalog().models.filter((model) => model.id !== TERRA_MEDIUM.model)
-    });
-    expect(decide({ policy: AUTOMATIC_POLICY, catalog: withoutPreferredModel })).toMatchObject({
-      source: "backend-default",
-      effectiveSelection: SOL_MAX,
-      reason: expect.stringContaining("configured automatic fallback was outside")
-    });
-    expect(() =>
-      validatePolicyAgainstCatalog(AUTOMATIC_POLICY, withoutPreferredModel, undefined, 7)
-    ).not.toThrow();
   });
 
   it("validates automatic policy drift by its surviving live intersection", () => {
@@ -114,20 +95,6 @@ describe("model policy resolver", () => {
     expect(() => validatePolicyAgainstCatalog(partial, withoutTerra, undefined, 7)).not.toThrow();
     expect(decide({ policy: partial, catalog: withoutTerra, requestedSelection: SOL_MAX }))
       .toMatchObject({ source: "caller", effectiveSelection: SOL_MAX });
-  });
-
-  it("materializes a migrated model-only preference with that model's catalog default", () => {
-    const policy: ModelPolicy = {
-      mode: "automatic",
-      allowedSelections: { kind: "catalog-visible" },
-      constraints: { allowDelegation: true }
-    };
-    expect(decide({ policy, legacyPreferredModel: "gpt-5.6-terra" })).toMatchObject({
-      source: "configured-fallback",
-      effectiveSelection: TERRA_MEDIUM
-    });
-    expect(decide({ policy, legacyPreferredModel: "gpt-5.6-sol" }).effectiveSelection)
-      .toEqual(SOL_MAX);
   });
 
   it("keeps explicit allowlists closed when the catalog expands", () => {
@@ -178,7 +145,8 @@ describe("model policy resolver", () => {
       allowedSelections: { kind: "catalog-visible" },
       constraints: { allowDelegation: true }
     };
-    expect(decide({ policy: catalogVisible }).effectiveSelection).toEqual(SOL_MAX);
+    expect(decide({ policy: catalogVisible, requestedSelection: SOL_MAX }).effectiveSelection)
+      .toEqual(SOL_MAX);
     expect(listAllowedModelSelections(catalogVisible, catalog())
       .every((selection) => selection.serviceTier === undefined)).toBe(true);
   });
@@ -259,7 +227,6 @@ describe("model policy resolver", () => {
     expect(decide({
       policy: {
         mode: "automatic",
-        fallbackSelection: SOL_MAX,
         allowedSelections: { kind: "catalog-visible" },
         constraints: { allowDelegation: true }
       },

@@ -28,7 +28,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -541,7 +541,7 @@ describe("user settings and project registry", () => {
     expect(imported.loadWarnings.join(" ")).toContain("intentionally not migrated");
   });
 
-  it("migrates the v2 preferred selection to the v3 omission fallback", () => {
+  it("migrates the v2 preferred selection by removing the retired fallback", () => {
     const stateFile = path.join(temporaryDirectory("settings-model-policy-v2-"), "settings.json");
     const config = configFor();
     const original = new UserSettingsStore(config, { stateFile, now: () => 4_000 });
@@ -559,20 +559,23 @@ describe("user settings and project registry", () => {
 
     const restored = new UserSettingsStore(config, { stateFile, now: () => 5_000 });
     expect(restored.current).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       settingsRevision: 2,
       modelPolicy: {
         mode: "automatic",
-        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+        allowedSelections: { kind: "catalog-visible" },
+        constraints: { allowDelegation: true }
       }
     });
     expect(restored.current.modelPolicy).not.toHaveProperty("preferredSelection");
+    expect(restored.current.modelPolicy).not.toHaveProperty("fallbackSelection");
+    expect(restored.loadWarnings.join(" ")).toContain("retired automatic model default was removed");
     const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(rewritten.settings.modelPolicy).toHaveProperty("fallbackSelection");
+    expect(rewritten.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
     expect(rewritten.settings.modelPolicy).not.toHaveProperty("preferredSelection");
   });
 
-  it("replaces a migrated model-only preference with an exact fallback policy", () => {
+  it("removes a migrated model-only preference while preserving automatic policy", () => {
     const stateFile = path.join(temporaryDirectory("settings-model-only-"), "settings.json");
     const config = configFor();
     const original = new UserSettingsStore(config, { stateFile, now: () => 6_000 });
@@ -591,7 +594,6 @@ describe("user settings and project registry", () => {
     const updated = restored.update({
       modelPolicy: {
         mode: "automatic",
-        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
         allowedSelections: { kind: "catalog-visible" },
         constraints: { allowDelegation: true }
       }
@@ -599,12 +601,13 @@ describe("user settings and project registry", () => {
 
     expect(updated.modelPolicy).toMatchObject({
       mode: "automatic",
-      fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      allowedSelections: { kind: "catalog-visible" }
     });
+    expect(updated.modelPolicy).not.toHaveProperty("fallbackSelection");
     expect(updated).not.toHaveProperty("legacyPreferredModel");
   });
 
-  it("persists the configured exact seed when a saved automatic policy lacks a fallback", () => {
+  it("ignores retired environment model seeds for an automatic policy", () => {
     const stateFile = path.join(temporaryDirectory("settings-fallback-seed-"), "settings.json");
     const original = new UserSettingsStore(configFor(), { stateFile, now: () => 8_000 });
     original.update({ uiLocalePreference: "ko" }, 0);
@@ -615,18 +618,15 @@ describe("user settings and project registry", () => {
     }), { stateFile, now: () => 9_000 });
 
     expect(restored.current).toMatchObject({
-      settingsRevision: 2,
+      settingsRevision: 1,
       modelPolicy: {
         mode: "automatic",
-        fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+        allowedSelections: { kind: "catalog-visible" }
       }
     });
-    expect(restored.loadWarnings.join(" ")).toContain("missing an exact fallback");
+    expect(restored.current.modelPolicy).not.toHaveProperty("fallbackSelection");
     const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(rewritten.settings.modelPolicy.fallbackSelection).toEqual({
-      model: "gpt-5.6-sol",
-      reasoningEffort: "max"
-    });
+    expect(rewritten.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
   });
 
   it("safely narrows saved capability settings in one ordinary generation", () => {

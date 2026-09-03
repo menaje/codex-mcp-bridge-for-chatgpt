@@ -119,8 +119,7 @@ private struct GeneralSettingsPane: View {
             in: snapshot,
             allowDelegation: draft.allowDelegation,
             preservingKeys: draft.explicitSelectionKeys.union([
-                draft.fixedSelectionKey,
-                draft.fallbackSelectionKey
+                draft.fixedSelectionKey
             ])
         )
     }
@@ -185,11 +184,6 @@ private struct GeneralSettingsPane: View {
                     Picker("자동 허용 범위", selection: $draft.allowedKind) {
                         Text("표시되는 전체 카탈로그").tag("catalog-visible")
                         Text("명시적으로 선택").tag("explicit")
-                    }
-                    Picker("기본 fallback", selection: $draft.fallbackSelectionKey) {
-                        ForEach(choices, id: \.key) { choice in
-                            Text(choiceLabel(choice)).tag(choice.key)
-                        }
                     }
                     if draft.allowedKind == "explicit" {
                         DisclosureGroup("허용 모델과 reasoning effort") {

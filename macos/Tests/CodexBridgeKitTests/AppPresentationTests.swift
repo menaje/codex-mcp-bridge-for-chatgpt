@@ -50,7 +50,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(draft.modelPolicyDirty)
     }
 
-    func testSettingsDraftProjectsLegacyAutomaticFallbackWithoutDirtyingPolicy() throws {
+    func testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy() throws {
         let snapshot = try settingsSnapshot(
             policy: [
                 "mode": "automatic",
@@ -62,14 +62,10 @@ final class AppPresentationTests: XCTestCase {
         )
         let draft = SettingsDraft(snapshot: snapshot)
 
-        XCTAssertEqual(
-            draft.fallbackSelectionKey,
-            ModelChoice(model: "gpt-legacy", reasoningEffort: "high").key
-        )
         XCTAssertFalse(draft.modelPolicyDirty)
     }
 
-    func testSettingsDraftSuggestsAndRequiresMissingAutomaticFallback() throws {
+    func testSettingsDraftDoesNotInventMissingAutomaticDefault() throws {
         let snapshot = try settingsSnapshot(
             policy: [
                 "mode": "automatic",
@@ -80,11 +76,7 @@ final class AppPresentationTests: XCTestCase {
         )
         let draft = SettingsDraft(snapshot: snapshot)
 
-        XCTAssertEqual(
-            draft.fallbackSelectionKey,
-            ModelChoice(model: "gpt-current", reasoningEffort: "high").key
-        )
-        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertFalse(draft.modelPolicyDirty)
     }
 
     func testSettingsDraftDeduplicatesCatalogChoices() throws {
@@ -108,9 +100,6 @@ final class AppPresentationTests: XCTestCase {
         let snapshot = try settingsSnapshot(
             policy: [
                 "mode": "automatic",
-                "fallbackSelection": choiceObject(
-                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
-                ),
                 "allowedSelections": ["kind": "catalog-visible"],
                 "constraints": ["allowDelegation": true]
             ],

@@ -597,11 +597,12 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
-    expect(SETTINGS_CARD_HTML).toContain('id="preferred-model" required');
-    expect(SETTINGS_CARD_HTML).toContain('id="preferred-effort" required');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-model"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-effort"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-selection"');
-    expect(SETTINGS_CARD_HTML).toContain("currentPreferredSelection()");
-    expect(SETTINGS_CARD_HTML).toContain("if(!fallbackSelection)throw new Error");
+    expect(SETTINGS_CARD_HTML).not.toContain("currentPreferredSelection()");
+    expect(SETTINGS_CARD_HTML).not.toContain("fallbackSelection");
+    expect(SETTINGS_CARD_HTML).toContain('return{mode:"automatic",allowedSelections');
     expect(SETTINGS_CARD_HTML).not.toContain('preferredModel.replaceChildren(option(""');
     expect(SETTINGS_CARD_HTML).toContain("modelDisplayName(modelId)");
     expect(SETTINGS_CARD_HTML).not.toContain('selection.model+"]"');

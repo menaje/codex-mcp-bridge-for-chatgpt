@@ -29,8 +29,6 @@ export type BridgeConfig = {
   allowWorkspaceWrite: boolean;
   allowDangerFullAccess: boolean;
   defaultApprovalPolicy: ApprovalPolicy;
-  defaultModel?: string;
-  defaultReasoningEffort?: string;
   operatorModelCeiling?: ModelChoice[];
   modelCatalogCacheTtlMs: number;
   modelCatalogTimeoutMs: number;
@@ -77,12 +75,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const allowWorkspaceWrite = parseBool(read("ALLOW_WRITE"));
   const allowDangerFullAccess = parseBool(read("ALLOW_DANGER_FULL_ACCESS"));
   const defaultApprovalPolicy = parseApprovalPolicy(read("APPROVAL_POLICY") || "on-request");
-  const defaultModel = parseOptionalIdentifier(read("DEFAULT_MODEL"), "default model id", 200);
-  const defaultReasoningEffort = parseOptionalIdentifier(
-    read("DEFAULT_REASONING_EFFORT"),
-    "default reasoning effort",
-    100
-  );
   const operatorModelCeiling = parseModelSelectionCeiling(read("MODEL_SELECTION_CEILING"));
   const modelCatalogCacheTtlMs = parsePositiveInt(read("MODEL_CATALOG_CACHE_TTL_MS") || "600000");
   const modelCatalogTimeoutMs = parsePositiveInt(read("MODEL_CATALOG_TIMEOUT_MS") || "30000");
@@ -141,6 +133,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
       "CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS is retired and ignored. Exact Activity thread continuation has no age limit."
     );
   }
+  if (
+    normalizeOptional(read("DEFAULT_MODEL")) ||
+    normalizeOptional(read("DEFAULT_REASONING_EFFORT"))
+  ) {
+    startupWarnings.push(
+      "CODEX_MCP_BRIDGE_DEFAULT_MODEL and CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT are retired and ignored. Automatic policy requires the caller to select an exact model and reasoning effort for new work."
+    );
+  }
 
   if (!token && !noAuth) {
     throw new Error("Set CODEX_MCP_BRIDGE_TOKEN, or set CODEX_MCP_BRIDGE_NO_AUTH=1 for local-only development.");
@@ -160,14 +160,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   if (defaultAccessStrategy === "always-full" && !allowDangerFullAccess) {
     throw new Error(
       "Default access strategy always-full requires CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS=1."
-    );
-  }
-  if (defaultReasoningEffort && !defaultModel) {
-    throw new Error("CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT requires CODEX_MCP_BRIDGE_DEFAULT_MODEL.");
-  }
-  if (defaultModel && !defaultReasoningEffort) {
-    throw new Error(
-      "CODEX_MCP_BRIDGE_DEFAULT_MODEL requires CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT because model policy selections are exact pairs."
     );
   }
   if (maxConcurrentJobs > HARD_MAX_CONCURRENT_JOBS) {
@@ -199,8 +191,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     allowWorkspaceWrite,
     allowDangerFullAccess,
     defaultApprovalPolicy,
-    defaultModel,
-    defaultReasoningEffort,
     operatorModelCeiling,
     modelCatalogCacheTtlMs,
     modelCatalogTimeoutMs,
@@ -478,15 +468,6 @@ function parseMcpTransportMode(raw: string): McpTransportMode {
 function normalizeOptional(raw: string | undefined): string | undefined {
   const value = raw?.trim();
   return value ? value : undefined;
-}
-
-function parseOptionalIdentifier(raw: string | undefined, label: string, maxLength: number): string | undefined {
-  const value = normalizeOptional(raw);
-  if (!value) return undefined;
-  if (value.length > maxLength || /[\r\n]/.test(value)) {
-    throw new Error(`Invalid ${label}.`);
-  }
-  return value;
 }
 
 function parseAbsoluteFilePath(raw: string, label: string): string {

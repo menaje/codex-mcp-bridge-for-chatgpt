@@ -94,14 +94,16 @@ describe("model-visible output contracts", () => {
     }
   });
 
-  it("rejects automatic policy summaries that disclose the saved fallback pair", () => {
+  it("rejects automatic default disclosure from model-visible outputs", () => {
     const models = structuredClone(
       modelResults.codex_models[0]!.structuredContent
     ) as Record<string, any>;
-    models.policy.model = "gpt-private-fallback";
-    models.policy.reasoningEffort = "private-effort";
+    models.defaultSelection = {
+      model: "gpt-private-fallback",
+      reasoningEffort: "private-effort"
+    };
     expect(() => validateModelVisibleStructuredOutput("codex_models", models))
-      .toThrow(/must not expose the saved fallback/);
+      .toThrow();
 
     const settings = structuredClone(
       modelResults.codex_settings[0]!.structuredContent
@@ -261,9 +263,9 @@ describe("model-visible output contracts", () => {
       "utf8"
     );
     expect(steeringBytes).toBe(1_360);
-    expect(bytes - steeringBytes).toBe(12_315);
+    expect(bytes - steeringBytes).toBe(12_211);
     expect(bytes - steeringBytes).toBeLessThanOrEqual(12_505);
-    expect(bytes).toBe(13_675);
+    expect(bytes).toBe(13_571);
     expect(bytes).toBeLessThanOrEqual(13_865);
   });
 
