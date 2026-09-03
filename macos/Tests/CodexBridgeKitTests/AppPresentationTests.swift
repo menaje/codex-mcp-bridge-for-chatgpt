@@ -4,6 +4,47 @@ import XCTest
 
 final class AppPresentationTests: XCTestCase {
     @MainActor
+    func testLoginItemRegistrationUsesSystemStateWithoutSharedSettings() {
+        let controller = TestLoginItemController(status: .notRegistered)
+        let model = AppModel(loginItemController: controller)
+
+        XCTAssertEqual(model.menuBarLoginItemStatus, .notRegistered)
+        model.setMenuBarLaunchAtLogin(true)
+        XCTAssertEqual(controller.registerCalls, 1)
+        XCTAssertEqual(model.menuBarLoginItemStatus, .enabled)
+
+        model.setMenuBarLaunchAtLogin(false)
+        XCTAssertEqual(controller.unregisterCalls, 1)
+        XCTAssertEqual(model.menuBarLoginItemStatus, .notRegistered)
+        XCTAssertNil(model.loginItemErrorMessage)
+    }
+
+    @MainActor
+    func testLoginItemApprovalOpensSystemSettingsInsteadOfReregistering() {
+        let controller = TestLoginItemController(status: .requiresApproval)
+        let model = AppModel(loginItemController: controller)
+
+        model.setMenuBarLaunchAtLogin(true)
+
+        XCTAssertEqual(controller.registerCalls, 0)
+        XCTAssertEqual(controller.openSystemSettingsCalls, 1)
+        XCTAssertEqual(model.menuBarLoginItemStatus, .requiresApproval)
+    }
+
+    @MainActor
+    func testLoginItemRegistrationFailureKeepsActualSystemState() {
+        let controller = TestLoginItemController(status: .notRegistered)
+        controller.registrationError = TestLoginItemError.denied
+        let model = AppModel(loginItemController: controller)
+
+        model.setMenuBarLaunchAtLogin(true)
+
+        XCTAssertEqual(model.menuBarLoginItemStatus, .notRegistered)
+        XCTAssertNotNil(model.loginItemErrorMessage)
+        XCTAssertFalse(model.loginItemOperationInProgress)
+    }
+
+    @MainActor
     func testHealthyRuntimeStillRequiresCodexAuthentication() throws {
         let model = AppModel()
         model.helperStatus = try helperStatus()
@@ -209,6 +250,44 @@ final class AppPresentationTests: XCTestCase {
             current: changed,
             latest: nil
         ))
+    }
+}
+
+@MainActor
+private final class TestLoginItemController: LoginItemControlling {
+    var status: MenuBarLoginItemStatus
+    var registrationError: Error?
+    var unregistrationError: Error?
+    private(set) var registerCalls = 0
+    private(set) var unregisterCalls = 0
+    private(set) var openSystemSettingsCalls = 0
+
+    init(status: MenuBarLoginItemStatus) {
+        self.status = status
+    }
+
+    func register() throws {
+        registerCalls += 1
+        if let registrationError { throw registrationError }
+        status = .enabled
+    }
+
+    func unregister() throws {
+        unregisterCalls += 1
+        if let unregistrationError { throw unregistrationError }
+        status = .notRegistered
+    }
+
+    func openSystemSettings() {
+        openSystemSettingsCalls += 1
+    }
+}
+
+private enum TestLoginItemError: LocalizedError {
+    case denied
+
+    var errorDescription: String? {
+        "승인되지 않음"
     }
 }
 

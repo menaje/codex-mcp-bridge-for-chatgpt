@@ -42,6 +42,15 @@ Settings card's General and Projects content. Tunnel setup, Codex browser login,
 and profile repair appear in a separate first-run/connection-repair window
 instead of becoming additional everyday Settings tabs.
 
+The General tab also contains one native-only **Mac app** control for launching
+the menu-bar UI at user login. It uses `SMAppService.mainApp` and reads the
+system registration or approval state directly. It is not part of the shared
+Settings revision, is not written to dotenv or UserDefaults, and does not change
+the helper's background lifecycle. A system-denied item is shown as requiring
+approval with an explicit path to the Login Items pane instead of being reported
+as enabled. The app does not register itself silently; each Mac user enables the
+login item explicitly from native Settings.
+
 The helper owns the app-managed bridge and tunnel process tree. Closing the
 popover, Settings window, or menu bar UI leaves its LaunchAgent and runtime
 running. Graceful stop/restart first blocks new Job admission, waits for active
@@ -209,6 +218,11 @@ Repository development launches the helper directly. The built app installs a
 per-user LaunchAgent and bundles the compiled TypeScript runtime plus production
 Node dependencies. Node.js, Codex CLI, and `tunnel-client` currently remain
 external prerequisites.
+
+The helper LaunchAgent and the menu-bar login item are deliberately independent.
+Disabling **Open menu-bar app at login** prevents only future UI launches; the
+helper continues its existing `RunAtLoad` server behavior so ChatGPT connectivity
+does not depend on the menu-bar process remaining open.
 
 `macos/build-app.sh` produces a host-architecture, ad-hoc-signed development
 bundle. Swift tests and release compilation run with strict concurrency and

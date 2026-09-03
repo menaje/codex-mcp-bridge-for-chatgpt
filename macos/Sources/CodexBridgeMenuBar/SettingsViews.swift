@@ -287,6 +287,52 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Mac 앱") {
+                Toggle(
+                    "로그인 시 메뉴 막대 앱 열기",
+                    isOn: Binding(
+                        get: { model.menuBarLoginItemStatus.isEnabled },
+                        set: { model.setMenuBarLaunchAtLogin($0) }
+                    )
+                )
+                .disabled(model.loginItemOperationInProgress)
+
+                Text("이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                switch model.menuBarLoginItemStatus {
+                case .enabled:
+                    Label("다음 사용자 로그인부터 메뉴 막대 앱이 자동으로 열립니다.", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .requiresApproval:
+                    Label("macOS에서 로그인 항목 실행 승인이 필요합니다.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button("로그인 항목 설정 열기") {
+                        model.openLoginItemsSystemSettings()
+                    }
+                case .notFound:
+                    Label("설치된 앱 번들에서 로그인 항목을 찾지 못했습니다.", systemImage: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                case .unknown:
+                    Label("로그인 항목 상태를 확인할 수 없습니다.", systemImage: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                case .notRegistered:
+                    EmptyView()
+                }
+
+                if let error = model.loginItemErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+            }
+
             if !snapshot.warnings.isEmpty {
                 Section("현재 경고") {
                     ForEach(snapshot.warnings, id: \.self) { warning in

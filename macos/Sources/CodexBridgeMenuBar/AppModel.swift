@@ -200,8 +200,12 @@ final class AppModel: ObservableObject {
     @Published var lastDashboardRefresh: Date?
     @Published var runtimeImpact: RuntimeAdmissionSnapshot?
     @Published var runtimeImpactErrorMessage: String?
+    @Published var menuBarLoginItemStatus: MenuBarLoginItemStatus = .notRegistered
+    @Published var loginItemErrorMessage: String?
+    @Published var loginItemOperationInProgress = false
 
     private let bootstrapper = HelperBootstrap()
+    private let loginItemController: any LoginItemControlling
     private let pageLimit = 12
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "app-model")
     private var pollingTask: Task<Void, Never>?
@@ -214,8 +218,13 @@ final class AppModel: ObservableObject {
     private var paths: RuntimePaths?
     private var pathResolutionTask: Task<RuntimePaths, Never>?
 
-    init(paths: RuntimePaths? = nil) {
+    init(
+        paths: RuntimePaths? = nil,
+        loginItemController: (any LoginItemControlling)? = nil
+    ) {
         self.paths = paths
+        self.loginItemController = loginItemController ?? ServiceManagementLoginItemController()
+        menuBarLoginItemStatus = self.loginItemController.status
     }
 
     private func resolvedPaths() async -> RuntimePaths {
@@ -419,9 +428,45 @@ final class AppModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 if !self.isBusy {
                     await self.refreshSettings()
+                    self.refreshLoginItemStatus()
                 }
             }
         }
+    }
+
+    func refreshLoginItemStatus() {
+        menuBarLoginItemStatus = loginItemController.status
+    }
+
+    func setMenuBarLaunchAtLogin(_ enabled: Bool) {
+        guard !loginItemOperationInProgress else { return }
+        refreshLoginItemStatus()
+        if enabled && menuBarLoginItemStatus == .requiresApproval {
+            loginItemController.openSystemSettings()
+            return
+        }
+        guard menuBarLoginItemStatus.isEnabled != enabled else { return }
+
+        loginItemOperationInProgress = true
+        loginItemErrorMessage = nil
+        defer {
+            refreshLoginItemStatus()
+            loginItemOperationInProgress = false
+        }
+        do {
+            if enabled {
+                try loginItemController.register()
+            } else {
+                try loginItemController.unregister()
+            }
+        } catch {
+            loginItemErrorMessage =
+                "로그인 시 실행 설정을 변경하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    func openLoginItemsSystemSettings() {
+        loginItemController.openSystemSettings()
     }
 
     func refreshAuthStatus() async {

@@ -19,6 +19,10 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Self.model?.refreshLoginItemStatus()
+    }
 }
 
 @MainActor
@@ -51,6 +55,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         model.setSettingsWindowVisible(true)
+        model.refreshLoginItemStatus()
         Task {
             if model.helperStatus == nil { await model.start() }
             await model.refreshStatus()

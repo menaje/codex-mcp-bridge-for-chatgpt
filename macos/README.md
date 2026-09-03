@@ -33,6 +33,11 @@ app-managed runtime instead of duplicating it.
 The everyday Settings window contains only the same General and Projects scope
 as the retained Settings card. Connection credentials, Codex login, and Tunnel
 repair stay in a separate first-run/repair surface.
+The General tab adds one native-only Mac control backed by
+`SMAppService.mainApp`: whether the menu-bar UI opens at user login. Its state
+comes from macOS, is not stored in `.env` or shared Settings, and does not stop
+the background helper when disabled. Registration is opt-in from native
+Settings rather than being enabled silently on first run.
 
 ## Local data and credentials
 
