@@ -12,7 +12,7 @@ import {
 } from "./uiHostToolResult.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
-export const ACTIVITY_CARD_CONTRACT_GENERATION = 20;
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 21;
 export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 6;
 export const ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION = 11;
 export const ACTIVITY_BOOTSTRAP_METADATA_KEY = "codex/activityBootstrap@11";
@@ -192,10 +192,10 @@ export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
 		    groups.replaceChildren();renderHistorySummary(next.feed);
 		    if(fullView(next))renderFullHistory(next.feed,showWorkspace);else if(next.feed.activeHasMore&&viewLimit<100)groups.appendChild(showMoreButton());
 		    updated.textContent=t["activity.updated"]+": "+new Date(next.generatedAt).toLocaleTimeString(localeTag);message.textContent="";message.classList.remove("error");scheduleSizeChanged();
-		    if(next.watcherPolicy&&next.watcherPolicy.live===false){if(handoffTimer){clearTimeout(handoffTimer);handoffTimer=null}message.textContent=historicalView()?t["activity.historicalSnapshot"]:t["activity.superseded"];scheduleSizeChanged();return}
+		    if(next.watcherPolicy&&next.watcherPolicy.live===false){if(handoffTimer){clearTimeout(handoffTimer);handoffTimer=null}message.textContent=historicalView()?t["activity.historicalSnapshot"]:t["activity.superseded"];scheduleSizeChanged();if(historicalView())scheduleEnrichment(next);return}
 			    scheduleHandoffs();scheduleEnrichment(next);if(!watching)void watch()
 			  }
-			  function scheduleEnrichment(next){if(!mounted||historicalView()||!next||!next.enrichment||next.enrichment.state!=="structural"||next.watcherPolicy&&next.watcherPolicy.live===false)return;const epoch=++enrichmentEpoch;if(enriching)return;enriching=true;Promise.resolve().then(async()=>{const card=cardProof(),args={card,limit:viewLimit,enrich:true};if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor;const enriched=unwrap(await callTool("codex_activity_snapshot",args));if(mounted&&epoch===enrichmentEpoch)render(enriched)}).catch(()=>{}).finally(()=>{enriching=false;if(epoch!==enrichmentEpoch&&snapshot&&snapshot.enrichment&&snapshot.enrichment.state==="structural")scheduleEnrichment(snapshot)})}
+			  function scheduleEnrichment(next){const historical=historicalView();if(!mounted||!next||!next.enrichment||next.enrichment.state!=="structural"||!historical&&next.watcherPolicy&&next.watcherPolicy.live===false)return;const epoch=++enrichmentEpoch;if(enriching)return;enriching=true;Promise.resolve().then(async()=>{let enriched;if(historical){if(!historicalCorrelation)throw new Error(t["common.error"]);const correlation={...historicalCorrelation};enriched=unwrap(await callTool("codex_activity_rehydrate",{jobId:correlation.jobId,requestId:correlation.requestId,limit:viewLimit,enrich:true}))}else{const card=cardProof(),args={card,limit:viewLimit,enrich:true};if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor;enriched=unwrap(await callTool("codex_activity_snapshot",args))}if(mounted&&epoch===enrichmentEpoch)render(enriched)}).catch(()=>{}).finally(()=>{enriching=false;if(epoch!==enrichmentEpoch&&snapshot&&snapshot.enrichment&&snapshot.enrichment.state==="structural")scheduleEnrichment(snapshot)})}
 
 	  function rememberToolInput(input){if(!input)return;if(typeof input.prompt==="string")taskInvocation=true;if(typeof input.requestId==="string")taskInputRequestId=input.requestId}
 		  function shouldCollapseRehydrateError(error){const raw=String(error&&error.message||error||"");return/ACTIVITY_REHYDRATE_(?:VISIBILITY_DISABLED|DUPLICATE)/.test(raw)}

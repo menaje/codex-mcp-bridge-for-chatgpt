@@ -2,7 +2,9 @@
 
 Date: 2026-09-03 (Asia/Seoul)
 
-Bridge build under test: `dee8ea1f465869e1fec2b5d22c6f4de721e7a295`
+Initial live bridge build: `dee8ea1f465869e1fec2b5d22c6f4de721e7a295`.
+The compatibility correction below was subsequently covered by the complete
+automated suite and focused page-ordering regressions.
 
 Scope: Dashboard, Activity, Settings, and the native macOS Dashboard path.
 Conversation, project, Agent, Job, thread, request, and local-path identifiers
@@ -18,20 +20,27 @@ cards.
 
 The enrichment path has these hard bounds:
 
-- at most 200 candidate rows, with Dashboard candidates selected only after the
-  visible pages are projected;
-- eight workers, a 400 ms per-probe timeout, and a 1,200 ms total runtime
+- at most 200 non-archived App Server Agents, selected independently of the
+  current page; visible/active candidates receive liveness inspection and the
+  remainder receive loaded-thread-only background-process inspection;
+- eight workers, a 1,500 ms per-probe timeout, and a 6,000 ms total runtime
   budget;
-- an independent 800 ms weekly-usage timeout;
+- an independent 1,500 ms weekly-usage timeout;
 - no new follow-up request from a worker after its upstream probe has timed out;
-- a 5-second, 512-entry cache for stable observations, invalidated by the
-  bridge-owned background-process mutation path; and
+- a 5-second fresh cache plus a 15-minute last-known retention window for up to
+  512 stable runtime observations, invalidated by the bridge-owned
+  background-process mutation path;
+- a one-minute fresh cache plus a 30-minute last-known retention window for
+  weekly usage; and
 - `listLoadedBackgroundTerminals`, which returns `null` instead of resuming an
   unloaded historical App Server thread.
 
-Timeouts and unsupported safe inspection are projected as `unknown`. They do
-not suppress the structural snapshot or turn a missing observation into a
-confirmed zero.
+Matching last-known evidence is projected into later structural snapshots
+without an upstream call. Timeouts and unsupported safe inspection remain
+reported in enrichment counters, but no longer replace a prior successful
+usage or runtime value with a transient absence. A loaded-thread inventory miss
+is a confirmed zero because that App Server connection cannot own a running
+terminal for an unloaded thread.
 
 The native macOS menu-bar app follows the same two-stage Dashboard contract:
 its first refresh requests structure only, while optional enrichment is applied
@@ -48,9 +57,11 @@ The 200-Agent/400-Job fixture passed all issue thresholds:
 - Settings snapshot completed below 500 ms.
 - Hanging Activity and Dashboard enrichment returned below 2 seconds, reported
   timeout/unknown state, and did not block the structural result.
-- Activity runtime calls were limited to the requested 30-row page. Dashboard
-  runtime calls did not exceed the projected visible row count and stayed below
-  the 200-candidate ceiling.
+- Runtime enrichment remained within the 200-Agent ceiling. A dedicated
+  40-Agent regression placed the only background process outside the first
+  30 rows and verified that enrichment promoted it into the current section,
+  after which a zero-call structural refresh retained the usage, process count,
+  and row order.
 - Dashboard and Activity private hydration envelopes remained inside their
   closed output caps.
 
@@ -66,7 +77,7 @@ Current source HTML payloads and enforced budgets are:
 | Card | HTML bytes | Budget bytes | Headroom |
 | --- | ---: | ---: | ---: |
 | Dashboard | 102,948 | 114,688 | 11,740 |
-| Activity | 133,000 | 147,456 | 14,456 |
+| Activity | 133,353 | 147,456 | 14,103 |
 | Settings | 180,804 | 196,608 | 15,804 |
 
 The complete live MCP resource responses, including protocol envelopes, were
@@ -75,7 +86,7 @@ exposes current HTML sizes, budgets, and bounded stage statistics.
 
 Validation completed on the build under test:
 
-- `npm run check`: 42 files, 556 tests passed.
+- `npm run check`: 42 files, 558 tests passed.
 - `npm run macos:check`: 27 tests passed; one opt-in live companion test was
   skipped.
 - progressive-card browser regression: passed.
@@ -84,7 +95,7 @@ Validation completed on the build under test:
 - skills, release manifest, package dry-run, and production dependency audit:
   passed; zero production vulnerabilities were reported.
 
-## Live bridge measurements
+## Live bridge measurements (initial implementation baseline)
 
 The committed build was rebuilt and restarted only after the bridge reported no
 active Jobs. The default stateless HTTP profile and Secure MCP Tunnel remained
@@ -145,7 +156,9 @@ identified.
 - 200-Agent/400-Job Dashboard threshold: **PASS**
 - 30+-Agent Activity threshold: **PASS**
 - Hanging/slow enrichment fallback below two seconds: **PASS**
-- Visible-row bounded probing and no historical resume: **PASS**
+- Page-independent bounded probing and no historical resume: **PASS**
+- Last-known usage/runtime preservation across structural refreshes: **PASS**
+- Historical one-shot enrichment without ownership or controls: **PASS**
 - Pagination, lease, mounted-card proof, scope, and mutation controls: **PASS**
 - Dashboard, Activity, Settings, and native macOS regression coverage: **PASS**
 - Explicit HTML and hydration byte budgets: **PASS**

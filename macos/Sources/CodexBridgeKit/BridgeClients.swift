@@ -21,7 +21,7 @@ public struct BridgeCompanionClient: Sendable {
                 idleOffset: idleOffset,
                 enrich: enrich
             ),
-            timeout: enrich ? 5 : 2
+            timeout: enrich ? 10 : 2
         )
     }
 

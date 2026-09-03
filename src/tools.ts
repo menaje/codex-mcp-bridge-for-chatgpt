@@ -5463,13 +5463,16 @@ export function registerBridgeTools(
     {
       title: "Rehydrate Historical Codex Activity Card",
       description:
-        "App-only one-shot reconstruction for a cold-remounted historical codex_task shell whose private bootstrap metadata is unavailable. Public Job/request identifiers are lookup hints only: the server derives the conversation scope, verifies the exact persisted logical call and current visibility policy, and returns a read-only non-owning snapshot. This tool never creates a live watcher, completion handoff owner, automatic presentation reservation, or control lease.",
+        "App-only one-shot reconstruction for a cold-remounted historical codex_task shell whose private bootstrap metadata is unavailable. Public Job/request identifiers are lookup hints only: the server derives the conversation scope, verifies the exact persisted logical call and current visibility policy, and returns a read-only non-owning snapshot. A current card may request bounded runtime and weekly-usage enrichment without acquiring ownership. This tool never creates a live watcher, completion handoff owner, automatic presentation reservation, or control lease.",
       inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional(),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
         jobId: scopeIdSchema().describe("Exact Job UUID retained in the historical codex_task result."),
         requestId: scopeIdSchema().describe("Exact logical-request UUID retained in that same result."),
-        limit: z.number().int().min(1).max(100).optional()
+        limit: z.number().int().min(1).max(100).optional(),
+        enrich: z.boolean().optional().describe(
+          "Request bounded runtime and weekly-usage evidence for this one-shot historical view."
+        )
       }),
       outputSchema: activityRehydrateOutputSchema,
       annotations: {
@@ -5556,7 +5559,11 @@ export function registerBridgeTools(
         args.limit || 30,
         selected.activityId,
         undefined,
-        presentation
+        presentation,
+        undefined,
+        undefined,
+        true,
+        args.enrich === true
       );
       recordActivityPerformance(view, activityStartedAt);
       return activityViewResult(
@@ -10442,20 +10449,59 @@ async function readCodexWeeklyUsage(
   }
 }
 
+type CardUsageCacheEntry = {
+  freshUntil: number;
+  retainUntil: number;
+  value: CodexWeeklyUsageView;
+};
+
+const cardUsageCaches = new WeakMap<CodexUpstream, CardUsageCacheEntry>();
+
+function cachedCodexWeeklyUsage(
+  upstream: CodexUpstream,
+  freshOnly = false
+): CodexWeeklyUsageView | null {
+  const cached = cardUsageCaches.get(upstream);
+  if (!cached) return null;
+  const now = Date.now();
+  if (cached.retainUntil <= now) {
+    cardUsageCaches.delete(upstream);
+    return null;
+  }
+  if (freshOnly && cached.freshUntil <= now) return null;
+  return cached.value;
+}
+
 async function readCodexWeeklyUsageBounded(
   upstream: CodexUpstream
 ): Promise<{ value: CodexWeeklyUsageView | null; timedOut: boolean }> {
+  const fresh = cachedCodexWeeklyUsage(upstream, true);
+  if (fresh) return { value: fresh, timedOut: false };
+  const fallback = cachedCodexWeeklyUsage(upstream);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<{ value: null; timedOut: true }>((resolve) => {
+  const timeout = new Promise<{
+    value: CodexWeeklyUsageView | null;
+    timedOut: true;
+  }>((resolve) => {
     timer = setTimeout(
-      () => resolve({ value: null, timedOut: true }),
+      () => resolve({ value: fallback, timedOut: true }),
       CARD_USAGE_TIMEOUT_MS
     );
   });
-  const request = readCodexWeeklyUsage(upstream).then((value) => ({
-    value,
-    timedOut: false as const
-  }));
+  const request = readCodexWeeklyUsage(upstream).then((value) => {
+    if (value) {
+      const now = Date.now();
+      cardUsageCaches.set(upstream, {
+        freshUntil: now + CARD_USAGE_CACHE_TTL_MS,
+        retainUntil: now + CARD_USAGE_STALE_TTL_MS,
+        value
+      });
+    }
+    return {
+      value: value || fallback,
+      timedOut: false as const
+    };
+  });
   const result = await Promise.race([request, timeout]);
   if (timer) clearTimeout(timer);
   return result;
@@ -10479,8 +10525,17 @@ type DashboardEnrichmentInput = {
 
 type DashboardRuntimeCacheEntry = {
   stamp: string;
-  expiresAt: number;
+  coverage: "background" | "liveness";
+  freshUntil: number;
+  retainUntil: number;
   observation: DashboardRuntimeObservation;
+};
+
+type DashboardRuntimeCandidate = {
+  agentId: string;
+  thread: BridgeAgentThread;
+  stamp: string;
+  inspectLiveness: boolean;
 };
 
 type BridgeBackgroundProcessImpact = {
@@ -10496,10 +10551,13 @@ const DASHBOARD_RUNTIME_PROBE_TIMEOUT_MS = 1_500;
 const DASHBOARD_RUNTIME_BUDGET_MS = 9_000;
 const CARD_RUNTIME_PROBE_LIMIT = 200;
 const CARD_RUNTIME_PROBE_CONCURRENCY = 8;
-const CARD_RUNTIME_PROBE_TIMEOUT_MS = 400;
-const CARD_RUNTIME_BUDGET_MS = 1_200;
-const CARD_USAGE_TIMEOUT_MS = 800;
+const CARD_RUNTIME_PROBE_TIMEOUT_MS = 1_500;
+const CARD_RUNTIME_BUDGET_MS = 6_000;
+const CARD_USAGE_TIMEOUT_MS = 1_500;
 const CARD_RUNTIME_CACHE_TTL_MS = 5_000;
+const CARD_RUNTIME_STALE_TTL_MS = 15 * 60_000;
+const CARD_USAGE_CACHE_TTL_MS = 60_000;
+const CARD_USAGE_STALE_TTL_MS = 30 * 60_000;
 const CARD_RUNTIME_CACHE_MAX_ENTRIES = 512;
 const DASHBOARD_HISTORY_LIMIT_PER_AGENT = 12;
 const DASHBOARD_ARCHIVED_JOB_LIMIT = 10_000;
@@ -11047,13 +11105,19 @@ async function inspectBridgeBackgroundProcessImpact(
 
 async function inspectDashboardRuntime(
   upstream: CodexUpstream,
-  thread: BridgeAgentThread,
+  candidate: DashboardRuntimeCandidate,
   shouldContinue: () => boolean = () => true
-): Promise<{ observation: DashboardRuntimeObservation; requests: number }> {
+): Promise<{
+  observation: DashboardRuntimeObservation;
+  requests: number;
+  coverage: DashboardRuntimeCacheEntry["coverage"];
+}> {
+  const { thread, inspectLiveness } = candidate;
   const backendKind = thread.backendKind as CodexBackendKind;
   let state: DashboardRuntimeObservation["state"] = "confirmed";
   let requests = 0;
-  if (upstream.probeThread) {
+  const coverage = inspectLiveness ? "liveness" as const : "background" as const;
+  if (inspectLiveness && upstream.probeThread) {
     let probe: CodexThreadResumeProbe;
     try {
       requests += 1;
@@ -11065,7 +11129,8 @@ async function inspectDashboardRuntime(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         },
-        requests
+        requests,
+        coverage
       };
     }
     if (!shouldContinue()) {
@@ -11075,7 +11140,8 @@ async function inspectDashboardRuntime(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         },
-        requests
+        requests,
+        coverage
       };
     }
     if (probe.state === "orphaned") {
@@ -11085,7 +11151,8 @@ async function inspectDashboardRuntime(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         },
-        requests
+        requests,
+        coverage
       };
     }
     if (probe.state === "unknown") {
@@ -11095,7 +11162,8 @@ async function inspectDashboardRuntime(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         },
-        requests
+        requests,
+        coverage
       };
     }
     if (probe.state === "resumable" && probe.runtimeStatus === "notLoaded") {
@@ -11105,7 +11173,8 @@ async function inspectDashboardRuntime(
           backgroundProcessState: "confirmed",
           backgroundProcessCount: 0
         },
-        requests
+        requests,
+        coverage
       };
     }
     state = probe.state === "busy" ? "busy" : "idle";
@@ -11113,7 +11182,8 @@ async function inspectDashboardRuntime(
   if (!upstream.listLoadedBackgroundTerminals) {
     return {
       observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
-      requests
+      requests,
+      coverage
     };
   }
   try {
@@ -11121,8 +11191,13 @@ async function inspectDashboardRuntime(
     const terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
     if (terminals === null) {
       return {
-        observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
-        requests
+        observation: {
+          state: state === "confirmed" ? "not-loaded" : state,
+          backgroundProcessState: "confirmed",
+          backgroundProcessCount: 0
+        },
+        requests,
+        coverage
       };
     }
     return {
@@ -11132,23 +11207,52 @@ async function inspectDashboardRuntime(
         backgroundProcessCount: terminals.length,
         backgroundProcessIds: terminals.map((terminal) => terminal.processId)
       },
-      requests
+      requests,
+      coverage
     };
   } catch {
     return {
       observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
-      requests
+      requests,
+      coverage
     };
   }
 }
 
+function dashboardRuntimeCacheKey(thread: BridgeAgentThread): string {
+  return `${thread.backendKind}\0${thread.threadId}`;
+}
+
+function dashboardRuntimeStamp(
+  agent: Pick<BridgeAgent, "version" | "updatedAt">,
+  latestJob?: Pick<CodexJob, "version" | "updatedAt">
+): string {
+  return `${agent.version}:${agent.updatedAt}:${latestJob?.version || 0}:${latestJob?.updatedAt || 0}`;
+}
+
+function cachedDashboardRuntimes(
+  upstream: CodexUpstream,
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+): Map<string, DashboardRuntimeObservation> {
+  const observations = new Map<string, DashboardRuntimeObservation>();
+  const cache = dashboardRuntimeCaches.get(upstream);
+  if (!cache) return observations;
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.retainUntil <= now) cache.delete(key);
+  }
+  for (const candidate of candidates) {
+    const cached = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+    if (cached?.stamp === candidate.stamp && cached.retainUntil > now) {
+      observations.set(candidate.agentId, cached.observation);
+    }
+  }
+  return observations;
+}
+
 async function inspectDashboardRuntimes(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<{
-    agentId: string;
-    thread: BridgeAgentThread;
-    stamp: string;
-  }>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>
 ): Promise<{
   observations: Map<string, DashboardRuntimeObservation>;
   skipped: number;
@@ -11161,28 +11265,36 @@ async function inspectDashboardRuntimes(
   dashboardRuntimeCaches.set(upstream, cache);
   const now = Date.now();
   for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now) cache.delete(key);
+    if (entry.retainUntil <= now) cache.delete(key);
   }
   const pending = candidates.filter((candidate) => {
-    const key = `${candidate.thread.backendKind}\0${candidate.thread.threadId}`;
+    const key = dashboardRuntimeCacheKey(candidate.thread);
     const cached = cache.get(key);
-    if (!cached || cached.stamp !== candidate.stamp || cached.expiresAt <= now) return true;
+    if (!cached || cached.stamp !== candidate.stamp || cached.retainUntil <= now) return true;
     observations.set(candidate.agentId, cached.observation);
-    return false;
+    const coverageSatisfied = !candidate.inspectLiveness || cached.coverage === "liveness";
+    return cached.freshUntil <= now || !coverageSatisfied;
   });
   const cacheHits = candidates.length - pending.length;
   const deadline = Date.now() + CARD_RUNTIME_BUDGET_MS;
-  let nextIndex = 0;
   let timedOut = 0;
   let requests = 0;
   const inspectWithTimeout = (
-    candidate: { agentId: string; thread: BridgeAgentThread; stamp: string },
+    candidate: DashboardRuntimeCandidate,
     timeoutMs: number
-  ): Promise<{ observation: DashboardRuntimeObservation; requests: number } | null> => new Promise((resolve) => {
+  ): Promise<{
+    observation: DashboardRuntimeObservation;
+    requests: number;
+    coverage: DashboardRuntimeCacheEntry["coverage"];
+  } | null> => new Promise((resolve) => {
     let settled = false;
     let acceptingFollowupRequests = true;
     const finish = (
-      value: { observation: DashboardRuntimeObservation; requests: number } | null
+      value: {
+        observation: DashboardRuntimeObservation;
+        requests: number;
+        coverage: DashboardRuntimeCacheEntry["coverage"];
+      } | null
     ): void => {
       if (settled) return;
       settled = true;
@@ -11195,7 +11307,7 @@ async function inspectDashboardRuntimes(
     }, timeoutMs);
     void inspectDashboardRuntime(
       upstream,
-      candidate.thread,
+      candidate,
       () => acceptingFollowupRequests
     )
       .then((value) => finish(value), () => finish({
@@ -11204,16 +11316,20 @@ async function inspectDashboardRuntimes(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         },
-        requests: 1
+        requests: 1,
+        coverage: candidate.inspectLiveness ? "liveness" : "background"
       }));
   });
-  const worker = async (): Promise<void> => {
-    while (nextIndex < pending.length) {
+  const worker = async (
+    queue: DashboardRuntimeCandidate[],
+    cursor: { value: number }
+  ): Promise<void> => {
+    while (cursor.value < queue.length) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return;
-      const candidate = pending[nextIndex++];
+      const candidate = queue[cursor.value++];
       if (!candidate) return;
-      const initiallyCountedRequests = upstream.probeThread
+      const initiallyCountedRequests = candidate.inspectLiveness && upstream.probeThread
         ? 1
         : upstream.listLoadedBackgroundTerminals
           ? 1
@@ -11225,17 +11341,41 @@ async function inspectDashboardRuntimes(
       );
       if (result) {
         requests += Math.max(0, result.requests - initiallyCountedRequests);
-        observations.set(candidate.agentId, result.observation);
+        const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
+        const previous = cache.get(cacheKey);
+        const canRetainLiveness =
+          result.coverage === "background" &&
+          previous?.stamp === candidate.stamp &&
+          previous.coverage === "liveness" &&
+          previous.retainUntil > Date.now();
+        const observation = canRetainLiveness
+          ? { ...result.observation, state: previous.observation.state }
+          : result.observation;
+        const coverage = canRetainLiveness ? "liveness" as const : result.coverage;
+        const stable =
+          observation.backgroundProcessState === "confirmed" &&
+          ["confirmed", "idle", "not-loaded", "busy"].includes(observation.state);
+        if (stable || observation.state === "orphaned") {
+          observations.set(candidate.agentId, observation);
+        }
+        else if (!observations.has(candidate.agentId)) {
+          observations.set(candidate.agentId, observation);
+        }
         if (
-          result.observation.backgroundProcessState === "confirmed" &&
-          ["confirmed", "idle", "busy"].includes(result.observation.state)
+          stable
         ) {
-          const cacheKey = `${candidate.thread.backendKind}\0${candidate.thread.threadId}`;
           cache.delete(cacheKey);
           cache.set(cacheKey, {
             stamp: candidate.stamp,
-            expiresAt: Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
-            observation: result.observation
+            coverage,
+            // An unloaded thread is cheap to re-check and can become loaded
+            // independently of bridge state, while the retained observation
+            // still keeps the next structural paint stable.
+            freshUntil: observation.state === "not-loaded"
+              ? Date.now()
+              : Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
+            retainUntil: Date.now() + CARD_RUNTIME_STALE_TTL_MS,
+            observation
           });
           while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
             const oldestKey = cache.keys().next().value;
@@ -11245,11 +11385,13 @@ async function inspectDashboardRuntimes(
         }
       } else {
         timedOut += 1;
-        observations.set(candidate.agentId, {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        });
+        if (!observations.has(candidate.agentId)) {
+          observations.set(candidate.agentId, {
+            state: "unknown",
+            backgroundProcessState: "unknown",
+            backgroundProcessCount: 0
+          });
+        }
         // The upstream API has no per-request cancellation contract. Do not
         // launch another probe from this worker while its timed-out request may
         // still be running, so the real in-flight fan-out stays bounded by the
@@ -11258,15 +11400,57 @@ async function inspectDashboardRuntimes(
       }
     }
   };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(CARD_RUNTIME_PROBE_CONCURRENCY, pending.length) },
-      () => worker()
+  const livenessPending = pending.filter((candidate) => candidate.inspectLiveness);
+  const backgroundPending = pending.filter((candidate) => !candidate.inspectLiveness);
+  const livenessCursor = { value: 0 };
+  const backgroundCursor = { value: 0 };
+  let livenessWorkers = 0;
+  let backgroundWorkers = 0;
+  // Keep independent worker pools when both coverage classes are present.
+  // A stalled thread/read therefore cannot consume every slot needed to find
+  // a background process on an otherwise off-page loaded thread.
+  if (livenessPending.length > 0 && backgroundPending.length > 0) {
+    backgroundWorkers = Math.min(
+      backgroundPending.length,
+      Math.floor(CARD_RUNTIME_PROBE_CONCURRENCY / 2)
+    );
+    livenessWorkers = Math.min(
+      livenessPending.length,
+      CARD_RUNTIME_PROBE_CONCURRENCY - backgroundWorkers
+    );
+    let unassignedWorkers = CARD_RUNTIME_PROBE_CONCURRENCY -
+      livenessWorkers - backgroundWorkers;
+    const additionalBackgroundWorkers = Math.min(
+      unassignedWorkers,
+      backgroundPending.length - backgroundWorkers
+    );
+    backgroundWorkers += additionalBackgroundWorkers;
+    unassignedWorkers -= additionalBackgroundWorkers;
+    livenessWorkers += Math.min(
+      unassignedWorkers,
+      livenessPending.length - livenessWorkers
+    );
+  } else if (livenessPending.length > 0) {
+    livenessWorkers = Math.min(CARD_RUNTIME_PROBE_CONCURRENCY, livenessPending.length);
+  } else {
+    backgroundWorkers = Math.min(CARD_RUNTIME_PROBE_CONCURRENCY, backgroundPending.length);
+  }
+  await Promise.all([
+    ...Array.from(
+      { length: livenessWorkers },
+      () => worker(livenessPending, livenessCursor)
+    ),
+    ...Array.from(
+      { length: backgroundWorkers },
+      () => worker(backgroundPending, backgroundCursor)
     )
-  );
+  ]);
   return {
     observations,
-    skipped: timedOut + Math.max(0, pending.length - nextIndex),
+    skipped:
+      timedOut +
+      Math.max(0, livenessPending.length - livenessCursor.value) +
+      Math.max(0, backgroundPending.length - backgroundCursor.value),
     requests,
     cacheHits,
     timeouts: timedOut
@@ -11312,17 +11496,42 @@ async function buildDashboardView(
       const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
       return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
     });
-    const candidates = appServerAgents
-      .filter(({ agent }) => visibleAgentIds.has(agent.agentId))
-      .slice(0, CARD_RUNTIME_PROBE_LIMIT)
+    const rankedCandidates = appServerAgents
       .map(({ agent, thread }) => {
         const latestJob = jobs.listForAgent(agent.agentId).at(-1);
         return {
           agentId: agent.agentId,
           thread,
-          stamp: `${agent.version}:${agent.updatedAt}:${latestJob?.version || 0}:${latestJob?.updatedAt || 0}`
+          stamp: dashboardRuntimeStamp(agent, latestJob),
+          inspectLiveness:
+            visibleAgentIds.has(agent.agentId) ||
+            agent.lifecycle === "active" ||
+            agent.lifecycle === "waiting-input" ||
+            Boolean(agent.currentJobId),
+          changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
         };
-      });
+      })
+      .sort((left, right) => right.changedAt - left.changedAt);
+    const livenessCandidates = rankedCandidates.filter((candidate) => candidate.inspectLiveness);
+    const backgroundCandidates = rankedCandidates.filter((candidate) => !candidate.inspectLiveness);
+    const backgroundReserve = backgroundCandidates.length === 0
+      ? 0
+      : Math.min(
+          backgroundCandidates.length,
+          Math.max(CARD_RUNTIME_PROBE_CONCURRENCY, Math.floor(CARD_RUNTIME_PROBE_LIMIT / 4))
+        );
+    const selectedLivenessCandidates = livenessCandidates.slice(
+      0,
+      CARD_RUNTIME_PROBE_LIMIT - backgroundReserve
+    );
+    const selectedBackgroundCandidates = backgroundCandidates.slice(
+      0,
+      CARD_RUNTIME_PROBE_LIMIT - selectedLivenessCandidates.length
+    );
+    const candidates: DashboardRuntimeCandidate[] = [
+      ...selectedLivenessCandidates,
+      ...selectedBackgroundCandidates
+    ];
     const startedAt = Date.now();
     const [runtimeInspection, usage] = await Promise.all([
       inspectDashboardRuntimes(upstream, candidates),
@@ -11460,8 +11669,23 @@ async function buildDashboardView(
       const thread = currentThreadFor(agent.agentId);
       return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
     });
-  const runtimeByAgent = enrichment?.runtimeByAgent || new Map<string, DashboardRuntimeObservation>();
-  const runtimeProbeSkippedAgents = enrichment?.runtimeProbeSkippedAgents ?? appServerAgents.length;
+  const runtimeCacheCandidates = appServerAgents
+    .map(({ agent, thread }) => {
+      const latestJob = latestJobByAgent.get(agent.agentId);
+      return {
+        agentId: agent.agentId,
+        thread,
+        stamp: dashboardRuntimeStamp(agent, latestJob),
+        inspectLiveness: false,
+        changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
+      };
+    })
+    .sort((left, right) => right.changedAt - left.changedAt)
+    .slice(0, CARD_RUNTIME_PROBE_LIMIT);
+  const runtimeByAgent = enrichment?.runtimeByAgent ||
+    cachedDashboardRuntimes(upstream, runtimeCacheCandidates);
+  const runtimeProbeSkippedAgents = enrichment?.runtimeProbeSkippedAgents ??
+    Math.max(0, appServerAgents.length - runtimeByAgent.size);
 
   const statusForJob = (job: CodexJob): DashboardStatus => {
     const status = dashboardStatusForJob(job);
@@ -11824,7 +12048,7 @@ async function buildDashboardView(
     const agentId = agentIdByRowKey.get(row.rowKey);
     if (agentId) visibleAgentIdsOut?.add(agentId);
   }
-  const weeklyUsage = enrichment?.weeklyUsage || null;
+  const weeklyUsage = enrichment?.weeklyUsage || cachedCodexWeeklyUsage(upstream);
   const trackedProjects = jobs.admissionStateStore
     .getProjectRegistrySnapshot()
     .projects
@@ -11840,7 +12064,7 @@ async function buildDashboardView(
     enrichment: enrichment?.summary || {
       state: "structural",
       runtimeRequests: 0,
-      cacheHits: 0,
+      cacheHits: runtimeByAgent.size,
       timeouts: 0,
       durationMs: 0,
       usageTimedOut: false
@@ -11996,11 +12220,13 @@ async function buildLegacyActivityView(
   const now = Date.now();
   const allAgents = listAllScopedAgents(jobs, scopeId);
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
+  const latestJobByAgent = new Map<string, CodexJob>();
   const controlRows: Array<Record<string, unknown>> = [];
   const currentThreads = new Map<string, BridgeAgentThread>();
   const agentRows = allAgents.map((agent) => {
     const agentJobs = jobs.listForAgent(agent.agentId);
     const latestJob = agentJobs.at(-1);
+    if (latestJob) latestJobByAgent.set(agent.agentId, latestJob);
     const activeJob = agent.currentJobId
       ? jobs.get(agent.currentJobId)
       : [...agentJobs].reverse().find((job) => isActiveActivityJobStatus(job.status));
@@ -12085,30 +12311,37 @@ async function buildLegacyActivityView(
   agentRows.sort((left, right) =>
     agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
   );
-  const runtimeCandidates = inspectRuntime
-    ? agentRows
-        .filter((row) => row.lifecycle !== "archived")
-        .slice(0, limit)
-        .flatMap((row) => {
-          const thread = currentThreads.get(row.agentId);
-          const agent = agentById.get(row.agentId);
-          if (!thread || thread.backendKind !== "app-server" || !agent) return [];
-          return [{
-            agentId: row.agentId,
-            thread,
-            stamp: `${agent.version}:${agent.updatedAt}:${row.updatedAt}`
-          }];
-        })
-    : [];
+  const runtimeCandidates = agentRows
+    .filter((row) => row.lifecycle !== "archived")
+    .flatMap((row) => {
+      const thread = currentThreads.get(row.agentId);
+      const agent = agentById.get(row.agentId);
+      if (!thread || thread.backendKind !== "app-server" || !agent) return [];
+      return [{
+        agentId: row.agentId,
+        thread,
+        stamp: dashboardRuntimeStamp(agent, latestJobByAgent.get(row.agentId)),
+        inspectLiveness: false
+      }];
+    })
+    .slice(0, CARD_RUNTIME_PROBE_LIMIT);
   const runtimeInspection = inspectRuntime
     ? await inspectDashboardRuntimes(upstream, runtimeCandidates)
     : {
-        observations: new Map<string, DashboardRuntimeObservation>(),
+        observations: cachedDashboardRuntimes(upstream, runtimeCandidates),
         skipped: 0,
         requests: 0,
         cacheHits: 0,
         timeouts: 0
       };
+  if (!inspectRuntime) {
+    runtimeInspection.cacheHits = runtimeInspection.observations.size;
+    runtimeInspection.skipped = Math.max(
+      0,
+      agentRows.filter((row) => row.lifecycle !== "archived").length -
+        runtimeInspection.observations.size
+    );
+  }
   for (const row of agentRows) {
     const observation = runtimeInspection.observations.get(row.agentId);
     if (!observation) continue;
@@ -12367,7 +12600,7 @@ async function buildActivityView(
     ),
     inspectRuntime
       ? readCodexWeeklyUsageBounded(upstream)
-      : Promise.resolve({ value: null, timedOut: false })
+      : Promise.resolve({ value: cachedCodexWeeklyUsage(upstream), timedOut: false })
   ]);
   const weeklyUsage = usage.value;
   const now = Date.now();

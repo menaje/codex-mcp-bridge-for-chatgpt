@@ -29,8 +29,11 @@ The native Dashboard uses the same progressive application-service contract as
 the ChatGPT card. It publishes an `enrich: false` structural snapshot first,
 then replaces or merges that page with a bounded `enrich: true` result in a
 separate task. Structural RPC has a two-second client ceiling; enrichment has a
-five-second transport ceiling while the bridge itself bounds runtime work to
-1.2 seconds and usage to 800 ms. Refresh and pagination cancel stale
+ten-second transport ceiling while the bridge itself bounds runtime work to
+six seconds and usage to 1.5 seconds. Matching last-known usage and runtime
+evidence is included in later structural snapshots without an upstream call,
+so polling does not temporarily clear process counts or reorder their rows.
+Refresh and pagination cancel stale
 enrichment generations, and an enrichment failure leaves the structural view
 visible. Swift does not issue App Server runtime probes itself.
 

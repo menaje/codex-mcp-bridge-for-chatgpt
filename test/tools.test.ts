@@ -101,6 +101,45 @@ class WeeklyUsageUpstream extends FakeUpstream {
   }
 }
 
+class SelectiveLoadedTerminalUpstream extends WeeklyUsageUpstream {
+  public backgroundThreadId?: string;
+  public hangLiveness = false;
+  public loadedTerminalReads: string[] = [];
+  public probeCalls: string[] = [];
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    if (this.hangLiveness) return new Promise(() => undefined);
+    return { state: "resumable", runtimeStatus: "notLoaded", threadId };
+  }
+
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    this.loadedTerminalReads.push(threadId);
+    if (threadId !== this.backgroundThreadId) return null;
+    return [{
+      processId: "off-page-background-process",
+      itemId: "off-page-background-item",
+      command: "private off-page command",
+      cwd: "/private/off-page",
+      osPid: 12_345
+    }];
+  }
+}
+
+class HangingAfterFirstWeeklyUsageUpstream extends WeeklyUsageUpstream {
+  public hangUsage = false;
+
+  override async readAccountRateLimits(): Promise<CodexWeeklyUsage> {
+    if (this.hangUsage) {
+      this.usageReads += 1;
+      return new Promise(() => undefined);
+    }
+    return super.readAccountRateLimits();
+  }
+}
+
 class FailingInventoryUpstream extends FakeUpstream {
   public inventoryCalls = 0;
 
@@ -1616,14 +1655,15 @@ describe("bridge tools", () => {
           },
           "name": "codex_activity_rehydrate",
           "properties": [
+            "enrich",
             "jobId",
             "limit",
             "requestId",
             "scopeId",
             "widgetInstanceId",
           ],
-          "propertyCount": 5,
-          "schemaBytes": 930,
+          "propertyCount": 6,
+          "schemaBytes": 1059,
           "visibility": {
             "app": true,
             "model": false,
@@ -2463,6 +2503,7 @@ describe("bridge tools", () => {
             expect(html).toContain("function appendCancellations(parent,row)");
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain('callTool("codex_activity_rehydrate"');
+            expect(html).toContain("requestId:correlation.requestId,limit:viewLimit,enrich:true");
             expect(html).toContain('mountedPresentation.kind==="historical"');
             expect(html).toContain('callTool("codex_background_process_terminate"');
             expect(html).toContain('callTool("codex_activity_job_cancel"');
@@ -2639,12 +2680,53 @@ describe("bridge tools", () => {
         ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
     );
     expect(activityPublic).not.toHaveProperty("weeklyUsage");
-    expect(activityPrivate.view.weeklyUsage).toBeNull();
+    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardView.weeklyUsage);
     expect(activityPrivate.view.enrichment.state).toBe("structural");
     expect(upstream.usageReads).toBe(1);
 
     await close();
   });
+
+  it("retains the last successful weekly usage through structural refresh and timeout", async () => {
+    const root = temporaryRoot();
+    const upstream = new HangingAfterFirstWeeklyUsageUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const first = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A,
+      enrich: true
+    });
+    expect(first.view.weeklyUsage).toMatchObject({ remainingPercent: 64.5 });
+    expect(upstream.usageReads).toBe(1);
+
+    const realNow = Date.now();
+    const future = vi.spyOn(Date, "now").mockReturnValue(realNow + 61_000);
+    try {
+      upstream.hangUsage = true;
+      const structural = await freshDashboardSnapshot(rawCallTool, {
+        scopeId: SCOPE_A,
+        enrich: false
+      });
+      expect(structural.view).toMatchObject({
+        enrichment: { state: "structural", runtimeRequests: 0 },
+        weeklyUsage: first.view.weeklyUsage
+      });
+      expect(upstream.usageReads).toBe(1);
+
+      const timedOut = await freshDashboardSnapshot(rawCallTool, {
+        scopeId: SCOPE_A,
+        enrich: true
+      });
+      expect(timedOut.view).toMatchObject({
+        enrichment: { state: "enriched", usageTimedOut: true },
+        weeklyUsage: first.view.weeklyUsage
+      });
+      expect(upstream.usageReads).toBe(2);
+    } finally {
+      future.mockRestore();
+    }
+
+    await close();
+  }, 5_000);
 
   it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
     const root = temporaryRoot();
@@ -2826,6 +2908,165 @@ describe("bridge tools", () => {
       .toBeLessThanOrEqual(diagnostics.performance.html.activityBudgetBytes);
     expect(diagnostics.performance.html.settingsBytes)
       .toBeLessThanOrEqual(diagnostics.performance.html.settingsBudgetBytes);
+
+    await close();
+  }, 15_000);
+
+  it("keeps off-page runtime evidence in Activity ordering and subsequent structural paints", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+        CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "200"
+      }),
+      upstream
+    );
+    const activities: Array<{ activityId: string }> = [];
+    const agents: Array<{ agentId: string; agentName: string; threadId: string }> = [];
+    for (let index = 0; index < 40; index += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Ordering activity ${index + 1}`
+      });
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Ordering Agent ${index + 1}`
+      });
+      const threadId = `ordering-thread-${index + 1}`;
+      activities.push(activity);
+      agents.push({ agentId: agent.agentId, agentName: agent.agentName, threadId });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+      jobs.linkAgentThread({
+        agentId: agent.agentId,
+        threadId,
+        backendKind: "app-server",
+        cwd: root,
+        sandbox: "read-only",
+        contextMode: "fresh"
+      });
+      const job = jobs.start({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh",
+        operation: "start",
+        cwd: root,
+        sandbox: "read-only",
+        scopeId: SCOPE_A,
+        requestId: `ordering-request-${index}`,
+        requestHash: `ordering-hash-${index}`,
+        requestHashVersion: 7,
+        exclusiveKeys: [],
+        sessionDecision: {
+          requestedMode: "new",
+          action: "start",
+          reason: "explicit-new"
+        },
+        executionMode: "foreground",
+        backendKind: "app-server"
+      }, async () => fakeCodexResult(threadId));
+      await job.promise;
+    }
+
+    const initialResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    });
+    const initial = privateActivityView(initialResult);
+    const visibleAgentIds = new Set(
+      (initial.agents as Array<{ agentId: string }>).map((agent) => agent.agentId)
+    );
+    const initialDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    const visibleDashboardAgentNames = new Set([
+      ...initialDashboard.activeRows,
+      ...initialDashboard.terminalRows,
+      ...initialDashboard.idleRows
+    ].map((row) => row.agentName));
+    const offPageAgent = agents.find((agent) =>
+      !visibleAgentIds.has(agent.agentId) &&
+      !visibleDashboardAgentNames.has(agent.agentName)
+    );
+    expect(offPageAgent).toBeDefined();
+    upstream.backgroundThreadId = offPageAgent!.threadId;
+    upstream.hangLiveness = true;
+
+    const enrichedDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: true
+    });
+    expect(enrichedDashboard.enrichment.timeouts).toBeGreaterThan(0);
+    expect(enrichedDashboard.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: offPageAgent!.agentName,
+        status: "background-process-running",
+        backgroundProcessCount: 1
+      })
+    ]));
+
+    const enrichedResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: initial.mountedActivity.activityId,
+          generation: initial.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "49494949-4949-4949-8949-494949494949" }
+    });
+    const enrichedActivity = privateActivityView(enrichedResult);
+    expect(enrichedActivity.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId: offPageAgent!.agentId,
+        backgroundProcessState: "running",
+        backgroundProcessCount: 1
+      })
+    ]));
+    expect(new Set(upstream.loadedTerminalReads).size).toBeGreaterThan(30);
+
+    const structuralDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    expect(structuralDashboard.enrichment).toMatchObject({
+      state: "structural",
+      runtimeRequests: 0
+    });
+    expect(structuralDashboard.weeklyUsage).toEqual(enrichedDashboard.weeklyUsage);
+    expect(structuralDashboard.counts.backgroundProcesses).toBe(1);
+    expect(structuralDashboard.activeRows.map((row) => row.rowKey))
+      .toEqual(enrichedDashboard.activeRows.map((row) => row.rowKey));
+
+    const structuralActivity = privateActivityView(await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    }));
+    expect(structuralActivity.enrichment.state).toBe("structural");
+    expect(structuralActivity.weeklyUsage).toEqual(enrichedActivity.weeklyUsage);
+    expect(structuralActivity.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId: offPageAgent!.agentId,
+        backgroundProcessState: "running"
+      })
+    ]));
 
     await close();
   }, 15_000);
@@ -3581,7 +3822,7 @@ describe("bridge tools", () => {
       arguments: snapshotArguments
     });
     expect((unknown as { structuredContent?: any }).structuredContent?.counts)
-      .toMatchObject({ runtimeUnknownAgents: 1, runtimeProbeSkippedAgents: 0 });
+      .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 0 });
 
     upstream.hangProbe = true;
     const timeoutStartedAt = Date.now();
@@ -3591,7 +3832,7 @@ describe("bridge tools", () => {
     });
     expect(Date.now() - timeoutStartedAt).toBeLessThan(3_000);
     expect((timedOut as { structuredContent?: any }).structuredContent?.counts)
-      .toMatchObject({ runtimeUnknownAgents: 1, runtimeProbeSkippedAgents: 1 });
+      .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 1 });
     upstream.hangProbe = false;
 
     upstream.probe = {
@@ -4055,6 +4296,20 @@ describe("bridge tools", () => {
       scopeVersion: historical.scopeVersion,
       mountedPresentation: historical.mountedPresentation,
       watcherPolicy: { mode: "one-shot", live: false }
+    });
+    const enrichedHistorical = parseToolJson(await rawCallTool({
+      ...rehydrateRequest,
+      arguments: { ...rehydrateRequest.arguments, enrich: true }
+    }));
+    expect(enrichedHistorical).toMatchObject({
+      enrichment: { state: "enriched" },
+      mountedPresentation: historical.mountedPresentation,
+      watcherPolicy: {
+        mode: "one-shot",
+        live: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
     });
     expect({
       jobs: jobs.sizeForScope(SCOPE_A),
