@@ -10,7 +10,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { collectSkillsRelease, verifySkillsReleaseArchive } from "./build-skills-release.mjs";
 import { deriveReleaseMetadata, loadReleaseManifest } from "./release-manifest.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,7 +19,6 @@ export function expectedReleaseAssetNames(repoRoot = DEFAULT_REPO_ROOT) {
   return [
     metadata.packageFilename,
     metadata.checksumFilename,
-    metadata.skillsArchiveFilename,
     metadata.macosArchiveFilename,
     metadata.releaseChecksumsFilename
   ];
@@ -97,9 +95,6 @@ function inspectReleaseAssets({ repoRoot, directory, requireChecksums }) {
   if (npmChecksum !== expectedNpmChecksum) {
     throw new Error(`${metadata.checksumFilename} does not match ${metadata.packageFilename}.`);
   }
-
-  const skills = collectSkillsRelease(repoRoot);
-  verifySkillsReleaseArchive(path.join(resolvedDirectory, metadata.skillsArchiveFilename), skills);
 
   verifyDmg(path.join(resolvedDirectory, metadata.macosArchiveFilename));
   return { directory: resolvedDirectory, metadata, assetFiles };

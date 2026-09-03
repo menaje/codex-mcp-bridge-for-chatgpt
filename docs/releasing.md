@@ -37,40 +37,17 @@ The manifest controls:
 - the first native target: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG,
   alongside the existing generic npm server archive.
 
-## Skills distribution
+## Archived skill documents
 
-Repository `skills/` is the source of truth. GitHub Release publishes
-`codex-mcp-bridge-skills-<bridgeVersion>.zip` as the install/deployment
-artifact, while the npm package is runtime-only and deliberately excludes
-`skills/`.
+The former ChatGPT skill source is retained under `archive/skills/` only for
+history and possible future reference. ChatGPT does not consume these files,
+so they are not an active product surface and must not be installed or packaged.
 
-Manifest version 2 declares the skills ZIP as one member of the complete public
-asset set. It is versioned with the same bridge SemVer as the npm package and
-macOS app.
-
-Build an installable ZIP explicitly (the output file is intentionally chosen by
-the caller):
-
-```bash
-npm run skills:package -- --output /tmp/codex-mcp-bridge-skills-0.3.0.zip
-```
-
-The archive has one predictable root directory and contains
-`codex-mcp-bridge-skills-<bridgeVersion>/manifest.json` plus every source file
-under `skills/`. The manifest records `bridgeVersion` from `package.json` and,
-for each skill, its frontmatter `name`, the same release-derived SemVer as
-`skillVersion`, and `skills/<name>/SKILL.md` path. Source skills omit a custom
-frontmatter version: `npm run release:version` changes the package/release
-version, and the skills packager applies that version automatically. Unreleased
-skill edits therefore do not consume versions or require version-only changes.
-
-`npm run skills:check` builds and inspects the archive in a temporary directory,
-checks manifest paths and frontmatter, compares every ZIP entry with source,
-and runs `npm pack --dry-run --json` to prove `skills/` is absent from the npm
-tarball. ZIP file order, permissions, compression settings, and timestamp
-(1980-01-01) are fixed for reproducible output from identical inputs. This check
-is intentionally independent of `npm run release:check` and `npm run build`;
-the GitHub release asset step invokes the skills packager explicitly.
+The archive directory is deliberately outside the npm `files` allowlist and is
+not copied into the native macOS app. Manifest version 2 does not declare a
+skills artifact, and the release workflow neither builds nor publishes a skills
+ZIP. A complete release therefore contains only the macOS DMG, generic npm
+server tarball, npm tarball checksum, and aggregate checksum file.
 
 ## Personal/local plugin package identity
 
@@ -345,14 +322,14 @@ and pull-request pushes run no Actions. A `main` push is therefore the deliberat
 prerelease or stable release action. The workflow then:
 
 1. runs the full Node.js server checks and production dependency audit;
-2. builds the canonical npm tarball, its checksum, and deterministic skills ZIP;
+2. builds the canonical npm tarball and its checksum;
 3. builds the macOS app on an arm64 runner, ad-hoc signs the app and DMG, and
    verifies the version, minimum OS, architecture, signatures, and container;
-4. assembles exactly those common assets and the macOS DMG, rejecting undeclared
+4. assembles exactly those npm assets and the macOS DMG, rejecting undeclared
    files and writing deterministic aggregate checksums;
 5. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
-6. publishes all five assets together and adds `--prerelease` when the manifest
+6. publishes all four assets together and adds `--prerelease` when the manifest
    SemVer contains a prerelease identifier.
 
 The macOS job has no Apple signing or notarization secrets. Its public asset is

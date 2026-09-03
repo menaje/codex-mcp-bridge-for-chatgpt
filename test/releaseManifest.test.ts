@@ -48,7 +48,6 @@ describe("release manifest", () => {
     expect(manifest.release.assets).toEqual([
       "npm-tarball",
       "npm-sha256",
-      "skills-archive",
       "macos-app",
       "release-checksums"
     ]);

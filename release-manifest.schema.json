@@ -194,14 +194,13 @@
         },
         "assets": {
           "type": "array",
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 4,
+          "maxItems": 4,
           "uniqueItems": true,
           "items": {
             "enum": [
               "npm-tarball",
               "npm-sha256",
-              "skills-archive",
               "macos-app",
               "release-checksums"
             ]
@@ -209,7 +208,6 @@
           "allOf": [
             { "contains": { "const": "npm-tarball" } },
             { "contains": { "const": "npm-sha256" } },
-            { "contains": { "const": "skills-archive" } },
             { "contains": { "const": "macos-app" } },
             { "contains": { "const": "release-checksums" } }
           ]

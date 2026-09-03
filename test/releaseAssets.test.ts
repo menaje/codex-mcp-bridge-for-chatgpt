@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildSkillsRelease } from "../scripts/build-skills-release.mjs";
 import { deriveReleaseMetadata, loadReleaseManifest } from "../scripts/release-manifest.mjs";
 import {
   checkReleaseAssets,
@@ -39,7 +38,7 @@ describe("macOS and npm release asset assembly", () => {
         repoRoot: REPO_ROOT,
         directory
       }).checksums).toEqual(result.checksums);
-      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(4);
+      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(3);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -75,16 +74,17 @@ function createFixtureAssets(): string {
     ["pack", "--json", "--pack-destination", directory],
     { cwd: REPO_ROOT, encoding: "utf8" }
   ));
+  expect(
+    packed[0].files.some((entry: { path: string }) =>
+      entry.path.startsWith("archive/skills/") || entry.path.startsWith("skills/")
+    )
+  ).toBe(false);
   const packageFile = path.join(directory, packed[0].filename);
   const packageDigest = createHash("sha256").update(readFileSync(packageFile)).digest("hex");
   writeFileSync(
     path.join(directory, metadata.checksumFilename),
     `${packageDigest}  ${metadata.packageFilename}\n`
   );
-  buildSkillsRelease({
-    repoRoot: REPO_ROOT,
-    outputFile: path.join(directory, metadata.skillsArchiveFilename)
-  });
   const fakeDmg = Buffer.alloc(1024);
   fakeDmg.write("koly", fakeDmg.length - 512, "ascii");
   writeFileSync(path.join(directory, metadata.macosArchiveFilename), fakeDmg);

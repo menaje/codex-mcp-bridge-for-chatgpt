@@ -31,7 +31,6 @@ const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+$/;
 const RELEASE_ASSET_NAMES = [
   "npm-tarball",
   "npm-sha256",
-  "skills-archive",
   "macos-app",
   "release-checksums"
 ];
@@ -252,7 +251,6 @@ export function deriveReleaseMetadata(manifest) {
     generateNotes: manifest.release.generateNotes,
     packageFilename,
     checksumFilename: `${packageFilename}.sha256`,
-    skillsArchiveFilename: `codex-mcp-bridge-skills-${version}.zip`,
     macosArchitecture: macosTarget.architecture,
     macosFormat: macosTarget.format,
     macosMinimumVersion: macosTarget.minimumVersion,
@@ -795,7 +793,6 @@ function printGithubOutput(metadata) {
     generate_notes: metadata.generateNotes,
     package_filename: metadata.packageFilename,
     checksum_filename: metadata.checksumFilename,
-    skills_archive_filename: metadata.skillsArchiveFilename,
     macos_architecture: metadata.macosArchitecture,
     macos_minimum_version: metadata.macosMinimumVersion,
     macos_archive_filename: metadata.macosArchiveFilename,

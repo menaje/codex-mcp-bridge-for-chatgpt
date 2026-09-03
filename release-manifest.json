@@ -105,7 +105,6 @@
     "assets": [
       "npm-tarball",
       "npm-sha256",
-      "skills-archive",
       "macos-app",
       "release-checksums"
     ]

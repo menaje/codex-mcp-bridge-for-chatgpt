@@ -626,19 +626,11 @@ npm run check
 
 Do not hand-edit `.codex-plugin/plugin.json`, `.app.json`, generated UI manifests/snapshots, or use `npm version` directly.
 
-Repository `skills/` is the source of truth. GitHub Release publishes the
-install/deployment archive `codex-mcp-bridge-skills-<bridgeVersion>.zip`; the
-npm package is runtime-only and excludes `skills/`. To make an archive locally:
-
-```bash
-npm run skills:package -- --output /tmp/codex-mcp-bridge-skills-0.3.0.zip
-```
-
-`npm run skills:check` verifies the manifest/frontmatter and ZIP contents in a
-temporary directory, and proves with `npm pack --dry-run` that `skills/` is not
-in the npm tarball. It is deliberately separate from `release:check` and the
-runtime `build`, so a skills-only release concern cannot block bridge startup.
-See [docs/releasing.md](docs/releasing.md#skills-distribution).
+The retired ChatGPT skill documents are preserved only as historical source in
+`archive/skills/`. ChatGPT does not consume them, and they are intentionally
+excluded from the npm package, native macOS app, GitHub Actions artifacts, and
+GitHub prerelease/release assets. See
+[docs/releasing.md](docs/releasing.md#archived-skill-documents).
 
 The current product/repository/package names include **for ChatGPT**. Bare `codex-mcp-bridge` values are a retained runtime namespace covering the executable, environment prefix, private dotenv directory, local state directory, tunnel profile, and MCP App URI namespace.
 

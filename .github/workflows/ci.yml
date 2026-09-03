@@ -61,8 +61,8 @@ jobs:
       - name: Verify development app bundle signature
         run: codesign --verify --deep --strict "macos/build/Codex MCP Bridge for ChatGPT.app"
 
-  common-release-assets:
-    name: Build npm server and skills assets
+  npm-release-assets:
+    name: Build generic npm server assets
     needs:
       - check
       - macos-check
@@ -80,11 +80,10 @@ jobs:
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
       - run: npm run build
-      - name: Build generic npm and skills assets
+      - name: Build generic npm assets
         env:
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
           CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
-          SKILLS_FILE: ${{ steps.metadata.outputs.skills_archive_filename }}
         run: |
           mkdir -p release-assets
           pack_json="$(npm pack --json --pack-destination release-assets)"
@@ -97,10 +96,9 @@ jobs:
             cd release-assets
             sha256sum "$PACKAGE_FILE" > "$CHECKSUM_FILE"
           )
-          npm run skills:package -- --output "release-assets/$SKILLS_FILE"
       - uses: actions/upload-artifact@v7
         with:
-          name: common-release-assets
+          name: npm-release-assets
           path: release-assets/*
           if-no-files-found: error
           retention-days: 7
@@ -145,7 +143,7 @@ jobs:
     needs:
       - check
       - macos-check
-      - common-release-assets
+      - npm-release-assets
       - macos-release-package
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -196,7 +194,7 @@ jobs:
       - if: steps.release-state.outputs.exists != 'true'
         uses: actions/download-artifact@v8
         with:
-          name: common-release-assets
+          name: npm-release-assets
           path: release-assets
       - if: steps.release-state.outputs.exists != 'true'
         name: Verify the complete release set and write aggregate checksums
@@ -213,7 +211,6 @@ jobs:
           GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
           CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
-          SKILLS_FILE: ${{ steps.metadata.outputs.skills_archive_filename }}
           MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
           RELEASE_CHECKSUMS_FILE: ${{ steps.metadata.outputs.release_checksums_filename }}
           TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
@@ -223,7 +220,6 @@ jobs:
             "release-assets/$MACOS_FILE#macOS arm64 app (ad-hoc signed, not notarized DMG)"
             "release-assets/$PACKAGE_FILE#generic npm server package"
             "release-assets/$CHECKSUM_FILE#npm package SHA-256"
-            "release-assets/$SKILLS_FILE#installable Codex skills"
             "release-assets/$RELEASE_CHECKSUMS_FILE#all release SHA-256 checksums"
             --title "$RELEASE_TITLE"
             --notes "The macOS arm64 app is ad-hoc signed and not Apple-notarized. Approve only this app in System Settings > Privacy & Security if first launch is blocked; do not disable Gatekeeper globally. The npm archive remains available for users who choose to run the existing server directly in their own Node.js environment."

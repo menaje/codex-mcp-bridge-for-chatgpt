@@ -21,7 +21,7 @@ describe("macOS and generic npm release workflow", () => {
 
   it("requires ad-hoc macOS and generic npm assets before assembly", () => {
     for (const job of [
-      "common-release-assets",
+      "npm-release-assets",
       "macos-release-package"
     ]) {
       expect(WORKFLOW).toContain(`${job}:`);
@@ -34,6 +34,9 @@ describe("macOS and generic npm release workflow", () => {
     expect(MACOS_PACKAGER).not.toContain("notarytool");
     expect(WORKFLOW).not.toContain("MACOS_DEVELOPER_ID");
     expect(WORKFLOW).not.toContain("APPLE_NOTARY");
+    expect(WORKFLOW).not.toContain("skills:package");
+    expect(WORKFLOW).not.toContain("skills_archive_filename");
+    expect(WORKFLOW).not.toContain("archive/skills");
     expect(WORKFLOW).toContain("npm run release:assets -- write");
     expect(WORKFLOW).toContain("npm run release:assets -- check");
   });
@@ -43,7 +46,6 @@ describe("macOS and generic npm release workflow", () => {
     for (const output of [
       "package_filename",
       "checksum_filename",
-      "skills_archive_filename",
       "macos_archive_filename",
       "release_checksums_filename"
     ]) {
