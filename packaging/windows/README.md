@@ -11,6 +11,10 @@ or background service.
 - the Codex CLI in `PATH`, with `codex mcp-server` support and an existing login
 - `tunnel-client` in `PATH` for ChatGPT Secure MCP Tunnel mode
 
+Visual Studio or C++ Build Tools are not required. The installer disables npm
+install scripts and verifies the `better-sqlite3` Windows x64 binary shipped by
+the pinned dependency before reporting success.
+
 Run the commands below from this extracted directory:
 
 ```powershell

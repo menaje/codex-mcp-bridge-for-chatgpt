@@ -53,7 +53,10 @@ jobs:
           node-version: ${{ steps.metadata.outputs.node_version }}
           cache: npm
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - name: Verify bundled Windows SQLite binary
+        shell: pwsh
+        run: node -e 'const Database = require("better-sqlite3"); const database = new Database(":memory:"); database.prepare("SELECT 1").get(); database.close();'
       - name: Install supported Codex CLI
         run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
       - name: Check App Server protocol schemas

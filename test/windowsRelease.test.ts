@@ -72,6 +72,8 @@ describe("Windows server release archive", () => {
         .filter((entry) => !entry.path.endsWith(".tgz"))
         .map((entry) => entry.data.toString("utf8"))
         .join("\n");
+      expect(textContents).toContain("--ignore-scripts");
+      expect(textContents).toContain("better-sqlite3");
       expect(textContents).not.toMatch(/^(?!\s*#)\s*CONTROL_PLANE_API_KEY=sk-/m);
       expect(textContents).not.toMatch(/^(?!\s*#)\s*CONTROL_PLANE_TUNNEL_ID=tunnel_/m);
       expect(release.archiveEntries.map((entry) => entry.path)).not.toEqual(expect.arrayContaining([

@@ -259,8 +259,10 @@ initial cross-platform release. The versioned Windows x64 ZIP contains the
 canonical npm tarball plus PowerShell prerequisite, install, foreground start,
 and status entrypoints. It preserves
 `%USERPROFILE%\.config\codex-mcp-bridge\.env`, applies a current-user/SYSTEM ACL,
-and officially selects the HTTP Secure MCP Tunnel transport. `Ctrl-C` in the
-foreground PowerShell window performs the managed shutdown.
+and officially selects the HTTP Secure MCP Tunnel transport. It verifies the
+bundled Windows SQLite binary without requiring Visual Studio or C++ Build
+Tools. `Ctrl-C` in the foreground PowerShell window performs the managed
+shutdown.
 
 Build and inspect the deterministic package without publishing anything:
 

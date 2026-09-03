@@ -262,6 +262,9 @@ and status entrypoints. The archive supports Windows x64 and HTTP Secure MCP
 Tunnel transport only. Installation preserves an existing
 `%USERPROFILE%\.config\codex-mcp-bridge\.env`; a newly created or existing file
 is restricted to the current Windows user and SYSTEM by the explicit installer.
+The installer disables dependency install scripts and immediately loads the
+bundled `better-sqlite3` Windows x64 binary, so end users do not need Visual
+Studio or a C++ compiler.
 
 The following remain release-candidate gates rather than inferred support:
 

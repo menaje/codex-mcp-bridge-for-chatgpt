@@ -23,9 +23,15 @@ if (-not (Test-Path -LiteralPath $packageFile -PathType Leaf)) {
 }
 
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
-& npm.cmd install --prefix $InstallRoot --omit=dev --no-audit --no-fund --no-package-lock $packageFile
+& npm.cmd install --prefix $InstallRoot --omit=dev --ignore-scripts --no-audit --no-fund --no-package-lock $packageFile
 if ($LASTEXITCODE -ne 0) {
     throw "npm could not install the bundled bridge package."
+}
+
+$sqlitePackage = Join-Path $InstallRoot "node_modules\better-sqlite3"
+& node.exe -e 'const Database = require(process.argv[1]); const database = new Database(":memory:"); database.prepare("SELECT 1").get(); database.close();' $sqlitePackage
+if ($LASTEXITCODE -ne 0) {
+    throw "The bundled Windows SQLite binary could not be loaded."
 }
 
 Copy-Item -LiteralPath $releaseFile -Destination (Join-Path $InstallRoot "release-manifest.json") -Force
