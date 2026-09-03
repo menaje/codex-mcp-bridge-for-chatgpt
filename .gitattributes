@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Preserve packaged and application assets byte-for-byte.
+*.dmg binary
+*.icns binary
+*.png binary
+*.sqlite binary
+*.tgz binary
+*.zip binary
