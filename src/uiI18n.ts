@@ -2206,8 +2206,21 @@ export function resolveHostUiLocaleTag(
     : "en";
 }
 
-export function serializedUiTranslations(): string {
-  return JSON.stringify(UI_TRANSLATIONS).replaceAll("<", "\\u003c");
+export function serializedUiTranslations(namespaces?: readonly string[]): string {
+  if (!namespaces || namespaces.length === 0) {
+    return JSON.stringify(UI_TRANSLATIONS).replaceAll("<", "\\u003c");
+  }
+  const selected = Object.fromEntries(
+    Object.entries(UI_TRANSLATIONS).map(([locale, bundle]) => [
+      locale,
+      Object.fromEntries(
+        Object.entries(bundle).filter(([key]) => namespaces.some(
+          (namespace) => key === namespace || key.startsWith(`${namespace}.`)
+        ))
+      )
+    ])
+  );
+  return JSON.stringify(selected).replaceAll("<", "\\u003c");
 }
 
 const KNOWN_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);

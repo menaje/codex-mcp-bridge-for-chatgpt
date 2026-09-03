@@ -10,16 +10,18 @@ public struct BridgeCompanionClient: Sendable {
     public func dashboard(
         limit: Int = 20,
         terminalOffset: Int = 0,
-        idleOffset: Int = 0
+        idleOffset: Int = 0,
+        enrich: Bool = false
     ) async throws -> DashboardSnapshot {
         try await rpc.call(
             "dashboard.snapshot",
             params: DashboardParameters(
                 limit: limit,
                 terminalOffset: terminalOffset,
-                idleOffset: idleOffset
+                idleOffset: idleOffset,
+                enrich: enrich
             ),
-            timeout: 20
+            timeout: enrich ? 5 : 2
         )
     }
 

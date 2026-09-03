@@ -1056,6 +1056,51 @@ describe("http server", () => {
     }
   }, 15_000);
 
+  it("retains bounded card performance diagnostics across stateless HTTP requests", async () => {
+    const baseUrl = await start(
+      {
+        CODEX_GPT_BRIDGE_NO_AUTH: "1"
+      },
+      new FakeUpstream()
+    );
+    const client = new Client({
+      name: "http-card-performance-client",
+      version: "0.0.0"
+    });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+      await client.callTool({
+        name: "codex_dashboard_snapshot",
+        arguments: {
+          widgetInstanceId: "48484848-4848-4484-8484-484848484848",
+          limit: 20,
+          terminalOffset: 0,
+          idleOffset: 0,
+          enrich: false
+        }
+      });
+
+      const diagnostics = parseToolJson(
+        await client.callTool({ name: "codex_diagnostics", arguments: {} })
+      );
+      expect(diagnostics.performance.stages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          name: "dashboard.structural.db-projection",
+          count: 1,
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number)
+        }),
+        expect.objectContaining({
+          name: "dashboard.serialization",
+          count: 1
+        })
+      ]));
+    } finally {
+      await client.close().catch(() => undefined);
+      await stopLastServer();
+    }
+  });
+
   it("treats an aborted read-only status wait as observation only", async () => {
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-wait-state-"));
     const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });

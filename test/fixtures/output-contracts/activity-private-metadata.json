@@ -42,6 +42,14 @@
     "view": {
       "scopeVersion": 7,
       "generatedAt": "2026-08-27T00:00:00.000Z",
+      "enrichment": {
+        "state": "structural",
+        "runtimeRequests": 0,
+        "cacheHits": 0,
+        "timeouts": 0,
+        "durationMs": 0,
+        "usageTimedOut": false
+      },
       "aggregates": {
         "running": 0,
         "needsAttention": 0

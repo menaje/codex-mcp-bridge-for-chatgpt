@@ -25,6 +25,15 @@ native Settings window both use the same revisioned service, including separate
 changes remain explicit add, rename, relocate, archive, restore, and delete
 operations. The Dashboard remains read-only.
 
+The native Dashboard uses the same progressive application-service contract as
+the ChatGPT card. It publishes an `enrich: false` structural snapshot first,
+then replaces or merges that page with a bounded `enrich: true` result in a
+separate task. Structural RPC has a two-second client ceiling; enrichment has a
+five-second transport ceiling while the bridge itself bounds runtime work to
+1.2 seconds and usage to 800 ms. Refresh and pagination cancel stale
+enrichment generations, and an enrichment failure leaves the structural view
+visible. Swift does not issue App Server runtime probes itself.
+
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content. Tunnel setup, Codex browser login,
 and profile repair appear in a separate first-run/connection-repair window
@@ -180,6 +189,7 @@ Codex CLI, and `tunnel-client` in a supported executable path.
 ```bash
 npm run check
 npm run macos:check
+npm run test:progressive-browser
 npm run macos:bundle
 open "macos/build/Codex MCP Bridge for ChatGPT.app"
 ```

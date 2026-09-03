@@ -222,6 +222,15 @@ export type CodexUpstream = {
     threadId: string,
     backendKind?: CodexBackendKind
   ): Promise<CodexBackgroundTerminal[]>;
+  /**
+   * Inspect background terminals only when the thread is already materialized
+   * in the selected App Server worker. A null result means that inspection was
+   * intentionally skipped; implementations must never resume a thread here.
+   */
+  listLoadedBackgroundTerminals?(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexBackgroundTerminal[] | null>;
   terminateBackgroundTerminal?(
     threadId: string,
     processId: string,

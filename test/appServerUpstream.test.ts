@@ -516,7 +516,13 @@ describe("CodexAppServerUpstreamPool", () => {
 
       await expect(pool.archiveThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
       await expect(pool.restoreThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
+      await expect(
+        pool.listLoadedBackgroundTerminals!(forkedThreadId, "app-server")
+      ).resolves.toBeNull();
       await expect(pool.listBackgroundTerminals!(forkedThreadId, "app-server")).resolves.toEqual([]);
+      await expect(
+        pool.listLoadedBackgroundTerminals!(forkedThreadId, "app-server")
+      ).resolves.toEqual([]);
       await expect(pool.archiveThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
       await expect(pool.restoreThread!(forkedThreadId, "app-server")).resolves.toBeUndefined();
       await expect(pool.continueThread!({
@@ -612,6 +618,11 @@ describe("CodexAppServerUpstreamPool", () => {
         selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       });
       const threadId = (result.structuredContent as { threadId: string }).threadId;
+      await expect(
+        pool.listLoadedBackgroundTerminals!(threadId, "app-server")
+      ).resolves.toEqual([
+        expect.objectContaining({ processId: "background-process-1" })
+      ]);
       await expect(pool.listBackgroundTerminals!(threadId, "app-server")).resolves.toEqual([
         expect.objectContaining({
           processId: "background-process-1",

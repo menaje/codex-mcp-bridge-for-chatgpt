@@ -380,6 +380,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return this.withThreadWorker(threadId, (connection) => connection.listBackgroundTerminals(threadId));
   }
 
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    return this.withThreadWorker(
+      threadId,
+      (connection) => connection.listLoadedBackgroundTerminals(threadId)
+    );
+  }
+
   async terminateBackgroundTerminal(
     threadId: string,
     processId: string
@@ -957,6 +966,19 @@ class AppServerConnection {
 
   async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
     await this.ensureThreadLoaded(threadId);
+    return this.listMaterializedBackgroundTerminals(threadId);
+  }
+
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    if (!this.loadedThreads.has(threadId)) return null;
+    return this.listMaterializedBackgroundTerminals(threadId);
+  }
+
+  private async listMaterializedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[]> {
     const terminals: CodexBackgroundTerminal[] = [];
     let cursor: string | null = null;
     do {
