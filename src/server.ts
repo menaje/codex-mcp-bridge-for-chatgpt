@@ -24,6 +24,7 @@ import {
 import type { CodexUpstream } from "./upstream.js";
 import {
   CodexJobRegistry,
+  CardPerformanceTracker,
   TaskProjectAvailabilityProjection,
   registerBridgeTools,
   type BridgeApplicationService
@@ -337,7 +338,8 @@ export function createBridgeMcpServer(
   scopeResolver?: ScopeResolver,
   descriptorCoordinator?: SdkToolDescriptorCoordinator,
   projectAvailability?: TaskProjectAvailabilityProjection,
-  onProtocolInitialized?: () => void
+  onProtocolInitialized?: () => void,
+  cardPerformance?: CardPerformanceTracker
 ): BridgeMcpServer {
   // A directly constructed in-memory server uses one store too, preserving the
   // same registry/admission serialization guarantee as the HTTP runtime.
@@ -406,7 +408,8 @@ export function createBridgeMcpServer(
     settingsStore,
     effectiveScopeResolver,
     descriptorCoordinator,
-    projectAvailability
+    projectAvailability,
+    cardPerformance
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -465,6 +468,10 @@ export function createHttpServer(
   const modelCatalog = modelCatalogOverride || createModelCatalog(config, upstream);
   const descriptorCoordinator = runtimeOptions.descriptorCoordinator ||
     new SdkToolDescriptorCoordinator();
+  // Stateless HTTP creates a short-lived McpServer for every request. Keep
+  // bounded card telemetry at the HTTP-runtime boundary so diagnostics report
+  // earlier card calls instead of an always-empty per-request tracker.
+  const cardPerformance = new CardPerformanceTracker();
   const ownsDescriptorCoordinator = runtimeOptions.descriptorCoordinator === undefined;
   const userSettings = new UserSettingsStore(config, {
     stateFile: config.settingsStateFile,
@@ -520,7 +527,8 @@ export function createHttpServer(
     scopeResolver,
     descriptorCoordinator,
     projectAvailability,
-    onProtocolInitialized
+    onProtocolInitialized,
+    cardPerformance
   );
   const reconcileDescriptor = () => {
     try {

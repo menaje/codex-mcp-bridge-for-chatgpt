@@ -4423,7 +4423,7 @@ type CardPerformanceSample = {
   cacheHits: number;
 };
 
-class CardPerformanceTracker {
+export class CardPerformanceTracker {
   private readonly samples = new Map<string, CardPerformanceSample[]>();
 
   record(
@@ -4484,7 +4484,8 @@ export function registerBridgeTools(
   userSettings: UserSettingsStore,
   scopeResolver: ScopeResolver,
   sharedDescriptorCoordinator?: SdkToolDescriptorCoordinator,
-  projectAvailability?: TaskProjectAvailabilityProjection
+  projectAvailability?: TaskProjectAvailabilityProjection,
+  sharedCardPerformance?: CardPerformanceTracker
 ): {
   applicationService: BridgeApplicationService;
   reconcileTaskDescriptor(catalog?: CodexModelCatalogSnapshot): SdkToolDescriptorProjectionStatus;
@@ -4496,7 +4497,7 @@ export function registerBridgeTools(
   registerActivityCardResource(server);
   registerDashboardCardResource(server);
   const descriptorCoordinator = sharedDescriptorCoordinator || new SdkToolDescriptorCoordinator();
-  const cardPerformance = new CardPerformanceTracker();
+  const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const ownsDescriptorCoordinator = sharedDescriptorCoordinator === undefined;
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
   const taskDescriptorSnapshot = (
