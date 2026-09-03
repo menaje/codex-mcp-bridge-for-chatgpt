@@ -72,9 +72,7 @@ struct DashboardPopoverView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: model.health.symbol)
-                .font(.title2)
-                .foregroundStyle(healthColor)
+            BridgeBrandStatusIcon(health: model.health, size: 32)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Codex MCP Bridge for ChatGPT")
@@ -103,6 +101,8 @@ struct DashboardPopoverView: View {
 
     private var loadingView: some View {
         VStack(spacing: 12) {
+            BridgeBrandMark()
+                .frame(width: 42, height: 42)
             ProgressView()
             Text("현황을 불러오는 중…")
                 .foregroundStyle(.secondary)
@@ -124,10 +124,7 @@ struct DashboardPopoverView: View {
 
     private var runtimeUnavailableView: some View {
         VStack(spacing: 14) {
-            Image(systemName: "bolt.slash.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
+            BridgeBrandStatusIcon(health: .unavailable, size: 48)
             Text("브리지 서버에 연결할 수 없습니다")
                 .font(.headline)
             Text(model.helperStatus?.lastError ?? model.runtimeErrorMessage ?? model.statusErrorMessage ?? "서버가 중지되었거나 시작 중입니다.")
@@ -293,14 +290,6 @@ struct DashboardPopoverView: View {
                 .help("메뉴바 앱만 종료합니다. helper와 서버는 계속 실행됩니다.")
         }
         .padding(12)
-    }
-
-    private var healthColor: Color {
-        switch model.health {
-        case .healthy: return .green
-        case .attention: return .orange
-        case .unavailable: return .red
-        }
     }
 
     private var activeJobCount: Int {
@@ -738,8 +727,16 @@ struct ConnectionRepairView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Label("최초 연결 또는 복구", systemImage: "wrench.and.screwdriver")
-                    .font(.title3.bold())
+                HStack(spacing: 10) {
+                    BridgeBrandStatusIcon(health: model.health, size: 34)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Codex MCP Bridge for ChatGPT")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("최초 연결 또는 복구")
+                            .font(.title3.bold())
+                    }
+                }
                 Text("기존 private .env가 유효하면 그대로 사용합니다. Keychain은 사용하지 않습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)

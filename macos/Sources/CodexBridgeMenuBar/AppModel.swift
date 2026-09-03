@@ -8,14 +8,6 @@ enum MenuBarHealth: Equatable {
     case attention
     case unavailable
 
-    var symbol: String {
-        switch self {
-        case .healthy: return "point.3.connected.trianglepath.dotted"
-        case .attention: return "exclamationmark.triangle.fill"
-        case .unavailable: return "bolt.slash.fill"
-        }
-    }
-
     var accessibilityLabel: String {
         switch self {
         case .healthy: return "Codex 브리지 정상"

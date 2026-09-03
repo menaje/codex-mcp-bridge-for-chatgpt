@@ -13,6 +13,17 @@ struct NativeSettingsView: View {
                 ConnectionRepairView()
             } else if let snapshot = model.settings, let draft = syncState.draft {
                 VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        BridgeBrandStatusIcon(health: model.health, size: 32)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Codex MCP Bridge for ChatGPT")
+                                .font(.headline)
+                            Text("전역 설정")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
                     if syncState.externalChangeDetected {
                         HStack(spacing: 10) {
                             Label(
@@ -47,9 +58,7 @@ struct NativeSettingsView: View {
                 .padding(18)
             } else if model.helperStatus?.bridge.connected != true {
                 VStack(spacing: 12) {
-                    Image(systemName: "bolt.slash.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.orange)
+                    BridgeBrandStatusIcon(health: .unavailable, size: 52)
                     Text("설정을 불러오려면 브리지 서버를 시작해 주세요.")
                     Button("서버 시작") { Task { await model.startRuntime() } }
                         .buttonStyle(.borderedProminent)
@@ -60,9 +69,7 @@ struct NativeSettingsView: View {
             } else {
                 VStack(spacing: 12) {
                     if let error = model.settingsLoadErrorMessage {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.largeTitle)
-                            .foregroundStyle(.orange)
+                        BridgeBrandStatusIcon(health: .attention, size: 52)
                         Text("설정을 불러오지 못했습니다.")
                             .font(.headline)
                         Text(error)
@@ -71,6 +78,8 @@ struct NativeSettingsView: View {
                             .textSelection(.enabled)
                         Button("다시 시도") { Task { await model.refreshSettings() } }
                     } else {
+                        BridgeBrandMark()
+                            .frame(width: 44, height: 44)
                         ProgressView("설정을 불러오는 중…")
                     }
                 }

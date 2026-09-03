@@ -3,6 +3,30 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class AppPresentationTests: XCTestCase {
+    func testBrandMarkScalesInsideItsSquare() {
+        let bounds = CGRect(x: 0, y: 0, width: 18, height: 18)
+        let mark = BridgeBrandMarkShape().path(in: bounds).boundingRect
+
+        XCTAssertGreaterThan(mark.width, 10)
+        XCTAssertGreaterThan(mark.height, 10)
+        XCTAssertTrue(bounds.contains(mark))
+    }
+
+    @MainActor
+    func testMenuBarBrandImagesAreDistinctTemplates() {
+        let healthy = BridgeMenuBarIcon.templateImage(for: .healthy)
+        let attention = BridgeMenuBarIcon.templateImage(for: .attention)
+        let unavailable = BridgeMenuBarIcon.templateImage(for: .unavailable)
+
+        for image in [healthy, attention, unavailable] {
+            XCTAssertTrue(image.isTemplate)
+            XCTAssertEqual(image.size, CGSize(width: 18, height: 18))
+            XCTAssertNotNil(image.tiffRepresentation)
+        }
+        XCTAssertNotEqual(healthy.tiffRepresentation, attention.tiffRepresentation)
+        XCTAssertNotEqual(attention.tiffRepresentation, unavailable.tiffRepresentation)
+    }
+
     @MainActor
     func testLoginItemRegistrationUsesSystemStateWithoutSharedSettings() {
         let controller = TestLoginItemController(status: .notRegistered)

@@ -119,7 +119,7 @@ struct CodexBridgeMenuBarApp: App {
             DashboardPopoverView()
                 .environmentObject(model)
         } label: {
-            Image(systemName: model.health.symbol)
+            BridgeMenuBarIcon(health: model.health)
                 .accessibilityLabel(model.health.accessibilityLabel)
         }
         .menuBarExtraStyle(.window)
