@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "메뉴 막대와 현황 카드의 유휴 섹션에서 중복된 Agent 유휴 상태 표시를 제거합니다.",
+  "breaking": false,
+  "migration": null
+}

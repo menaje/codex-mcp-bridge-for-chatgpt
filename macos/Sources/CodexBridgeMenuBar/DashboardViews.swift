@@ -654,7 +654,7 @@ private struct DashboardActivityGroupView: View {
                 ForEach(group.rows) { row in
                     DashboardRowView(
                         row: row,
-                        presentation: .nestedAgent,
+                        presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
                         suppressHistoricalExecution: commonHistoricalExecution != nil,
                         suppressNextExecution: commonNextExecution != nil
                     )
@@ -693,7 +693,17 @@ private struct DashboardActivityGroupView: View {
 
 private enum DashboardRowPresentation {
     case nestedAgent
+    case nestedIdleAgent
     case idle
+
+    var suppressesRedundantIdleStatus: Bool {
+        switch self {
+        case .nestedAgent:
+            return false
+        case .nestedIdleAgent, .idle:
+            return true
+        }
+    }
 }
 
 private struct CancellationDisclosure: View {
@@ -737,11 +747,13 @@ private struct DashboardRowView: View {
                     }
                 }
                 Spacer()
-                Text(StatusPresentation.label(row.status))
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
+                if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
+                    Text(StatusPresentation.label(row.status))
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.quaternary, in: Capsule())
+                }
             }
             if let execution = historicalExecution {
                 Text("\(row.bucket == "idle" ? "최근 실행" : "실행"): \(executionText(execution))")

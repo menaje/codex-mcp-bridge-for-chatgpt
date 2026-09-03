@@ -536,7 +536,14 @@ describe("human-facing UI localization", () => {
     );
     expect(DASHBOARD_CARD_HTML).toContain("identity.appendChild(title)");
     expect(DASHBOARD_CARD_HTML).not.toContain("aggregateDashboardActivityStatus");
-    expect(DASHBOARD_CARD_HTML).toContain("head.append(title,state)");
+    expect(DASHBOARD_CARD_HTML).toContain("head.appendChild(title)");
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'if(!suppressIdleStatus||row.status!=="idle")head.appendChild(state)'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "Boolean(commonNextExecution),recentActivity"
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("head.append(title,state)");
     expect(DASHBOARD_CARD_HTML).toContain(
       "shouldShowDashboardNextExecution(row.execution,turn&&turn.execution)"
     );
@@ -722,6 +729,12 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('node("div","activity-agent-list")');
     expect(ACTIVITY_CARD_HTML).toContain(
       "appendExecutions(content,[{execution:commonExecution}],false)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "agentSummary=[agent.role,agentWorkTime(agent)]"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      'agentSummary=[agent.role,codeLabel("agent","idle"),agentWorkTime(agent)]'
     );
     expect(ACTIVITY_CARD_HTML).toContain(
       'if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"]'
