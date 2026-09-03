@@ -13,6 +13,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const artifactDir = path.join(repoRoot, "output", "playwright", "activity-card-regression");
 const session = `activity-card-regression-${process.pid}`;
 const browserTitle = "Browser hydration activity";
+const recentTitle = "Recent browser activity";
+const idleAgentName = "Idle browser Agent";
 const execFileAsync = promisify(execFile);
 
 mkdirSync(artifactDir, { recursive: true });
@@ -39,13 +41,57 @@ const view = {
       }
     ],
     activeCount: 1,
-    activityTotal: 1,
+    activityTotal: 2,
     activeHasMore: false,
     showWorkspaceLabels: false,
+    history: {
+      rows: [
+        {
+          activityId: "recent-browser-regression",
+          title: recentTitle,
+          lifecycle: "completed",
+          kind: "implementation",
+          displayState: "completed",
+          elapsedMs: 2_000,
+          counts: { total: 1, failed: 0 },
+          agents: [
+            {
+              agentId: "recent-browser-agent",
+              agentName: "Recent browser Agent",
+              role: null,
+              displayState: "completed",
+              durationMs: 2_000,
+              backgroundProcessCount: 0
+            }
+          ],
+          cancellations: [],
+          canRequestVerification: false,
+          canRetry: false,
+          updatedAt: "2026-09-02T23:59:00.000Z"
+        }
+      ],
+      pagination: { limit: 3, returned: 1, total: 1, hasMore: false }
+    },
+    idleAgents: {
+      agentCount: 1,
+      rows: [
+        {
+          agentId: "idle-browser-agent",
+          agentName: idleAgentName,
+          role: null,
+          latestActivityId: null,
+          latestActivityTitle: null,
+          workspaceLabels: [],
+          updatedAt: "2026-09-02T23:58:00.000Z"
+        }
+      ],
+      hasMore: false,
+      pagination: { limit: 3, returned: 1, total: 1, hasMore: false }
+    },
     historySummary: {
-      completedActivities: 0,
+      completedActivities: 1,
       endedActivities: 0,
-      idleAgents: 0
+      idleAgents: 1
     }
   },
   watcherPolicy: {
@@ -226,6 +272,10 @@ type BrowserState = {
   heading: string;
   count: string;
   title: string;
+  recentTitle: string;
+  idleAgentName: string;
+  idleExpanded: string;
+  idlePanelHidden: boolean;
   message: string;
   messageIsError: boolean;
   refreshLabel: string;
@@ -242,6 +292,10 @@ async function browserState(framed = false): Promise<BrowserState> {
       heading:document.querySelector("#activity-heading").textContent,
       count:document.querySelector("#current-count").textContent,
       title:document.querySelector(".row .name")&&document.querySelector(".row .name").textContent||"",
+      recentTitle:document.querySelector(".groups .group-list .row .name")&&document.querySelector(".groups .group-list .row .name").textContent||"",
+      idleAgentName:document.querySelector("#group-idle .activity-agent .name")&&document.querySelector("#group-idle .activity-agent .name").textContent||"",
+      idleExpanded:document.querySelector('[aria-controls="group-idle"]')&&document.querySelector('[aria-controls="group-idle"]').getAttribute("aria-expanded")||"",
+      idlePanelHidden:Boolean(document.querySelector("#group-idle")&&document.querySelector("#group-idle").hidden),
       message:document.querySelector("#message").textContent,
       messageIsError:document.querySelector("#message").classList.contains("error"),
       refreshLabel:document.querySelector("#refresh").getAttribute("aria-label")||"",
@@ -262,6 +316,10 @@ function assertRendered(name: string, state: BrowserState): void {
   assert(state.heading === "현재 활동", `${name}: localized heading was not rendered`);
   assert(state.count === "· 1", `${name}: active count was not rendered`);
   assert(state.title === browserTitle, `${name}: Activity row was not rendered`);
+  assert(state.recentTitle === recentTitle, `${name}: recent Activity was not visible by default`);
+  assert(state.idleAgentName === idleAgentName, `${name}: idle Agent detail was not rendered`);
+  assert(state.idleExpanded === "false", `${name}: idle section did not start collapsed`);
+  assert(state.idlePanelHidden, `${name}: idle section content was visible by default`);
   assert(!state.messageIsError, `${name}: card rendered an error state`);
   assert(state.errors.length === 0, `${name}: browser errors: ${state.errors.join("; ")}`);
 }

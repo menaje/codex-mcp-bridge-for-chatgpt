@@ -12713,8 +12713,15 @@ describe("bridge tools", () => {
         mode: "compact",
         active: [],
         historySummary: { completedActivities: 1, endedActivities: 0, idleAgents: 1 },
-        history: { rows: [] },
-        idleAgents: { rows: [] }
+        history: {
+          rows: [expect.objectContaining({ activityId, displayState: "completed" })],
+          pagination: { limit: 3, returned: 1, hasMore: false }
+        },
+        idleAgents: {
+          agentCount: 1,
+          rows: [],
+          pagination: { limit: 3, returned: 0, hasMore: false }
+        }
       });
 
     const agentId = startedTask.agentId as string;
@@ -12756,8 +12763,15 @@ describe("bridge tools", () => {
       activeCount: 1,
       active: [expect.objectContaining({ activityId: resumedActivityId })],
       historySummary: { completedActivities: 1, endedActivities: 1, idleAgents: 1 },
-      history: { rows: [] },
-      idleAgents: { rows: [] },
+      history: {
+        rows: expect.arrayContaining([
+          expect.objectContaining({ activityId, displayState: "completed" }),
+          expect.objectContaining({ activityId: ended.activityId, displayState: "ended" })
+        ])
+      },
+      idleAgents: {
+        rows: [expect.objectContaining({ agentName: "Unused idle Agent" })]
+      },
       completed: { rows: [] },
       idle: { rows: [] },
       ended: { rows: [] }
@@ -12796,6 +12810,50 @@ describe("bridge tools", () => {
         endedActivities: 2,
         idleAgents: 2
       });
+    const boundedFeed = (endedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed;
+    expect(boundedFeed.history).toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({ activityId, displayState: "completed" }),
+        expect.objectContaining({ activityId: ended.activityId, displayState: "ended" }),
+        expect.objectContaining({ activityId: endedWithAgent.activityId, displayState: "ended" })
+      ]),
+      pagination: { limit: 3, returned: 3, hasMore: false }
+    });
+    expect(boundedFeed.idleAgents).toMatchObject({
+      agentCount: 2,
+      rows: [expect.objectContaining({ agentName: "Unused idle Agent" })],
+      pagination: { limit: 3, returned: 1, hasMore: false }
+    });
+    expect(JSON.stringify(boundedFeed.idleAgents.rows)).not.toContain("Ended idle Agent");
+
+    for (const title of ["Extra ended history 1", "Extra ended history 2"]) {
+      const extra = jobs.createActivity({ scopeId: SCOPE_A, title });
+      jobs.cancelActivity(extra.activityId, "Compact history limit regression");
+    }
+    const cappedAutomatic = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card: automaticCard },
+      _meta: { "openai/widgetSessionId": "compact-history-summary" }
+    });
+    const cappedFeed = (cappedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed;
+    expect(cappedFeed.history.rows).toHaveLength(3);
+    expect(cappedFeed.history.pagination).toMatchObject({
+      limit: 3,
+      returned: 3,
+      hasMore: true
+    });
+    const focusedCompact = privateActivityView(await presentCompactActivity(
+      client,
+      activityId,
+      "32323232-3232-4232-8232-323232323232"
+    ));
+    expect(focusedCompact.feed.history.rows).toHaveLength(3);
+    expect(focusedCompact.feed.history.rows[0]).toMatchObject({
+      activityId,
+      displayState: "completed"
+    });
     await close();
   });
 

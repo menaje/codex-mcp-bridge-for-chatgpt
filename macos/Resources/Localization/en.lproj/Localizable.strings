@@ -2,6 +2,12 @@
 "Codex 브리지 확인 필요" = "Codex bridge needs attention";
 "Codex 브리지 연결 불가" = "Codex bridge is unavailable";
 
+"최근 활동" = "Recent Activity";
+"유휴 에이전트" = "Idle Agents";
+"유휴 에이전트가 없습니다." = "There are no idle Agents.";
+"펼침" = "Expanded";
+"접힘" = "Collapsed";
+
 "전역 설정" = "Global Settings";
 "다른 화면에서 설정이 변경되어 자동 저장을 멈췄습니다. 편집 내용을 유지하려면 확인한 뒤 최신 값을 다시 불러와 주세요." = "Settings changed elsewhere, so automatic saving paused. Review your edits, then reload the latest values to continue.";
 "최신 값 불러오기…" = "Reload Latest Values…";

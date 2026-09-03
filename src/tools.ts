@@ -12581,6 +12581,7 @@ async function buildActivityView(
   focusSelectedActivityPage = true,
   inspectRuntime = false
 ) {
+  const compactHistoryLimit = 3;
   const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
   const enrichmentStartedAt = Date.now();
   const [legacy, usage] = await Promise.all([
@@ -13003,15 +13004,28 @@ async function buildActivityView(
   const visibleFullActivityRows = feedMode === "full"
     ? fullActivityRows.slice(pageOffset, pageOffset + limit)
     : [];
+  const compactHistoryRows = (() => {
+    const recent = historyRows.slice(0, compactHistoryLimit);
+    if (!selectedActivityId) return recent;
+    const selected = historyRows.find((row) => row.activityId === selectedActivityId);
+    if (!selected || recent.some((row) => row.activityId === selected.activityId)) return recent;
+    return [selected, ...recent].slice(0, compactHistoryLimit);
+  })();
   const visibleActiveRows = feedMode === "full"
     ? visibleFullActivityRows.filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
     : activeRows.slice(0, limit);
   const visibleHistoryRows = feedMode === "full"
     ? visibleFullActivityRows.filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
-    : [];
+    : compactHistoryRows;
+  const compactVisibleActivityIds = new Set(
+    compactHistoryRows.map((row) => row.activityId)
+  );
+  const compactIdleAgentRows = idleAgentRows.filter(
+    (row) => !compactVisibleActivityIds.has(String(row.latestActivityId || ""))
+  );
   const visibleIdleAgents = feedMode === "full"
     ? idleAgentRows.slice(pageOffset, pageOffset + limit)
-    : [];
+    : compactIdleAgentRows.slice(0, compactHistoryLimit);
   const nextPageOffset = feedMode === "full" && pageOffset + limit < maximumPageRowCount
     ? pageOffset + limit
     : null;
@@ -13082,11 +13096,13 @@ async function buildActivityView(
           rows: visibleHistoryRows,
           pagination: {
             offset: feedMode === "full" ? pageOffset : 0,
-            limit,
-            returned: visibleFullActivityRows.length,
-            total: fullActivityRows.length,
+            limit: feedMode === "full" ? limit : compactHistoryLimit,
+            returned: feedMode === "full" ? visibleFullActivityRows.length : visibleHistoryRows.length,
+            total: feedMode === "full" ? fullActivityRows.length : historyRows.length,
             hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: nextHistoryCursor !== null,
+            hasMore: feedMode === "full"
+              ? nextHistoryCursor !== null
+              : historyRows.length > visibleHistoryRows.length,
             currentCursor: currentHistoryCursor,
             previousCursor: previousHistoryCursor,
             nextCursor: nextHistoryCursor,
@@ -13096,14 +13112,18 @@ async function buildActivityView(
         idleAgents: {
           agentCount: idleAgentRows.length,
           rows: visibleIdleAgents,
-          hasMore: feedMode === "full" && pageOffset + visibleIdleAgents.length < idleAgentRows.length,
+          hasMore: feedMode === "full"
+            ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
+            : compactIdleAgentRows.length > visibleIdleAgents.length,
           pagination: {
             offset: feedMode === "full" ? pageOffset : 0,
-            limit,
+            limit: feedMode === "full" ? limit : compactHistoryLimit,
             returned: visibleIdleAgents.length,
-            total: idleAgentRows.length,
+            total: feedMode === "full" ? idleAgentRows.length : compactIdleAgentRows.length,
             hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: feedMode === "full" && pageOffset + visibleIdleAgents.length < idleAgentRows.length
+            hasMore: feedMode === "full"
+              ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
+              : compactIdleAgentRows.length > visibleIdleAgents.length
           }
         },
         completed: {

@@ -7,6 +7,7 @@ struct DashboardPopoverView: View {
     @State private var showForceStopConfirmation = false
     @State private var showForceRestartConfirmation = false
     @State private var showRepairConfirmation = false
+    @State private var idleSectionExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -214,7 +215,7 @@ struct DashboardPopoverView: View {
                     .foregroundStyle(.orange)
                 }
                 DashboardSection(
-                    title: "최근 종료",
+                    title: "최근 활동",
                     emptyText: "보존된 최근 실행이 없습니다.",
                     rows: dashboard.terminalRows,
                     total: dashboard.pagination.terminal.total,
@@ -223,13 +224,14 @@ struct DashboardPopoverView: View {
                     loadMore: { Task { await model.loadMoreRecent() } }
                 )
                 DashboardSection(
-                    title: "유휴 Agent",
-                    emptyText: "유휴 Agent가 없습니다.",
+                    title: "유휴 에이전트",
+                    emptyText: "유휴 에이전트가 없습니다.",
                     rows: dashboard.idleRows,
                     total: dashboard.pagination.idle.total,
                     groupsByActivity: true,
                     marksRecentActivity: true,
                     hasMore: dashboard.pagination.idle.hasNext,
+                    disclosureExpanded: $idleSectionExpanded,
                     loadMore: { Task { await model.loadMoreIdle() } }
                 )
             }
@@ -422,48 +424,85 @@ private struct DashboardSection: View {
     var groupsByActivity = false
     var marksRecentActivity = false
     var hasMore = false
+    var disclosureExpanded: Binding<Bool>? = nil
     var loadMore: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title).font(.headline)
-                if let total {
-                    Text("\(total)")
-                        .font(.caption.monospacedDigit())
+            sectionHeader
+            if isExpanded {
+                if rows.isEmpty {
+                    Text(emptyText)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-            }
-            if rows.isEmpty {
-                Text(emptyText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
-            } else {
-                if groupsByActivity {
-                    ForEach(activityGroups) { group in
-                        DashboardActivityGroupView(
-                            group: group,
-                            marksRecentActivity: marksRecentActivity
-                        )
-                    }
+                        .padding(.vertical, 4)
                 } else {
-                    ForEach(rows) { row in
-                        DashboardRowView(
-                            row: row,
-                            presentation: .idle,
-                            suppressHistoricalExecution: false,
-                            suppressNextExecution: false
-                        )
+                    if groupsByActivity {
+                        ForEach(activityGroups) { group in
+                            DashboardActivityGroupView(
+                                group: group,
+                                marksRecentActivity: marksRecentActivity
+                            )
+                        }
+                    } else {
+                        ForEach(rows) { row in
+                            DashboardRowView(
+                                row: row,
+                                presentation: .idle,
+                                suppressHistoricalExecution: false,
+                                suppressNextExecution: false
+                            )
+                        }
                     }
                 }
-            }
-            if hasMore {
-                Button("더 보기", action: { loadMore?() })
-                    .buttonStyle(.link)
-                    .disabled(model.isBusy)
+                if hasMore {
+                    Button("더 보기", action: { loadMore?() })
+                        .buttonStyle(.link)
+                        .disabled(model.isBusy)
+                }
             }
         }
+    }
+
+    @ViewBuilder
+    private var sectionHeader: some View {
+        if let disclosureExpanded {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    disclosureExpanded.wrappedValue.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(disclosureExpanded.wrappedValue ? 90 : 0))
+                        .accessibilityHidden(true)
+                    sectionTitle
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(disclosureExpanded.wrappedValue ? "펼침" : "접힘")
+        } else {
+            sectionTitle
+        }
+    }
+
+    private var sectionTitle: some View {
+        HStack(spacing: 6) {
+            Text(title).font(.headline)
+            if let total {
+                Text("\(total)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var isExpanded: Bool {
+        disclosureExpanded?.wrappedValue ?? true
     }
 
     private var activityGroups: [DashboardActivityGroup] {
@@ -595,6 +634,7 @@ private struct DashboardRowView: View {
     let presentation: DashboardRowPresentation
     let suppressHistoricalExecution: Bool
     let suppressNextExecution: Bool
+    @State private var historyExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -658,10 +698,30 @@ private struct DashboardRowView: View {
                 CancellationDisclosure(cancellation: cancellation)
             }
             if let history = row.history, !history.isEmpty {
-                DisclosureGroup("최근 실행 기록 \(row.historyCount ?? history.count)") {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        historyExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(historyExpanded ? 90 : 0))
+                            .accessibilityHidden(true)
+                        Text("최근 실행 기록 \(row.historyCount ?? history.count)")
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .accessibilityValue(historyExpanded ? "펼침" : "접힘")
+
+                if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(history.enumerated()), id: \.offset) { _, turn in
-                            HStack(alignment: .top) {
+                            HStack(alignment: .top, spacing: 7) {
                                 Image(systemName: StatusPresentation.symbol(turn.status))
                                     .foregroundStyle(StatusPresentation.color(turn.status))
                                     .accessibilityHidden(true)
@@ -682,13 +742,16 @@ private struct DashboardRowView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                 }
+                                Spacer(minLength: 0)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .font(.caption)
                     .padding(.top, 3)
+                    .padding(.leading, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .font(.caption)
             }
         }
         .padding(10)

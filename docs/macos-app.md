@@ -45,7 +45,10 @@ selection shared by every nested Agent appear once on the Activity. Agent state,
 background processes, differing execution settings, and work time remain on the
 Agent. Active work shows only accumulated work time; past work adds relative age
 and omits absolute start, update, and end timestamps. The native UI never prints
-the private compatibility session alias.
+the private compatibility session alias. Active and recent sections start open;
+idle starts collapsed. A native Agent's retained-history label and chevron share
+one full-width click target, and expanded history remains left-aligned with the
+rest of the row.
 
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content plus a small Server tab for the
