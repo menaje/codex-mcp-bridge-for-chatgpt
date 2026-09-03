@@ -131,6 +131,48 @@ const publicTask = {
   requestId: "request-browser-regression"
 };
 
+const publicActivity = {
+  kind: "activity",
+  mode: "full-history",
+  scopeVersion: 1,
+  activityId: "activity-browser-regression",
+  activityVersion: 1,
+  counts: { activities: 2, agents: 2, active: 1, needsAttention: 0 }
+};
+
+const restoredView = {
+  ...view,
+  feed: {
+    ...view.feed,
+    mode: "full",
+    history: {
+      ...view.feed.history,
+      pagination: {
+        ...view.feed.history.pagination,
+        offset: 0,
+        hasPrevious: false,
+        currentCursor: null,
+        previousCursor: null,
+        nextCursor: null,
+        reset: false
+      }
+    }
+  },
+  watcherPolicy: {
+    presentationKind: "restored-explicit",
+    mode: "one-shot",
+    live: false,
+    stopped: false,
+    ownsCompletionHandoff: false
+  },
+  mountedPresentation: {
+    kind: "restored-explicit",
+    mode: "full-history",
+    activityId: "activity-browser-regression",
+    activityVersion: 1
+  }
+};
+
 const toolResult = {
   structuredContent: publicTask,
   content: [{ type: "text", text: JSON.stringify(publicTask) }],
@@ -140,6 +182,13 @@ const toolResult = {
 const nestedMcpResult = { mcp_tool_result: toolResult };
 const nestedCallResult = {
   call_tool_result: JSON.stringify({ result: toolResult })
+};
+const restoredToolResult = {
+  structuredContent: restoredView,
+  content: [{ type: "text", text: JSON.stringify(restoredView) }]
+};
+const restoredNestedCallResult = {
+  call_tool_result: JSON.stringify({ result: restoredToolResult })
 };
 
 function errorCapturePrelude(): string {
@@ -228,6 +277,11 @@ const cases = [
   { name: "nested-mcp-result", html: fixtureHtml(compatibilityPrelude(nestedMcpResult)), framed: false },
   { name: "nested-call-json-result", html: fixtureHtml(compatibilityPrelude(nestedCallResult)), framed: false },
   { name: "cold-compatibility-rehydrate", html: fixtureHtml(compatibilityPrelude({}, publicTask)), framed: false },
+  {
+    name: "cold-full-history-rehydrate",
+    html: fixtureHtml(compatibilityPrelude({}, publicActivity, restoredNestedCallResult)),
+    framed: false
+  },
   { name: "standard-tool-result", html: standardHostHtml(), framed: true },
   { name: "set-globals", html: fixtureHtml(setGlobalsPrelude()), framed: false }
 ] as const;
@@ -324,6 +378,19 @@ function assertRendered(name: string, state: BrowserState): void {
   assert(state.errors.length === 0, `${name}: browser errors: ${state.errors.join("; ")}`);
 }
 
+function assertRestoredFullHistory(name: string, state: BrowserState): void {
+  assert(!state.bodyHidden, `${name}: body stayed hidden`);
+  assert(!state.cardHidden, `${name}: card stayed hidden`);
+  assert(state.heading === "전체 Activity", `${name}: full-history heading was not rendered`);
+  assert(state.count === "· 2", `${name}: full-history count was not rendered`);
+  assert(state.title === browserTitle, `${name}: Activity row was not rendered`);
+  assert(state.recentTitle === recentTitle, `${name}: Activity history was not rendered`);
+  assert(state.message.includes("복구된 전체 Activity"), `${name}: restored-view status was not rendered`);
+  assert(state.refreshLabel === "실시간 Activity 열기", `${name}: live promotion action was not exposed`);
+  assert(!state.messageIsError, `${name}: card rendered an error state`);
+  assert(state.errors.length === 0, `${name}: browser errors: ${state.errors.join("; ")}`);
+}
+
 const report: Record<string, BrowserState> = {};
 let opened = false;
 const server = createServer((request, response) => {
@@ -366,11 +433,22 @@ try {
     }
     await waitFor(`document.querySelector(".row .name")&&document.querySelector(".row .name").textContent===${JSON.stringify(browserTitle)}`, framed);
     const state = await browserState(framed);
-    assertRendered(name, state);
+    if (name === "cold-full-history-rehydrate") assertRestoredFullHistory(name, state);
+    else assertRendered(name, state);
     if (name === "cold-compatibility-rehydrate" || name === "standard-tool-result") {
       assert(
         state.toolCalls.some((call) => call.name === "codex_activity_rehydrate"),
         `${name}: public task correlation did not invoke safe rehydration`
+      );
+    }
+    if (name === "cold-full-history-rehydrate") {
+      const rehydrate = state.toolCalls.find((call) => call.name === "codex_activity_rehydrate");
+      assert(rehydrate, `${name}: public Activity summary did not invoke safe rehydration`);
+      assert(rehydrate.args.mode === "full-history", `${name}: full-history mode was not retained`);
+      assert(
+        rehydrate.args.activityId === "activity-browser-regression" &&
+          rehydrate.args.activityVersion === 1,
+        `${name}: Activity identity/version hints were not retained`
       );
     }
     report[name] = state;

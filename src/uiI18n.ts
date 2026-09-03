@@ -218,6 +218,9 @@ const ENGLISH = {
   "activity.manualRefresh": "Live updates paused; refresh manually.",
   "activity.superseded": "A newer Activity card now owns live updates. This snapshot will remain available.",
   "activity.historicalSnapshot": "Historical snapshot · Refresh to open live controls.",
+  "activity.restoredSnapshot": "Restored full Activity view · Refresh to open live updates.",
+  "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
+  "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
   "activity.openLive": "Open live Activity",
   "activity.partialChanges": "Force stop does not roll back changes already written to disk.",
   "activity.jobs": "jobs",
@@ -1422,34 +1425,58 @@ const ISSUE37_OVERRIDES: Record<
 > = {
   ko: {
     "activity.historicalSnapshot": "과거 스냅샷 · 새로 고침하면 실시간 제어로 엽니다.",
+    "activity.restoredSnapshot": "복구된 전체 Activity · 새로고침하면 실시간 보기로 엽니다.",
+    "activity.enrichmentFailed": "사용량 또는 런타임 정보를 갱신하지 못했습니다. Activity 기록은 계속 표시됩니다.",
+    "activity.refreshFailedRetained": "새로고침하지 못해 마지막으로 불러온 Activity를 표시합니다.",
     "activity.openLive": "실시간 Activity 열기"
   },
   ja: {
     "activity.historicalSnapshot": "履歴スナップショット · 更新するとライブ操作で開きます。",
+    "activity.restoredSnapshot": "復元した Activity 全体表示 · 更新するとライブ表示で開きます。",
+    "activity.enrichmentFailed": "使用量またはランタイムの詳細を更新できませんでした。Activity の記録は引き続き表示されます。",
+    "activity.refreshFailedRetained": "更新できなかったため、最後に読み込んだ Activity を表示しています。",
     "activity.openLive": "ライブ Activity を開く"
   },
   "zh-Hans": {
     "activity.historicalSnapshot": "历史快照 · 刷新以打开实时控制。",
+    "activity.restoredSnapshot": "已恢复完整 Activity 视图 · 刷新以打开实时更新。",
+    "activity.enrichmentFailed": "无法刷新用量或运行时详情。Activity 记录仍可查看。",
+    "activity.refreshFailedRetained": "刷新失败；正在显示上次加载的 Activity 数据。",
     "activity.openLive": "打开实时 Activity"
   },
   "zh-Hant": {
     "activity.historicalSnapshot": "歷史快照 · 重新整理以開啟即時控制。",
+    "activity.restoredSnapshot": "已復原完整 Activity 檢視 · 重新整理以開啟即時更新。",
+    "activity.enrichmentFailed": "無法更新用量或執行階段詳細資料。Activity 記錄仍可查看。",
+    "activity.refreshFailedRetained": "重新整理失敗；正在顯示上次載入的 Activity 資料。",
     "activity.openLive": "開啟即時 Activity"
   },
   es: {
     "activity.historicalSnapshot": "Instantánea histórica · Actualiza para abrir los controles en vivo.",
+    "activity.restoredSnapshot": "Vista completa de Activity restaurada · Actualiza para abrir las novedades en vivo.",
+    "activity.enrichmentFailed": "No se pudieron actualizar los datos de uso o ejecución. Los registros de Activity siguen disponibles.",
+    "activity.refreshFailedRetained": "La actualización falló; se muestran los últimos datos de Activity cargados.",
     "activity.openLive": "Abrir Activity en vivo"
   },
   fr: {
     "activity.historicalSnapshot": "Instantané historique · Actualisez pour ouvrir les contrôles en direct.",
+    "activity.restoredSnapshot": "Vue Activity complète restaurée · Actualisez pour ouvrir les mises à jour en direct.",
+    "activity.enrichmentFailed": "Les détails d’utilisation ou d’exécution n’ont pas pu être actualisés. Les enregistrements Activity restent disponibles.",
+    "activity.refreshFailedRetained": "L’actualisation a échoué ; les dernières données Activity chargées sont affichées.",
     "activity.openLive": "Ouvrir l’Activity en direct"
   },
   de: {
     "activity.historicalSnapshot": "Historischer Snapshot · Aktualisieren, um die Live-Steuerung zu öffnen.",
+    "activity.restoredSnapshot": "Wiederhergestellte vollständige Activity-Ansicht · Aktualisieren, um Live-Updates zu öffnen.",
+    "activity.enrichmentFailed": "Nutzungs- oder Laufzeitdetails konnten nicht aktualisiert werden. Die Activity-Einträge bleiben verfügbar.",
+    "activity.refreshFailedRetained": "Aktualisierung fehlgeschlagen; die zuletzt geladenen Activity-Daten werden angezeigt.",
     "activity.openLive": "Live-Activity öffnen"
   },
   pt: {
     "activity.historicalSnapshot": "Instantâneo histórico · Atualize para abrir os controles ao vivo.",
+    "activity.restoredSnapshot": "Visualização completa de Activity restaurada · Atualize para abrir as atualizações ao vivo.",
+    "activity.enrichmentFailed": "Não foi possível atualizar os detalhes de uso ou execução. Os registros de Activity continuam disponíveis.",
+    "activity.refreshFailedRetained": "A atualização falhou; os últimos dados de Activity carregados estão sendo exibidos.",
     "activity.openLive": "Abrir Activity ao vivo"
   }
 };

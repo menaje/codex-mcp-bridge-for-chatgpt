@@ -460,6 +460,7 @@ const codexTaskOutputSchema = z.strictObject({
 
 const activityModelOutputSchema = z.strictObject({
   kind: z.literal("activity"),
+  mode: z.enum(["compact-monitor", "full-history"]),
   scopeVersion: z.number().int().min(0),
   activityId: z.string().optional(),
   activityVersion: z.number().int().min(1).optional(),
@@ -733,19 +734,21 @@ const activityViewOutputSchema = z.strictObject({
 const activityRehydrateOutputSchema = activityViewOutputSchema.superRefine((value, context) => {
   const presentation = value.mountedPresentation;
   const watcher = value.watcherPolicy;
-  if (
-    presentation.kind !== "historical" ||
-    typeof presentation.jobId !== "string" ||
-    typeof presentation.requestId !== "string"
-  ) {
+  const historical = presentation.kind === "historical" &&
+    typeof presentation.jobId === "string" &&
+    typeof presentation.requestId === "string";
+  const restored = presentation.kind === "restored-explicit" &&
+    presentation.mode === "full-history";
+  if (!historical && !restored) {
     context.addIssue({
       code: "custom",
       path: ["mountedPresentation"],
-      message: "Historical Activity rehydration requires exact Job/request correlation."
+      message:
+        "Activity rehydration requires exact historical Job/request correlation or a restored full-history presentation."
     });
   }
   if (
-    watcher.presentationKind !== "historical" ||
+    watcher.presentationKind !== presentation.kind ||
     watcher.mode !== "one-shot" ||
     watcher.live !== false ||
     watcher.stopped !== false ||
@@ -754,14 +757,14 @@ const activityRehydrateOutputSchema = activityViewOutputSchema.superRefine((valu
     context.addIssue({
       code: "custom",
       path: ["watcherPolicy"],
-      message: "Historical Activity rehydration must be one-shot and non-owning."
+      message: "Rehydrated Activity views must be one-shot and non-owning."
     });
   }
   if (value.pendingHandoffs.length !== 0) {
     context.addIssue({
       code: "custom",
       path: ["pendingHandoffs"],
-      message: "Historical Activity rehydration cannot expose completion handoffs."
+      message: "Activity rehydration cannot expose completion handoffs."
     });
   }
 });
@@ -780,6 +783,12 @@ const activityPrivatePresentationSchema = z.discriminatedUnion("kind", [
     kind: z.literal("historical"),
     jobId: privateActivityIdentitySchema,
     requestId: privateActivityIdentitySchema
+  }),
+  z.strictObject({
+    kind: z.literal("restored-explicit"),
+    mode: z.literal("full-history"),
+    activityId: privateActivityIdentitySchema.optional(),
+    activityVersion: z.number().int().min(1).optional()
   })
 ]);
 
@@ -833,14 +842,14 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
   }),
   view: activityViewOutputSchema
 }).superRefine((value, context) => {
-  if (
-    (value.source === "codex_activity_rehydrate") !==
-      (value.correlation.presentation.kind === "historical")
-  ) {
+  const rehydratedPresentation =
+    value.correlation.presentation.kind === "historical" ||
+    value.correlation.presentation.kind === "restored-explicit";
+  if ((value.source === "codex_activity_rehydrate") !== rehydratedPresentation) {
     context.addIssue({
       code: "custom",
       path: ["source"],
-      message: "Historical Activity presentation is exclusive to the rehydrate source."
+      message: "Rehydrated Activity presentations are exclusive to the rehydrate source."
     });
   }
   if (
@@ -850,7 +859,7 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
     context.addIssue({
       code: "custom",
       path: ["view"],
-      message: "Historical Activity view must remain one-shot, read-only, and non-owning."
+      message: "Rehydrated Activity view must remain one-shot, read-only, and non-owning."
     });
   }
   if (value.correlation.scopeVersion !== value.view.scopeVersion) {
@@ -898,6 +907,14 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
       (
         mountedPresentation.jobId !== value.correlation.presentation.jobId ||
         mountedPresentation.requestId !== value.correlation.presentation.requestId
+      )
+    ) ||
+    (
+      value.correlation.presentation.kind === "restored-explicit" &&
+      (
+        mountedPresentation.mode !== value.correlation.presentation.mode ||
+        mountedPresentation.activityId !== value.correlation.presentation.activityId ||
+        mountedPresentation.activityVersion !== value.correlation.presentation.activityVersion
       )
     )
   ) {
@@ -1864,7 +1881,13 @@ type ActivityCardPresentationContext =
 
 type ActivityViewPresentationContext =
   | ActivityCardPresentationContext
-  | { kind: "historical"; jobId: string; requestId: string };
+  | { kind: "historical"; jobId: string; requestId: string }
+  | {
+      kind: "restored-explicit";
+      mode: "full-history";
+      activityId?: string;
+      activityVersion?: number;
+    };
 
 const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -2479,11 +2502,23 @@ export class CodexJobRegistry {
     scopeId: string,
     presentation: ActivityViewPresentationContext
   ) {
-    if (presentation.kind === "historical") {
+    if (
+      presentation.kind === "historical" ||
+      presentation.kind === "restored-explicit"
+    ) {
       return {
         presentationKind: presentation.kind,
-        jobId: presentation.jobId,
-        requestId: presentation.requestId,
+        ...(presentation.kind === "historical"
+          ? {
+              jobId: presentation.jobId,
+              requestId: presentation.requestId
+            }
+          : {
+              ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
+              ...(presentation.activityVersion
+                ? { activityVersion: presentation.activityVersion }
+                : {})
+            }),
         mode: "one-shot" as const,
         live: false,
         stopped: false,
@@ -5457,22 +5492,74 @@ export function registerBridgeTools(
     }
   );
 
+  const activityRehydrateInputSchema = z.strictObject({
+    scopeId: scopeIdSchema().optional(),
+    widgetInstanceId: widgetInstanceIdSchema.optional(),
+    jobId: scopeIdSchema().optional().describe(
+      "Exact Job UUID retained in a historical codex_task result."
+    ),
+    requestId: scopeIdSchema().optional().describe(
+      "Exact logical-request UUID retained in that same historical result."
+    ),
+    mode: z.literal("full-history").optional().describe(
+      "Restore an explicit conversation Activity view when its private hydration metadata is unavailable."
+    ),
+    activityId: scopeIdSchema().optional().describe(
+      "Optional Activity identity retained in the public full-history result."
+    ),
+    activityVersion: z.number().int().min(1).optional().describe(
+      "Optional last-observed Activity version paired with activityId."
+    ),
+    limit: z.number().int().min(1).max(100).optional(),
+    cursor: z.string().trim().min(1).max(256).optional().describe(
+      "Opaque full-history page cursor returned by an earlier rehydrated view."
+    ),
+    enrich: z.boolean().optional().describe(
+      "Request bounded runtime and weekly-usage evidence for this one-shot rehydrated view."
+    )
+  }).superRefine((value, context) => {
+    const historical = value.jobId !== undefined || value.requestId !== undefined;
+    const fullHistory = value.mode === "full-history";
+    if (historical === fullHistory) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Choose exactly one Activity rehydration correlation: historical Job/request or full-history mode."
+      });
+    }
+    if (historical && (!value.jobId || !value.requestId)) {
+      context.addIssue({
+        code: "custom",
+        message: "Historical Activity rehydration requires both jobId and requestId."
+      });
+    }
+    if (!fullHistory && (value.activityId !== undefined || value.activityVersion !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Activity identity hints are valid only for full-history rehydration."
+      });
+    }
+    if (!fullHistory && value.cursor !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Activity history pagination is valid only for full-history rehydration."
+      });
+    }
+    if (value.activityVersion !== undefined && !value.activityId) {
+      context.addIssue({
+        code: "custom",
+        message: "activityVersion requires activityId."
+      });
+    }
+  });
+
   server.registerTool(
     "codex_activity_rehydrate",
     {
-      title: "Rehydrate Historical Codex Activity Card",
+      title: "Rehydrate Codex Activity Card",
       description:
-        "App-only one-shot reconstruction for a cold-remounted historical codex_task shell whose private bootstrap metadata is unavailable. Public Job/request identifiers are lookup hints only: the server derives the conversation scope, verifies the exact persisted logical call and current visibility policy, and returns a read-only non-owning snapshot. A current card may request bounded runtime and weekly-usage enrichment without acquiring ownership. This tool never creates a live watcher, completion handoff owner, automatic presentation reservation, or control lease.",
-      inputSchema: z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        jobId: scopeIdSchema().describe("Exact Job UUID retained in the historical codex_task result."),
-        requestId: scopeIdSchema().describe("Exact logical-request UUID retained in that same result."),
-        limit: z.number().int().min(1).max(100).optional(),
-        enrich: z.boolean().optional().describe(
-          "Request bounded runtime and weekly-usage evidence for this one-shot historical view."
-        )
-      }),
+        "App-only one-shot reconstruction when a cold-remounted Activity card no longer has its private hydration metadata. A historical codex_task shell supplies exact public Job/request lookup hints; an explicit full-history result supplies its public mode and optional Activity identity/version. The server derives conversation scope, validates every supplied hint, and returns a read-only non-owning snapshot. Optional bounded runtime and weekly-usage enrichment never acquires ownership. This tool never creates a live watcher, completion-handoff owner, automatic presentation reservation, or control lease.",
+      inputSchema: activityRehydrateInputSchema,
       outputSchema: activityRehydrateOutputSchema,
       annotations: {
         readOnlyHint: true,
@@ -5492,61 +5579,98 @@ export function registerBridgeTools(
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
         args.scopeId,
-        "Historical Codex Activity card"
+        "Rehydrated Codex Activity card"
       );
       if (!mountedWidgetInstanceId(args, _meta)) {
         throw new Error(
-          "CARD_REHYDRATE_WIDGET_REQUIRED: Historical Activity rehydration requires a mounted widget session."
+          "CARD_REHYDRATE_WIDGET_REQUIRED: Activity rehydration requires a mounted widget session."
         );
       }
-      const job = jobs.get(args.jobId);
-      if (
-        !job ||
-        job.scopeId !== scope.scopeId ||
-        job.requestId !== args.requestId ||
-        !job.activityPresentationId
-      ) {
-        throw new Error(
-          "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation."
+      let selected: BridgeActivity | undefined;
+      let presentation: ActivityViewPresentationContext;
+      let focusSelectedActivityPage = true;
+      if (args.mode === "full-history") {
+        const availableActivities = jobs.listActivities(
+          scope.scopeId,
+          Math.max(1, jobs.activityCount(scope.scopeId)),
+          0
         );
-      }
-      const visibility = userSettings.current.activityCardVisibility;
-      const eligible = visibility === "always" ||
-        (visibility === "background-only" && job.executionMode === "background");
-      if (!eligible) {
-        throw new Error(
-          "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job."
-        );
-      }
-      const selected = jobs.getActivity(job.activityId);
-      if (!selected || selected.scopeId !== scope.scopeId) {
-        throw new Error(
-          "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation."
-        );
-      }
-      const latestEligibleSibling = jobs
-        .listForScope(scope.scopeId, config.maxRetainedJobs, 0)
-        .filter((candidate) =>
-          candidate.activityPresentationId === job.activityPresentationId &&
-          (
-            visibility === "always" ||
-            (visibility === "background-only" && candidate.executionMode === "background")
+        selected = args.activityId
+          ? jobs.getActivity(args.activityId)
+          : availableActivities[0];
+        if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_UNAVAILABLE: The full-history Activity is unavailable in this conversation."
+          );
+        }
+        if (
+          selected &&
+          args.activityVersion !== undefined &&
+          selected.version < args.activityVersion
+        ) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_VERSION_INVALID: The supplied Activity version is newer than authoritative retained state."
+          );
+        }
+        presentation = {
+          kind: "restored-explicit",
+          mode: "full-history",
+          ...(args.activityId ? { activityId: args.activityId } : {}),
+          ...(args.activityVersion !== undefined
+            ? { activityVersion: args.activityVersion }
+            : {})
+        };
+        focusSelectedActivityPage = Boolean(args.activityId);
+      } else {
+        const job = jobs.get(args.jobId as string);
+        if (
+          !job ||
+          job.scopeId !== scope.scopeId ||
+          job.requestId !== args.requestId ||
+          !job.activityPresentationId
+        ) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation."
+          );
+        }
+        const visibility = userSettings.current.activityCardVisibility;
+        const eligible = visibility === "always" ||
+          (visibility === "background-only" && job.executionMode === "background");
+        if (!eligible) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job."
+          );
+        }
+        selected = jobs.getActivity(job.activityId);
+        if (!selected || selected.scopeId !== scope.scopeId) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation."
+          );
+        }
+        const latestEligibleSibling = jobs
+          .listForScope(scope.scopeId, config.maxRetainedJobs, 0)
+          .filter((candidate) =>
+            candidate.activityPresentationId === job.activityPresentationId &&
+            (
+              visibility === "always" ||
+              (visibility === "background-only" && candidate.executionMode === "background")
+            )
           )
-        )
-        .sort((left, right) =>
-          right.createdAt - left.createdAt ||
-          right.jobId.localeCompare(left.jobId)
-        )[0];
-      if (!latestEligibleSibling || latestEligibleSibling.jobId !== job.jobId) {
-        throw new Error(
-          "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
-        );
+          .sort((left, right) =>
+            right.createdAt - left.createdAt ||
+            right.jobId.localeCompare(left.jobId)
+          )[0];
+        if (!latestEligibleSibling || latestEligibleSibling.jobId !== job.jobId) {
+          throw new Error(
+            "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
+          );
+        }
+        presentation = {
+          kind: "historical",
+          jobId: job.jobId,
+          requestId: job.requestId
+        };
       }
-      const presentation: ActivityViewPresentationContext = {
-        kind: "historical",
-        jobId: job.jobId,
-        requestId: job.requestId
-      };
       const activityStartedAt = Date.now();
       const view = await buildActivityView(
         jobs,
@@ -5556,12 +5680,12 @@ export function registerBridgeTools(
         userSettings.current,
         scope.scopeId,
         args.limit || 30,
-        selected.activityId,
+        selected?.activityId,
         undefined,
         presentation,
         undefined,
-        undefined,
-        true,
+        args.cursor,
+        focusSelectedActivityPage,
         args.enrich === true
       );
       recordActivityPerformance(view, activityStartedAt);
@@ -12483,6 +12607,14 @@ async function buildLegacyActivityView(
                 jobId: presentation.jobId,
                 requestId: presentation.requestId
               }
+            : presentation.kind === "restored-explicit"
+              ? {
+                  mode: presentation.mode,
+                  ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
+                  ...(presentation.activityVersion
+                    ? { activityVersion: presentation.activityVersion }
+                    : {})
+                }
           : {})
       },
       uiLocalePreference: preferences.uiLocalePreference,
@@ -12582,7 +12714,10 @@ async function buildActivityView(
   inspectRuntime = false
 ) {
   const compactHistoryLimit = 3;
-  const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
+  const feedMode =
+    presentation.kind === "explicit" || presentation.kind === "restored-explicit"
+      ? "full" as const
+      : "compact" as const;
   const enrichmentStartedAt = Date.now();
   const [legacy, usage] = await Promise.all([
     buildLegacyActivityView(
@@ -13190,6 +13325,17 @@ function activityViewResult(
           jobId: mountedPresentationRecord.jobId,
           requestId: mountedPresentationRecord.requestId
         }
+      : mountedPresentationRecord.kind === "restored-explicit"
+        ? {
+            kind: "restored-explicit" as const,
+            mode: "full-history" as const,
+            ...(typeof mountedPresentationRecord.activityId === "string"
+              ? { activityId: mountedPresentationRecord.activityId }
+              : {}),
+            ...(Number.isInteger(mountedPresentationRecord.activityVersion)
+              ? { activityVersion: mountedPresentationRecord.activityVersion as number }
+              : {})
+          }
       : { kind: "explicit" as const };
   const source = contract === activityModelResultContract
     ? "codex_activity" as const
@@ -13219,7 +13365,7 @@ function activityViewResult(
   };
   const appHydration = {
     [ACTIVITY_VIEW_METADATA_KEY]: privateView,
-    interactionControls: mountedPresentation.kind === "historical"
+    interactionControls: contract === activityRehydrateResultContract
       ? { agents: [] }
       : view.interactionControls,
     "openai/locale": effectiveLocale,
@@ -13236,6 +13382,7 @@ function activityViewResult(
       : undefined;
     const structured = activityModelOutputSchema.parse({
       kind: "activity",
+      mode: view.structured.feed.mode === "full" ? "full-history" : "compact-monitor",
       scopeVersion: view.structured.scopeVersion,
       ...(mountedActivity ? { activityId: mountedActivity.activityId } : {}),
       ...(mountedActivityRecord && Number.isInteger(mountedActivityRecord.version)

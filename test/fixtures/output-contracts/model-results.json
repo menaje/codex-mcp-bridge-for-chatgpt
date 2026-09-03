@@ -4,6 +4,7 @@
       "fixture": "empty-activity-view",
       "structuredContent": {
         "kind": "activity",
+        "mode": "compact-monitor",
         "scopeVersion": 0,
         "counts": { "activities": 0, "agents": 0, "active": 0, "needsAttention": 0 }
       }

@@ -82,11 +82,12 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   full working paths.
 - `codex_activity_rehydrate` is app-private and read-only. A cold-remounted
   retained pre-decoupling Task shell may submit its public `jobId + requestId`
-  only as lookup hints; the bridge
-  derives the host conversation scope and revalidates the retained logical call,
-  linked Activity, visibility setting, mounted widget, and elected sibling. The
-  result is one-shot historical state with no watcher, handoff ownership, card
-  lease, controls, automatic-presentation mutation, or newly persisted bootstrap.
+  only as lookup hints; a cold explicit Activity card may instead submit its
+  public `mode: full-history` plus optional Activity identity/version hints. The
+  bridge derives the host conversation scope and revalidates the retained
+  logical call or Activity before returning a one-shot historical or full view.
+  Neither path creates a watcher, handoff owner, card lease, controls,
+  automatic-presentation mutation, or newly persisted bootstrap.
 - `codex_cancel` requires a logical cancellation UUID and exact Job version,
   then records a durable scope-owned intent before exact App Server turn
   interruption or tracked worker-process termination. Exact retries replay the
@@ -328,13 +329,14 @@ the network as the current macOS user.
   instance leases use app-generated per-iframe UUIDs with
   `openai/widgetSessionId` as a compatibility fallback and are released by
   abort/unmount/TTL or process restart.
-- Historical cold rehydration is outside automatic presentation ownership. It
-  deterministically admits at most one retained Job for a shared response
-  presentation, honors the current `always | background-only | never` setting,
-  and fails closed for an unknown, expired, mismatched, cross-scope, or
-  non-selected Job. Only a user refresh can enter the existing explicit-card
-  lease path. Public identifiers and historical private metadata never authorize
-  a mutation by themselves.
+- Cold rehydration is outside automatic presentation ownership. Historical Task
+  recovery deterministically admits at most one retained Job for a shared
+  response presentation, honors the current `always | background-only | never`
+  setting, and fails closed for an unknown, expired, mismatched, cross-scope, or
+  non-selected Job. Full-history recovery validates any public Activity identity
+  and rejects a version hint newer than authoritative retained state. Only a user
+  refresh can enter the existing explicit-card lease path. Public identifiers
+  and private metadata never authorize a mutation by themselves.
 - HTTP/SSE detach, MCP `notifications/cancelled`, read-only status/snapshot wait
   abort, presentation supersession, and widget unmount are observation
   lifecycle only. They can release bounded waits/leases and append a bounded

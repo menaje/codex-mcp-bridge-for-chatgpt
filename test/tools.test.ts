@@ -1334,10 +1334,13 @@ describe("bridge tools", () => {
       }
     });
     expect(byName.get("codex_activity_rehydrate")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["jobId", "requestId"]),
       properties: {
         jobId: expect.any(Object),
         requestId: expect.any(Object),
+        mode: expect.any(Object),
+        activityId: expect.any(Object),
+        activityVersion: expect.any(Object),
+        cursor: { maxLength: 256, type: "string" },
         widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") }
       }
     });
@@ -1655,15 +1658,19 @@ describe("bridge tools", () => {
           },
           "name": "codex_activity_rehydrate",
           "properties": [
+            "activityId",
+            "activityVersion",
+            "cursor",
             "enrich",
             "jobId",
             "limit",
+            "mode",
             "requestId",
             "scopeId",
             "widgetInstanceId",
           ],
-          "propertyCount": 6,
-          "schemaBytes": 1059,
+          "propertyCount": 10,
+          "schemaBytes": 1692,
           "visibility": {
             "app": true,
             "model": false,
@@ -2503,8 +2510,10 @@ describe("bridge tools", () => {
             expect(html).toContain("function appendCancellations(parent,row)");
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain('callTool("codex_activity_rehydrate"');
-            expect(html).toContain("requestId:correlation.requestId,limit:viewLimit,enrich:true");
+            expect(html).toContain('correlation.kind==="historical"?{jobId:correlation.jobId,requestId:correlation.requestId,limit:viewLimit}');
+            expect(html).toContain('{mode:"full-history",limit:viewLimit');
             expect(html).toContain('mountedPresentation.kind==="historical"');
+            expect(html).toContain('mountedPresentation.kind==="restored-explicit"');
             expect(html).toContain('callTool("codex_background_process_terminate"');
             expect(html).toContain('callTool("codex_activity_job_cancel"');
             expect(html).not.toContain('callTool("codex_cancel"');
@@ -4203,6 +4212,7 @@ describe("bridge tools", () => {
     expect(privateView.view).toEqual(activityStructured);
     expect(publicActivity).toMatchObject({
       kind: "activity",
+      mode: "full-history",
       scopeVersion: privateView.view.scopeVersion,
       activityId: taskStructured.activityId,
       counts: expect.any(Object)
@@ -4438,6 +4448,163 @@ describe("bridge tools", () => {
     );
 
     upstream.resolveNext(fakeCodexResult("historical-thread"));
+    await waitForJobStatus(client, task.jobId, "completed");
+    await close();
+  });
+
+  it("rehydrates a cold full-history Activity result as a one-shot full view", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const taskResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "retain this Activity for a cold full-history remount",
+        executionMode: "background"
+      }
+    });
+    const task = parseToolJson(taskResult);
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: task.activityId
+      }
+    });
+    const publicActivity = (activityResult as {
+      structuredContent?: Record<string, any>;
+    }).structuredContent!;
+    expect(publicActivity).toMatchObject({
+      kind: "activity",
+      mode: "full-history",
+      activityId: task.activityId,
+      activityVersion: expect.any(Number),
+      scopeVersion: expect.any(Number),
+      counts: expect.any(Object)
+    });
+
+    const presentationState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+      activityCardReservations: Map<string, unknown>;
+      latestAutomaticPresentationByScope: Map<string, unknown>;
+    };
+    const before = {
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    };
+    const rehydrateRequest = {
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: publicActivity.activityId,
+        activityVersion: publicActivity.activityVersion,
+        limit: 30
+      },
+      _meta: { "openai/widgetSessionId": "restored-full-history-widget" }
+    } as const;
+    const restoredResult = await rawCallTool(rehydrateRequest);
+    expect(restoredResult.isError).not.toBe(true);
+    const restored = parseToolJson(restoredResult);
+    expect(restored).toMatchObject({
+      feed: { mode: "full" },
+      mountedActivity: {
+        activityId: task.activityId,
+        cardGeneration: expect.any(Number)
+      },
+      mountedPresentation: {
+        kind: "restored-explicit",
+        mode: "full-history",
+        activityId: task.activityId,
+        activityVersion: publicActivity.activityVersion
+      },
+      watcherPolicy: {
+        presentationKind: "restored-explicit",
+        mode: "one-shot",
+        live: false,
+        stopped: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
+    });
+    expect((restoredResult as { _meta?: Record<string, any> })._meta)
+      .toMatchObject({ interactionControls: { agents: [] } });
+    expect(validateActivityViewPrivateMetadata(
+      (restoredResult as { _meta?: Record<string, any> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    )).toMatchObject({
+      source: "codex_activity_rehydrate",
+      correlation: {
+        activity: { activityId: task.activityId },
+        presentation: {
+          kind: "restored-explicit",
+          mode: "full-history",
+          activityId: task.activityId,
+          activityVersion: publicActivity.activityVersion
+        }
+      }
+    });
+    expect({
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    }).toEqual(before);
+
+    const invalidScope = await rawCallTool({
+      ...rehydrateRequest,
+      arguments: { ...rehydrateRequest.arguments, scopeId: SCOPE_B }
+    });
+    expect(invalidScope.isError).toBe(true);
+    expect(JSON.stringify(invalidScope)).toContain("ACTIVITY_REHYDRATE_UNAVAILABLE");
+    const invalidVersion = await rawCallTool({
+      ...rehydrateRequest,
+      arguments: {
+        ...rehydrateRequest.arguments,
+        activityVersion: publicActivity.activityVersion + 1
+      }
+    });
+    expect(invalidVersion.isError).toBe(true);
+    expect(JSON.stringify(invalidVersion)).toContain("ACTIVITY_REHYDRATE_VERSION_INVALID");
+
+    const promoted = parseToolJson(await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: task.activityId,
+          generation: restored.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "restored-full-history-widget" }
+    }));
+    expect(promoted).toMatchObject({
+      feed: { mode: "full" },
+      mountedPresentation: { kind: "explicit" },
+      watcherPolicy: { live: true, ownsCompletionHandoff: false }
+    });
+    jobs.releaseActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      restored.mountedActivity.cardGeneration,
+      "restored-full-history-widget",
+      { kind: "explicit" }
+    );
+
+    upstream.resolveNext(fakeCodexResult("restored-full-history-thread"));
     await waitForJobStatus(client, task.jobId, "completed");
     await close();
   });
@@ -12908,6 +13075,37 @@ describe("bridge tools", () => {
     );
     expect(JSON.stringify(selectedPage)).not.toContain("Other conversation history");
     expect(JSON.stringify(selectedPage)).not.toContain("Other conversation Agent");
+
+    const openedPublic = (opened as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    const restoredFirstPage = parseToolJson(await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: oldest.activityId,
+        activityVersion: openedPublic.activityVersion,
+        limit: 30,
+        cursor: selectedPage.feed.history.pagination.previousCursor
+      },
+      _meta: { "openai/widgetSessionId": "restored-history-pagination" }
+    }));
+    expect(restoredFirstPage).toMatchObject({
+      feed: {
+        mode: "full",
+        history: {
+          pagination: {
+            offset: 0,
+            returned: 30,
+            total: 35,
+            hasPrevious: false,
+            hasMore: true
+          }
+        }
+      },
+      mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+      watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+    });
 
     const card = {
       activityId: selectedPage.mountedActivity.activityId,

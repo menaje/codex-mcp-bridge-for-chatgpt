@@ -764,15 +764,22 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain(
-      'async function reload(){const card=cardProof(),args={card,limit:viewLimit,enrich:false}'
+      'async function reload(){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false}'
     );
     expect(ACTIVITY_CARD_HTML).toContain(
       'afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false'
     );
     expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
     expect(ACTIVITY_CARD_HTML).toContain(
-      'callTool("codex_activity_rehydrate",{jobId:correlation.jobId'
+      'callTool("codex_activity_rehydrate",rehydrateArgs(correlation,false)'
     );
+    expect(ACTIVITY_CARD_HTML).toContain("function callUiToolWithFallback");
+    expect(ACTIVITY_CARD_HTML).toContain("function withUiToolCallTimeout");
+    expect(ACTIVITY_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
+    expect(ACTIVITY_CARD_HTML).toContain("WATCH_CALL_TIMEOUT_MS");
+    expect(ACTIVITY_CARD_HTML).toContain("function setBusy(value)");
+    expect(ACTIVITY_CARD_HTML).toContain("operationEpoch");
+    expect(ACTIVITY_CARD_HTML).toContain("watchEpoch");
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_interaction_respond"');
     expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
     expect(ACTIVITY_CARD_HTML).toContain("For every listed Job ID");
@@ -804,9 +811,11 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("rememberToolInput");
     expect(ACTIVITY_CARD_HTML).toContain("taskInputRequestId!==outputRequestId");
     expect(ACTIVITY_CARD_HTML).toContain('next.kind==="task"');
+    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="activity"');
+    expect(ACTIVITY_CARD_HTML).toContain('next.mode==="full-history"');
     expect(ACTIVITY_CARD_HTML).toContain('const key="historical\\u0000"+next.jobId');
     expect(ACTIVITY_CARD_HTML).toContain(
-      'historicalCorrelation={jobId:next.jobId,requestId:next.requestId}'
+      'rehydrationCorrelation={kind:"historical",jobId:next.jobId,requestId:next.requestId}'
     );
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeSession.requestId");
     expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
@@ -817,7 +826,7 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId+\"\\u0000\"");
     expect(ACTIVITY_CARD_HTML).toContain("if(taskBootstrapKey===key)return true");
     expect(ACTIVITY_CARD_HTML).toContain(
-      "setCardVisible(false);void reload().catch((error)=>showHydrationError(error,reload))"
+      "void hydrateWithRetry(reload,key)"
     );
     expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
     expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
@@ -827,16 +836,17 @@ describe("human-facing UI localization", () => {
       'next.watcherPolicy.stopReason==="presentation-duplicate"'
     );
     expect(ACTIVITY_CARD_HTML).toContain(
-      "snapshot=null;historicalCorrelation=null;historyCursor=null;setCardVisible(false);return"
+      "snapshot=null;rehydrationCorrelation=null;historyCursor=null;lastRenderedAt=0;invalidateWatch();setBusy(false);setCardVisible(false);return false"
     );
     expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
-    expect(ACTIVITY_CARD_HTML).toContain('readOnly=historicalView()');
-    expect(ACTIVITY_CARD_HTML).toContain('message.textContent=historicalView()?t["activity.historicalSnapshot"]');
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="restored-explicit"');
+    expect(ACTIVITY_CARD_HTML).toContain('readOnly=rehydratedView()');
+    expect(ACTIVITY_CARD_HTML).toContain('"activity.restoredSnapshot":"activity.historicalSnapshot"');
     expect(ACTIVITY_CARD_HTML).toContain(
       "const recovery=recoveryAction;if(recovery)"
     );
     expect(ACTIVITY_CARD_HTML).toContain(
-      'const action=historicalView()?promoteHistorical():reload()'
+      'action=rehydratedView()?(mountedActivity?promoteRehydrated():reloadRehydrated()):reload()'
     );
     expect(ACTIVITY_CARD_HTML).toContain('t["activity.loadFailed"]');
     expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(true)");
@@ -846,6 +856,8 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
     expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
     expect(UI_TRANSLATIONS.en["activity.historicalSnapshot"]).toContain("Historical snapshot");
+    expect(UI_TRANSLATIONS.ko["activity.restoredSnapshot"]).toContain("복구된 전체 Activity");
+    expect(UI_TRANSLATIONS.ko["activity.refreshFailedRetained"]).toContain("마지막으로 불러온 Activity");
     expect(UI_TRANSLATIONS.ko["activity.openLive"]).toBe("실시간 Activity 열기");
   });
 

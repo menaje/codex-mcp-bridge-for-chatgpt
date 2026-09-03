@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Activity 카드를 공통 표시 엔진으로 통합하고 전체 기록의 안전한 복구와 안정적인 새로고침을 추가합니다.",
+  "breaking": false,
+  "migration": null
+}
