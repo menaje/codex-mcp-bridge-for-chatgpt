@@ -32,7 +32,8 @@ describe("user settings and project registry", () => {
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
-      accessStrategy: "adaptive"
+      accessStrategy: "adaptive",
+      maxConcurrentJobs: 30
     });
     expect(store.current).not.toHaveProperty("defaultProjectId");
     expect(store.current).not.toHaveProperty("defaultCwd");
@@ -69,6 +70,14 @@ describe("user settings and project registry", () => {
     )).toThrow("PROJECT_REGISTRY_REVISION_CONFLICT");
     expect(store.current).toMatchObject({ settingsRevision: 1, registryRevision: 1 });
     state.close();
+  });
+
+  it("keeps a conservative default while allowing a higher operator ceiling", () => {
+    const store = new UserSettingsStore(configFor());
+
+    expect(store.current.maxConcurrentJobs).toBe(30);
+    expect(store.update({ maxConcurrentJobs: 64 }, 0).maxConcurrentJobs).toBe(64);
+    expect(() => store.update({ maxConcurrentJobs: 101 }, 1)).toThrow(/Concurrent job limit/);
   });
 
   it("increments each affected revision exactly once and leaves no-op/failure unchanged", () => {

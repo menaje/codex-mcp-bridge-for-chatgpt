@@ -48,9 +48,12 @@ and omits absolute start, update, and end timestamps. The native UI never prints
 the private compatibility session alias.
 
 The normal native UI is intentionally limited to that Dashboard and the
-Settings card's General and Projects content. Tunnel setup, Codex browser login,
-and profile repair appear in a separate first-run/connection-repair window
-instead of becoming additional everyday Settings tabs.
+Settings card's General and Projects content plus a small Server tab for the
+backend and maximum access. General changes save automatically; the Server tab
+keeps an explicit apply-and-restart confirmation because those values are stored
+in the private dotenv and require runtime replacement. Tunnel setup, Codex
+browser login, and profile repair appear in a separate first-run/connection-
+repair window instead of becoming additional everyday Settings tabs.
 
 The General tab also contains one native-only **Mac app** control for launching
 the menu-bar UI at user login. It uses `SMAppService.mainApp` and reads the
@@ -195,9 +198,14 @@ retained thread. Loading, mutation, Dashboard,
 authentication, runtime, and diagnostic failures keep independent UI state so
 one successful poll cannot hide another failed action.
 While the Settings window is open it refreshes the shared snapshot every ten
-seconds. A newer card-side revision replaces an untouched form, but never
-overwrites a locally edited draft. Conflicts retain the draft for review or
-copying and require an explicit, confirmed reload before another save.
+seconds. General edits are coalesced for 450 ms and serialized with exact
+settings-revision checks. A successful save rebases any newer local edits onto
+the returned revision. A newer card-side revision replaces an untouched form,
+but never overwrites a locally edited draft; a genuine conflict pauses autosave
+and requires an explicit, confirmed reload. Language selection updates the
+native locale immediately and the persisted preference continues to localize
+the retained cards. The user concurrency preference defaults to 30 and accepts
+direct numeric input up to the operator ceiling, which defaults to 100.
 
 Runtime/Node discovery starts off the main actor so a slow or broken executable
 cannot freeze the menu bar UI. Duplicate candidates are ignored and a candidate

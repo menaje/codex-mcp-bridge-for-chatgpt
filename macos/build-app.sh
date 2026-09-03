@@ -23,6 +23,7 @@ rm -rf "$app_iconset_directory"
 mkdir -p "$contents_directory/MacOS" "$runtime_directory/scripts" "$app_iconset_directory"
 cp "$swift_binary_directory/CodexBridgeMenuBar" "$contents_directory/MacOS/CodexBridgeMenuBar"
 cp "$script_directory/Info.plist" "$contents_directory/Info.plist"
+cp -R "$script_directory/Resources/Localization/en.lproj" "$resources_directory/"
 
 if [[ ! -f "$app_icon_source" ]]; then
   echo "Missing app icon source: $app_icon_source" >&2

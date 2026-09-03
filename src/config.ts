@@ -11,6 +11,7 @@ export type CodexBackendKind = "mcp-server" | "app-server";
 export type McpTransportMode = "stateless" | "stateful";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
+export const DEFAULT_USER_MAX_CONCURRENT_JOBS = 30;
 
 export type BridgeConfig = {
   host: string;
@@ -100,7 +101,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   );
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const enableRecoveryTools = parseBool(read("ENABLE_RECOVERY_TOOLS"));
-  const maxConcurrentJobs = parsePositiveInt(read("MAX_CONCURRENT_JOBS") || "30");
+  const maxConcurrentJobs = parsePositiveInt(
+    read("MAX_CONCURRENT_JOBS") || String(HARD_MAX_CONCURRENT_JOBS)
+  );
   const upstreamPoolSize = parsePositiveInt(read("UPSTREAM_POOL_SIZE") || String(Math.min(4, maxConcurrentJobs)));
   const maxPromptChars = parsePositiveInt(read("MAX_PROMPT_CHARS") || "50000");
   const jobTtlMs = parsePositiveInt(read("JOB_TTL_MS") || String(6 * 60 * 60 * 1000));

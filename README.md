@@ -231,8 +231,10 @@ enabled automatically, and app-managed Codex children do not inherit legacy
 API-key environment variables.
 Graceful stop/restart also verifies retained App Server background processes;
 unknown or nonzero impact requires the separately confirmed force action. The
-native Settings window follows card-side revisions while visible without
-overwriting a locally edited draft.
+native Settings window automatically saves ordinary preferences, applies its
+language selection to the native UI immediately, and follows card-side revisions
+without overwriting a locally edited draft. Backend and maximum-access changes
+remain an explicit private-dotenv apply and server restart.
 
 Build and verify the current host-architecture development app with:
 
@@ -643,7 +645,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Successful catalog TTL |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Catalog refresh timeout |
 | `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` | `~/.codex-mcp-bridge/state.sqlite` | Primary private state |
-| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Operator/job admission ceiling; hard maximum `100` |
+| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `100` | Operator/job admission ceiling; the saved user default remains `30` |
 | `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy upstream worker pool |
 | `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Prompt limit |
 | `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Active result-retention window |

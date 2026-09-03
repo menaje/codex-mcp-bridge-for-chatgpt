@@ -26,7 +26,7 @@ describe("config policy", () => {
     expect(config.allowWorkspaceWrite).toBe(false);
     expect(config.allowDangerFullAccess).toBe(false);
     expect(config.defaultApprovalPolicy).toBe("on-request");
-    expect(config.maxConcurrentJobs).toBe(30);
+    expect(config.maxConcurrentJobs).toBe(HARD_MAX_CONCURRENT_JOBS);
     expect(config.enableRecoveryTools).toBe(false);
     expect(config).not.toHaveProperty("defaultModel");
     expect(config).not.toHaveProperty("defaultReasoningEffort");
@@ -93,6 +93,7 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "900000",
       CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS: "7200000",
       CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "30",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "3",
       CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "50",
       CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES: "2000000",

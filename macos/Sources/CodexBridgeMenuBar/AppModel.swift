@@ -8,12 +8,26 @@ enum MenuBarHealth: Equatable {
     case attention
     case unavailable
 
-    var accessibilityLabel: String {
+    func accessibilityLabel(locale: Locale) -> String {
+        let key: String
         switch self {
-        case .healthy: return "Codex 브리지 정상"
-        case .attention: return "Codex 브리지 확인 필요"
-        case .unavailable: return "Codex 브리지 연결 불가"
+        case .healthy: key = "Codex 브리지 정상"
+        case .attention: key = "Codex 브리지 확인 필요"
+        case .unavailable: key = "Codex 브리지 연결 불가"
         }
+        return BridgeAppLocalization.string(key, locale: locale)
+    }
+}
+
+enum GeneralSettingsSaveState: Equatable {
+    case idle
+    case pending
+    case saving
+    case saved
+    case failed
+
+    var isActive: Bool {
+        self == .pending || self == .saving
     }
 }
 
@@ -69,6 +83,38 @@ struct SettingsDraft: Equatable {
 
     var modelPolicyDirty: Bool {
         policyState != originalPolicyState
+    }
+
+    func rebased(on snapshot: SettingsSnapshot) -> SettingsDraft {
+        var rebased = SettingsDraft(snapshot: snapshot)
+        rebased.accessStrategy = accessStrategy
+        rebased.policyMode = policyMode
+        rebased.fixedSelectionKey = fixedSelectionKey
+        rebased.allowedKind = allowedKind
+        rebased.explicitSelectionKeys = explicitSelectionKeys
+        rebased.allowDelegation = allowDelegation
+        rebased.usePriorityServiceTier = usePriorityServiceTier
+        rebased.uiLocalePreference = uiLocalePreference
+        rebased.maxConcurrentJobs = maxConcurrentJobs
+        rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
+        rebased.activityCardVisibility = activityCardVisibility
+        rebased.completionHandoff = completionHandoff
+        return rebased
+    }
+
+    func hasSameEditableValues(as other: SettingsDraft) -> Bool {
+        accessStrategy == other.accessStrategy &&
+            policyMode == other.policyMode &&
+            fixedSelectionKey == other.fixedSelectionKey &&
+            allowedKind == other.allowedKind &&
+            explicitSelectionKeys == other.explicitSelectionKeys &&
+            allowDelegation == other.allowDelegation &&
+            usePriorityServiceTier == other.usePriorityServiceTier &&
+            uiLocalePreference == other.uiLocalePreference &&
+            maxConcurrentJobs == other.maxConcurrentJobs &&
+            showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
+            activityCardVisibility == other.activityCardVisibility &&
+            completionHandoff == other.completionHandoff
     }
 
     mutating func setActivityCardVisibility(_ visibility: String) {
@@ -169,6 +215,22 @@ struct SettingsDraftSyncState: Equatable {
         }
         loadedRevision = snapshot.settings.settingsRevision
     }
+
+    mutating func acknowledgePersisted(
+        snapshot: SettingsSnapshot,
+        submitted: SettingsDraft
+    ) {
+        let next = SettingsDraft(snapshot: snapshot)
+        let current = draft
+        baseline = next
+        loadedRevision = snapshot.settings.settingsRevision
+        externalChangeDetected = false
+        if let current, !current.hasSameEditableValues(as: submitted) {
+            draft = current.rebased(on: snapshot)
+        } else {
+            draft = next
+        }
+    }
 }
 
 @MainActor
@@ -195,6 +257,10 @@ final class AppModel: ObservableObject {
     @Published var menuBarLoginItemStatus: MenuBarLoginItemStatus = .notRegistered
     @Published var loginItemErrorMessage: String?
     @Published var loginItemOperationInProgress = false
+    @Published private(set) var interfaceLocalePreference = "auto"
+    @Published private(set) var generalSettingsSaveState: GeneralSettingsSaveState = .idle
+    @Published private(set) var lastAutosavedSettingsRevision: Int?
+    @Published private(set) var lastAutosavedDraft: SettingsDraft?
 
     private let bootstrapper = HelperBootstrap()
     private let loginItemController: any LoginItemControlling
@@ -206,6 +272,10 @@ final class AppModel: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
     private var dashboardEnrichmentTask: Task<Void, Never>?
+    private var settingsAutosaveDebounceTask: Task<Void, Never>?
+    private var pendingSettingsDraft: SettingsDraft?
+    private var settingsAutosaveInProgress = false
+    private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
     private var paths: RuntimePaths?
     private var pathResolutionTask: Task<RuntimePaths, Never>?
@@ -260,6 +330,33 @@ final class AppModel: ObservableObject {
     var needsSetup: Bool {
         guard let helperStatus else { return false }
         return !helperStatus.configuration.valid
+    }
+
+    var interfaceLocale: Locale {
+        BridgeAppLocalization.locale(for: interfaceLocalePreference)
+    }
+
+    var interfaceLocaleIdentifier: String {
+        BridgeAppLocalization.languageCode(for: interfaceLocalePreference)
+    }
+
+    func previewInterfaceLocale(_ preference: String) {
+        guard ["auto", "ko", "en"].contains(preference) else { return }
+        interfaceLocalePreviewActive = true
+        interfaceLocalePreference = preference
+    }
+
+    func restorePersistedInterfaceLocale() {
+        interfaceLocalePreviewActive = false
+        if let preference = settings?.settings.uiLocalePreference {
+            interfaceLocalePreference = preference
+        }
+    }
+
+    func consumeAutosaveAcknowledgement(revision: Int) {
+        guard lastAutosavedSettingsRevision == revision else { return }
+        lastAutosavedSettingsRevision = nil
+        lastAutosavedDraft = nil
     }
 
     func start() async {
@@ -322,12 +419,16 @@ final class AppModel: ObservableObject {
         }
         do {
             let client = await bridgeClient()
-            dashboard = try await client.dashboard(
+            let next = try await client.dashboard(
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0,
                 enrich: false
             )
+            dashboard = next
+            if settings == nil && !interfaceLocalePreviewActive {
+                interfaceLocalePreference = next.uiLocalePreference
+            }
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
             scheduleDashboardEnrichment(
@@ -385,7 +486,14 @@ final class AppModel: ObservableObject {
         }
         do {
             let client = await bridgeClient()
-            settings = try await client.settings(refreshModels: refreshModels)
+            let next = try await client.settings(
+                refreshModels: refreshModels,
+                locale: interfaceLocaleIdentifier
+            )
+            settings = next
+            if !interfaceLocalePreviewActive {
+                interfaceLocalePreference = next.settings.uiLocalePreference
+            }
             settingsLoadErrorMessage = nil
         } catch {
             settingsLoadErrorMessage = error.localizedDescription
@@ -409,6 +517,9 @@ final class AppModel: ObservableObject {
         if !visible {
             settingsPollingTask?.cancel()
             settingsPollingTask = nil
+            Task { @MainActor [weak self] in
+                await self?.flushSettingsAutosave()
+            }
             return
         }
         guard settingsPollingTask == nil else { return }
@@ -416,11 +527,99 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard let self, !Task.isCancelled else { return }
-                if !self.isBusy {
+                if !self.isBusy &&
+                    !self.settingsAutosaveInProgress &&
+                    self.pendingSettingsDraft == nil {
                     await self.refreshSettings()
                     self.refreshLoginItemStatus()
                 }
             }
+        }
+    }
+
+    func scheduleSettingsAutosave(_ draft: SettingsDraft) {
+        if !settingsAutosaveInProgress,
+           let snapshot = settings,
+           draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
+            settingsAutosaveDebounceTask?.cancel()
+            settingsAutosaveDebounceTask = nil
+            pendingSettingsDraft = nil
+            generalSettingsSaveState = .idle
+            settingsErrorMessage = nil
+            interfaceLocalePreviewActive = false
+            interfaceLocalePreference = snapshot.settings.uiLocalePreference
+            return
+        }
+        pendingSettingsDraft = draft
+        generalSettingsSaveState = settingsAutosaveInProgress ? .saving : .pending
+        settingsErrorMessage = nil
+        settingsAutosaveDebounceTask?.cancel()
+        settingsAutosaveDebounceTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 450_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.settingsAutosaveDebounceTask = nil
+            await self.drainSettingsAutosave()
+        }
+    }
+
+    func cancelPendingSettingsAutosave() {
+        settingsAutosaveDebounceTask?.cancel()
+        settingsAutosaveDebounceTask = nil
+        pendingSettingsDraft = nil
+        if !settingsAutosaveInProgress {
+            generalSettingsSaveState = .idle
+        }
+    }
+
+    func flushSettingsAutosave() async {
+        settingsAutosaveDebounceTask?.cancel()
+        settingsAutosaveDebounceTask = nil
+        await drainSettingsAutosave()
+        while settingsAutosaveInProgress {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    private func drainSettingsAutosave() async {
+        if settingsAutosaveInProgress { return }
+        settingsAutosaveInProgress = true
+        defer { settingsAutosaveInProgress = false }
+
+        var persistedAny = false
+        while let requestedDraft = pendingSettingsDraft {
+            pendingSettingsDraft = nil
+            guard let snapshot = settings else {
+                generalSettingsSaveState = .failed
+                return
+            }
+            let draft = requestedDraft.rebased(on: snapshot)
+            if draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
+                continue
+            }
+            generalSettingsSaveState = .saving
+            guard await saveSettings(draft, autosave: true) else {
+                pendingSettingsDraft = nil
+                generalSettingsSaveState = .failed
+                return
+            }
+            persistedAny = true
+        }
+        if persistedAny {
+            interfaceLocalePreviewActive = false
+            if let preference = settings?.settings.uiLocalePreference {
+                interfaceLocalePreference = preference
+            }
+            generalSettingsSaveState = .saved
+        } else {
+            interfaceLocalePreviewActive = false
+            if let preference = settings?.settings.uiLocalePreference {
+                interfaceLocalePreference = preference
+            }
+            generalSettingsSaveState = .idle
         }
     }
 
@@ -609,7 +808,7 @@ final class AppModel: ObservableObject {
         return succeeded
     }
 
-    func saveSettings(_ draft: SettingsDraft) async -> Bool {
+    private func saveSettings(_ draft: SettingsDraft, autosave: Bool) async -> Bool {
         guard let snapshot = settings else { return false }
         settingsErrorMessage = nil
         let displayedChoices = Dictionary(
@@ -630,8 +829,10 @@ final class AppModel: ObservableObject {
             if draft.policyMode == "fixed" {
                 guard let choice = displayedChoices[draft.fixedSelectionKey],
                       selectableKeys.contains(choice.key) else {
-                    settingsErrorMessage =
-                        "현재 사용할 수 있는 고정 모델과 reasoning effort를 선택해 주세요."
+                    settingsErrorMessage = BridgeAppLocalization.string(
+                        "현재 사용할 수 있는 고정 모델과 추론 수준을 선택해 주세요.",
+                        locale: interfaceLocale
+                    )
                     return false
                 }
                 policy = ModelPolicy(
@@ -644,16 +845,20 @@ final class AppModel: ObservableObject {
                 if draft.allowedKind == "explicit" {
                     let selectedKeys = draft.explicitSelectionKeys
                     guard selectedKeys.allSatisfy(selectableKeys.contains) else {
-                        settingsErrorMessage =
-                            "현재 사용할 수 없는 저장된 모델 조합을 허용 목록에서 해제해 주세요."
+                        settingsErrorMessage = BridgeAppLocalization.string(
+                            "현재 사용할 수 없는 저장된 모델 조합을 허용 목록에서 해제해 주세요.",
+                            locale: interfaceLocale
+                        )
                         return false
                     }
                     let selections = selectedKeys.compactMap { displayedChoices[$0] }.sorted {
                         $0.key < $1.key
                     }
                     guard !selections.isEmpty else {
-                        settingsErrorMessage =
-                            "자동 정책의 명시적 허용 목록을 하나 이상 선택해 주세요."
+                        settingsErrorMessage = BridgeAppLocalization.string(
+                            "자동 정책의 명시적 허용 목록을 하나 이상 선택해 주세요.",
+                            locale: interfaceLocale
+                        )
                         return false
                     }
                     allowed = AllowedSelections(kind: "explicit", selections: selections)
@@ -684,7 +889,11 @@ final class AppModel: ObservableObject {
                 )
             ))
         )
-        return await performSettingsMutation(mutation)
+        return await performSettingsMutation(
+            mutation,
+            tracksGlobalBusyState: !autosave,
+            autosavedDraft: autosave ? draft : nil
+        )
     }
 
     func resetGeneralSettings() async -> Bool {
@@ -775,20 +984,36 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func performSettingsMutation(_ mutation: SettingsMutation) async -> Bool {
-        isBusy = true
-        defer { isBusy = false }
+    private func performSettingsMutation(
+        _ mutation: SettingsMutation,
+        tracksGlobalBusyState: Bool = true,
+        autosavedDraft: SettingsDraft? = nil
+    ) async -> Bool {
+        if tracksGlobalBusyState { isBusy = true }
+        defer {
+            if tracksGlobalBusyState { isBusy = false }
+        }
         settingsErrorMessage = nil
         do {
             let client = await bridgeClient()
-            settings = try await client.updateSettings(mutation)
+            let updated = try await client.updateSettings(mutation)
+            if let autosavedDraft {
+                lastAutosavedSettingsRevision = updated.settings.settingsRevision
+                lastAutosavedDraft = autosavedDraft
+            }
+            settings = updated
             settingsConflictMessage = nil
             return true
         } catch {
             let message = error.localizedDescription
             if message.contains("REVISION_CONFLICT") {
-                settingsConflictMessage =
-                    "다른 화면에서 설정이 변경되었습니다. 편집 중인 값은 유지했습니다. 필요한 내용을 확인하거나 복사한 뒤 최신 값으로 되돌려 다시 적용해 주세요."
+                if autosavedDraft == nil {
+                    settingsConflictMessage =
+                        BridgeAppLocalization.string(
+                            "다른 화면에서 설정이 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요.",
+                            locale: interfaceLocale
+                        )
+                }
                 await refreshSettings()
             }
             settingsErrorMessage = message

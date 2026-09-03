@@ -25,10 +25,13 @@ public struct BridgeCompanionClient: Sendable {
         )
     }
 
-    public func settings(refreshModels: Bool = false) async throws -> SettingsSnapshot {
+    public func settings(
+        refreshModels: Bool = false,
+        locale: String = Locale.current.identifier
+    ) async throws -> SettingsSnapshot {
         try await rpc.call(
             "settings.snapshot",
-            params: SettingsSnapshotParameters(refreshModels: refreshModels),
+            params: SettingsSnapshotParameters(refreshModels: refreshModels, locale: locale),
             timeout: refreshModels ? 60 : 20
         )
     }

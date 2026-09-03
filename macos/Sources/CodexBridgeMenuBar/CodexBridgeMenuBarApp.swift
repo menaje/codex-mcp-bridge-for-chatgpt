@@ -23,6 +23,15 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         Self.model?.refreshLoginItemStatus()
     }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model = Self.model else { return .terminateNow }
+        Task { @MainActor in
+            await model.flushSettingsAutosave()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 }
 
 @MainActor
@@ -40,7 +49,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            settingsWindow.title = "Codex MCP Bridge for ChatGPT 설정"
+            settingsWindow.title = "Codex MCP Bridge for ChatGPT"
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
@@ -81,7 +90,7 @@ final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            repairWindow.title = "Codex MCP Bridge 연결 및 복구"
+            repairWindow.title = "Codex MCP Bridge for ChatGPT"
             repairWindow.isReleasedWhenClosed = false
             repairWindow.delegate = self
             repairWindow.setFrameAutosaveName("CodexBridgeConnectionRepairWindow")
@@ -120,7 +129,9 @@ struct CodexBridgeMenuBarApp: App {
                 .environmentObject(model)
         } label: {
             BridgeMenuBarIcon(health: model.health)
-                .accessibilityLabel(model.health.accessibilityLabel)
+                .accessibilityLabel(
+                    model.health.accessibilityLabel(locale: model.interfaceLocale)
+                )
         }
         .menuBarExtraStyle(.window)
     }

@@ -352,7 +352,7 @@ async function startSecureTunnel({ tunnelId }) {
   const mcpConcurrency =
     process.env.MCP_MAX_CONCURRENT_REQUESTS ||
     process.env.CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS ||
-    "30";
+    "100";
   const controlPlaneInflight = process.env.CONTROL_PLANE_MAX_INFLIGHT_REQUESTS || mcpConcurrency;
   const logLevel = process.env.LOG_LEVEL || "warn";
   removeStaleRuntimeFile(tunnelHealthUrlFile);

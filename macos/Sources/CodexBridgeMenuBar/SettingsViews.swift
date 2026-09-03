@@ -27,7 +27,7 @@ struct NativeSettingsView: View {
                     if syncState.externalChangeDetected {
                         HStack(spacing: 10) {
                             Label(
-                                "다른 화면의 변경을 확인했습니다. 편집 내용은 유지했지만 저장 전 최신 값을 다시 불러와야 합니다.",
+                                "다른 화면에서 설정이 변경되어 자동 저장을 멈췄습니다. 편집 내용을 유지하려면 확인한 뒤 최신 값을 다시 불러와 주세요.",
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                             .font(.caption)
@@ -42,8 +42,10 @@ struct NativeSettingsView: View {
                         GeneralSettingsPane(
                             snapshot: snapshot,
                             draft: binding(for: draft),
-                            saveBlockedByExternalChange: syncState.externalChangeDetected,
-                            didPersist: { synchronizeDraft(force: true) }
+                            didReset: {
+                                synchronizeDraft(force: true)
+                                model.restorePersistedInterfaceLocale()
+                            }
                         )
                             .environmentObject(model)
                             .tabItem { Label("일반", systemImage: "gearshape") }
@@ -52,7 +54,7 @@ struct NativeSettingsView: View {
                             .tabItem { Label("프로젝트", systemImage: "folder") }
                         RuntimeStatusPane(snapshot: snapshot)
                             .environmentObject(model)
-                            .tabItem { Label("상태·정보", systemImage: "info.circle") }
+                            .tabItem { Label("서버", systemImage: "server.rack") }
                     }
                 }
                 .padding(18)
@@ -85,8 +87,18 @@ struct NativeSettingsView: View {
                 }
             }
         }
+        .environment(\.locale, model.interfaceLocale)
         .onAppear { synchronizeDraft() }
-        .onChange(of: model.settings?.settings.settingsRevision) { _ in synchronizeDraft() }
+        .onChange(of: model.settings?.settings.settingsRevision) { revision in
+            guard let snapshot = model.settings else { return }
+            if revision == model.lastAutosavedSettingsRevision,
+               let submitted = model.lastAutosavedDraft {
+                syncState.acknowledgePersisted(snapshot: snapshot, submitted: submitted)
+                model.consumeAutosaveAcknowledgement(revision: revision ?? -1)
+            } else {
+                synchronizeDraft()
+            }
+        }
         .alert("설정 충돌", isPresented: Binding(
             get: { model.settingsConflictMessage != nil },
             set: { if !$0 { model.settingsConflictMessage = nil } }
@@ -100,7 +112,9 @@ struct NativeSettingsView: View {
             isPresented: $showDiscardDraftConfirmation
         ) {
             Button("편집 내용 버리기", role: .destructive) {
+                model.cancelPendingSettingsAutosave()
                 synchronizeDraft(force: true)
+                model.restorePersistedInterfaceLocale()
             }
         }
     }
@@ -113,7 +127,13 @@ struct NativeSettingsView: View {
     private func binding(for value: SettingsDraft) -> Binding<SettingsDraft> {
         Binding(
             get: { syncState.draft ?? value },
-            set: { syncState.updateDraft($0) }
+            set: { next in
+                syncState.updateDraft(next)
+                model.previewInterfaceLocale(next.uiLocalePreference)
+                if !syncState.externalChangeDetected {
+                    model.scheduleSettingsAutosave(next)
+                }
+            }
         )
     }
 }
@@ -122,8 +142,7 @@ private struct GeneralSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
     @Binding var draft: SettingsDraft
-    let saveBlockedByExternalChange: Bool
-    let didPersist: () -> Void
+    let didReset: () -> Void
     @State private var showResetConfirmation = false
 
     private var choices: [ModelChoice] {
@@ -167,17 +186,17 @@ private struct GeneralSettingsPane: View {
             Section("접근 권한") {
                 Picker("접근 전략", selection: $draft.accessStrategy) {
                     ForEach(snapshot.capabilities.availableAccessStrategies, id: \.self) {
-                        Text(accessLabel($0)).tag($0)
+                        Text(accessLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
-                Text(accessDescription(draft.accessStrategy))
+                Text(accessDescription(draft.accessStrategy, locale: model.interfaceLocale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if draft.accessStrategy == "always-full" {
                     Label(
                         snapshot.capabilities.allowDangerFullAccess
                             ? "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다."
-                            : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 상태·정보에서 최대 권한을 변경할 수 있습니다.",
+                            : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 서버 탭에서 최대 권한을 변경할 수 있습니다.",
                         systemImage: "exclamationmark.shield.fill"
                     )
                     .font(.caption)
@@ -198,7 +217,7 @@ private struct GeneralSettingsPane: View {
                             Text(modelLabel(modelID)).tag(modelID)
                         }
                     }
-                    Picker("Reasoning effort", selection: fixedEffortBinding) {
+                    Picker("추론 수준", selection: fixedEffortBinding) {
                         ForEach(choicesForFixedModel, id: \.key) { choice in
                             Text(effortLabel(choice)).tag(choice.reasoningEffort)
                         }
@@ -209,7 +228,7 @@ private struct GeneralSettingsPane: View {
                         Text("명시적으로 선택").tag("explicit")
                     }
                     if draft.allowedKind == "explicit" {
-                        DisclosureGroup("허용 모델과 reasoning effort") {
+                        DisclosureGroup("허용 모델과 추론 수준") {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(modelIDs, id: \.self) { modelID in
                                     DisclosureGroup(modelLabel(modelID)) {
@@ -235,13 +254,16 @@ private struct GeneralSettingsPane: View {
                 }
 
                 Toggle(
-                    "Ultra 추론 허용(하위 에이전트 위임 포함)",
+                    "Ultra 추론 및 하위 에이전트 위임 허용",
                     isOn: $draft.allowDelegation
                 )
-                Text("끄면 Ultra reasoning effort가 모델 선택 목록에서 제외됩니다.")
+                Text("끄면 Ultra 추론이 모델 목록에서 제외되고 하위 에이전트 위임이 차단됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("Priority/Fast 처리 사용", isOn: $draft.usePriorityServiceTier)
+                Toggle("빠른 처리 우선 사용", isOn: $draft.usePriorityServiceTier)
+                Text("지원되는 모델에서 Priority/Fast 처리 계층을 요청합니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if snapshot.catalog.stale {
                     Label("모델 카탈로그가 오래되어 정책 저장이 제한될 수 있습니다.", systemImage: "clock.badge.exclamationmark")
                         .font(.caption)
@@ -256,33 +278,65 @@ private struct GeneralSettingsPane: View {
                 Button("모델 목록 새로고침") {
                     Task { await model.refreshSettings(refreshModels: true) }
                 }
+                .disabled(model.generalSettingsSaveState.isActive)
             }
 
             Section("표시와 실행") {
-                Picker("UI 언어", selection: $draft.uiLocalePreference) {
+                Picker("앱 및 카드 언어", selection: $draft.uiLocalePreference) {
                     ForEach(snapshot.capabilities.availableUiLocalePreferences, id: \.self) {
-                        Text(localeLabel($0)).tag($0)
+                        Text(localeLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
-                Stepper(
-                    "최대 동시 작업: \(draft.maxConcurrentJobs)",
-                    value: $draft.maxConcurrentJobs,
-                    in: 1...snapshot.capabilities.maxConcurrentJobs
-                )
-                Toggle("Codex 앱에서 bridge thread 표시", isOn: $draft.showBridgeThreadsInCodexApp)
-                Picker("Activity 카드 표시", selection: activityCardVisibilityBinding) {
+                LabeledContent("동시 실행 에이전트 작업 수") {
+                    HStack(spacing: 6) {
+                        TextField(
+                            "개수",
+                            value: concurrentJobsBinding,
+                            format: .number
+                        )
+                        .frame(width: 58)
+                        .multilineTextAlignment(.trailing)
+                        .textFieldStyle(.roundedBorder)
+                        Stepper(
+                            "",
+                            value: concurrentJobsBinding,
+                            in: 1...snapshot.capabilities.maxConcurrentJobs
+                        )
+                        .labelsHidden()
+                    }
+                }
+                Text(BridgeAppLocalization.format(
+                    "1부터 운영 한도 %d까지 직접 입력할 수 있습니다. 등록된 에이전트 수가 아니라 동시에 실행할 작업의 상한입니다.",
+                    locale: model.interfaceLocale,
+                    snapshot.capabilities.maxConcurrentJobs
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if draft.maxConcurrentJobs > 30 {
+                    Label(
+                        "30을 넘기면 CPU·메모리·API 사용량이 크게 증가할 수 있습니다.",
+                        systemImage: "gauge.with.dots.needle.67percent"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                Toggle("Codex 앱에 새 스레드 표시", isOn: $draft.showBridgeThreadsInCodexApp)
+                Text(threadVisibilityDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("액티비티 카드 표시", selection: activityCardVisibilityBinding) {
                     ForEach(snapshot.capabilities.availableActivityCardVisibilities, id: \.self) {
-                        Text(activityVisibilityLabel($0)).tag($0)
+                        Text(activityVisibilityLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
-                Picker("완료 handoff", selection: $draft.completionHandoff) {
+                Picker("완료 후 ChatGPT에 넘기기", selection: $draft.completionHandoff) {
                     ForEach(snapshot.capabilities.availableCompletionHandoffs, id: \.self) {
-                        Text(handoffLabel($0)).tag($0)
+                        Text(handoffLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
                 .disabled(draft.activityCardVisibility == "never")
                 if draft.activityCardVisibility == "never" {
-                    Text("자동 handoff에는 표시되는 Activity 카드가 필요합니다.")
+                    Text("자동으로 넘기려면 액티비티 카드가 표시되어야 합니다.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -346,33 +400,78 @@ private struct GeneralSettingsPane: View {
             Section {
                 HStack {
                     Button("일반 설정 초기화…", role: .destructive) {
+                        model.cancelPendingSettingsAutosave()
                         showResetConfirmation = true
                     }
-                    .disabled(model.isBusy)
+                    .disabled(model.isBusy || model.generalSettingsSaveState.isActive)
                     Spacer()
-                    if model.isBusy { ProgressView().controlSize(.small) }
-                    Button("변경사항 저장") {
-                        Task {
-                            if await model.saveSettings(draft) { didPersist() }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy || saveBlockedByExternalChange)
+                    autosaveStatus
                 }
             } footer: {
-                Text("프로젝트 registry는 일반 설정 초기화에 포함되지 않습니다. 설정은 기존 ChatGPT 카드와 즉시 공유됩니다.")
+                Text("변경사항은 자동으로 저장되어 기존 ChatGPT 카드와 공유됩니다. 프로젝트 등록은 일반 설정 초기화에 포함되지 않습니다.")
             }
         }
         .formStyle(.grouped)
         .confirmationDialog("일반 설정을 운영자 기본값으로 되돌릴까요?", isPresented: $showResetConfirmation) {
             Button("일반 설정 초기화", role: .destructive) {
                 Task {
-                    if await model.resetGeneralSettings() { didPersist() }
+                    if await model.resetGeneralSettings() { didReset() }
                 }
             }
         } message: {
             Text("등록된 프로젝트는 유지됩니다.")
         }
+    }
+
+    @ViewBuilder
+    private var autosaveStatus: some View {
+        switch model.generalSettingsSaveState {
+        case .idle:
+            Text("변경사항 자동 저장")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .pending:
+            Label("저장 대기 중…", systemImage: "ellipsis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .saving:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("저장 중…")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        case .saved:
+            Label("저장됨", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed:
+            Label("저장하지 못함", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var concurrentJobsBinding: Binding<Int> {
+        Binding(
+            get: { draft.maxConcurrentJobs },
+            set: {
+                draft.maxConcurrentJobs = min(
+                    snapshot.capabilities.maxConcurrentJobs,
+                    max(1, $0)
+                )
+            }
+        )
+    }
+
+    private var threadVisibilityDescription: String {
+        let key: String
+        if snapshot.capabilities.defaultBackend == "app-server" {
+            key = "App Server에서 새로 만드는 스레드를 Codex 앱 목록에도 표시합니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+        } else {
+            key = "MCP Server는 스레드 숨김을 지원하지 않습니다. 이 선택은 App Server로 전환한 뒤 새 스레드부터 적용됩니다."
+        }
+        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
 
     private func explicitBinding(_ key: String) -> Binding<Bool> {
@@ -464,9 +563,15 @@ private struct GeneralSettingsPane: View {
         if selectableChoiceKeys.contains(choice.key) {
             unavailable = ""
         } else if SettingsDraft.savedChoiceKeys(in: snapshot).contains(choice.key) {
-            unavailable = " (저장됨 · 현재 선택 불가)"
+            unavailable = BridgeAppLocalization.string(
+                " (저장됨 · 현재 선택 불가)",
+                locale: model.interfaceLocale
+            )
         } else {
-            unavailable = " (현재 선택 불가)"
+            unavailable = BridgeAppLocalization.string(
+                " (현재 선택 불가)",
+                locale: model.interfaceLocale
+            )
         }
         return "\(effort?.label ?? choice.reasoningEffort)\(unavailable)"
     }
@@ -502,12 +607,31 @@ private struct RuntimeStatusPane: View {
         return error.contains("BACKGROUND_PROCESS") || error.contains("DRAIN_TIMEOUT")
     }
 
+    private var backendDescription: String {
+        let key: String
+        if defaultBackend == "app-server" {
+            key = "실험적 방식입니다. 스레드와 백그라운드 프로세스를 더 세밀하게 제어하고 Codex 앱에 표시되지 않는 임시 스레드를 지원합니다."
+        } else {
+            key = "안정적인 기본 방식입니다. 호환성과 복구 안정성을 우선하며 일부 스레드·백그라운드 프로세스 제어는 제한됩니다."
+        }
+        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
+    }
+
     var body: some View {
         Form {
-            Section("런타임 설정") {
+            Section("서버 설정") {
                 Picker("Codex 실행 백엔드", selection: $defaultBackend) {
                     Text("App Server").tag("app-server")
                     Text("MCP Server").tag("mcp-server")
+                }
+                Text(backendDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                DisclosureGroup("백엔드 전환 시 알아둘 점") {
+                    Text("변경 사항은 서버를 재시작한 뒤 새 에이전트 또는 새로 시작한 에이전트부터 적용됩니다. 기존 에이전트는 생성 당시 백엔드를 계속 사용하며, 다른 백엔드로 새로 시작할 때는 이전 작업을 요약해 전달해야 합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 3)
                 }
                 Picker("허용할 최대 접근 권한", selection: $maximumAccess) {
                     Text("읽기 전용").tag("read-only")
@@ -532,60 +656,22 @@ private struct RuntimeStatusPane: View {
                         showApplyConfirmation = true
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isBusy || !isDirty)
+                    .disabled(
+                        model.isBusy ||
+                            model.generalSettingsSaveState.isActive ||
+                            !isDirty
+                    )
                 }
             }
 
-            Section("백엔드 전환 안내") {
-                Label(
-                    "선택한 백엔드는 새 Agent 또는 fresh로 시작한 Agent부터 적용됩니다. 기존 Agent는 생성 당시 백엔드를 계속 사용하며, 백엔드를 바꾸는 fresh 작업에는 handoffSummary가 필요합니다.",
-                    systemImage: "info.circle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Section("정책과 카탈로그 상태") {
-                LabeledContent(
-                    "실행 정책",
-                    value: snapshot.policyActivation.executionPolicyActive ? "적용됨" : "확인 필요"
-                )
-                LabeledContent("정책 revision", value: String(snapshot.policyActivation.policyRevision))
-                LabeledContent("현재 실행 백엔드", value: snapshot.capabilities.defaultBackend)
-                LabeledContent("모델 카탈로그", value: snapshot.catalog.source ?? "사용 가능한 캐시 없음")
-                LabeledContent("카탈로그 검증", value: snapshot.catalog.validation)
-                LabeledContent(
-                    "운영자 모델 상한",
-                    value: snapshot.capabilities.operatorModelCeiling.map {
-                        "모델·reasoning 조합 \($0.count)개"
-                    } ?? "별도 제한 없음"
-                )
-                if snapshot.policyActivation.developerModeRefreshRequired {
+            if snapshot.policyActivation.developerModeRefreshRequired {
+                Section("필요한 조치") {
                     Label(
-                        "정적 실행 한도가 바뀌어 ChatGPT 플러그인 Refresh가 필요합니다.",
+                        "실행 한도가 바뀌었습니다. ChatGPT 개발자 모드에서 플러그인을 새로고침해 주세요.",
                         systemImage: "arrow.triangle.2.circlepath"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                } else if snapshot.policyActivation.descriptorProjectionUpdated {
-                    Label("현재 실행 계약이 반영되었습니다.", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if let counts = model.dashboard?.counts,
-               counts.runtimeUnknownAgents > 0 || counts.runtimeProbeSkippedAgents > 0 {
-                Section("기록 정보") {
-                    Label(
-                        "과거 Agent 중 런타임 상태 불명 \(counts.runtimeUnknownAgents) · 확인 생략 \(counts.runtimeProbeSkippedAgents)",
-                        systemImage: "info.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    Text("이 항목만으로 메뉴 막대 아이콘에 경고를 표시하지 않습니다.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -683,7 +769,7 @@ private struct ProjectsSettingsPane: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("프로젝트").font(.title2.bold())
-                    Text("폴더는 앱에 저장되지 않고 기존 bridge registry에서 관리됩니다.")
+                    Text("프로젝트 이름과 연결할 기존 폴더를 관리합니다. 앱은 실제 폴더나 파일을 이동하지 않습니다.")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -739,7 +825,7 @@ private struct ProjectsSettingsPane: View {
             }
             .listStyle(.inset)
 
-            Text("Registry revision \(snapshot.settings.registryRevision) · 삭제는 등록 정보만 제거하며 폴더와 작업 기록은 삭제하지 않습니다.")
+            Text("등록을 삭제해도 실제 폴더·파일과 기존 작업 기록은 그대로 유지됩니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error = model.settingsErrorMessage {
@@ -772,7 +858,11 @@ private struct ProjectsSettingsPane: View {
                 }
             }
         } message: { project in
-            Text("‘\(project.name)’ 폴더와 기존 작업 기록은 그대로 유지됩니다.")
+            Text(BridgeAppLocalization.format(
+                "‘%@’ 폴더와 기존 작업 기록은 그대로 유지됩니다.",
+                locale: model.interfaceLocale,
+                project.name
+            ))
         }
     }
 
@@ -782,7 +872,11 @@ private struct ProjectsSettingsPane: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = "선택"
+        panel.prompt = BridgeAppLocalization.string("연결", locale: model.interfaceLocale)
+        panel.message = BridgeAppLocalization.string(
+            "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+            locale: model.interfaceLocale
+        )
         return panel.runModal() == .OK ? panel.url : nil
     }
 }
@@ -825,7 +919,7 @@ private struct ProjectRow: View {
             Menu {
                 if project.archivedAt == nil {
                     Button("이름 변경…", action: rename)
-                    Button("폴더 이전…", action: relocate)
+                    Button("연결 폴더 변경…", action: relocate)
                     Divider()
                     Button("보관", action: archive)
                 } else {
@@ -860,6 +954,7 @@ private enum ProjectEditor: Identifiable {
 
 private struct ProjectEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let editor: ProjectEditor
     let save: (ProjectOperation) async -> Bool
@@ -893,6 +988,11 @@ private struct ProjectEditorSheet: View {
                         let panel = NSOpenPanel()
                         panel.canChooseFiles = false
                         panel.canChooseDirectories = true
+                        panel.prompt = BridgeAppLocalization.string("연결", locale: locale)
+                        panel.message = BridgeAppLocalization.string(
+                            "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+                            locale: locale
+                        )
                         if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
                     }
                 }
@@ -923,11 +1023,13 @@ private struct ProjectEditorSheet: View {
     }
 
     private var title: String {
+        let key: String
         switch editor {
-        case .add: return "프로젝트 추가"
-        case .rename: return "프로젝트 이름 변경"
-        case .restore: return "프로젝트 복원"
+        case .add: key = "프로젝트 추가"
+        case .rename: key = "프로젝트 이름 변경"
+        case .restore: key = "프로젝트 복원"
         }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
 
     private var operation: ProjectOperation {
@@ -942,48 +1044,56 @@ private struct ProjectEditorSheet: View {
     }
 }
 
-private func accessLabel(_ value: String) -> String {
+private func accessLabel(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "read-only": return "읽기 전용"
-    case "adaptive": return "작업별 선택"
-    case "always-full": return "항상 전체 접근"
+    case "read-only": key = "읽기 전용"
+    case "adaptive": key = "작업별 선택"
+    case "always-full": key = "항상 전체 접근"
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func accessDescription(_ value: String) -> String {
+private func accessDescription(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "read-only": return "모든 새 작업을 읽기 전용 sandbox로 제한합니다."
-    case "adaptive": return "허용된 범위 안에서 작업마다 필요한 접근 수준을 선택합니다."
-    case "always-full": return "모든 새 작업에 danger-full-access를 적용합니다."
+    case "read-only": key = "모든 새 작업을 읽기 전용으로 제한합니다."
+    case "adaptive": key = "허용된 범위 안에서 작업마다 필요한 접근 수준을 선택합니다."
+    case "always-full": key = "모든 새 작업에 전체 접근을 적용합니다."
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func localeLabel(_ value: String) -> String {
+private func localeLabel(_ value: String, locale: Locale) -> String {
     switch value {
-    case "auto": return "자동"
+    case "auto": return BridgeAppLocalization.string("자동", locale: locale)
     case "ko": return "한국어"
     case "en": return "English"
     default: return value
     }
 }
 
-private func activityVisibilityLabel(_ value: String) -> String {
+private func activityVisibilityLabel(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "always": return "항상"
-    case "background-only": return "백그라운드 작업만"
-    case "never": return "표시 안 함"
+    case "always": key = "항상"
+    case "background-only": key = "백그라운드 작업만"
+    case "never": key = "표시 안 함"
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func handoffLabel(_ value: String) -> String {
+private func handoffLabel(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "off": return "사용 안 함"
-    case "auto-handoff": return "완료 시 자동 handoff"
+    case "off": key = "사용 안 함"
+    case "auto-handoff": key = "완료 시 자동으로 ChatGPT에 넘기기"
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
 private func phaseLabel(_ value: String?) -> String {

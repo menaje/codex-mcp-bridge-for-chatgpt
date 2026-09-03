@@ -223,6 +223,64 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertFalse(state.externalChangeDetected)
     }
 
+    func testSettingsAutosaveAcknowledgementRebasesNewerEdits() throws {
+        let original = try settingsSnapshot(
+            policy: [
+                "mode": "fixed",
+                "selection": choiceObject(
+                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
+                ),
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let persisted = try settingsSnapshot(
+            settingsRevision: 5,
+            accessStrategy: "read-only",
+            policy: [
+                "mode": "fixed",
+                "selection": choiceObject(
+                    ModelChoice(model: "gpt-current", reasoningEffort: "high")
+                ),
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        var state = SettingsDraftSyncState()
+        state.synchronize(with: original)
+        var submitted = try XCTUnwrap(state.draft)
+        submitted.accessStrategy = "read-only"
+        state.updateDraft(submitted)
+        var newer = submitted
+        newer.maxConcurrentJobs = 3
+        state.updateDraft(newer)
+
+        state.acknowledgePersisted(snapshot: persisted, submitted: submitted)
+
+        XCTAssertEqual(state.draft?.expectedSettingsRevision, 5)
+        XCTAssertEqual(state.draft?.accessStrategy, "read-only")
+        XCTAssertEqual(state.draft?.maxConcurrentJobs, 3)
+        XCTAssertFalse(state.externalChangeDetected)
+    }
+
+    @MainActor
+    func testUnchangedSettingsDraftDoesNotEnterAutosaveQueue() throws {
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let model = AppModel()
+        model.settings = snapshot
+
+        model.scheduleSettingsAutosave(SettingsDraft(snapshot: snapshot))
+
+        XCTAssertEqual(model.generalSettingsSaveState, .idle)
+    }
+
     func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
         XCTAssertNotNil(DashboardLink.conversation(
             "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001"

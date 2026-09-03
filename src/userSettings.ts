@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
-import { enforceSandbox } from "./config.js";
+import { DEFAULT_USER_MAX_CONCURRENT_JOBS, enforceSandbox } from "./config.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
@@ -115,7 +115,7 @@ export class UserSettingsStore {
       modelPolicy: automaticModelPolicy(),
       usePriorityServiceTier: false,
       uiLocalePreference: "auto",
-      maxConcurrentJobs: config.maxConcurrentJobs,
+      maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
       showBridgeThreadsInCodexApp: false,
       activityCardVisibility: "always",
       completionHandoff: "off"

@@ -2023,7 +2023,7 @@ describe("bridge tools", () => {
             "operation",
           ],
           "propertyCount": 3,
-          "schemaBytes": 4826,
+          "schemaBytes": 4827,
           "visibility": {
             "app": true,
             "model": false,
@@ -6183,7 +6183,7 @@ describe("bridge tools", () => {
         availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
         availableActivityCardVisibilities: ["always", "background-only", "never"],
         availableCompletionHandoffs: ["off", "auto-handoff"],
-        maxConcurrentJobs: 30,
+        maxConcurrentJobs: 100,
         allowDangerFullAccess: true
       }
     });

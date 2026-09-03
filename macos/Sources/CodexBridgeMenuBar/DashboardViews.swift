@@ -29,6 +29,7 @@ struct DashboardPopoverView: View {
             footer
         }
         .frame(width: 460, height: 660)
+        .environment(\.locale, model.interfaceLocale)
         .task {
             if model.helperStatus == nil {
                 await model.start()
@@ -77,7 +78,7 @@ struct DashboardPopoverView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Codex MCP Bridge for ChatGPT")
                     .font(.headline)
-                Text(model.health.accessibilityLabel)
+                Text(model.health.accessibilityLabel(locale: model.interfaceLocale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -937,6 +938,7 @@ struct ConnectionRepairView: View {
             }
             .padding(18)
         }
+        .environment(\.locale, model.interfaceLocale)
     }
 
     private var tunnelIDInputIsValid: Bool {

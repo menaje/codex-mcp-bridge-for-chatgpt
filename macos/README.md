@@ -30,9 +30,11 @@ It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical
 per-user launcher lock. A restarted helper can safely adopt a still-healthy
 app-managed runtime instead of duplicating it.
 
-The everyday Settings window contains only the same General and Projects scope
-as the retained Settings card. Connection credentials, Codex login, and Tunnel
-repair stay in a separate first-run/repair surface.
+The everyday Settings window contains General, Projects, and Server tabs backed
+by the same application service as the retained Settings card. General changes
+are debounced, serialized, and saved automatically; server backend and maximum
+access remain an explicit apply-and-restart operation. Connection credentials,
+Codex login, and Tunnel repair stay in a separate first-run/repair surface.
 The General tab adds one native-only Mac control backed by
 `SMAppService.mainApp`: whether the menu-bar UI opens at user login. Its state
 comes from macOS, is not stored in `.env` or shared Settings, and does not stop
@@ -77,9 +79,11 @@ confirms. If LaunchAgent replacement fails after changing its plist, the prior
 definition and service are restored.
 
 The Settings window polls the shared revision while visible. Untouched values
-follow changes from the retained Settings card; locally edited drafts are kept
-until save or an explicitly confirmed reload. Runtime discovery runs away from
-the menu-bar UI thread.
+follow changes from the retained Settings card; autosave preserves newer local
+edits while one save is in flight, and a genuine external revision conflict
+pauses autosave until an explicitly confirmed reload. The selected native UI
+locale changes optimistically and is also sent to the Settings snapshot service.
+Runtime discovery runs away from the menu-bar UI thread.
 
 ## Build an app bundle
 
