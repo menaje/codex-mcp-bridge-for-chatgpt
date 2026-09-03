@@ -394,9 +394,11 @@ public struct DashboardParameters: Codable, Sendable {
 
 public struct SettingsSnapshotParameters: Codable, Sendable {
     public let refreshModels: Bool
+    public let locale: String
 
-    public init(refreshModels: Bool = false) {
+    public init(refreshModels: Bool = false, locale: String = Locale.current.identifier) {
         self.refreshModels = refreshModels
+        self.locale = locale
     }
 }
 
@@ -535,6 +537,16 @@ public struct RuntimeSnapshotParameters: Codable, Sendable {
     }
 }
 
+public struct RuntimeOperatorConfiguration: Codable, Equatable, Sendable {
+    public let defaultBackend: String
+    public let maximumAccess: String
+
+    public init(defaultBackend: String, maximumAccess: String) {
+        self.defaultBackend = defaultBackend
+        self.maximumAccess = maximumAccess
+    }
+}
+
 public struct RuntimeConfigurationStatus: Codable, Sendable {
     public let path: String
     public let exists: Bool
@@ -542,7 +554,31 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
     public let hasApiKey: Bool
     public let hasTunnelId: Bool
     public let tunnelId: String?
+    public let operatorConfiguration: RuntimeOperatorConfiguration
     public let issue: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case path, exists, valid, hasApiKey, hasTunnelId, tunnelId
+        case operatorConfiguration, issue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        exists = try container.decode(Bool.self, forKey: .exists)
+        valid = try container.decode(Bool.self, forKey: .valid)
+        hasApiKey = try container.decode(Bool.self, forKey: .hasApiKey)
+        hasTunnelId = try container.decode(Bool.self, forKey: .hasTunnelId)
+        tunnelId = try container.decodeIfPresent(String.self, forKey: .tunnelId)
+        operatorConfiguration = try container.decodeIfPresent(
+            RuntimeOperatorConfiguration.self,
+            forKey: .operatorConfiguration
+        ) ?? RuntimeOperatorConfiguration(
+            defaultBackend: "mcp-server",
+            maximumAccess: "read-only"
+        )
+        issue = try container.decodeIfPresent(String.self, forKey: .issue)
+    }
 }
 
 public struct HelperBridgeStatus: Codable, Sendable {
@@ -630,6 +666,25 @@ public struct SetupApplyResponse: Codable, Sendable {
     public let status: HelperStatus
     public let restarted: Bool
     public let rolledBack: Bool
+}
+
+public struct RuntimeConfigureParameters: Codable, Sendable {
+    public let defaultBackend: String
+    public let maximumAccess: String
+    public let mode: String
+    public let timeoutMs: Int
+
+    public init(
+        defaultBackend: String,
+        maximumAccess: String,
+        force: Bool,
+        timeoutMilliseconds: Int
+    ) {
+        self.defaultBackend = defaultBackend
+        self.maximumAccess = maximumAccess
+        self.mode = force ? "force" : "drain"
+        self.timeoutMs = timeoutMilliseconds
+    }
 }
 
 public struct CodexLoginStatus: Codable, Sendable {

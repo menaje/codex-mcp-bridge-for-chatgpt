@@ -20,8 +20,16 @@ const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
 export const RUNTIME_ENV_MANAGED_KEYS = [
   "CONTROL_PLANE_API_KEY",
-  "CONTROL_PLANE_TUNNEL_ID"
+  "CONTROL_PLANE_TUNNEL_ID",
+  "CODEX_MCP_BRIDGE_DEFAULT_BACKEND",
+  "CODEX_MCP_BRIDGE_ALLOW_WRITE",
+  "CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS"
 ];
+
+const DEFAULT_OPERATOR_CONFIGURATION = Object.freeze({
+  defaultBackend: "mcp-server",
+  maximumAccess: "read-only"
+});
 
 export function defaultRuntimeEnvFile({ environment = process.env, homeDirectory = homedir() } = {}) {
   const configHome = environment.XDG_CONFIG_HOME || resolve(homeDirectory, ".config");
@@ -129,6 +137,7 @@ export function inspectRuntimeEnvFile(
         hasApiKey: false,
         hasTunnelId: false,
         tunnelId: null,
+        operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
         issue: safeRuntimeEnvIssue(error)
       };
     }
@@ -139,6 +148,7 @@ export function inspectRuntimeEnvFile(
       hasApiKey: false,
       hasTunnelId: false,
       tunnelId: null,
+      operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
       issue: "Runtime environment file is not configured."
     };
   }
@@ -154,6 +164,7 @@ export function inspectRuntimeEnvFile(
       hasApiKey: Boolean(values.CONTROL_PLANE_API_KEY),
       hasTunnelId: Boolean(values.CONTROL_PLANE_TUNNEL_ID),
       tunnelId: values.CONTROL_PLANE_TUNNEL_ID || null,
+      operatorConfiguration: runtimeOperatorConfiguration(values),
       issue: null
     };
   } catch (error) {
@@ -164,6 +175,7 @@ export function inspectRuntimeEnvFile(
       hasApiKey: false,
       hasTunnelId: false,
       tunnelId: null,
+      operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
       issue: safeRuntimeEnvIssue(error)
     };
   }
@@ -246,7 +258,7 @@ export function readRuntimeEnvSubset(
  */
 export function prepareRuntimeEnvUpdate(
   filePath,
-  { apiKey, tunnelId },
+  { apiKey, tunnelId, defaultBackend, maximumAccess },
   {
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
@@ -260,11 +272,13 @@ export function prepareRuntimeEnvUpdate(
   if (existed) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
   const original = existed ? readFileSync(resolvedPath, "utf8") : "";
   const previousValues = readManagedRuntimeEnvValues(original);
+  const operatorUpdates = runtimeOperatorUpdates({ defaultBackend, maximumAccess });
   const updates = {
     ...(typeof apiKey === "string" && apiKey.trim() ? { CONTROL_PLANE_API_KEY: apiKey.trim() } : {}),
     ...(typeof tunnelId === "string" && tunnelId.trim()
       ? { CONTROL_PLANE_TUNNEL_ID: tunnelId.trim() }
-      : {})
+      : {}),
+    ...operatorUpdates
   };
   const next = mergeManagedRuntimeEnv(original, updates);
   const nextValues = readManagedRuntimeEnvValues(next);
@@ -325,15 +339,56 @@ export function rollbackRuntimeEnvUpdate(prepared) {
  */
 export function updateRuntimeEnvFile(
   filePath,
-  { apiKey, tunnelId },
+  { apiKey, tunnelId, defaultBackend, maximumAccess },
   {
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined,
     renameFile = renameSync
   } = {}
 ) {
-  const prepared = prepareRuntimeEnvUpdate(filePath, { apiKey, tunnelId }, { platform, uid });
+  const prepared = prepareRuntimeEnvUpdate(
+    filePath,
+    { apiKey, tunnelId, defaultBackend, maximumAccess },
+    { platform, uid }
+  );
   return commitRuntimeEnvUpdate(prepared, { renameFile });
+}
+
+function runtimeOperatorUpdates({ defaultBackend, maximumAccess }) {
+  const updates = {};
+  if (defaultBackend !== undefined) {
+    if (defaultBackend !== "app-server" && defaultBackend !== "mcp-server") {
+      throw new Error(`Invalid Codex execution backend: ${String(defaultBackend)}`);
+    }
+    updates.CODEX_MCP_BRIDGE_DEFAULT_BACKEND = defaultBackend;
+  }
+  if (maximumAccess !== undefined) {
+    if (!["read-only", "workspace-write", "full-access"].includes(maximumAccess)) {
+      throw new Error(`Invalid maximum access level: ${String(maximumAccess)}`);
+    }
+    updates.CODEX_MCP_BRIDGE_ALLOW_WRITE = maximumAccess === "read-only" ? "0" : "1";
+    updates.CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS = maximumAccess === "full-access" ? "1" : "0";
+  }
+  return updates;
+}
+
+function runtimeOperatorConfiguration(values) {
+  const dangerFullAccess = runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS);
+  const workspaceWrite = dangerFullAccess || runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_WRITE);
+  return {
+    defaultBackend: values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND === "app-server"
+      ? "app-server"
+      : "mcp-server",
+    maximumAccess: dangerFullAccess
+      ? "full-access"
+      : workspaceWrite
+        ? "workspace-write"
+        : "read-only"
+  };
+}
+
+function runtimeBoolean(value) {
+  return typeof value === "string" && ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function writeAtomicPrivateRuntimeEnv(filePath, contents, options) {

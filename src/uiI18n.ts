@@ -157,7 +157,7 @@ const ENGLISH = {
   "settings.warning.legacyProjects": "Legacy project IDs and default aliases were not migrated. Register projects by name in Settings.",
   "settings.warning.automaticFallbackSeeded": "The automatic model policy had no exact fallback, so the configured model and effort were saved as its fallback when GPT omits a selection.",
   "settings.warning.automaticFallbackRemoved": "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work.",
-  "settings.warning.fullAccessDowngraded": "The saved full-access mode was changed to read-only because bridge security policy disables danger-full-access.",
+  "settings.warning.fullAccessDowngraded": "The saved full-access mode is retained but inactive because bridge security policy disables danger-full-access. Read-only is enforced until full access is enabled in runtime settings.",
   "settings.warning.concurrentLimitReduced": "The saved concurrent-job limit was reduced to the current bridge maximum.",
   "settings.warning.projectUnavailable": "Saved project “{project}” is unavailable and cannot accept new work.",
   "settings.warning.legacyModel": "The legacy model-only preference “{model}” is still active. Its exact default effort comes from the backend catalog, while Priority remains a separate preference.",
@@ -2096,7 +2096,10 @@ export function localizeSettingsWarning(
   if (warning.startsWith("A retired automatic model default was removed")) {
     return uiTranslation(locale, "settings.warning.automaticFallbackRemoved");
   }
-  if (warning.startsWith("Saved full-access mode was downgraded")) {
+  if (
+    warning.startsWith("Saved full-access mode was downgraded") ||
+    warning.startsWith("Saved full-access mode is retained but inactive")
+  ) {
     return uiTranslation(locale, "settings.warning.fullAccessDowngraded");
   }
   if (warning.startsWith("Saved concurrent-job limit was reduced")) {

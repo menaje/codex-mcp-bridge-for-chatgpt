@@ -39,6 +39,9 @@ struct NativeSettingsView: View {
                         ProjectsSettingsPane(snapshot: snapshot)
                             .environmentObject(model)
                             .tabItem { Label("프로젝트", systemImage: "folder") }
+                        RuntimeStatusPane(snapshot: snapshot)
+                            .environmentObject(model)
+                            .tabItem { Label("상태·정보", systemImage: "info.circle") }
                     }
                 }
                 .padding(18)
@@ -136,6 +139,10 @@ private struct GeneralSettingsPane: View {
             }
         }
     }
+    private var modelIDs: [String] {
+        var seen = Set<String>()
+        return choices.map(\.model).filter { seen.insert($0).inserted }
+    }
 
     var body: some View {
         Form {
@@ -159,7 +166,9 @@ private struct GeneralSettingsPane: View {
                     .foregroundStyle(.secondary)
                 if draft.accessStrategy == "always-full" {
                     Label(
-                        "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다.",
+                        snapshot.capabilities.allowDangerFullAccess
+                            ? "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다."
+                            : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 상태·정보에서 최대 권한을 변경할 수 있습니다.",
                         systemImage: "exclamationmark.shield.fill"
                     )
                     .font(.caption)
@@ -168,16 +177,21 @@ private struct GeneralSettingsPane: View {
             }
 
             Section("모델 정책") {
-                Picker("선택 방식", selection: $draft.policyMode) {
+                Picker("선택 방식", selection: policyModeBinding) {
                     Text("고정").tag("fixed")
                     Text("자동").tag("automatic")
                 }
                 .pickerStyle(.segmented)
 
                 if draft.policyMode == "fixed" {
-                    Picker("모델 · reasoning", selection: $draft.fixedSelectionKey) {
-                        ForEach(choices, id: \.key) { choice in
-                            Text(choiceLabel(choice)).tag(choice.key)
+                    Picker("모델", selection: fixedModelIDBinding) {
+                        ForEach(modelIDs, id: \.self) { modelID in
+                            Text(modelLabel(modelID)).tag(modelID)
+                        }
+                    }
+                    Picker("Reasoning effort", selection: fixedEffortBinding) {
+                        ForEach(choicesForFixedModel, id: \.key) { choice in
+                            Text(effortLabel(choice)).tag(choice.reasoningEffort)
                         }
                     }
                 } else {
@@ -188,12 +202,22 @@ private struct GeneralSettingsPane: View {
                     if draft.allowedKind == "explicit" {
                         DisclosureGroup("허용 모델과 reasoning effort") {
                             VStack(alignment: .leading, spacing: 6) {
-                                ForEach(choices, id: \.key) { choice in
-                                    Toggle(choiceLabel(choice), isOn: explicitBinding(choice.key))
-                                        .disabled(
-                                            !selectableChoiceKeys.contains(choice.key) &&
-                                            !draft.explicitSelectionKeys.contains(choice.key)
-                                        )
+                                ForEach(modelIDs, id: \.self) { modelID in
+                                    DisclosureGroup(modelLabel(modelID)) {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            ForEach(choices(for: modelID), id: \.key) { choice in
+                                                Toggle(
+                                                    effortLabel(choice),
+                                                    isOn: explicitBinding(choice.key)
+                                                )
+                                                .disabled(
+                                                    !selectableChoiceKeys.contains(choice.key) &&
+                                                    !draft.explicitSelectionKeys.contains(choice.key)
+                                                )
+                                            }
+                                        }
+                                        .padding(.leading, 8)
+                                    }
                                 }
                             }
                             .padding(.vertical, 4)
@@ -201,7 +225,13 @@ private struct GeneralSettingsPane: View {
                     }
                 }
 
-                Toggle("Delegation 허용", isOn: $draft.allowDelegation)
+                Toggle(
+                    "Ultra 추론 허용(하위 에이전트 위임 포함)",
+                    isOn: $draft.allowDelegation
+                )
+                Text("끄면 Ultra reasoning effort가 모델 선택 목록에서 제외됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Priority/Fast 처리 사용", isOn: $draft.usePriorityServiceTier)
                 if snapshot.catalog.stale {
                     Label("모델 카탈로그가 오래되어 정책 저장이 제한될 수 있습니다.", systemImage: "clock.badge.exclamationmark")
@@ -216,44 +246,6 @@ private struct GeneralSettingsPane: View {
                 }
                 Button("모델 목록 새로고침") {
                     Task { await model.refreshSettings(refreshModels: true) }
-                }
-            }
-
-            Section("정책과 카탈로그 상태") {
-                LabeledContent(
-                    "실행 정책",
-                    value: snapshot.policyActivation.executionPolicyActive ? "적용됨" : "확인 필요"
-                )
-                LabeledContent(
-                    "정책 revision",
-                    value: String(snapshot.policyActivation.policyRevision)
-                )
-                LabeledContent(
-                    "실행 백엔드",
-                    value: snapshot.capabilities.defaultBackend
-                )
-                LabeledContent(
-                    "모델 카탈로그",
-                    value: snapshot.catalog.source ?? "사용 가능한 캐시 없음"
-                )
-                LabeledContent("카탈로그 검증", value: snapshot.catalog.validation)
-                LabeledContent(
-                    "운영자 모델 상한",
-                    value: snapshot.capabilities.operatorModelCeiling.map {
-                        "모델·reasoning 조합 \($0.count)개"
-                    } ?? "별도 제한 없음"
-                )
-                if snapshot.policyActivation.developerModeRefreshRequired {
-                    Label(
-                        "정적 실행 한도가 바뀌어 ChatGPT 플러그인 Refresh가 필요합니다.",
-                        systemImage: "arrow.triangle.2.circlepath"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                } else if snapshot.policyActivation.descriptorProjectionUpdated {
-                    Label("현재 실행 계약이 반영되었습니다.", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -333,17 +325,6 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
-            if !snapshot.warnings.isEmpty {
-                Section("현재 경고") {
-                    ForEach(snapshot.warnings, id: \.self) { warning in
-                        Label(warning, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
-
             if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
                 Section("저장하지 못한 이유") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -395,6 +376,66 @@ private struct GeneralSettingsPane: View {
         )
     }
 
+    private var policyModeBinding: Binding<String> {
+        Binding(
+            get: { draft.policyMode },
+            set: { mode in
+                draft.policyMode = mode
+                if mode == "fixed" && !selectableChoiceKeys.contains(draft.fixedSelectionKey),
+                   let first = SettingsDraft.selectableChoices(
+                       in: snapshot,
+                       allowDelegation: draft.allowDelegation
+                   ).first {
+                    draft.fixedSelectionKey = first.key
+                }
+            }
+        )
+    }
+
+    private var selectedFixedChoice: ModelChoice? {
+        choices.first { $0.key == draft.fixedSelectionKey }
+    }
+
+    private var choicesForFixedModel: [ModelChoice] {
+        let selectedModel = selectedFixedChoice?.model ?? modelIDs.first ?? ""
+        return choices(for: selectedModel)
+    }
+
+    private var fixedModelIDBinding: Binding<String> {
+        Binding(
+            get: { selectedFixedChoice?.model ?? modelIDs.first ?? "" },
+            set: { modelID in
+                let candidates = choices(for: modelID)
+                let previousEffort = selectedFixedChoice?.reasoningEffort
+                let preferredEffort = modelsByID[modelID]?.defaultReasoningEffort
+                let next = candidates.first {
+                    $0.reasoningEffort == previousEffort && selectableChoiceKeys.contains($0.key)
+                } ?? candidates.first {
+                    $0.reasoningEffort == preferredEffort && selectableChoiceKeys.contains($0.key)
+                } ?? candidates.first { selectableChoiceKeys.contains($0.key) }
+                    ?? candidates.first
+                if let next { draft.fixedSelectionKey = next.key }
+            }
+        )
+    }
+
+    private var fixedEffortBinding: Binding<String> {
+        Binding(
+            get: { selectedFixedChoice?.reasoningEffort ?? choicesForFixedModel.first?.reasoningEffort ?? "" },
+            set: { effort in
+                guard let modelID = selectedFixedChoice?.model ?? modelIDs.first,
+                      let choice = choices(for: modelID).first(where: {
+                          $0.reasoningEffort == effort
+                      }) else { return }
+                draft.fixedSelectionKey = choice.key
+            }
+        )
+    }
+
+    private func choices(for modelID: String) -> [ModelChoice] {
+        choices.filter { $0.model == modelID }
+    }
+
     private var activityCardVisibilityBinding: Binding<String> {
         Binding(
             get: { draft.activityCardVisibility },
@@ -402,9 +443,12 @@ private struct GeneralSettingsPane: View {
         )
     }
 
-    private func choiceLabel(_ choice: ModelChoice) -> String {
-        let model = modelsByID[choice.model]
-        let effort = model?.supportedReasoningEfforts.first {
+    private func modelLabel(_ modelID: String) -> String {
+        modelsByID[modelID]?.displayName ?? modelID
+    }
+
+    private func effortLabel(_ choice: ModelChoice) -> String {
+        let effort = modelsByID[choice.model]?.supportedReasoningEfforts.first {
             $0.effort == choice.reasoningEffort
         }
         let unavailable: String
@@ -415,7 +459,199 @@ private struct GeneralSettingsPane: View {
         } else {
             unavailable = " (현재 선택 불가)"
         }
-        return "\(model?.displayName ?? choice.model) · \(effort?.label ?? choice.reasoningEffort)\(unavailable)"
+        return "\(effort?.label ?? choice.reasoningEffort)\(unavailable)"
+    }
+}
+
+private struct RuntimeStatusPane: View {
+    @EnvironmentObject private var model: AppModel
+    let snapshot: SettingsSnapshot
+    @State private var defaultBackend = "mcp-server"
+    @State private var maximumAccess = "read-only"
+    @State private var showApplyConfirmation = false
+    @State private var showForceConfirmation = false
+
+    private var savedConfiguration: RuntimeOperatorConfiguration? {
+        model.helperStatus?.configuration.operatorConfiguration
+    }
+
+    private var isDirty: Bool {
+        guard let savedConfiguration else { return false }
+        return defaultBackend != savedConfiguration.defaultBackend ||
+            maximumAccess != savedConfiguration.maximumAccess
+    }
+
+    private var nonRoutingWarnings: [String] {
+        snapshot.warnings.filter { warning in
+            !warning.localizedCaseInsensitiveContains("Backend routing:") &&
+                !warning.contains("백엔드 라우팅:")
+        }
+    }
+
+    private var canRetryWithForce: Bool {
+        guard let error = model.runtimeErrorMessage else { return false }
+        return error.contains("BACKGROUND_PROCESS") || error.contains("DRAIN_TIMEOUT")
+    }
+
+    var body: some View {
+        Form {
+            Section("런타임 설정") {
+                Picker("Codex 실행 백엔드", selection: $defaultBackend) {
+                    Text("App Server").tag("app-server")
+                    Text("MCP Server").tag("mcp-server")
+                }
+                Picker("허용할 최대 접근 권한", selection: $maximumAccess) {
+                    Text("읽기 전용").tag("read-only")
+                    Text("작업 폴더 쓰기").tag("workspace-write")
+                    Text("전체 접근").tag("full-access")
+                }
+                Text("이 값은 기존 비공개 .env에 저장되며 키체인을 사용하지 않습니다. 적용할 때 진행 중인 작업을 안전하게 비운 뒤 서버를 재시작합니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if maximumAccess == "full-access" {
+                    Label(
+                        "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행할 수 있게 합니다.",
+                        systemImage: "exclamationmark.shield.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                HStack {
+                    Spacer()
+                    if model.isBusy { ProgressView().controlSize(.small) }
+                    Button("저장하고 서버 재시작…") {
+                        showApplyConfirmation = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isBusy || !isDirty)
+                }
+            }
+
+            Section("백엔드 전환 안내") {
+                Label(
+                    "선택한 백엔드는 새 Agent 또는 fresh로 시작한 Agent부터 적용됩니다. 기존 Agent는 생성 당시 백엔드를 계속 사용하며, 백엔드를 바꾸는 fresh 작업에는 handoffSummary가 필요합니다.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("정책과 카탈로그 상태") {
+                LabeledContent(
+                    "실행 정책",
+                    value: snapshot.policyActivation.executionPolicyActive ? "적용됨" : "확인 필요"
+                )
+                LabeledContent("정책 revision", value: String(snapshot.policyActivation.policyRevision))
+                LabeledContent("현재 실행 백엔드", value: snapshot.capabilities.defaultBackend)
+                LabeledContent("모델 카탈로그", value: snapshot.catalog.source ?? "사용 가능한 캐시 없음")
+                LabeledContent("카탈로그 검증", value: snapshot.catalog.validation)
+                LabeledContent(
+                    "운영자 모델 상한",
+                    value: snapshot.capabilities.operatorModelCeiling.map {
+                        "모델·reasoning 조합 \($0.count)개"
+                    } ?? "별도 제한 없음"
+                )
+                if snapshot.policyActivation.developerModeRefreshRequired {
+                    Label(
+                        "정적 실행 한도가 바뀌어 ChatGPT 플러그인 Refresh가 필요합니다.",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                } else if snapshot.policyActivation.descriptorProjectionUpdated {
+                    Label("현재 실행 계약이 반영되었습니다.", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let counts = model.dashboard?.counts,
+               counts.runtimeUnknownAgents > 0 || counts.runtimeProbeSkippedAgents > 0 {
+                Section("기록 정보") {
+                    Label(
+                        "과거 Agent 중 런타임 상태 불명 \(counts.runtimeUnknownAgents) · 확인 생략 \(counts.runtimeProbeSkippedAgents)",
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Text("이 항목만으로 메뉴 막대 아이콘에 경고를 표시하지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !nonRoutingWarnings.isEmpty {
+                Section("확인할 사항") {
+                    ForEach(nonRoutingWarnings, id: \.self) { warning in
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            if let error = model.runtimeErrorMessage {
+                Section("적용하지 못한 이유") {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                    if canRetryWithForce {
+                        Button("강제로 저장하고 재시작…", role: .destructive) {
+                            showForceConfirmation = true
+                        }
+                        .disabled(model.isBusy)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear(perform: synchronize)
+        .onChange(of: model.helperStatus?.configuration.operatorConfiguration) { _ in
+            if !isDirty { synchronize() }
+        }
+        .confirmationDialog(
+            "런타임 설정을 저장하고 서버를 재시작할까요?",
+            isPresented: $showApplyConfirmation
+        ) {
+            Button("저장하고 재시작") {
+                Task {
+                    if await model.configureRuntime(
+                        defaultBackend: defaultBackend,
+                        maximumAccess: maximumAccess
+                    ) {
+                        synchronize()
+                    }
+                }
+            }
+        } message: {
+            Text("진행 중인 작업이 있으면 완료될 때까지 기다린 뒤 적용합니다.")
+        }
+        .confirmationDialog(
+            "확인할 수 없는 백그라운드 프로세스를 무시하고 강제로 재시작할까요?",
+            isPresented: $showForceConfirmation
+        ) {
+            Button("강제로 저장하고 재시작", role: .destructive) {
+                Task {
+                    if await model.configureRuntime(
+                        defaultBackend: defaultBackend,
+                        maximumAccess: maximumAccess,
+                        force: true
+                    ) {
+                        synchronize()
+                    }
+                }
+            }
+        } message: {
+            Text("실제로 실행 중인 Codex 작업이나 백그라운드 프로세스가 있으면 중단될 수 있습니다.")
+        }
+    }
+
+    private func synchronize() {
+        guard let savedConfiguration else { return }
+        defaultBackend = savedConfiguration.defaultBackend
+        maximumAccess = savedConfiguration.maximumAccess
     }
 }
 

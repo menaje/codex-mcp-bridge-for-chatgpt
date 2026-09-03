@@ -376,7 +376,8 @@ public actor HelperBootstrap {
             hello.protocol.version == HelperHello.expectedProtocolVersion &&
             hello.runtime.buildId == runtimeBuildID &&
             hello.capabilities.contains("setup.dotenv.atomic-apply") &&
-            hello.capabilities.contains("setup.dotenv.repair-permissions")
+            hello.capabilities.contains("setup.dotenv.repair-permissions") &&
+            hello.capabilities.contains("runtime.configure")
     }
 
     private func helperArguments(

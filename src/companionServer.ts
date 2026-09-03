@@ -19,6 +19,7 @@ import type {
   BridgeApplicationService,
   BridgeSettingsMutationInput
 } from "./tools.js";
+import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
 export const COMPANION_PROTOCOL_VERSION = 1;
@@ -55,7 +56,8 @@ const dashboardParamsSchema = z.strictObject({
   enrich: z.boolean().optional()
 });
 const settingsSnapshotParamsSchema = z.strictObject({
-  refreshModels: z.boolean().optional()
+  refreshModels: z.boolean().optional(),
+  locale: z.string().min(1).max(100).optional()
 });
 const runtimeSnapshotParamsSchema = z.strictObject({
   inspectBackgroundProcesses: z.boolean().optional()
@@ -227,12 +229,17 @@ async function dispatchRequest(
     }
     case "settings.snapshot": {
       const params = settingsSnapshotParamsSchema.parse(request.params || {});
-      return applicationService.settingsSnapshot(params);
+      const view = await applicationService.settingsSnapshot({
+        refreshModels: params.refreshModels
+      });
+      return localizeSettingsView(view, params.locale);
     }
-    case "settings.update":
-      return applicationService.updateSettings(
+    case "settings.update": {
+      const view = await applicationService.updateSettings(
         request.params as BridgeSettingsMutationInput
       );
+      return localizeSettingsView(view);
+    }
     case "runtime.snapshot":
       return applicationService.runtimeSnapshot(
         runtimeSnapshotParamsSchema.parse(request.params || {})

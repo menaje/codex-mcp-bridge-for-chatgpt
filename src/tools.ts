@@ -153,13 +153,12 @@ import {
 } from "./userSettings.js";
 import {
   UI_LOCALE_PREFERENCES,
-  localizeSettingsWarning,
   missingReasoningEffortTranslations,
-  reasoningEffortPresentation,
   resolvePreferredUiLocale,
   uiTranslation,
   type UiLocalePreference
 } from "./uiI18n.js";
+import { localizeSettingsView } from "./settingsLocalization.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   CANCELLATION_REASON_MAX_LENGTH,
@@ -7952,7 +7951,7 @@ export function registerBridgeTools(
           sessions,
           jobs,
           requestedSandbox:
-            effectiveContinuationSandbox(preferences, args.sandbox) || session.sandbox,
+            effectiveContinuationSandbox(config, preferences, args.sandbox) || session.sandbox,
           preferences,
           activityRequest,
           executionDecision,
@@ -9014,7 +9013,7 @@ async function continueTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  const forcedSandbox = forcedSandboxForStrategy(input.preferences);
+  const forcedSandbox = forcedSandboxForStrategy(input.config, input.preferences);
   if (forcedSandbox && input.session.sandbox !== forcedSandbox) {
     throw new Error(
       `The saved ${input.preferences.accessStrategy} access strategy cannot continue a ${input.session.sandbox} Agent thread. Use contextMode='fresh'.`
@@ -9173,7 +9172,7 @@ async function forkTrackedSession(input: {
   }
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
-  const forcedSandbox = forcedSandboxForStrategy(input.preferences);
+  const forcedSandbox = forcedSandboxForStrategy(input.config, input.preferences);
   if (forcedSandbox && forcedSandbox !== input.session.sandbox) {
     throw new Error(
       `The saved ${input.preferences.accessStrategy} access strategy cannot fork a ${input.session.sandbox} thread. Use contextMode='fresh'.`
@@ -14205,7 +14204,12 @@ async function buildSettingsView(
     "read-only",
     "adaptive"
   ];
-  if (config.allowDangerFullAccess) availableAccessStrategies.push("always-full");
+  if (
+    config.allowDangerFullAccess ||
+    userSettings.current.accessStrategy === "always-full"
+  ) {
+    availableAccessStrategies.push("always-full");
+  }
   return {
     settings: userSettings.current,
     operatorDefaults: userSettings.defaults,
@@ -14293,39 +14297,11 @@ function settingsViewResult(
   locale: string | undefined,
   audience: "model" | "snapshot" | "mutation"
 ): ToolResult {
-  const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
-  const localizedView: SettingsView = {
-    ...view,
-    warnings: view.warnings.map((warning) =>
-      localizeSettingsWarning(warning, effectiveLocale)
-    ),
-    scopeNotice: uiTranslation(effectiveLocale, "settings.sharedNotice"),
-    catalog: {
-      ...view.catalog,
-      warning: view.catalog.warning
-        ? localizeSettingsWarning(view.catalog.warning, effectiveLocale, {
-            catalog: true,
-            stale: view.catalog.stale
-          })
-        : null,
-      models: view.catalog.models.map((model) => ({
-        ...model,
-        supportedReasoningEfforts: model.supportedReasoningEfforts.map((entry) => {
-          const presentation = reasoningEffortPresentation(
-            entry.effort,
-            effectiveLocale,
-            entry.description
-          );
-          return {
-            ...entry,
-            label: presentation.label,
-            localizedDescription: presentation.description,
-            descriptionSource: presentation.descriptionSource
-          };
-        })
-      }))
-    }
-  };
+  const effectiveLocale = resolvePreferredUiLocale(
+    view.settings.uiLocalePreference,
+    locale
+  );
+  const localizedView = localizeSettingsView(view, locale);
   const validatedEditorView = settingsViewOutputSchema.parse(localizedView);
   const unavailableProjectWarnings = view.capabilities.projectAvailability
     .filter(({ available, archived }) => !available && !archived)
@@ -14436,7 +14412,7 @@ function resolveTaskSandbox(
   preferences: BridgeUserSettings,
   requested?: SandboxMode
 ): SandboxMode {
-  const forced = forcedSandboxForStrategy(preferences);
+  const forced = forcedSandboxForStrategy(config, preferences);
   return forced ? enforceSandbox(config, forced) : enforceSandbox(config, requested);
 }
 
@@ -14491,17 +14467,23 @@ function assertExecutionPolicyAdmission(input: {
   throw new ExecutionPolicyChangedError(input.currentRef);
 }
 
-function forcedSandboxForStrategy(preferences: BridgeUserSettings): SandboxMode | undefined {
+function forcedSandboxForStrategy(
+  config: BridgeConfig,
+  preferences: BridgeUserSettings
+): SandboxMode | undefined {
   if (preferences.accessStrategy === "read-only") return "read-only";
-  if (preferences.accessStrategy === "always-full") return "danger-full-access";
+  if (preferences.accessStrategy === "always-full") {
+    return config.allowDangerFullAccess ? "danger-full-access" : "read-only";
+  }
   return undefined;
 }
 
 function effectiveContinuationSandbox(
+  config: BridgeConfig,
   preferences: BridgeUserSettings,
   requested?: SandboxMode
 ): SandboxMode | undefined {
-  return forcedSandboxForStrategy(preferences) || requested;
+  return forcedSandboxForStrategy(config, preferences) || requested;
 }
 
 type ResolvedExecutionDecision = {

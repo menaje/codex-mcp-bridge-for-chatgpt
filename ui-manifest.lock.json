@@ -10,8 +10,8 @@
   },
   "resources": {
     "settings": {
-      "digest": "0b12d97d007fec68065903e633850875c068a2962c2094fb6bd1ef71dc677111",
-      "uri": "ui://codex-mcp-bridge/settings/0b12d97d007f.html",
+      "digest": "b0d2cba010b040f9f320cbc034b676ff60849ac807dc6d342787e6cdf25f2c1c",
+      "uri": "ui://codex-mcp-bridge/settings/b0d2cba010b0.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -38,6 +38,35 @@
         }
       },
       "previous": [
+        {
+          "digest": "0b12d97d007fec68065903e633850875c068a2962c2094fb6bd1ef71dc677111",
+          "uri": "ui://codex-mcp-bridge/settings/0b12d97d007f.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 15
+            }
+          }
+        },
         {
           "digest": "cf12bc05f05a65961d0fa9761f417f0bfb6bee926ef3d4551e7fad3df9d2c487",
           "uri": "ui://codex-mcp-bridge/settings/cf12bc05f05a.html",

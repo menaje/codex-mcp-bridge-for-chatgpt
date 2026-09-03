@@ -280,6 +280,7 @@ export class UserSettingsStore {
   resolveSandbox(requested?: SandboxMode): SandboxMode {
     if (this.settings.accessStrategy === "read-only") return "read-only";
     if (this.settings.accessStrategy === "always-full") {
+      if (!this.config.allowDangerFullAccess) return "read-only";
       return enforceSandbox(this.config, "danger-full-access");
     }
     return enforceSandbox(this.config, requested);
@@ -315,7 +316,11 @@ export class UserSettingsStore {
       settingsRevision: this.settings.settingsRevision,
       updatedAt: this.settings.updatedAt
     } as GeneralSettings;
-    const candidate = this.validateGeneral(merged);
+    const candidate = this.validateGeneral(merged, {
+      allowUnavailableFullAccess:
+        this.settings.accessStrategy === "always-full" &&
+        merged.accessStrategy === "always-full"
+    });
     const generalChanged = hasGeneralPatch &&
       canonicalGeneralSettings(candidate) !== canonicalGeneralSettings(this.settings);
     const now = this.now();
@@ -393,7 +398,10 @@ export class UserSettingsStore {
     return operations;
   }
 
-  private validateGeneral(candidate: GeneralSettings): GeneralSettings {
+  private validateGeneral(
+    candidate: GeneralSettings,
+    options: { allowUnavailableFullAccess?: boolean } = {}
+  ): GeneralSettings {
     if (
       candidate.accessStrategy !== "read-only" &&
       candidate.accessStrategy !== "adaptive" &&
@@ -401,7 +409,11 @@ export class UserSettingsStore {
     ) {
       throw new Error(`Invalid access strategy: ${String(candidate.accessStrategy)}`);
     }
-    if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
+    if (
+      candidate.accessStrategy === "always-full" &&
+      !this.config.allowDangerFullAccess &&
+      !options.allowUnavailableFullAccess
+    ) {
       throw new Error(
         "always-full is unavailable because the bridge security policy disables danger-full-access."
       );
@@ -532,10 +544,8 @@ export class UserSettingsStore {
       );
     }
     if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
-      candidate.accessStrategy = "read-only";
-      changed = true;
       this.warnings.push(
-        "Saved full-access mode was downgraded to read-only because the bridge security policy disables danger-full-access."
+        "Saved full-access mode is retained but inactive because the bridge security policy disables danger-full-access. Read-only is enforced until full access is enabled in runtime settings."
       );
     }
     if (candidate.maxConcurrentJobs > this.config.maxConcurrentJobs) {
@@ -547,7 +557,10 @@ export class UserSettingsStore {
       candidate.settingsRevision = settingsRevision + 1;
       candidate.updatedAt = new Date(this.now()).toISOString();
     }
-    return { settings: this.validateGeneral(candidate), changed };
+    return {
+      settings: this.validateGeneral(candidate, { allowUnavailableFullAccess: true }),
+      changed
+    };
   }
 
   private noteUnavailableProjects(): void {

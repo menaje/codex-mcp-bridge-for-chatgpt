@@ -629,7 +629,7 @@ describe("user settings and project registry", () => {
     expect(rewritten.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
   });
 
-  it("safely narrows saved capability settings in one ordinary generation", () => {
+  it("safely clamps but does not erase a saved full-access preference", () => {
     const stateFile = path.join(temporaryDirectory("settings-narrow-"), "settings.json");
     const broad = configFor({
       CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
@@ -648,11 +648,12 @@ describe("user settings and project registry", () => {
     });
     expect(narrowed.current).toMatchObject({
       settingsRevision: 2,
-      accessStrategy: "read-only",
+      accessStrategy: "always-full",
       maxConcurrentJobs: 2,
       updatedAt: "2026-08-26T00:00:00.000Z"
     });
-    expect(narrowed.loadWarnings.join(" ")).toContain("downgraded to read-only");
+    expect(narrowed.resolveSandbox("danger-full-access")).toBe("read-only");
+    expect(narrowed.loadWarnings.join(" ")).toContain("retained but inactive");
     expect(narrowed.loadWarnings.join(" ")).toContain("concurrent-job limit");
   });
 });

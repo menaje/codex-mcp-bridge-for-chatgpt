@@ -5,7 +5,13 @@ export type RuntimeEnvStatus = {
   hasApiKey: boolean;
   hasTunnelId: boolean;
   tunnelId: string | null;
+  operatorConfiguration: RuntimeOperatorConfiguration;
   issue: string | null;
+};
+
+export type RuntimeOperatorConfiguration = {
+  defaultBackend: "app-server" | "mcp-server";
+  maximumAccess: "read-only" | "workspace-write" | "full-access";
 };
 
 export function defaultRuntimeEnvFile(options?: {
@@ -52,7 +58,12 @@ export type PreparedRuntimeEnvUpdate = {
 
 export function prepareRuntimeEnvUpdate(
   filePath: string,
-  values: { apiKey?: string; tunnelId?: string }
+  values: {
+    apiKey?: string;
+    tunnelId?: string;
+    defaultBackend?: RuntimeOperatorConfiguration["defaultBackend"];
+    maximumAccess?: RuntimeOperatorConfiguration["maximumAccess"];
+  }
 ): PreparedRuntimeEnvUpdate;
 
 export function commitRuntimeEnvUpdate(
@@ -65,5 +76,10 @@ export function rollbackRuntimeEnvUpdate(
 
 export function updateRuntimeEnvFile(
   filePath: string,
-  values: { apiKey?: string; tunnelId?: string }
+  values: {
+    apiKey?: string;
+    tunnelId?: string;
+    defaultBackend?: RuntimeOperatorConfiguration["defaultBackend"];
+    maximumAccess?: RuntimeOperatorConfiguration["maximumAccess"];
+  }
 ): RuntimeEnvStatus;

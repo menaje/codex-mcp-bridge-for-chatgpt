@@ -152,6 +152,34 @@ describe("native companion server", () => {
     });
   });
 
+  it("localizes native Settings warnings using the requested locale", async () => {
+    const socketPath = temporarySocketPath();
+    const applicationService = fakeApplicationService();
+    vi.mocked(applicationService.settingsSnapshot).mockResolvedValue({
+      settings: { settingsRevision: 3, uiLocalePreference: "ko" },
+      catalog: { stale: false, warning: null, models: [] },
+      warnings: [
+        "Backend routing: app-server applies only to new or deliberately fresh Agent threads. " +
+          "Existing Agent threads remain pinned to their original backend. To cross backends, " +
+          "choose the existing Agent with context='fresh' and provide an explicit handoffSummary; " +
+          "the prior transcript and backend state are not copied."
+      ],
+      scopeNotice: "unlocalized"
+    } as SettingsView);
+    const server = await startBridgeCompanionServer({ socketPath, applicationService });
+    servers.push(server);
+
+    const response = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "localized-settings",
+      method: "settings.snapshot",
+      params: { refreshModels: false, locale: "ko-KR" }
+    });
+
+    expect(response.result.warnings[0]).toContain("백엔드 라우팅");
+    expect(response.result.scopeNotice).not.toBe("unlocalized");
+  });
+
   it("rejects malformed requests without closing the server", async () => {
     const socketPath = temporarySocketPath();
     const server = await startBridgeCompanionServer({

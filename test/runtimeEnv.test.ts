@@ -231,9 +231,42 @@ describe("runtime environment", () => {
       hasApiKey: true,
       hasTunnelId: true,
       tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      operatorConfiguration: {
+        defaultBackend: "mcp-server",
+        maximumAccess: "read-only"
+      },
       issue: null
     });
     expect(JSON.stringify(status)).not.toContain("sk-native");
+  });
+
+  it("atomically stores backend and maximum access without exposing credentials", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, "private", ".env");
+    updateRuntimeEnvFile(file, {
+      apiKey: "sk-native-operator-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo",
+      defaultBackend: "app-server",
+      maximumAccess: "full-access"
+    });
+
+    expect(inspectRuntimeEnvFile(file)).toMatchObject({
+      valid: true,
+      operatorConfiguration: {
+        defaultBackend: "app-server",
+        maximumAccess: "full-access"
+      }
+    });
+    expect(readFileSync(file, "utf8")).toContain("CODEX_MCP_BRIDGE_DEFAULT_BACKEND=app-server");
+    expect(readFileSync(file, "utf8")).toContain("CODEX_MCP_BRIDGE_ALLOW_WRITE=1");
+    expect(readFileSync(file, "utf8")).toContain("CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS=1");
+
+    updateRuntimeEnvFile(file, { maximumAccess: "workspace-write" });
+    expect(inspectRuntimeEnvFile(file).operatorConfiguration).toEqual({
+      defaultBackend: "app-server",
+      maximumAccess: "workspace-write"
+    });
+    expect(readFileSync(file, "utf8")).toContain("CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS=0");
   });
 
   it("preserves comments, unknown values, and a saved key when its input is blank", () => {

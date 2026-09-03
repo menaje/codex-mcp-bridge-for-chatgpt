@@ -58,6 +58,8 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(model.health, .attention)
         model.dashboard = try dashboardStatus()
         XCTAssertEqual(model.health, .healthy)
+        model.dashboard = try dashboardStatus(runtimeUnknownAgents: 18)
+        XCTAssertEqual(model.health, .healthy)
         model.dashboardErrorMessage = "stale"
         XCTAssertEqual(model.health, .attention)
     }
@@ -314,7 +316,7 @@ private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLo
     return try JSONDecoder().decode(CodexLoginStatus.self, from: data)
 }
 
-private func dashboardStatus() throws -> DashboardSnapshot {
+private func dashboardStatus(runtimeUnknownAgents: Int = 0) throws -> DashboardSnapshot {
     let counts: [String: Any] = [
         "trackedProjects": 0,
         "trackedConversations": 0,
@@ -327,7 +329,7 @@ private func dashboardStatus() throws -> DashboardSnapshot {
         "needsAttention": 0,
         "backgroundProcesses": 0,
         "backgroundProcessAgents": 0,
-        "runtimeUnknownAgents": 0,
+        "runtimeUnknownAgents": runtimeUnknownAgents,
         "runtimeProbeSkippedAgents": 0,
         "completed": 0,
         "failed": 0,

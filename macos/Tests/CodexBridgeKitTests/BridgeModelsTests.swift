@@ -157,7 +157,8 @@ final class BridgeModelsTests: XCTestCase {
             buildID: "build-current",
             capabilities: [
                 "setup.dotenv.atomic-apply",
-                "setup.dotenv.repair-permissions"
+                "setup.dotenv.repair-permissions",
+                "runtime.configure"
             ]
         )
         XCTAssertTrue(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-current"))
@@ -169,7 +170,8 @@ final class BridgeModelsTests: XCTestCase {
                 buildID: "build-current",
                 capabilities: [
                     "setup.dotenv.atomic-apply",
-                    "setup.dotenv.repair-permissions"
+                    "setup.dotenv.repair-permissions",
+                    "runtime.configure"
                 ]
             ),
             runtimeBuildID: "build-current"
@@ -179,7 +181,10 @@ final class BridgeModelsTests: XCTestCase {
                 name: HelperHello.expectedProtocolName,
                 version: HelperHello.expectedProtocolVersion,
                 buildID: "build-current",
-                capabilities: ["setup.dotenv.atomic-apply"]
+                capabilities: [
+                    "setup.dotenv.atomic-apply",
+                    "setup.dotenv.repair-permissions"
+                ]
             ),
             runtimeBuildID: "build-current"
         ))

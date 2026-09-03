@@ -262,9 +262,7 @@ final class AppModel: ObservableObject {
         guard dashboardErrorMessage == nil, let counts = dashboard?.counts else {
             return .attention
         }
-        return counts.needsAttention > 0 || counts.runtimeUnknownAgents > 0
-            ? .attention
-            : .healthy
+        return counts.needsAttention > 0 ? .attention : .healthy
     }
 
     var needsSetup: Bool {
@@ -509,6 +507,24 @@ final class AppModel: ObservableObject {
                 apiKey: apiKey.isEmpty ? nil : apiKey,
                 tunnelId: tunnelId.isEmpty ? nil : tunnelId,
                 force: false,
+                timeoutMilliseconds: 60_000
+            )
+            self.helperStatus = result.status
+            await self.refreshAll()
+        }
+    }
+
+    func configureRuntime(
+        defaultBackend: String,
+        maximumAccess: String,
+        force: Bool = false
+    ) async -> Bool {
+        await performRuntime {
+            let client = await self.helperClient()
+            let result = try await client.configureRuntime(
+                defaultBackend: defaultBackend,
+                maximumAccess: maximumAccess,
+                force: force,
                 timeoutMilliseconds: 60_000
             )
             self.helperStatus = result.status

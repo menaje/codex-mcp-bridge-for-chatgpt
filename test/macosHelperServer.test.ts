@@ -84,6 +84,24 @@ describe("macOS runtime helper RPC", () => {
 
     await request(socketPath, {
       jsonrpc: "2.0",
+      id: "runtime-configure",
+      method: "runtime.configure",
+      params: {
+        defaultBackend: "app-server",
+        maximumAccess: "full-access",
+        mode: "drain",
+        timeoutMs: 60_000
+      }
+    });
+    expect(controller.applyConfiguration).toHaveBeenLastCalledWith({
+      defaultBackend: "app-server",
+      maximumAccess: "full-access",
+      mode: "drain",
+      timeoutMs: 60_000
+    });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
       id: "repair-permissions",
       method: "setup.repair-permissions",
       params: {}
@@ -819,6 +837,10 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
       hasApiKey: true,
       hasTunnelId: true,
       tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      operatorConfiguration: {
+        defaultBackend: "mcp-server",
+        maximumAccess: "read-only"
+      },
       issue: null
     },
     bridge: {

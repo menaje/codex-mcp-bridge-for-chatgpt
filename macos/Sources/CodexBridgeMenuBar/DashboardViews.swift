@@ -200,15 +200,6 @@ struct DashboardPopoverView: View {
                     WeeklyUsageView(usage: usage)
                 }
                 CountsGrid(counts: dashboard.counts)
-                if dashboard.counts.runtimeUnknownAgents > 0 ||
-                    dashboard.counts.runtimeProbeSkippedAgents > 0 {
-                    Label(
-                        "런타임 상태 불명 \(dashboard.counts.runtimeUnknownAgents) · 확인 생략 \(dashboard.counts.runtimeProbeSkippedAgents)",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
                 DashboardSection(
                     title: "활성",
                     emptyText: "현재 활성 Agent가 없습니다.",

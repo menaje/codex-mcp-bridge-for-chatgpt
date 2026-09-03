@@ -101,6 +101,24 @@ public struct MacOSHelperClient: Sendable {
         )
     }
 
+    public func configureRuntime(
+        defaultBackend: String,
+        maximumAccess: String,
+        force: Bool = false,
+        timeoutMilliseconds: Int = 60_000
+    ) async throws -> SetupApplyResponse {
+        try await rpc.call(
+            "runtime.configure",
+            params: RuntimeConfigureParameters(
+                defaultBackend: defaultBackend,
+                maximumAccess: maximumAccess,
+                force: force,
+                timeoutMilliseconds: timeoutMilliseconds
+            ),
+            timeout: Self.configurationApplyTimeout(timeoutMilliseconds)
+        )
+    }
+
     public func authStatus() async throws -> CodexLoginStatus {
         try await rpc.call("auth.status", params: EmptyParameters(), timeout: 20)
     }

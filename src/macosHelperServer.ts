@@ -76,6 +76,7 @@ const helperRequestSchema = z.strictObject({
     "runtime.start",
     "runtime.stop",
     "runtime.restart",
+    "runtime.configure",
     "runtime.repair",
     "runtime.logs"
   ]),
@@ -95,6 +96,13 @@ const stopParamsSchema = z.strictObject({
     .default(DEFAULT_DRAIN_TIMEOUT_MS)
 });
 const restartParamsSchema = stopParamsSchema;
+const runtimeConfigureParamsSchema = z.strictObject({
+  defaultBackend: z.enum(["app-server", "mcp-server"]),
+  maximumAccess: z.enum(["read-only", "workspace-write", "full-access"]),
+  mode: z.enum(["drain", "force"]).default("drain"),
+  timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
+    .default(DEFAULT_DRAIN_TIMEOUT_MS)
+});
 const logsParamsSchema = z.strictObject({
   limit: z.number().int().min(1).max(HELPER_LOG_LIMIT).default(100)
 });
@@ -167,6 +175,8 @@ export type MacOSHelperController = {
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
+    defaultBackend?: "app-server" | "mcp-server";
+    maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
   }): Promise<{
@@ -295,6 +305,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
+    defaultBackend?: "app-server" | "mcp-server";
+    maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
   }): Promise<{
@@ -1011,6 +1023,7 @@ async function dispatchHelperLine(
             "runtime.start",
             "runtime.stop",
             "runtime.restart",
+            "runtime.configure",
             "runtime.repair-profile",
             "runtime.logs.redacted",
             "setup.dotenv.atomic-apply",
@@ -1048,6 +1061,11 @@ async function dispatchHelperLine(
         break;
       case "runtime.restart":
         result = await controller.restart(restartParamsSchema.parse(request.params || {}));
+        break;
+      case "runtime.configure":
+        result = await controller.applyConfiguration(
+          runtimeConfigureParamsSchema.parse(request.params || {})
+        );
         break;
       case "runtime.repair":
         result = await controller.repair(restartParamsSchema.parse(request.params || {}));
