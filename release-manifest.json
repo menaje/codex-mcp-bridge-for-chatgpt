@@ -1,6 +1,6 @@
 {
   "$schema": "./release-manifest.schema.json",
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "product": {
     "displayName": "Codex MCP Bridge for ChatGPT",
     "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
@@ -89,9 +89,13 @@
     ]
   },
   "release": {
+    "releaseUnitId": "codex-mcp-bridge",
     "version": "0.3.0",
+    "stage": "development",
     "tagPrefix": "v",
-    "channel": "stable",
+    "channel": "none",
+    "sourceVersion": null,
+    "sourceCandidate": null,
     "generateNotes": true,
     "targets": {
       "macos": {

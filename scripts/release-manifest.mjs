@@ -55,7 +55,7 @@ export function validateReleaseManifest(value) {
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
-  if (root.manifestVersion !== 2) fail("manifestVersion must be 2");
+  if (root.manifestVersion !== 3) fail("manifestVersion must be 3");
 
   const product = requiredRecord(root.product, "product");
   assertKeys(product, ["displayName", "description", "runtimeName"], "product");
@@ -185,20 +185,68 @@ export function validateReleaseManifest(value) {
   }
 
   const release = requiredRecord(root.release, "release");
-  assertKeys(release, ["version", "tagPrefix", "channel", "generateNotes", "targets", "assets"], "release");
+  assertKeys(
+    release,
+    [
+      "releaseUnitId",
+      "version",
+      "stage",
+      "tagPrefix",
+      "channel",
+      "sourceVersion",
+      "sourceCandidate",
+      "generateNotes",
+      "targets",
+      "assets"
+    ],
+    "release"
+  );
+  if (release.releaseUnitId !== root.product.runtimeName) {
+    fail("release.releaseUnitId must match product.runtimeName");
+  }
   const semver = typeof release.version === "string" ? SEMVER_PATTERN.exec(release.version) : null;
   if (!semver) {
     fail("release.version must be a valid SemVer value");
   }
+  if (semver[5]) fail("release.version cannot contain build metadata");
+  if (!["development", "candidate", "stable", "deprecated"].includes(release.stage)) {
+    fail("release.stage must be development, candidate, stable, or deprecated");
+  }
   if (typeof release.tagPrefix !== "string" || !/^[A-Za-z0-9._-]{0,16}$/.test(release.tagPrefix)) {
     fail("release.tagPrefix contains unsupported characters");
   }
-  if (release.channel !== "stable" && release.channel !== "prerelease") {
-    fail("release.channel must be stable or prerelease");
+  const expectedChannel = releaseChannelForStage(release.stage);
+  if (release.channel !== expectedChannel) {
+    fail(`release.channel must be ${expectedChannel} for ${release.stage} stage`);
   }
-  const hasPrerelease = Boolean(semver[4]);
-  if (release.channel === "stable" && hasPrerelease) fail("stable releases cannot use a prerelease version");
-  if (release.channel === "prerelease" && !hasPrerelease) fail("prerelease channel requires a prerelease version");
+  const candidate = candidateVersionParts(release.version);
+  if (release.stage === "candidate" && !candidate) {
+    fail("candidate stage requires an X.Y.Z-rc.N version");
+  }
+  if (release.stage !== "candidate" && semver[4]) {
+    fail(`${release.stage} stage requires a suffix-free X.Y.Z version`);
+  }
+  if (release.stage === "stable") {
+    const sourceCandidate = candidateVersionParts(release.sourceCandidate);
+    if (!sourceCandidate) fail("stable stage requires release.sourceCandidate in X.Y.Z-rc.N form");
+    if (sourceCandidate.base !== release.version) {
+      fail("release.sourceCandidate must have the same numeric version as release.version");
+    }
+  } else if (release.sourceCandidate !== null) {
+    fail(`release.sourceCandidate must be null for ${release.stage} stage`);
+  }
+  if (release.stage === "candidate" || release.stage === "stable") {
+    const sourceVersion = baseVersionParts(release.sourceVersion);
+    const targetVersion = baseVersionParts(candidate?.base ?? release.version);
+    if (!sourceVersion) {
+      fail(`${release.stage} stage requires release.sourceVersion in X.Y.Z form`);
+    }
+    if (!targetVersion || compareBaseVersions(sourceVersion, targetVersion) >= 0) {
+      fail("release.sourceVersion must precede the target release version");
+    }
+  } else if (release.sourceVersion !== null) {
+    fail(`release.sourceVersion must be null for ${release.stage} stage`);
+  }
   if (typeof release.generateNotes !== "boolean") fail("release.generateNotes must be boolean");
   const targets = requiredRecord(release.targets, "release.targets");
   assertKeys(targets, ["macos"], "release.targets");
@@ -233,8 +281,10 @@ export function deriveReleaseMetadata(manifest) {
   const tag = `${manifest.release.tagPrefix}${version}`;
   const packageFilename = `${manifest.package.name}-${version}.tgz`;
   const macosTarget = manifest.release.targets.macos;
+  const sourceCandidate = manifest.release.sourceCandidate;
   return {
     manifestVersion: manifest.manifestVersion,
+    releaseUnitId: manifest.release.releaseUnitId,
     displayName: manifest.product.displayName,
     runtimeName: manifest.product.runtimeName,
     packageName: manifest.package.name,
@@ -244,6 +294,18 @@ export function deriveReleaseMetadata(manifest) {
     npmVersion: manifest.toolchain.npm,
     codexCliVersion: manifest.toolchain.codexCli,
     version,
+    stage: manifest.release.stage,
+    sourceVersion: manifest.release.sourceVersion,
+    sourceCandidate,
+    sourceCandidateTag: sourceCandidate
+      ? `${manifest.release.tagPrefix}${sourceCandidate}`
+      : "",
+    sourceCandidatePackageFilename: sourceCandidate
+      ? `${manifest.package.name}-${sourceCandidate}.tgz`
+      : "",
+    sourceCandidateMacosArchiveFilename: sourceCandidate
+      ? `Codex-MCP-Bridge-for-ChatGPT-${sourceCandidate}-macOS-${macosTarget.architecture}-unnotarized.${macosTarget.format}`
+      : "",
     tag,
     releaseTitle: `${manifest.product.displayName} ${tag}`,
     channel: manifest.release.channel,
@@ -522,12 +584,32 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
 
 export function setReleaseVersion(requested, repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
-  const packageJson = readJson(path.join(repoRoot, "package.json"));
   const version = resolveVersion(packageVersionFromSource(repoRoot), requested);
-  const nextPackageJson = structuredClone(packageJson);
-  nextPackageJson.version = version;
-  writeJsonIfChanged(path.join(repoRoot, "package.json"), packageJson, nextPackageJson);
-  const nextManifest = manifestForPackageVersion(manifest, version);
+  const candidate = candidateVersionParts(version);
+  const sameBasePromotion = manifest.release.stage === "candidate" &&
+    candidateVersionParts(manifest.release.version)?.base === version;
+  const stage = candidate ? "candidate" : sameBasePromotion ? "stable" : "development";
+  const sourceCandidate = stage === "stable" ? manifest.release.version : null;
+  const sourceVersion = stage === "candidate"
+    ? manifest.release.stage === "candidate"
+      ? manifest.release.sourceVersion
+      : packageVersionFromSource(repoRoot)
+    : stage === "stable"
+      ? manifest.release.sourceVersion
+      : null;
+  return setReleaseState({ version, stage, sourceVersion, sourceCandidate }, repoRoot);
+}
+
+export function setReleaseState(state, repoRoot = DEFAULT_REPO_ROOT) {
+  const manifest = loadReleaseManifest(repoRoot);
+  const version = resolveVersion(packageVersionFromSource(repoRoot), state?.version);
+  const nextManifest = manifestForReleaseState(
+    manifest,
+    version,
+    state?.stage,
+    state?.sourceVersion ?? null,
+    state?.sourceCandidate ?? null
+  );
   const prepared = preparePackageMetadata(repoRoot, nextManifest);
   writeJsonAtomically(path.join(repoRoot, MANIFEST_FILENAME), nextManifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
@@ -583,11 +665,51 @@ function packageVersionFromSource(repoRoot) {
 }
 
 function manifestForPackageVersion(manifest, version) {
+  return manifestForReleaseState(
+    manifest,
+    version,
+    manifest.release.stage,
+    manifest.release.sourceVersion,
+    manifest.release.sourceCandidate
+  );
+}
+
+function manifestForReleaseState(manifest, version, stage, sourceVersion, sourceCandidate) {
   const nextManifest = structuredClone(manifest);
   nextManifest.release.version = version;
-  nextManifest.release.channel = SEMVER_PATTERN.exec(version)?.[4] ? "prerelease" : "stable";
+  nextManifest.release.stage = stage;
+  nextManifest.release.channel = releaseChannelForStage(stage);
+  nextManifest.release.sourceVersion = sourceVersion;
+  nextManifest.release.sourceCandidate = sourceCandidate;
   validateReleaseManifest(nextManifest);
   return nextManifest;
+}
+
+function releaseChannelForStage(stage) {
+  if (stage === "candidate") return "prerelease";
+  if (stage === "stable") return "stable";
+  return "none";
+}
+
+function candidateVersionParts(version) {
+  if (typeof version !== "string") return null;
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.([1-9]\d*)$/.exec(version);
+  if (!match) return null;
+  return {
+    base: `${match[1]}.${match[2]}.${match[3]}`,
+    rc: Number(match[4])
+  };
+}
+
+function baseVersionParts(version) {
+  if (typeof version !== "string") return null;
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+}
+
+function compareBaseVersions(left, right) {
+  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
 }
 
 function resolveVersion(current, requested) {
@@ -777,6 +899,7 @@ function fail(message) {
 function printGithubOutput(metadata) {
   const output = {
     manifest_version: metadata.manifestVersion,
+    release_unit_id: metadata.releaseUnitId,
     display_name: metadata.displayName,
     runtime_name: metadata.runtimeName,
     package_name: metadata.packageName,
@@ -786,6 +909,12 @@ function printGithubOutput(metadata) {
     npm_version: metadata.npmVersion,
     codex_cli_version: metadata.codexCliVersion,
     version: metadata.version,
+    stage: metadata.stage,
+    source_version: metadata.sourceVersion ?? "",
+    source_candidate: metadata.sourceCandidate ?? "",
+    source_candidate_tag: metadata.sourceCandidateTag,
+    source_candidate_package_filename: metadata.sourceCandidatePackageFilename,
+    source_candidate_macos_archive_filename: metadata.sourceCandidateMacosArchiveFilename,
     tag: metadata.tag,
     release_title: metadata.releaseTitle,
     channel: metadata.channel,
@@ -804,7 +933,7 @@ function printGithubOutput(metadata) {
 }
 
 async function main() {
-  const [command, argument] = process.argv.slice(2);
+  const [command] = process.argv.slice(2);
   if (command === "check") {
     const metadata = checkReleaseMetadata();
     console.log(`Release manifest is synchronized for ${metadata.tag}.`);
@@ -815,11 +944,6 @@ async function main() {
     console.log(`Synchronized package metadata from ${MANIFEST_FILENAME} for ${metadata.tag}.`);
     return;
   }
-  if (command === "version") {
-    const metadata = setReleaseVersion(argument);
-    console.log(`Set release version to ${metadata.version} (${metadata.channel}).`);
-    return;
-  }
   if (command === "github-output") {
     // This command bootstraps the workflow before setup-node/npm ci, so it
     // must only depend on built-in Node modules and the canonical manifest.
@@ -828,7 +952,7 @@ async function main() {
     printGithubOutput(deriveReleaseMetadata(loadReleaseManifest()));
     return;
   }
-  throw new Error("Usage: release-manifest.mjs <check|sync|version|github-output> [major|minor|patch|semver]");
+  throw new Error("Usage: release-manifest.mjs <check|sync|github-output>");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

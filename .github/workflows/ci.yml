@@ -1,22 +1,39 @@
 name: Release
 
-# A main push is the explicit prerelease/stable release action for this
-# repository. Development and pull-request pushes intentionally run no Actions.
+# Development and pull-request pushes intentionally run no Actions. A manual
+# run on release/X.Y.Z publishes an RC; a main push publishes only a promoted
+# stable release.
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: main-release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  policy-context:
+    name: Validate release authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.policy.outputs.mode }}
+      stage: ${{ steps.policy.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: policy
+        name: Reject an invalid event, branch, version, or stage
+        run: node scripts/release-policy.mjs github-context >> "$GITHUB_OUTPUT"
+
   check:
     name: Check npm server runtime
+    needs:
+      - policy-context
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -39,6 +56,8 @@ jobs:
 
   macos-check:
     name: Check native macOS app
+    needs:
+      - policy-context
     runs-on: macos-15
     timeout-minutes: 25
     steps:
@@ -64,6 +83,7 @@ jobs:
   npm-release-assets:
     name: Build generic npm server assets
     needs:
+      - policy-context
       - check
       - macos-check
     runs-on: ubuntu-latest
@@ -96,6 +116,57 @@ jobs:
             cd release-assets
             sha256sum "$PACKAGE_FILE" > "$CHECKSUM_FILE"
           )
+      - name: Smoke-test the packed generic npm server
+        env:
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          smoke_root="$(mktemp -d)"
+          smoke_pid=""
+          cleanup_smoke() {
+            if [[ -n "$smoke_pid" ]]; then
+              kill -TERM "$smoke_pid" >/dev/null 2>&1 || true
+              wait "$smoke_pid" >/dev/null 2>&1 || true
+            fi
+            rm -rf "$smoke_root"
+          }
+          trap cleanup_smoke EXIT
+          npm install \
+            --prefix "$smoke_root" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            "./release-assets/$PACKAGE_FILE"
+          CODEX_MCP_BRIDGE_HOST=127.0.0.1 \
+          CODEX_MCP_BRIDGE_PORT=18765 \
+          CODEX_MCP_BRIDGE_NO_AUTH=1 \
+          CODEX_MCP_BRIDGE_STATE_DATABASE_FILE="$smoke_root/state.sqlite" \
+            "$smoke_root/node_modules/.bin/codex-mcp-bridge" >"$smoke_root/server.log" 2>&1 &
+          smoke_pid="$!"
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:18765/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$smoke_root/server.log" >&2
+          exit 1
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Compare stable npm payload with the source RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+          SOURCE_PACKAGE_FILE: ${{ steps.metadata.outputs.source_candidate_package_filename }}
+          STABLE_PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          mkdir -p candidate-assets
+          gh release download "$SOURCE_CANDIDATE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_PACKAGE_FILE" \
+            --dir candidate-assets
+          npm run release:payload -- compare \
+            --kind npm \
+            --candidate "candidate-assets/$SOURCE_PACKAGE_FILE" \
+            --stable "release-assets/$STABLE_PACKAGE_FILE"
       - uses: actions/upload-artifact@v7
         with:
           name: npm-release-assets
@@ -106,6 +177,7 @@ jobs:
   macos-release-package:
     name: Package unnotarized macOS arm64 app
     needs:
+      - policy-context
       - check
       - macos-check
     runs-on: macos-15
@@ -131,6 +203,23 @@ jobs:
         run: |
           mkdir -p release-assets
           npm run macos:package -- --output "release-assets/$MACOS_FILE"
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Compare stable macOS payload with the source RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+          SOURCE_MACOS_FILE: ${{ steps.metadata.outputs.source_candidate_macos_archive_filename }}
+          STABLE_MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
+        run: |
+          mkdir -p candidate-assets
+          gh release download "$SOURCE_CANDIDATE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_MACOS_FILE" \
+            --dir candidate-assets
+          npm run release:payload -- compare \
+            --kind macos \
+            --candidate "candidate-assets/$SOURCE_MACOS_FILE" \
+            --stable "release-assets/$STABLE_MACOS_FILE"
       - uses: actions/upload-artifact@v7
         with:
           name: macos-release-asset
@@ -141,6 +230,7 @@ jobs:
   release:
     name: Publish package version
     needs:
+      - policy-context
       - check
       - macos-check
       - npm-release-assets
@@ -165,10 +255,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_STAGE: ${{ steps.metadata.outputs.stage }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
         run: |
           if [[ "$GITHUB_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
             echo "Manifest repository $EXPECTED_REPOSITORY does not match workflow repository $GITHUB_REPOSITORY." >&2
             exit 1
+          fi
+          if [[ "$RELEASE_STAGE" == "stable" ]]; then
+            if [[ -z "$SOURCE_CANDIDATE_TAG" ]]; then
+              echo "Stable release is missing its source candidate." >&2
+              exit 1
+            fi
+            candidate_is_prerelease="$(gh release view "$SOURCE_CANDIDATE_TAG" --json isPrerelease --jq .isPrerelease)"
+            if [[ "$candidate_is_prerelease" != "true" ]]; then
+              echo "$SOURCE_CANDIDATE_TAG is not an existing GitHub prerelease." >&2
+              exit 1
+            fi
+            latest_candidate_tag="$(
+              gh release list --limit 1000 --json tagName,isPrerelease |
+                node -e '
+                  const releases = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+                  const stableTag = process.argv[1];
+                  const prefix = `${stableTag}-rc.`;
+                  const candidates = releases
+                    .filter((release) => release.isPrerelease && release.tagName.startsWith(prefix))
+                    .map((release) => ({
+                      tag: release.tagName,
+                      rc: Number(release.tagName.slice(prefix.length))
+                    }))
+                    .filter((release) => Number.isSafeInteger(release.rc) && release.rc > 0)
+                    .sort((left, right) => right.rc - left.rc);
+                  process.stdout.write(candidates[0]?.tag || "");
+                ' "$RELEASE_TAG"
+            )"
+            if [[ "$latest_candidate_tag" != "$SOURCE_CANDIDATE_TAG" ]]; then
+              echo "$SOURCE_CANDIDATE_TAG is not the latest RC for $RELEASE_TAG (latest: ${latest_candidate_tag:-none})." >&2
+              exit 1
+            fi
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"

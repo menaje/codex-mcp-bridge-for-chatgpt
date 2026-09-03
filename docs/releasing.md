@@ -1,13 +1,14 @@
-# Release manifest and main-branch release flow
+# Release manifest and promotion flow
 
 `package.json` is the source of truth for the bridge/runtime and release
-SemVer. `release-manifest.json` is authoritative for the remaining release
-identity and policy, and its `release.version` is a synchronized mirror.
+SemVer. `release-manifest.json#/release/stage` is the independent release-stage
+authority, and its `release.version` is a synchronized mirror.
 `npm run release:sync` copies the package version into the manifest;
 `npm run release:check` rejects a mismatch. Its shape is fixed by
 `release-manifest.schema.json` and validated again by the built-in-only
 `scripts/release-manifest.mjs` command, so release checks do not depend on a
-globally installed schema utility.
+globally installed schema utility. The complete authority, branch, RC, and
+validation policy is in [release-governance.md](release-governance.md).
 
 ## Canonical fields
 
@@ -32,8 +33,9 @@ The manifest controls:
   capabilities, starter prompts, and registered ChatGPT app connection;
 - immutable Settings and Activity UI cache-key policy, hash algorithm and
   prefix length, retained-generation count, and required logical resources;
-- the synchronized SemVer mirror, tag prefix, stable/prerelease channel, and release title;
-- generated release-note policy and the manifest-v2 release asset contract;
+- the single release unit, synchronized SemVer mirror, independent stage,
+  derived publication channel, source-RC provenance, tag prefix, and release title;
+- generated release-note policy and the manifest-v3 release asset contract;
 - the first native target: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG,
   alongside the existing generic npm server archive.
 
@@ -44,7 +46,7 @@ history and possible future reference. ChatGPT does not consume these files,
 so they are not an active product surface and must not be installed or packaged.
 
 The archive directory is deliberately outside the npm `files` allowlist and is
-not copied into the native macOS app. Manifest version 2 does not declare a
+not copied into the native macOS app. Manifest version 3 does not declare a
 skills artifact, and the release workflow neither builds nor publishes a skills
 ZIP. A complete release therefore contains only the macOS DMG, generic npm
 server tarball, npm tarball checksum, and aggregate checksum file.
@@ -137,7 +139,7 @@ npm run app-server:compat:check
 ```
 
 `release:check` rejects a lock whose version metadata differs from the
-manifest. The main-branch release workflow installs the exact manifest version
+manifest. The release workflow installs the exact manifest version
 and regenerates both schema formats before build/test, so ordinary unit tests
 remain offline and fixture-driven.
 
@@ -258,26 +260,22 @@ Renaming those values requires a separate credential, state, service, and UI
 resource migration. A repository or package rename must not silently perform
 that migration.
 
-## Change a version
+## Plan and prepare a version
 
-Run this on `dev`:
-
-```bash
-npm run release:version -- patch
-npm run release:check
-npm run check
-```
-
-`major`, `minor`, and exact SemVer values are also accepted:
+Keep `dev` at a suffix-free development version and add `.changes/*.json`
+fragments with the user-visible impact. Inspect the aggregate without mutation:
 
 ```bash
-npm run release:version -- 0.4.0-beta.1
+npm run release:plan
 ```
 
-The command changes `package.json` first, then synchronizes the manifest,
-`package-lock.json`, `.codex-plugin/plugin.json`, and `.app.json` in one
-operation. An exact prerelease version automatically sets the prerelease
-channel; a normal version sets the stable channel.
+Create the exact reported `release/X.Y.Z` branch, switch to it, and then run
+`npm run release:prepare-candidate`. Only `X.Y.Z-rc.N` candidates are accepted.
+Use `npm run release:next-rc` after any candidate payload change and
+`npm run release:promote` only after the final candidate passes every gate.
+The promotion preserves the numeric version, records the source RC, and removes
+the RC suffix. See [release-governance.md](release-governance.md) for the full
+lifecycle and validation ladder.
 
 If another manifest field is intentionally edited, run:
 
@@ -286,7 +284,7 @@ npm run release:sync
 npm run release:check
 ```
 
-Do not use `npm version` directly. `npm run build` and the main workflow reject
+Do not use `npm version` directly. `npm run build` and the release workflow reject
 derived metadata that has drifted from the runtime package version.
 
 ## ChatGPT rollout and smoke test
@@ -317,9 +315,10 @@ conversation. See
 
 ## GitHub workflow contract
 
-Only an explicit push to `main` starts `.github/workflows/ci.yml`; development
-and pull-request pushes run no Actions. A `main` push is therefore the deliberate
-prerelease or stable release action. The workflow then:
+Only a manual run on a matching `release/X.Y.Z` branch or an explicit push to
+`main` starts `.github/workflows/ci.yml`; development pushes, release-branch
+pushes, and pull requests run no Actions. The manual path accepts only an RC and
+the `main` path accepts only a source-RC-backed stable promotion. The workflow:
 
 1. runs the full Node.js server checks and production dependency audit;
 2. builds the canonical npm tarball and its checksum;
@@ -327,10 +326,12 @@ prerelease or stable release action. The workflow then:
    verifies the version, minimum OS, architecture, signatures, and container;
 4. assembles exactly those npm assets and the macOS DMG, rejecting undeclared
    files and writing deterministic aggregate checksums;
-5. refuses a repository mismatch or conflicting tag and skips an already
+5. compares unpacked npm and macOS payloads with the named source RC before a
+   stable publication, allowing only enumerated release/build/signature metadata;
+6. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
-6. publishes all four assets together and adds `--prerelease` when the manifest
-   SemVer contains a prerelease identifier.
+7. publishes all four assets together and marks only candidate-stage runs as
+   GitHub prereleases.
 
 The macOS job has no Apple signing or notarization secrets. Its public asset is
 intentionally named
@@ -342,5 +343,5 @@ account decision; the workflow must not silently change the trust model.
 Development pushes stay on `dev` and do not start this workflow at all.
 Never merge, fast-forward, cherry-pick, or push development work to `main`
 unless the user explicitly instructs that specific promotion. Before that
-promotion, set a new unused SemVer and complete both physical release-candidate
-smoke gates, including the clean-Mac Gatekeeper path.
+promotion, prepare the planned unused RC and complete both physical
+release-candidate smoke gates, including the clean-Mac Gatekeeper path.

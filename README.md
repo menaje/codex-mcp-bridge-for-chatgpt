@@ -598,23 +598,26 @@ App Server threads are checked by exact ID with `thread/read` before resume. MCP
 ## Development and releases
 
 Work on `dev`; development and pull-request pushes intentionally run no GitHub
-Actions. An explicit push to `main` is the release action and runs validation,
-packaging, and `gh release create` for either the manifest-selected prerelease
-or stable channel. Do not promote or push to `main` without explicit
-instruction.
+Actions. A manual workflow run on an exact `release/X.Y.Z` branch is the only RC
+publication path. An explicit push of a source-RC-backed stable state to `main`
+is the only final-release path. Do not promote or push to `main` without
+explicit instruction.
 
 `package.json` is the bridge/runtime and release SemVer source of truth.
 `release-manifest.json` carries its synchronized version mirror plus the
 remaining release policy, product/package identity, personal/local plugin
 metadata, exact supported App Server CLI, toolchain, repository,
-manifest-v2 macOS and generic npm release assets, and UI resource policy.
-Normal version change:
+manifest-v3 macOS and generic npm release assets, and UI resource policy.
+Plan the next version from repository-owned change fragments without mutating it:
 
 ```bash
-npm run release:version -- patch
+npm run release:plan
 npm run release:check
-npm run check
 ```
+
+The reported release branch prepares `X.Y.Z-rc.1`; later candidates increment
+only `rc.N`, and stable promotion removes only that suffix. The macOS app and
+generic npm server are one release unit and always share the product version.
 
 After an intentional UI, metadata, or manifest edit:
 
@@ -630,7 +633,8 @@ The retired ChatGPT skill documents are preserved only as historical source in
 `archive/skills/`. ChatGPT does not consume them, and they are intentionally
 excluded from the npm package, native macOS app, GitHub Actions artifacts, and
 GitHub prerelease/release assets. See
-[docs/releasing.md](docs/releasing.md#archived-skill-documents).
+[docs/releasing.md](docs/releasing.md#archived-skill-documents) and
+[docs/release-governance.md](docs/release-governance.md).
 
 The current product/repository/package names include **for ChatGPT**. Bare `codex-mcp-bridge` values are a retained runtime namespace covering the executable, environment prefix, private dotenv directory, local state directory, tunnel profile, and MCP App URI namespace.
 

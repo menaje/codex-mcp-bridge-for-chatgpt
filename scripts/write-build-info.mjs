@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeSourceHash } from "./build-fingerprint.mjs";
+import { computeSourceHash, hasTrackedSourceChanges } from "./build-fingerprint.mjs";
 import { loadReleaseManifest } from "./release-manifest.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = loadReleaseManifest(repoRoot);
 const commit = git(["rev-parse", "HEAD"]) || "unknown";
-const dirty = Boolean(git(["status", "--porcelain", "--untracked-files=normal"]));
+const dirty = hasTrackedSourceChanges(repoRoot);
 const sourceHash = computeSourceHash(repoRoot);
 const build = {
   version: manifest.release.version,

@@ -42,7 +42,7 @@ describe("release manifest", () => {
     expect(output).toContain("codex_cli_version=0.145.0\n");
   });
 
-  it("requires the macOS and generic npm manifestVersion 2 release asset contract", () => {
+  it("requires the macOS and generic npm manifestVersion 3 release asset contract", () => {
     const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
     expect(validateReleaseManifest(manifest)).toBe(manifest);
     expect(manifest.release.assets).toEqual([
@@ -61,8 +61,16 @@ describe("release manifest", () => {
       }
     });
 
-    manifest.manifestVersion = 1;
-    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 2");
+    expect(manifest.release).toMatchObject({
+      releaseUnitId: "codex-mcp-bridge",
+      stage: "development",
+      channel: "none",
+      sourceVersion: null,
+      sourceCandidate: null
+    });
+
+    manifest.manifestVersion = 2;
+    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 3");
   });
 
   it("derives release metadata from the synchronized package version and manifest policy", () => {
@@ -87,7 +95,11 @@ describe("release manifest", () => {
       macosArchitecture: "arm64",
       macosMinimumVersion: "13.0",
       macosArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
-      releaseChecksumsFilename: "SHA256SUMS.txt"
+      releaseChecksumsFilename: "SHA256SUMS.txt",
+      releaseUnitId: "codex-mcp-bridge",
+      stage: "development",
+      channel: "none",
+      prerelease: false
     });
   });
 
@@ -137,25 +149,39 @@ describe("release manifest", () => {
     expect(checkReleaseMetadata(root).pluginCategory).toBe("Developer Tools");
   });
 
-  it("updates the manifest and package metadata together for increments and prereleases", () => {
+  it("updates product metadata together and restricts candidates to rc.N", () => {
     const root = fixtureRoot();
     syncReleaseMetadata(root);
 
-    expect(setReleaseVersion("1.2.3", root)).toMatchObject({ version: "1.2.3", channel: "stable" });
-    expect(setReleaseVersion("patch", root)).toMatchObject({ version: "1.2.4", channel: "stable" });
-    expect(setReleaseVersion("1.2.4+build-7", root)).toMatchObject({
-      version: "1.2.4+build-7",
-      channel: "stable",
-      prerelease: false
+    expect(setReleaseVersion("1.2.3", root)).toMatchObject({
+      version: "1.2.3",
+      stage: "development",
+      channel: "none"
     });
-    expect(setReleaseVersion("0.4.0-beta.1", root)).toMatchObject({
-      version: "0.4.0-beta.1",
-      tag: "v0.4.0-beta.1",
+    expect(setReleaseVersion("patch", root)).toMatchObject({
+      version: "1.2.4",
+      stage: "development",
+      channel: "none"
+    });
+    expect(setReleaseVersion("1.3.0-rc.1", root)).toMatchObject({
+      version: "1.3.0-rc.1",
+      tag: "v1.3.0-rc.1",
+      stage: "candidate",
       channel: "prerelease",
+      sourceVersion: "1.2.4",
       prerelease: true
     });
-    expect(readJson(path.join(root, ".codex-plugin/plugin.json")).version).toBe("0.4.0-beta.1");
-    expect(checkReleaseMetadata(root).version).toBe("0.4.0-beta.1");
+    expect(setReleaseVersion("1.3.0", root)).toMatchObject({
+      version: "1.3.0",
+      stage: "stable",
+      channel: "stable",
+      sourceVersion: "1.2.4",
+      sourceCandidate: "1.3.0-rc.1"
+    });
+    expect(readJson(path.join(root, ".codex-plugin/plugin.json")).version).toBe("1.3.0");
+    expect(checkReleaseMetadata(root).version).toBe("1.3.0");
+    expect(() => setReleaseVersion("1.4.0-beta.1", root)).toThrow(/suffix-free X\.Y\.Z/);
+    expect(() => setReleaseVersion("1.4.0+build-7", root)).toThrow(/build metadata/);
     expect(() => setReleaseVersion("1.2.3-01", root)).toThrow(/Version must be/);
   });
 
