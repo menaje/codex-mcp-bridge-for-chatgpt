@@ -37,6 +37,16 @@ Refresh and pagination cancel stale
 enrichment generations, and an enrichment failure leaves the structural view
 visible. Swift does not issue App Server runtime probes itself.
 
+The native popover and both retained ChatGPT cards use the same presentation
+rules. Active, recent, and idle sections are Activity-first with one or more
+Agents nested below; an idle heading is explicitly the Agent's latest Activity,
+not a current assignment. Project/conversation context and an exact execution
+selection shared by every nested Agent appear once on the Activity. Agent state,
+background processes, differing execution settings, and work time remain on the
+Agent. Active work shows only accumulated work time; past work adds relative age
+and omits absolute start, update, and end timestamps. The native UI never prints
+the private compatibility session alias.
+
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content. Tunnel setup, Codex browser login,
 and profile repair appear in a separate first-run/connection-repair window

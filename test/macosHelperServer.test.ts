@@ -176,6 +176,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000,
       registeredProjectRoots: () => [path.join(root, "safe-project")]
@@ -221,6 +222,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -261,6 +263,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -299,6 +302,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 500
     });
@@ -333,6 +337,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -370,6 +375,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -412,6 +418,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -448,6 +455,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -490,6 +498,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -530,6 +539,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       startTimeoutMs: 5_000
     });
@@ -732,6 +742,7 @@ describe("macOS runtime helper RPC", () => {
       envFile: configFile,
       bridgeSocketPath: bridgeSocket,
       launcherPath: path.join(bridgeRoot, "missing-launcher.mjs"),
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       registeredProjectRoots: () => [project]
     });

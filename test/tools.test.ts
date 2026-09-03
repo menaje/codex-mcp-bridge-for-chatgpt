@@ -2523,7 +2523,9 @@ describe("bridge tools", () => {
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
             expect(html).toContain("function appendExecution(parent,execution,next=false)");
-            expect(html).toContain("function renderActivityRows(parent,rows)");
+            expect(html).toContain(
+              "function renderActivityRows(parent,rows,recentActivity=false)"
+            );
             expect(html).toContain('node("details","history")');
             expect(html).toContain("new Intl.RelativeTimeFormat");
             expect(html).toContain("function normalizeHostToolResult");
@@ -3575,6 +3577,35 @@ describe("bridge tools", () => {
         terminalPage.pagination.terminal.returned;
     }
     expect(foundCompleteSharedActivity).toBe(true);
+    await close();
+  });
+
+  it("keeps an idle Activity group intact when it is larger than the requested page", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root),
+      new DeferredUpstream()
+    );
+    for (let index = 0; index < 3; index += 1) {
+      jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Idle grouped Agent ${index + 1}`
+      });
+    }
+
+    const view = await applicationService.dashboardSnapshot({
+      limit: 2,
+      inspectRuntime: false
+    });
+    expect(view.idleRows).toHaveLength(3);
+    expect(new Set(view.idleRows.map((row) => row.activityKey)).size).toBe(1);
+    expect(view.pagination.idle).toMatchObject({
+      limit: 2,
+      returned: 3,
+      total: 3,
+      hasNext: false
+    });
+
     await close();
   });
 
@@ -12617,7 +12648,12 @@ describe("bridge tools", () => {
           activityId,
           title: "Render summary",
           displayState: "waiting-gpt",
-          agents: [expect.objectContaining({ agentName: "Summary Agent" })]
+          agents: [expect.objectContaining({
+            agentName: "Summary Agent",
+            durationMs: expect.any(Number),
+            updatedAt: expect.any(String),
+            endedAt: expect.any(String)
+          })]
         })],
         historySummary: { completedActivities: 0, endedActivities: 0 },
         history: { rows: [] },
@@ -12661,7 +12697,9 @@ describe("bridge tools", () => {
         rows: [expect.objectContaining({
           agentName: "Summary Agent",
           latestActivityId: activityId,
-          latestActivityTitle: "Render summary"
+          latestActivityTitle: "Render summary",
+          durationMs: expect.any(Number),
+          endedAt: expect.any(String)
         })]
       }
     });

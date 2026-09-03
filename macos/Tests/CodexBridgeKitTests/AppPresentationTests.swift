@@ -277,6 +277,50 @@ final class AppPresentationTests: XCTestCase {
             latest: nil
         ))
     }
+
+    func testDashboardHoistsOnlyExecutionSelectionsSharedByEveryAgent() throws {
+        let historical = try dashboardExecution(
+            model: "gpt-5.6-sol",
+            displayName: "Sol",
+            effort: "high",
+            reroutedModel: nil,
+            isCurrent: false
+        )
+        let current = try dashboardExecution(
+            model: "gpt-5.6-terra",
+            displayName: "Terra",
+            effort: "max",
+            reroutedModel: nil,
+            isCurrent: true
+        )
+        let matchingRows = try [
+            dashboardRow(id: "agent-a", execution: current, latestExecution: historical),
+            dashboardRow(id: "agent-b", execution: current, latestExecution: historical)
+        ]
+
+        XCTAssertEqual(
+            DashboardExecutionPresentation.commonHistorical(in: matchingRows)?.model,
+            historical.model
+        )
+        XCTAssertEqual(
+            DashboardExecutionPresentation.commonNext(in: matchingRows)?.model,
+            current.model
+        )
+
+        let different = try dashboardExecution(
+            model: "gpt-5.6-terra",
+            displayName: "Terra",
+            effort: "high",
+            reroutedModel: nil,
+            isCurrent: true
+        )
+        let mixedRows = try [
+            matchingRows[0],
+            dashboardRow(id: "agent-c", execution: different, latestExecution: historical)
+        ]
+        XCTAssertNil(DashboardExecutionPresentation.commonNext(in: mixedRows))
+        XCTAssertNil(DashboardExecutionPresentation.commonHistorical(in: [matchingRows[0]]))
+    }
 }
 
 @MainActor
@@ -491,5 +535,51 @@ private func dashboardExecution(
     return try JSONDecoder().decode(
         DashboardExecution.self,
         from: JSONSerialization.data(withJSONObject: object)
+    )
+}
+
+private func dashboardRow(
+    id: String,
+    execution: DashboardExecution?,
+    latestExecution: DashboardExecution?
+) throws -> DashboardRow {
+    var row: [String: Any] = [
+        "rowKey": id,
+        "activityKey": "activity-shared",
+        "conversationKey": "conversation-shared",
+        "sessionAlias": "Session TEST",
+        "bucket": "idle",
+        "projectKey": "project-shared",
+        "agentName": id,
+        "status": "idle",
+        "createdAt": "2026-09-03T00:00:00.000Z",
+        "updatedAt": "2026-09-03T00:01:00.000Z",
+        "elapsedMs": 60_000,
+        "backgroundProcessCount": 0,
+        "history": [],
+        "historyCount": 0
+    ]
+    if let execution {
+        row["execution"] = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(execution)
+        )
+    }
+    if let latestExecution {
+        row["latestTurn"] = [
+            "activityKey": "activity-shared",
+            "activityTitle": "Shared Activity",
+            "execution": try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(latestExecution)
+            ),
+            "status": "completed",
+            "startedAt": "2026-09-03T00:00:00.000Z",
+            "updatedAt": "2026-09-03T00:01:00.000Z",
+            "endedAt": "2026-09-03T00:01:00.000Z",
+            "durationMs": 60_000
+        ]
+    }
+    return try JSONDecoder().decode(
+        DashboardRow.self,
+        from: JSONSerialization.data(withJSONObject: row)
     )
 }

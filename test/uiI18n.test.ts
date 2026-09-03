@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ACTIVITY_CARD_HTML,
   ACTIVITY_CARD_HTML_MAX_BYTES,
+  commonActivityAgentExecution,
+  groupActivityIdleAgentsByActivity,
   shouldShowHistoricalActivityTitle
 } from "../src/activityCard.js";
 import {
+  commonDashboardExecution,
+  commonDashboardNextExecution,
   dashboardHistoryActivityIdentity,
   dashboardExecutionsEqual,
   dispatchDashboardExternalUrl,
@@ -163,8 +167,8 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["dashboard.agentShownCount"]).toBe("현재 페이지 {count}개");
     expect(UI_TRANSLATIONS.ko["dashboard.sectionCount"])
       .toBe("대화 {conversations}개 · 에이전트 {agents}개");
-    expect(UI_TRANSLATIONS.ko["dashboard.time.duration"]).toBe("소요 {duration}");
-    expect(UI_TRANSLATIONS.ko["dashboard.time.terminal"]).toBe("{relative} {status}");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.duration"]).toBe("작업시간 {duration}");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.terminal"]).toBe("{relative}");
     expect(UI_TRANSLATIONS.ko["dashboard.scopeNotice"]).toContain("전체 ChatGPT 기록은 아닙니다");
     expect(UI_TRANSLATIONS.ko["dashboard.runtimeOnly"]).toContain("GPT의 검증·완료 판단은 사용하지 않습니다");
     for (const locale of SUPPORTED_UI_LOCALES) {
@@ -248,7 +252,8 @@ describe("human-facing UI localization", () => {
       "activity.defaultAgent",
       "activity.threads",
       "dashboard.page",
-      "dashboard.conversationCount"
+      "dashboard.conversationCount",
+      "dashboard.time.terminal"
     ]);
     for (const locale of SUPPORTED_UI_LOCALES.filter((entry) => entry !== "en")) {
       for (const key of Object.keys(UI_TRANSLATIONS.en) as Array<keyof typeof UI_TRANSLATIONS.en>) {
@@ -349,7 +354,8 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(
       serializedUiTranslations([
         "common", "usage", "cancellation", "activity", "agent", "job",
-        "lifecycle", "verification", "kind", "dashboard.status"
+        "lifecycle", "verification", "kind", "dashboard.status", "dashboard.time",
+        "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity"
       ])
     );
     expect(DASHBOARD_CARD_HTML).toContain(
@@ -511,22 +517,24 @@ describe("human-facing UI localization", () => {
       "activityIdentity!==previousActivityIdentity"
     );
     expect(DASHBOARD_CARD_HTML).toContain(
-      'if(active)return turn.durationMs===null?t["dashboard.time.durationUnknown"]'
+      'if(active)return turn.durationMs==null?t["dashboard.time.durationUnknown"]'
     );
     expect(DASHBOARD_CARD_HTML).not.toContain(
       'updated=t["dashboard.time.updated"].replace'
     );
     expect(DASHBOARD_CARD_HTML).toContain('else if(row.bucket!=="active")');
-    expect(DASHBOARD_CARD_HTML).toContain("function renderActivityRows(parent,rows)");
-    expect(DASHBOARD_CARD_HTML).toContain("function renderAgentRows(parent,rows)");
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "function renderActivityRows(parent,rows,recentActivity=false)"
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderAgentRows(parent,rows)");
     expect(DASHBOARD_CARD_HTML).toContain('function appendRowContext(parent,row,mode="row")');
     expect(DASHBOARD_CARD_HTML).toContain(
       "groupDashboardRowsByActivity(rows)"
     );
     expect(DASHBOARD_CARD_HTML).toContain(
-      'function renderActivityGroup(parent,group){const representative=group.rows[0]'
+      'function renderActivityGroup(parent,group,recentActivity=false){const representative=group.rows[0]'
     );
-    expect(DASHBOARD_CARD_HTML).toContain("head.appendChild(title)");
+    expect(DASHBOARD_CARD_HTML).toContain("identity.appendChild(title)");
     expect(DASHBOARD_CARD_HTML).not.toContain("aggregateDashboardActivityStatus");
     expect(DASHBOARD_CARD_HTML).toContain("head.append(title,state)");
     expect(DASHBOARD_CARD_HTML).toContain(
@@ -548,7 +556,7 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain(
       "renderActivityRow(row,showWorkspace,true)"
     );
-    expect(ACTIVITY_CARD_HTML).toContain(
+    expect(ACTIVITY_CARD_HTML).not.toContain(
       "shouldShowHistoricalActivityTitle(activityTitle,item.latestActivityId,visibleActivityIds)"
     );
     expect(ACTIVITY_CARD_HTML).toContain(
@@ -698,17 +706,21 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("next.feed");
     expect(ACTIVITY_CARD_HTML).toContain("renderHistorySummary(next.feed)");
     expect(ACTIVITY_CARD_HTML).toContain("renderFullHistory(next.feed,showWorkspace)");
-    expect(ACTIVITY_CARD_HTML).toContain('renderGroup("idle",feed.idleAgents');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "renderIdleActivityGroups(feed.idleAgents,showWorkspace,visibleActivityIds)"
+    );
     expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("completed",next.feed.completed');
     expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("ended",next.feed.ended');
     expect(ACTIVITY_CARD_HTML).toContain(
-      "renderHistoryRow(item,kind,showWorkspace,visibleActivityIds)"
+      "groupActivityIdleAgentsByActivity(group.rows,visibleActivityIds)"
     );
     expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
-    expect(ACTIVITY_CARD_HTML).toContain("summary.push(...(item.workspaceLabels||[]))");
+    expect(ACTIVITY_CARD_HTML).toContain("summary.push(...workspaces)");
     expect(ACTIVITY_CARD_HTML).toContain("appendActivityAgents(content,row,readOnly)");
     expect(ACTIVITY_CARD_HTML).toContain('node("div","activity-agent-list")');
-    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(content,[item],false)");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "appendExecutions(content,[{execution:commonExecution}],false)"
+    );
     expect(ACTIVITY_CARD_HTML).toContain(
       'if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"]'
     );
@@ -874,6 +886,65 @@ describe("human-facing UI localization", () => {
         rows: [rows[2]]
       }
     ]);
+  });
+
+  it("groups idle Activity-card Agents by their latest Activity and omits visible duplicates", () => {
+    const rows = [
+      { agentId: "agent-a", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
+      { agentId: "agent-b", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
+      { agentId: "agent-c", latestActivityId: "activity-visible", latestActivityTitle: "Visible" },
+      { agentId: "agent-d", latestActivityId: null, latestActivityTitle: null },
+      { agentId: "agent-e", latestActivityId: null, latestActivityTitle: null }
+    ];
+
+    expect(groupActivityIdleAgentsByActivity(
+      rows,
+      new Set(["activity-visible"])
+    )).toEqual([
+      {
+        activityKey: "activity:activity-a",
+        activityId: "activity-a",
+        activityTitle: "Shared",
+        rows: [rows[0], rows[1]]
+      },
+      {
+        activityKey: "no-recent-activity",
+        activityId: null,
+        activityTitle: null,
+        rows: [rows[3], rows[4]]
+      }
+    ]);
+  });
+
+  it("hoists only exact execution details shared by every nested Agent", () => {
+    const shared = {
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      reroutedModel: "gpt-5.6-terra"
+    };
+    expect(commonActivityAgentExecution([
+      { execution: shared },
+      { execution: { ...shared, model: "GPT-5.6-SOL", reasoningEffort: "HIGH" } }
+    ])).toBe(shared);
+    expect(commonActivityAgentExecution([
+      { execution: shared },
+      { execution: { ...shared, reasoningEffort: "max" } }
+    ])).toBeNull();
+
+    const latest = { ...shared, isCurrent: false };
+    const current = { ...shared, isCurrent: true };
+    expect(commonDashboardExecution([
+      { latestTurn: { execution: latest } },
+      { latestTurn: { execution: { ...latest } } }
+    ])).toBe(latest);
+    expect(commonDashboardNextExecution([
+      { execution: current, latestTurn: null },
+      { execution: { ...current }, latestTurn: null }
+    ])).toBe(current);
+    expect(commonDashboardNextExecution([
+      { execution: current, latestTurn: null },
+      { execution: { ...current, reasoningEffort: "max" }, latestTurn: null }
+    ])).toBeNull();
   });
 
   it("deduplicates Dashboard history by opaque Activity identity", () => {

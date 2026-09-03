@@ -31,7 +31,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Codex Activity {activityId}을(를) 검증하세요. 먼저 codex_status로 Activity를 조회한 다음, 관련된 정확한 각 작업 ID를 하나씩 조회해 작업 항목의 답변을 읽으세요. Activity 요약에는 작업 답변이 포함되지 않습니다. 파일, diff, 테스트, 결과물을 독립적으로 확인한 뒤 정확한 검증 전환을 수행하세요. Codex 출력만 보고 성공으로 판단하지 마세요.",
     "activity.prompt.retry": "Codex Activity {activityId}을(를) 재시도하거나 복구하세요. codex_status로 신뢰할 수 있는 상태를 조회하고, 완료된 작업 결과가 필요하면 정확한 작업 ID를 조회해 답변을 읽으세요. 실패 또는 중단 원인을 설명하고, 범위를 크게 바꾸기 전에는 확인을 요청하세요.",
     "activity.prompt.handoff": "Codex Activity 완료 인계입니다. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. Activity ID: {activityIds}. 작업 ID: {jobIds}. 나열된 각 작업 ID마다 codex_status를 정확한 작업 하나로 조회해 작업 항목의 답변을 읽으세요. Activity와 전체 현황 조회에는 작업 답변이 포함되지 않습니다. 전달됨, 생략됨, 사용할 수 없음을 구분하세요. 전달된 결과를 복원하려고 codex_task를 새로 시작하지 마세요. 검증이 필요하면 파일, diff, 테스트, 결과물을 독립적으로 확인하세요. 이 인계에서 또 다른 자동 인계를 만들지 마세요.",
-    "dashboard.countsLabel": "전체 현황 집계"
+    "dashboard.countsLabel": "전체 현황 집계",
+    "dashboard.recentActivity": "최근 Activity",
+    "dashboard.noRecentActivity": "최근 Activity 없음"
   },
   ja: {
     "common.errorCode": "リクエストに失敗しました（{code}）。",
@@ -67,7 +69,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Codex Activity {activityId} を検証してください。まず codex_status で Activity を照会し、次に関連する正確な各ジョブ ID を個別に照会して、ジョブ項目の回答を読んでください。Activity の概要にジョブの回答は含まれません。ファイル、差分、テスト、成果物を独立して確認してから、正確な検証遷移を実行してください。Codex の出力だけから成功と判断しないでください。",
     "activity.prompt.retry": "Codex Activity {activityId} を再試行または復旧してください。codex_status で信頼できる状態を取得し、完了したジョブの結果が必要な場合は正確なジョブ ID を照会して回答を読んでください。失敗または中断を説明し、範囲を大きく変更する前に確認してください。",
     "activity.prompt.handoff": "Codex Activity 完了の引き継ぎです。origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}。Activity ID: {activityIds}。ジョブ ID: {jobIds}。記載された各ジョブ ID について、codex_status を正確な 1 件のジョブで呼び出し、ジョブ項目の回答を読んでください。Activity と全体状況の照会にジョブの回答は含まれません。配信済み、省略、利用不可を区別してください。配信済みの結果を復元するためだけに別の codex_task を開始しないでください。検証が必要な場合は、ファイル、差分、テスト、成果物を独立して確認してください。この引き継ぎから別の自動引き継ぎを作成しないでください。",
-    "dashboard.countsLabel": "概要の集計"
+    "dashboard.countsLabel": "概要の集計",
+    "dashboard.recentActivity": "最近の Activity",
+    "dashboard.noRecentActivity": "最近の Activity なし"
   },
   "zh-Hans": {
     "common.errorCode": "请求失败（{code}）。",
@@ -103,7 +107,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "请验证 Codex Activity {activityId}。先使用 codex_status 查询 Activity，再逐一查询每个相关的确切任务 ID，并读取任务项中的答复；Activity 摘要绝不包含任务答复。请独立检查文件、差异、测试和产物，然后执行正确的验证状态转换。不要仅根据 Codex 输出推断成功。",
     "activity.prompt.retry": "请重试或恢复 Codex Activity {activityId}。使用 codex_status 获取权威状态；需要已完成任务的结果时，请查询其确切任务 ID 并读取答复。说明失败或中断情况，并在大幅更改范围前先询问。",
     "activity.prompt.handoff": "Codex Activity 完成移交。origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}。Activity ID：{activityIds}。任务 ID：{jobIds}。对于列出的每个任务 ID，请使用一个确切任务查询调用 codex_status，并读取任务项中的答复；Activity 和概览查询绝不包含任务答复。请区分已交付、省略和不可用的结果。不要仅为重建已交付结果而启动另一个 codex_task。需要验证时，请独立检查文件、差异、测试和产物。不要从本次移交再创建自动移交。",
-    "dashboard.countsLabel": "概览计数"
+    "dashboard.countsLabel": "概览计数",
+    "dashboard.recentActivity": "最近的 Activity",
+    "dashboard.noRecentActivity": "没有最近的 Activity"
   },
   "zh-Hant": {
     "common.errorCode": "要求失敗（{code}）。",
@@ -139,7 +145,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "請驗證 Codex Activity {activityId}。先使用 codex_status 查詢 Activity，再逐一查詢每個相關的確切工作 ID，並讀取工作項目中的回覆；Activity 摘要絕不包含工作回覆。請獨立檢查檔案、差異、測試與產出，然後執行正確的驗證狀態轉換。不要只根據 Codex 輸出推斷成功。",
     "activity.prompt.retry": "請重試或復原 Codex Activity {activityId}。使用 codex_status 取得權威狀態；需要已完成工作的結果時，請查詢其確切工作 ID 並讀取回覆。說明失敗或中斷情況，並在大幅變更範圍前先詢問。",
     "activity.prompt.handoff": "Codex Activity 完成移交。origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}。Activity ID：{activityIds}。工作 ID：{jobIds}。對於列出的每個工作 ID，請以一個確切工作查詢呼叫 codex_status，並讀取工作項目中的回覆；Activity 與概覽查詢絕不包含工作回覆。請區分已交付、省略與無法使用的結果。不要只為重建已交付結果而啟動另一個 codex_task。需要驗證時，請獨立檢查檔案、差異、測試與產出。不要從本次移交再建立自動移交。",
-    "dashboard.countsLabel": "概覽計數"
+    "dashboard.countsLabel": "概覽計數",
+    "dashboard.recentActivity": "最近的 Activity",
+    "dashboard.noRecentActivity": "沒有最近的 Activity"
   },
   es: {
     "common.errorCode": "La solicitud falló ({code}).",
@@ -175,7 +183,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Verifica la Activity de Codex {activityId}. Consulta primero la Activity con codex_status y después cada ID de tarea exacto pertinente para leer la respuesta de su elemento; los resúmenes de Activity nunca contienen respuestas de tareas. Inspecciona de forma independiente los archivos, las diferencias, las pruebas y los artefactos, y después realiza la transición de verificación exacta. No deduzcas el éxito solo a partir de la salida de Codex.",
     "activity.prompt.retry": "Reintenta o recupera la Activity de Codex {activityId}. Obtén el estado fiable con codex_status; si necesitas el resultado de una tarea completada, consulta su ID exacto y lee su respuesta. Explica el fallo o la interrupción y pregunta antes de cambiar sustancialmente el alcance.",
     "activity.prompt.handoff": "Entrega de finalización de Activity de Codex. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. ID de Activity: {activityIds}. ID de tareas: {jobIds}. Para cada ID de tarea indicado, llama a codex_status con una consulta exacta de una tarea y lee la respuesta del elemento; las consultas de Activity y del resumen nunca contienen respuestas de tareas. Distingue los resultados entregados, omitidos y no disponibles. No inicies otro codex_task solo para reconstruir un resultado entregado. Verifica de forma independiente los archivos, las diferencias, las pruebas y los artefactos cuando sea necesario. No crees otra entrega automática a partir de esta.",
-    "dashboard.countsLabel": "Recuentos generales"
+    "dashboard.countsLabel": "Recuentos generales",
+    "dashboard.recentActivity": "Activity reciente",
+    "dashboard.noRecentActivity": "Sin Activity reciente"
   },
   fr: {
     "common.errorCode": "La requête a échoué ({code}).",
@@ -212,7 +222,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Vérifiez l’Activity Codex {activityId}. Interrogez d’abord l’Activity avec codex_status, puis chaque identifiant exact de tâche concerné et lisez la réponse de l’élément de tâche ; les résumés d’Activity ne contiennent jamais les réponses des tâches. Inspectez indépendamment les fichiers, différences, tests et artefacts, puis effectuez la transition de vérification exacte. Ne déduisez pas la réussite de la seule sortie de Codex.",
     "activity.prompt.retry": "Réessayez ou récupérez l’Activity Codex {activityId}. Obtenez l’état de référence avec codex_status ; si le résultat d’une tâche terminée est nécessaire, interrogez son identifiant exact et lisez sa réponse. Expliquez l’échec ou l’interruption et demandez confirmation avant de modifier sensiblement la portée.",
     "activity.prompt.handoff": "Transmission de fin d’Activity Codex. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. Identifiants d’Activity : {activityIds}. Identifiants de tâches : {jobIds}. Pour chaque identifiant de tâche indiqué, appelez codex_status avec une requête portant sur une seule tâche exacte et lisez la réponse de l’élément ; les requêtes d’Activity et de vue d’ensemble ne contiennent jamais les réponses des tâches. Distinguez les résultats livrés, omis et indisponibles. Ne lancez pas un autre codex_task uniquement pour reconstituer un résultat livré. Vérifiez indépendamment les fichiers, différences, tests et artefacts lorsque cela est requis. Ne créez pas d’autre transmission automatique depuis celle-ci.",
-    "dashboard.countsLabel": "Totaux de la vue d’ensemble"
+    "dashboard.countsLabel": "Totaux de la vue d’ensemble",
+    "dashboard.recentActivity": "Activity récente",
+    "dashboard.noRecentActivity": "Aucune Activity récente"
   },
   de: {
     "common.errorCode": "Die Anfrage ist fehlgeschlagen ({code}).",
@@ -248,7 +260,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Prüfen Sie die Codex-Activity {activityId}. Fragen Sie zuerst die Activity mit codex_status ab, dann jede relevante genaue Aufgaben-ID einzeln und lesen Sie die Antwort des Aufgabeneintrags; Activity-Zusammenfassungen enthalten niemals Aufgabenantworten. Prüfen Sie Dateien, Diffs, Tests und Artefakte unabhängig und führen Sie danach den genauen Prüfstatuswechsel aus. Leiten Sie Erfolg nicht allein aus der Codex-Ausgabe ab.",
     "activity.prompt.retry": "Versuchen Sie die Codex-Activity {activityId} erneut oder stellen Sie sie wieder her. Rufen Sie den maßgeblichen Status mit codex_status ab; wenn das Ergebnis einer abgeschlossenen Aufgabe benötigt wird, fragen Sie deren genaue ID ab und lesen Sie die Antwort. Erklären Sie den Fehler oder die Unterbrechung und fragen Sie nach, bevor Sie den Umfang wesentlich ändern.",
     "activity.prompt.handoff": "Abschlussübergabe der Codex-Activity. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. Activity-IDs: {activityIds}. Aufgaben-IDs: {jobIds}. Rufen Sie für jede aufgeführte Aufgaben-ID codex_status mit einer einzelnen genauen Aufgabenabfrage auf und lesen Sie die Antwort des Aufgabeneintrags; Activity- und Übersichtsabfragen enthalten niemals Aufgabenantworten. Unterscheiden Sie zugestellte, ausgelassene und nicht verfügbare Ergebnisse. Starten Sie keinen weiteren codex_task nur zur Rekonstruktion eines zugestellten Ergebnisses. Prüfen Sie Dateien, Diffs, Tests und Artefakte bei Bedarf unabhängig. Erstellen Sie aus dieser Übergabe keine weitere automatische Übergabe.",
-    "dashboard.countsLabel": "Übersichtszahlen"
+    "dashboard.countsLabel": "Übersichtszahlen",
+    "dashboard.recentActivity": "Letzte Activity",
+    "dashboard.noRecentActivity": "Keine letzte Activity"
   },
   pt: {
     "common.errorCode": "A solicitação falhou ({code}).",
@@ -284,7 +298,9 @@ const CORE_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> = {
     "activity.prompt.verify": "Verifique a Activity do Codex {activityId}. Consulte primeiro a Activity com codex_status e depois cada ID exato de tarefa relevante para ler a resposta do item; resumos de Activity nunca contêm respostas de tarefas. Inspecione de forma independente os arquivos, diffs, testes e artefatos e, em seguida, faça a transição exata de verificação. Não conclua que houve sucesso apenas pela saída do Codex.",
     "activity.prompt.retry": "Tente novamente ou recupere a Activity do Codex {activityId}. Obtenha o status confiável com codex_status; quando precisar do resultado de uma tarefa concluída, consulte o ID exato dela e leia a resposta. Explique a falha ou interrupção e pergunte antes de alterar substancialmente o escopo.",
     "activity.prompt.handoff": "Entrega de conclusão da Activity do Codex. origin={origin}; handoffDepth={handoffDepth}; handoffBatchId={handoffBatchId}. IDs de Activity: {activityIds}. IDs de tarefas: {jobIds}. Para cada ID de tarefa listado, chame codex_status com uma consulta exata de uma tarefa e leia a resposta do item; consultas de Activity e da visão geral nunca contêm respostas de tarefas. Diferencie resultados entregues, omitidos e indisponíveis. Não inicie outro codex_task apenas para reconstruir um resultado entregue. Verifique de forma independente arquivos, diffs, testes e artefatos quando necessário. Não crie outra entrega automática a partir desta.",
-    "dashboard.countsLabel": "Contagens gerais"
+    "dashboard.countsLabel": "Contagens gerais",
+    "dashboard.recentActivity": "Activity recente",
+    "dashboard.noRecentActivity": "Sem Activity recente"
   }
 };
 
@@ -353,11 +369,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} 分",
     "dashboard.duration.hours": "{count} 時間",
     "dashboard.duration.days": "{count} 日",
-    "dashboard.time.active": "実行時間 {duration}",
+    "dashboard.time.active": "作業時間 {duration}",
     "dashboard.time.updated": "最終状態更新 {relative}",
-    "dashboard.time.duration": "所要時間 {duration}",
-    "dashboard.time.durationUnknown": "所要時間不明",
-    "dashboard.time.terminal": "{relative} · {status}",
+    "dashboard.time.duration": "作業時間 {duration}",
+    "dashboard.time.durationUnknown": "作業時間不明",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "更新に失敗したため、最後に読み込んだスナップショットを表示しています。",
     "dashboard.status.running": "実行中",
     "dashboard.status.background-process-running": "バックグラウンドプロセス実行中",
@@ -437,11 +453,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} 分钟",
     "dashboard.duration.hours": "{count} 小时",
     "dashboard.duration.days": "{count} 天",
-    "dashboard.time.active": "已运行 {duration}",
+    "dashboard.time.active": "工作时长 {duration}",
     "dashboard.time.updated": "上次状态更新 {relative}",
-    "dashboard.time.duration": "耗时 {duration}",
-    "dashboard.time.durationUnknown": "耗时未知",
-    "dashboard.time.terminal": "{relative} · {status}",
+    "dashboard.time.duration": "工作时长 {duration}",
+    "dashboard.time.durationUnknown": "工作时长未知",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "刷新失败；正在显示上次加载的快照。",
     "dashboard.status.running": "运行中",
     "dashboard.status.background-process-running": "后台进程运行中",
@@ -521,11 +537,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} 分鐘",
     "dashboard.duration.hours": "{count} 小時",
     "dashboard.duration.days": "{count} 天",
-    "dashboard.time.active": "已執行 {duration}",
+    "dashboard.time.active": "工作時間 {duration}",
     "dashboard.time.updated": "上次狀態更新 {relative}",
-    "dashboard.time.duration": "耗時 {duration}",
-    "dashboard.time.durationUnknown": "耗時未知",
-    "dashboard.time.terminal": "{relative} · {status}",
+    "dashboard.time.duration": "工作時間 {duration}",
+    "dashboard.time.durationUnknown": "工作時間未知",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "重新整理失敗；正在顯示上次載入的快照。",
     "dashboard.status.running": "執行中",
     "dashboard.status.background-process-running": "背景程序執行中",
@@ -605,11 +621,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} d",
-    "dashboard.time.active": "En ejecución durante {duration}",
+    "dashboard.time.active": "Tiempo de trabajo {duration}",
     "dashboard.time.updated": "Última actualización de estado {relative}",
-    "dashboard.time.duration": "Duración {duration}",
-    "dashboard.time.durationUnknown": "Duración no disponible",
-    "dashboard.time.terminal": "{status} · {relative}",
+    "dashboard.time.duration": "Tiempo de trabajo {duration}",
+    "dashboard.time.durationUnknown": "Tiempo de trabajo no disponible",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "La actualización falló; se muestra la última instantánea cargada.",
     "dashboard.status.running": "En ejecución",
     "dashboard.status.background-process-running": "Proceso en segundo plano en ejecución",
@@ -689,11 +705,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} j",
-    "dashboard.time.active": "En cours depuis {duration}",
+    "dashboard.time.active": "Temps de travail {duration}",
     "dashboard.time.updated": "Dernière mise à jour de l’état {relative}",
-    "dashboard.time.duration": "Durée {duration}",
-    "dashboard.time.durationUnknown": "Durée indisponible",
-    "dashboard.time.terminal": "{status} · {relative}",
+    "dashboard.time.duration": "Temps de travail {duration}",
+    "dashboard.time.durationUnknown": "Temps de travail indisponible",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "L’actualisation a échoué ; le dernier instantané chargé reste affiché.",
     "dashboard.status.running": "En cours",
     "dashboard.status.background-process-running": "Processus d’arrière-plan en cours",
@@ -773,11 +789,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} Min.",
     "dashboard.duration.hours": "{count} Std.",
     "dashboard.duration.days": "{count} T.",
-    "dashboard.time.active": "Läuft seit {duration}",
+    "dashboard.time.active": "Arbeitszeit {duration}",
     "dashboard.time.updated": "Letzte Statusaktualisierung {relative}",
-    "dashboard.time.duration": "Dauer {duration}",
-    "dashboard.time.durationUnknown": "Dauer nicht verfügbar",
-    "dashboard.time.terminal": "{status} · {relative}",
+    "dashboard.time.duration": "Arbeitszeit {duration}",
+    "dashboard.time.durationUnknown": "Arbeitszeit nicht verfügbar",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "Aktualisierung fehlgeschlagen; der zuletzt geladene Stand wird angezeigt.",
     "dashboard.status.running": "Wird ausgeführt",
     "dashboard.status.background-process-running": "Hintergrundprozess wird ausgeführt",
@@ -857,11 +873,11 @@ const DASHBOARD_AUDIT_OVERRIDES: Readonly<Record<string, TranslationOverrides>> 
     "dashboard.duration.minutes": "{count} min",
     "dashboard.duration.hours": "{count} h",
     "dashboard.duration.days": "{count} d",
-    "dashboard.time.active": "Em execução há {duration}",
+    "dashboard.time.active": "Tempo de trabalho {duration}",
     "dashboard.time.updated": "Última atualização de status {relative}",
-    "dashboard.time.duration": "Duração {duration}",
-    "dashboard.time.durationUnknown": "Duração indisponível",
-    "dashboard.time.terminal": "{status} · {relative}",
+    "dashboard.time.duration": "Tempo de trabalho {duration}",
+    "dashboard.time.durationUnknown": "Tempo de trabalho indisponível",
+    "dashboard.time.terminal": "{relative}",
     "dashboard.refreshFailedRetained": "A atualização falhou; o último instantâneo carregado continua sendo exibido.",
     "dashboard.status.running": "Em execução",
     "dashboard.status.background-process-running": "Processo em segundo plano em execução",

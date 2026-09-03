@@ -10,9 +10,10 @@ import {
   hostToolResultMetadata,
   normalizeHostToolResult
 } from "./uiHostToolResult.js";
+import { dashboardExecutionsEqual } from "./dashboardCard.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
-export const ACTIVITY_CARD_CONTRACT_GENERATION = 21;
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 22;
 export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 6;
 export const ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION = 11;
 export const ACTIVITY_BOOTSTRAP_METADATA_KEY = "codex/activityBootstrap@11";
@@ -28,6 +29,67 @@ export function shouldShowHistoricalActivityTitle(
   if (!String(activityTitle || "").trim()) return false;
   const activityId = typeof latestActivityId === "string" ? latestActivityId.trim() : "";
   return !activityId || !visibleActivityIds?.has(activityId);
+}
+
+type ActivityAgentExecutionRow = {
+  execution?: {
+    model?: unknown;
+    reasoningEffort?: unknown;
+    reroutedModel?: unknown;
+  } | null;
+};
+
+export function commonActivityAgentExecution<Row extends ActivityAgentExecutionRow>(
+  rows: readonly Row[]
+): ActivityAgentExecutionRow["execution"] | null {
+  if (rows.length < 2) return null;
+  const first = rows[0]?.execution;
+  if (!first) return null;
+  return rows.every((row) => dashboardExecutionsEqual(row.execution, first)) ? first : null;
+}
+
+type ActivityIdleAgentGroupRow = {
+  agentId?: unknown;
+  latestActivityId?: unknown;
+  latestActivityTitle?: unknown;
+};
+
+export function groupActivityIdleAgentsByActivity<Row extends ActivityIdleAgentGroupRow>(
+  rows: readonly Row[],
+  visibleActivityIds?: ReadonlySet<string>
+): Array<{ activityKey: string; activityId: string | null; activityTitle: string | null; rows: Row[] }> {
+  const groups: Array<{
+    activityKey: string;
+    activityId: string | null;
+    activityTitle: string | null;
+    rows: Row[];
+  }> = [];
+  const byKey = new Map<string, (typeof groups)[number]>();
+  for (const row of rows) {
+    const activityId = typeof row.latestActivityId === "string"
+      ? row.latestActivityId.trim()
+      : "";
+    if (activityId && visibleActivityIds?.has(activityId)) continue;
+    const activityKey = activityId ? `activity:${activityId}` : "no-recent-activity";
+    const title = typeof row.latestActivityTitle === "string" && row.latestActivityTitle.trim()
+      ? row.latestActivityTitle.trim()
+      : null;
+    const existing = byKey.get(activityKey);
+    if (existing) {
+      existing.rows.push(row);
+      if (!existing.activityTitle && title) existing.activityTitle = title;
+      continue;
+    }
+    const group = {
+      activityKey,
+      activityId: activityId || null,
+      activityTitle: title,
+      rows: [row]
+    };
+    byKey.set(activityKey, group);
+    groups.push(group);
+  }
+  return groups;
 }
 
 export const ACTIVITY_CARD_RESOURCE_DESCRIPTOR = {
@@ -104,9 +166,11 @@ export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
     <div class="footer"><span class="message" id="message" role="status" aria-live="polite"></span><span class="meta" id="updated"></span></div>
   </main>
 	<script>
-	  const BUNDLES=${serializedUiTranslations(["common", "usage", "cancellation", "activity", "agent", "job", "lifecycle", "verification", "kind", "dashboard.status"])};
+	  const BUNDLES=${serializedUiTranslations(["common", "usage", "cancellation", "activity", "agent", "job", "lifecycle", "verification", "kind", "dashboard.status", "dashboard.time", "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity"])};
 	  ${resolveHostUiLocaleTag.toString()}
-	  ${shouldShowHistoricalActivityTitle.toString()}
+	  ${dashboardExecutionsEqual.toString()}
+	  ${commonActivityAgentExecution.toString()}
+	  ${groupActivityIdleAgentsByActivity.toString()}
 	  ${normalizeHostToolResult.toString()}
 	  ${hostToolResultMetadata.toString()}
 	  const pending=new Map();
@@ -154,11 +218,12 @@ export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
   function activityLifecycleIcon(row){const icon=node("span","state-icon "+activityLifecycleTone(row));icon.setAttribute("aria-hidden","true");return icon}
   function displayAgentName(value){const name=String(value||"").trim();return/^Codex Agent [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(name)?t["activity.defaultAgent"]:name}
   function previousFailureText(row){const count=Number(row.counts&&row.counts.failed||0);return count>0&&row.displayState!=="failed"?t["activity.previousFailures"].replace("{count}",formatNumber(count)):""}
-  function summaryText(row,includeUpdatedAt=false){const parts=[activityLifecycleLabel(row)];if(row.kind==="discussion")parts.push("GPT · "+formatNumber(row.counts&&row.counts.total||0)+" "+t["activity.turns"]);else{parts.push(previousFailureText(row));if(row.displayState==="running"||row.displayState==="terminating")parts.push(formatDuration(row.elapsedMs))}if(includeUpdatedAt&&row.updatedAt)parts.push(relativeTime(row.updatedAt));return unique(parts).join(" · ")}
+  function summaryText(row,includeUpdatedAt=false){const parts=[activityLifecycleLabel(row)];if(row.kind==="discussion")parts.push("GPT · "+formatNumber(row.counts&&row.counts.total||0)+" "+t["activity.turns"]);else{parts.push(previousFailureText(row));if((row.displayState==="running"||row.displayState==="terminating")&&!(Array.isArray(row.agents)&&row.agents.length))parts.push(t["dashboard.time.active"].replace("{duration}",formatDuration(row.elapsedMs)))}if(includeUpdatedAt&&row.updatedAt)parts.push(relativeTime(row.updatedAt));return unique(parts).join(" · ")}
   function metadataText(row,showWorkspace){const values=[codeLabel("kind",row.kind)];if(showWorkspace)values.push(...(row.workspaceLabels||[]));if(row.kind!=="discussion"&&row.counts&&row.counts.total>1)values.push(formatNumber(row.counts.total)+" "+t["activity.jobs"]);if(row.continued)values.push(t["activity.continued"]);return unique(values).join(" · ")}
   function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,model=rerouted?selected+" → "+rerouted:selected;return model+" · "+execution.reasoningEffort}
   function appendExecutions(parent,agents,showAgentName){const available=(agents||[]).filter((agent)=>agent&&agent.execution);if(!available.length)return;const list=node("div","execution-list");for(const agent of available){const execution=agent.execution,prefix=showAgentName?displayAgentName(agent.agentName)+" · ":"",text=prefix+executionText(execution),badge=node("span","execution",text);badge.title=text;list.appendChild(badge)}parent.appendChild(list)}
-  function appendActivityAgents(parent,row,readOnly){const agents=Array.isArray(row.agents)?row.agents:[],list=node("div","activity-agent-list");if(!agents.length){const empty=node("div","activity-agent");empty.appendChild(node("div","name",t["activity.temporaryJob"]));list.appendChild(empty)}for(const agent of agents){const item=node("div","activity-agent"),head=node("div","activity-agent-head"),identity=node("div","identity"),actions=node("div","actions"),agentName=displayAgentName(agent.agentName),summary=[agent.role,stateLabel(agent.displayState)];let control=null;if(Number(agent.backgroundProcessCount)>0)summary.push(t["activity.backgroundProcesses"]+" · "+formatNumber(agent.backgroundProcessCount));identity.appendChild(node("div","name",agentName));const agentMeta=unique(summary).join(" · ");if(agentMeta)identity.appendChild(node("div","summary",agentMeta));appendExecutions(identity,[agent],false);if(!readOnly){control=controlFor(agent.agentId);if(agent.canForceStop){const stop=actionButton(t["activity.forceStop"],()=>forceAgent(row,agent,stop),"danger");stop.setAttribute("title",agentName);actions.appendChild(stop)}if((control.backgroundProcesses||[]).length){const stopBackground=actionButton(t["activity.stopBackground"],()=>terminateBackgroundProcesses(agent,control,stopBackground),"danger");stopBackground.setAttribute("title",agentName);actions.appendChild(stopBackground)}}head.appendChild(identity);if(actions.childElementCount)head.appendChild(actions);item.appendChild(head);if(control){for(const interaction of control.pendingInteractions||[])item.appendChild(renderInteraction(row,agent,control,interaction))}list.appendChild(item)}parent.appendChild(list)}
+  function agentWorkTime(agent){return agent&&agent.durationMs!=null?t["dashboard.time.duration"].replace("{duration}",formatDuration(agent.durationMs)):t["dashboard.time.durationUnknown"]}
+  function appendActivityAgents(parent,row,readOnly){const agents=Array.isArray(row.agents)?row.agents:[],list=node("div","activity-agent-list"),commonExecution=commonActivityAgentExecution(agents);if(commonExecution)appendExecutions(parent,[{execution:commonExecution}],false);if(!agents.length){const empty=node("div","activity-agent");empty.appendChild(node("div","name",t["activity.temporaryJob"]));list.appendChild(empty)}for(const agent of agents){const item=node("div","activity-agent"),head=node("div","activity-agent-head"),identity=node("div","identity"),actions=node("div","actions"),agentName=displayAgentName(agent.agentName),summary=[agent.role,stateLabel(agent.displayState),agentWorkTime(agent)];let control=null;if(Number(agent.backgroundProcessCount)>0)summary.push(t["activity.backgroundProcesses"]+" · "+formatNumber(agent.backgroundProcessCount));identity.appendChild(node("div","name",agentName));const agentMeta=unique(summary).join(" · ");if(agentMeta)identity.appendChild(node("div","summary",agentMeta));if(!commonExecution)appendExecutions(identity,[agent],false);if(!readOnly){control=controlFor(agent.agentId);if(agent.canForceStop){const stop=actionButton(t["activity.forceStop"],()=>forceAgent(row,agent,stop),"danger");stop.setAttribute("title",agentName);actions.appendChild(stop)}if((control.backgroundProcesses||[]).length){const stopBackground=actionButton(t["activity.stopBackground"],()=>terminateBackgroundProcesses(agent,control,stopBackground),"danger");stopBackground.setAttribute("title",agentName);actions.appendChild(stopBackground)}}head.appendChild(identity);if(actions.childElementCount)head.appendChild(actions);item.appendChild(head);if(control){for(const interaction of control.pendingInteractions||[])item.appendChild(renderInteraction(row,agent,control,interaction))}list.appendChild(item)}parent.appendChild(list)}
   function cancellationHeading(entry){if(entry.status==="requested")return t["cancellation.requestReason"];if(entry.status==="failed")return t["cancellation.attemptReason"];return t["cancellation.reason"]}
   function appendCancellations(parent,row){const entries=Array.isArray(row.cancellations)?row.cancellations.filter((entry)=>entry&&typeof entry.reason==="string"&&entry.reason.trim()):[];if(!entries.length)return;const key=String(row.activityId||row.title||"activity"),details=node("details","cancellation"),summary=node("summary","cancellation-toggle"),chevron=node("span","chevron"),label=entries.length===1?cancellationHeading(entries[0]):t["cancellation.reasons"].replace("{count}",formatNumber(entries.length)),list=node("div","cancellation-list");chevron.setAttribute("aria-hidden","true");summary.append(chevron,node("span","",label));for(const entry of entries){const item=node("div","cancellation-item"),meta=[cancellationHeading(entry)];if(entry.targetKind==="job"&&entry.agentName)meta.push(displayAgentName(entry.agentName));meta.push(t["cancellation.target."+entry.targetKind]||String(entry.targetKind||""));const requestedAt=new Date(entry.requestedAt);if(Number.isFinite(requestedAt.getTime()))meta.push(new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(requestedAt));item.append(node("div","meta",unique(meta).join(" · ")),node("div","cancellation-reason",entry.reason));list.appendChild(item)}details.append(summary,list);details.open=expandedCancellations.has(key);details.addEventListener("toggle",()=>{if(details.open)expandedCancellations.add(key);else expandedCancellations.delete(key);scheduleSizeChanged(true)});parent.appendChild(details)}
   function actionButton(label,handler,className){const button=node("button",className||"",label);button.type="button";button.addEventListener("click",handler);return button}
@@ -166,12 +231,13 @@ export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
   function fullView(value=snapshot){return Boolean(value&&value.feed&&value.feed.mode==="full")}
 
   function renderActivityRow(row,showWorkspace,includeUpdatedAt=false){const box=node("article","row"),content=node("div","content"),main=node("div","row-main"),identity=node("div","identity"),actions=node("div","actions"),readOnly=historicalView();box.appendChild(activityLifecycleIcon(row));identity.append(node("div","name",row.title),node("div","summary",summaryText(row,includeUpdatedAt)));const metadata=metadataText(row,showWorkspace);if(metadata)identity.appendChild(node("div","meta",metadata));if(!readOnly){if(row.canRequestVerification){const verify=actionButton(t["activity.verify"],()=>requestFollowUp("verify",row,verify));actions.appendChild(verify)}if(row.canRetry){const retry=actionButton(t["activity.retry"],()=>requestFollowUp("retry",row,retry));actions.appendChild(retry)}}main.append(identity,actions);content.appendChild(main);appendActivityAgents(content,row,readOnly);appendCancellations(content,row);box.appendChild(content);return box}
-  function renderHistoryRow(item,kind,showWorkspace,visibleActivityIds){const box=node("article","row history-row"),content=node("div","content"),activityTitle=String(item.latestActivityTitle||"").trim(),showActivityTitle=shouldShowHistoricalActivityTitle(activityTitle,item.latestActivityId,visibleActivityIds),title=displayAgentName(item.agentName)+(showActivityTitle?" · "+activityTitle:"");const state=kind==="completed"?"completed":kind==="ended"?"failed":"idle";box.appendChild(stateIcon({displayState:state,kind:"other"}));content.append(node("span","sr-only",stateLabel(state)),node("div","name",title));const summary=[];if(item.role)summary.push(item.role);if(kind==="completed")summary.push(item.verification==="verified"?codeLabel("verification","verified"):codeLabel("lifecycle","completed"));else if(kind==="ended")summary.push(item.displayState==="archived"?codeLabel("agent","archived"):codeLabel("lifecycle",item.displayState));else summary.push(codeLabel("agent","idle"));if(showWorkspace)summary.push(...(item.workspaceLabels||[]));summary.push(relativeTime(item.updatedAt));content.appendChild(node("div","summary",unique(summary).join(" · ")));appendExecutions(content,[item],false);if(kind==="completed"&&item.activityCount>1)content.appendChild(node("div","meta",t["activity.moreActivities"]+" "+formatNumber(item.activityCount-1)));box.appendChild(content);return box}
   function groupLabel(kind,group){if(kind==="completed")return t["activity.completedCodex"]+" · "+formatNumber(group.agentCount)+" · "+t["activity.completedWork"]+" "+formatNumber(group.activityCount);const key=kind==="idle"?"activity.idleCodex":"activity.endedCodex";return t[key]+" · "+formatNumber(group.agentCount)}
-  function renderGroup(kind,group,showWorkspace,visibleActivityIds){if(!group||group.agentCount<1)return;const wrapper=node("section","group"),button=node("button","disclosure"),label=node("span","disclosure-label"),chevron=node("span","chevron"),panel=node("div","group-list"),panelId="group-"+kind;button.type="button";button.setAttribute("aria-expanded",String(expandedGroups[kind]));button.setAttribute("aria-controls",panelId);chevron.setAttribute("aria-hidden","true");label.append(chevron,node("span","",groupLabel(kind,group)));button.append(label);panel.id=panelId;panel.hidden=!expandedGroups[kind];for(const row of group.rows||[])panel.appendChild(renderHistoryRow(row,kind,showWorkspace,visibleActivityIds));button.addEventListener("click",()=>{expandedGroups[kind]=!expandedGroups[kind];button.setAttribute("aria-expanded",String(expandedGroups[kind]));panel.hidden=!expandedGroups[kind]});wrapper.append(button,panel);groups.appendChild(wrapper)}
+  function commonWorkspaceLabels(rows){if(!rows.length)return[];const first=Array.isArray(rows[0].workspaceLabels)?rows[0].workspaceLabels:[];return rows.every((row)=>JSON.stringify(Array.isArray(row.workspaceLabels)?row.workspaceLabels:[])===JSON.stringify(first))?first:[]}
+  function renderIdleActivityGroup(group,showWorkspace){const first=group.rows[0];if(!first)return null;const box=node("article","row history-row"),content=node("div","content"),title=group.activityTitle||t["dashboard.noRecentActivity"],summary=[t["dashboard.recentActivity"]],workspaces=showWorkspace?commonWorkspaceLabels(group.rows):[],commonExecution=commonActivityAgentExecution(group.rows),list=node("div","activity-agent-list"),updatedAt=group.rows.map((row)=>Date.parse(row.updatedAt)).filter(Number.isFinite).sort((left,right)=>right-left)[0];box.appendChild(stateIcon({displayState:"idle",kind:"other"}));content.appendChild(node("div","name",title));summary.push(...workspaces);if(group.activityId&&updatedAt)summary.push(relativeTime(new Date(updatedAt).toISOString()));content.appendChild(node("div","summary",unique(summary).join(" · ")));if(commonExecution)appendExecutions(content,[{execution:commonExecution}],false);for(const agent of group.rows){const item=node("div","activity-agent"),identity=node("div","identity"),agentSummary=[agent.role,codeLabel("agent","idle"),agentWorkTime(agent)];if(showWorkspace&&!workspaces.length)agentSummary.push(...(agent.workspaceLabels||[]));identity.append(node("div","name",displayAgentName(agent.agentName)),node("div","summary",unique(agentSummary).join(" · ")));if(!commonExecution)appendExecutions(identity,[agent],false);item.appendChild(identity);list.appendChild(item)}content.appendChild(list);box.appendChild(content);return box}
+  function renderIdleActivityGroups(group,showWorkspace,visibleActivityIds){if(!group||!Array.isArray(group.rows))return;const activityGroups=groupActivityIdleAgentsByActivity(group.rows,visibleActivityIds),visibleCount=activityGroups.reduce((count,item)=>count+item.rows.length,0);if(!visibleCount)return;const wrapper=node("section","group"),button=node("button","disclosure"),label=node("span","disclosure-label"),chevron=node("span","chevron"),panel=node("div","group-list"),panelId="group-idle";button.type="button";button.setAttribute("aria-expanded",String(expandedGroups.idle));button.setAttribute("aria-controls",panelId);chevron.setAttribute("aria-hidden","true");label.append(chevron,node("span","",groupLabel("idle",{agentCount:visibleCount})));button.append(label);panel.id=panelId;panel.hidden=!expandedGroups.idle;for(const activityGroup of activityGroups){const row=renderIdleActivityGroup(activityGroup,showWorkspace);if(row)panel.appendChild(row)}button.addEventListener("click",()=>{expandedGroups.idle=!expandedGroups.idle;button.setAttribute("aria-expanded",String(expandedGroups.idle));panel.hidden=!expandedGroups.idle});wrapper.append(button,panel);groups.appendChild(wrapper)}
   function historySummaryText(feed){const summary=feed&&feed.historySummary||{};return t["activity.pastRecords"]+" · "+t["activity.completedActivities"]+" "+formatNumber(summary.completedActivities)+" · "+t["activity.endedActivities"]+" "+formatNumber(summary.endedActivities)+" · "+t["activity.idleAgentCount"]+" "+formatNumber(summary.idleAgents)}
   function renderHistorySummary(feed){const wrapper=node("section","group"),line=node("div","disclosure",historySummaryText(feed));line.setAttribute("role","status");wrapper.appendChild(line);groups.appendChild(wrapper)}
-  function renderFullHistory(feed,showWorkspace){const history=feed.history||{},rows=Array.isArray(history.rows)?history.rows:[],visibleActivityIds=new Set(rows.map((row)=>String(row&&row.activityId||"").trim()).filter(Boolean)),section=node("section","group"),heading=node("div","disclosure",t["activity.history"]),list=node("div","group-list");if(rows.length||!feed.activityTotal){section.appendChild(heading);if(rows.length===0)list.appendChild(node("p","empty",t["activity.noHistory"]));for(const row of rows)list.appendChild(renderActivityRow(row,showWorkspace,true));section.appendChild(list);groups.appendChild(section)}if(feed.idleAgents&&Array.isArray(feed.idleAgents.rows)&&feed.idleAgents.rows.length)renderGroup("idle",feed.idleAgents,showWorkspace,visibleActivityIds);const page=history.pagination||{},controls=node("div","actions");if(page.hasPrevious){const previous=actionButton(t["activity.previousPage"],()=>loadHistoryPage(page.previousCursor,previous));controls.appendChild(previous)}if(page.nextCursor){const next=actionButton(t["activity.nextPage"],()=>loadHistoryPage(page.nextCursor,next));controls.appendChild(next)}if(controls.childElementCount){const wrapper=node("section","group");wrapper.appendChild(controls);groups.appendChild(wrapper)}}
+  function renderFullHistory(feed,showWorkspace){const history=feed.history||{},rows=Array.isArray(history.rows)?history.rows:[],visibleActivityIds=new Set(rows.map((row)=>String(row&&row.activityId||"").trim()).filter(Boolean)),section=node("section","group"),heading=node("div","disclosure",t["activity.history"]),list=node("div","group-list");if(rows.length||!feed.activityTotal){section.appendChild(heading);if(rows.length===0)list.appendChild(node("p","empty",t["activity.noHistory"]));for(const row of rows)list.appendChild(renderActivityRow(row,showWorkspace,true));section.appendChild(list);groups.appendChild(section)}if(feed.idleAgents&&Array.isArray(feed.idleAgents.rows)&&feed.idleAgents.rows.length)renderIdleActivityGroups(feed.idleAgents,showWorkspace,visibleActivityIds);const page=history.pagination||{},controls=node("div","actions");if(page.hasPrevious){const previous=actionButton(t["activity.previousPage"],()=>loadHistoryPage(page.previousCursor,previous));controls.appendChild(previous)}if(page.nextCursor){const next=actionButton(t["activity.nextPage"],()=>loadHistoryPage(page.nextCursor,next));controls.appendChild(next)}if(controls.childElementCount){const wrapper=node("section","group");wrapper.appendChild(controls);groups.appendChild(wrapper)}}
   async function loadHistoryPage(cursor,button){button.disabled=true;const prior=historyCursor;historyCursor=cursor||null;try{await reload()}catch(error){historyCursor=prior;showError(error);button.disabled=false}}
   function showMoreButton(){const more=actionButton(t["activity.showMore"],async()=>{more.disabled=true;viewLimit=Math.min(100,viewLimit+30);try{historicalView()?await reloadHistorical():await reload()}catch(error){showError(error);more.disabled=false}});more.className="disclosure";return more}
 

@@ -11963,13 +11963,14 @@ async function buildDashboardView(
       const currentSession = currentSessionFor(agent.agentId);
       const codexThreadUrl = codexThreadUrlFor(thread, currentSession);
       const project = dashboardProjectIdentity(thread, latestJob);
+      const conversationKey = dashboardConversationKey(agent.scopeId);
       const row: DashboardRow = {
         rowKey: dashboardRowKey(agent.agentId),
         activityKey: dashboardActivityKey(
           latestJob?.activityId || latestArchivedJob?.activityId,
-          agent.agentId
+          `idle:${conversationKey}:${project.projectKey}`
         ),
-        conversationKey: dashboardConversationKey(agent.scopeId),
+        conversationKey,
         sessionAlias: dashboardSessionAlias(agent.scopeId),
         ...(conversationUrl ? { conversationUrl } : {}),
         ...(codexThreadUrl ? { codexThreadUrl } : {}),
@@ -12042,7 +12043,7 @@ async function buildDashboardView(
     terminalOffset,
     limit
   );
-  const idlePage = dashboardPage(idleRows, idleOffset, limit, (row) => row.conversationKey);
+  const idlePage = dashboardActivityPage(idleRows, idleOffset, limit);
   for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows]) {
     const agentId = agentIdByRowKey.get(row.rowKey);
     if (agentId) visibleAgentIdsOut?.add(agentId);
@@ -12737,12 +12738,16 @@ async function buildActivityView(
       const activeAgentJob = [...agentActivityJobs]
         .reverse()
         .find((job) => isActiveActivityJobStatus(job.status));
-      const execution = activityCardExecution(activeAgentJob || agentActivityJobs.at(-1), modelCatalog);
+      const representativeJob = activeAgentJob || agentActivityJobs.at(-1);
+      const execution = activityCardExecution(representativeJob, modelCatalog);
       const participantDisplayState = activityParticipantDisplayState(
         activity,
         assignment,
         agentActivityJobs
       );
+      const terminal = representativeJob
+        ? isTerminalActivityJobStatus(representativeJob.status)
+        : false;
       return {
         agentId,
         agentName: agent.agentName,
@@ -12752,6 +12757,16 @@ async function buildActivityView(
         canForceStop: Boolean(currentForActivity && current.canForceStop),
         backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
         backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0,
+        ...(representativeJob
+          ? {
+              durationMs: Math.max(
+                0,
+                (terminal ? representativeJob.updatedAt : now) - representativeJob.createdAt
+              ),
+              updatedAt: new Date(representativeJob.updatedAt).toISOString(),
+              endedAt: terminal ? new Date(representativeJob.updatedAt).toISOString() : null
+            }
+          : {}),
         ...(execution ? { execution } : {})
       };
     });
@@ -12887,6 +12902,14 @@ async function buildActivityView(
       workspaceLabels: hasMultipleWorkspaces && latestActivity
         ? workspacesFor(latestActivity.activityId)
         : [],
+      ...(latestActivityJob
+        ? {
+            durationMs: Math.max(0, latestActivityJob.updatedAt - latestActivityJob.createdAt),
+            endedAt: isTerminalActivityJobStatus(latestActivityJob.status)
+              ? new Date(latestActivityJob.updatedAt).toISOString()
+              : null
+          }
+        : {}),
       ...(execution ? { execution } : {}),
       updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
     };
