@@ -21,6 +21,16 @@
         "required_approving_review_count": 0,
         "required_review_thread_resolution": false
       }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "Stable promotion gate" }
+        ],
+        "strict_required_status_checks_policy": true
+      }
     }
   ]
 }

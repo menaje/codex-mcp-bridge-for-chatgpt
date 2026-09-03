@@ -597,11 +597,15 @@ App Server threads are checked by exact ID with `thread/read` before resume. MCP
 
 ## Development and releases
 
-Work on `dev`; development and pull-request pushes intentionally run no GitHub
-Actions. A manual workflow run on an exact `release/X.Y.Z` branch is the only RC
-publication path. An explicit push of a source-RC-backed stable state to `main`
-is the only final-release path. Do not promote or push to `main` without
-explicit instruction.
+Work on `dev`; development pushes and ordinary PRs targeting `dev`
+intentionally run no release Actions. One same-repository `release/X.Y.Z` PR
+targeting `main` runs read-only candidate/stable validation. Its required Stable
+promotion gate remains on `HOLD` while the manifest is candidate and passes only
+after the latest published RC is promoted and the stable payload comparison
+succeeds. A manual workflow run on the release branch is the only RC publication
+path. An explicit push of a source-RC-backed stable state to `main` is the only
+final-release path. Do not promote or push to `main` without explicit
+instruction.
 
 `package.json` is the bridge/runtime and release SemVer source of truth.
 `release-manifest.json` carries its synchronized version mirror plus the
@@ -615,9 +619,11 @@ npm run release:plan
 npm run release:check
 ```
 
-The reported release branch prepares `X.Y.Z-rc.1`; later candidates increment
-only `rc.N`, and stable promotion removes only that suffix. The macOS app and
-generic npm server are one release unit and always share the product version.
+The reported release branch prepares `X.Y.Z-rc.1`; open its draft PR to `main`,
+increment later changed candidates only through `rc.N`, and promote the final
+RC on that same branch. Stable promotion removes only the suffix and reruns the
+PR gate before merge. The macOS app and generic npm server are one release unit
+and always share the product version.
 
 After an intentional UI, metadata, or manifest edit:
 

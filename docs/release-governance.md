@@ -70,6 +70,18 @@ After creating and switching to the exact planned branch, prepare metadata:
 npm run release:prepare-candidate
 ```
 
+Open one draft pull request from that same-repository `release/X.Y.Z` branch to
+`main`. While the manifest is `candidate`, the pull request runs the complete
+read-only release validation, but its required **Stable promotion gate** remains
+on `HOLD`; the pull request must not be merged in candidate state. Publish each
+validated RC only through the manual release workflow.
+
+If a candidate validation or publication run fails for a transient runner or
+network reason without changing the commit or payload, rerun that exact commit.
+If the fix changes any source or payload, keep the PR on `HOLD`, commit the fix
+on the release branch, run `release:next-rc`, and publish the new RC; never
+replace an existing RC tag, release, or asset.
+
 Each changed candidate increments only `rc.N`:
 
 ```bash
@@ -83,9 +95,11 @@ and consume its active fragments:
 npm run release:promote
 ```
 
-Merge that exact promotion into `main` for the stable publication. After the
-stable state is merged back to `dev`, restore the non-publishing stage without
-changing the product number:
+The same pull request then reruns in `stable` mode, compares both rebuilt
+payloads with the latest published source RC, and passes the required gate only
+after every read-only job succeeds. Merge that exact promotion into `main` for
+the stable publication. After the stable state is merged back to `dev`, restore
+the non-publishing stage without changing the product number:
 
 ```bash
 npm run release:development
@@ -100,8 +114,8 @@ None of these local metadata commands publishes a tag or GitHub release.
 | Fast | `npm run validate:fast` | manifest/mirror/UI drift, fragments, App Server schema lock |
 | Affected | `npm run validate:affected` | fast checks plus Node and/or Swift checks selected from changed paths |
 | Full integration | `npm run validate:full` | full Node build/tests, exact App Server schema, full Swift tests |
-| Candidate | `npm run validate:candidate` plus the manual release workflow | clean installs, all four assets, npm archive, app/DMG structure, architecture, ad-hoc signatures, checksums |
-| Stable promotion | `npm run validate:stable` plus the main release workflow and physical-Mac evidence | source RC, normalized payload equivalence, exact stage/tag, installation readiness |
+| Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all four assets, npm archive, app/DMG structure, architecture, ad-hoc signatures, checksums |
+| Stable promotion | `npm run validate:stable`, the required Stable promotion gate, the main release workflow, and physical-Mac evidence | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
 
 A successful result applies only to the exact commit and inputs that produced
 it. An unexplained difference, absent source candidate, missing asset, failed
@@ -124,19 +138,27 @@ evidence and does not add a fifth public asset.
 
 ## GitHub Actions authority
 
-The release workflow has only two entry points:
+The release workflow has three entry points with separate authority:
 
+- a `pull_request` targeting `main`, accepted only when its head is a
+  same-repository `release/X.Y.Z` branch whose manifest is `candidate` or
+  `stable`; this path is read-only and never publishes;
 - `workflow_dispatch` on an exact `release/X.Y.Z` ref whose manifest is
   `candidate` and whose version is `X.Y.Z-rc.N`;
 - a push to `main` whose manifest is `stable`, suffix-free, and names its exact
   source candidate.
 
-Pushes to `dev`, pushes to release branches, and pull requests do not run
-Actions. The first workflow job validates event/ref/stage/version authority
-before installing dependencies or building. Stable jobs additionally require
-an existing GitHub prerelease for `sourceCandidate` and compare both npm and
-macOS payloads. The publisher rejects repository mismatches, conflicting tags,
-duplicate releases, missing declared assets, and extra undeclared assets.
+Pushes to `dev`, pushes to release branches, and ordinary pull requests to
+`dev` do not run this workflow. A non-release pull request targeting `main` is
+rejected by the first policy job. The policy validates the event, same-repository
+head, base, stage, branch, and version before installing dependencies or
+building. Candidate PRs expose successful read-only validation while their
+Stable promotion gate deliberately remains on `HOLD`. Stable PRs additionally
+require the latest existing GitHub prerelease for `sourceCandidate` and compare
+both npm and macOS payloads before the gate passes. Only manual candidate and
+`main` push runs receive publication authority. The publisher rejects
+repository mismatches, conflicting tags, duplicate releases, missing declared
+assets, and extra undeclared assets.
 
 The public asset set remains exactly:
 
@@ -155,12 +177,13 @@ for users who want to run the server directly.
 ## Remote protection and promotion hold
 
 The intended remote boundary is: `dev` is the default branch; `dev` and `main`
-reject force-push and deletion; `main` requires a pull request; release branches
-reject force-push but remain deletable because they are short-lived. These
-settings are defined in `.github/rulesets/`. Version-tag rules permit a new
-`v*` tag but reject moving or deleting an existing one. Remote settings are
-verified separately after application and do not replace the repository-local
-checks.
+reject force-push and deletion; `main` requires a pull request and the strict
+**Stable promotion gate** status check; release branches reject force-push but
+remain deletable because they are short-lived. These settings are defined in
+`.github/rulesets/`. Version-tag rules permit a new `v*` tag but reject moving
+or deleting an existing one. Apply the workflow before activating the required
+remote status context, then verify the remote settings separately. Remote
+protection does not replace the repository-local checks.
 
 No candidate should be published until the physical clean-Mac install,
 upgrade, quit/process cleanup, `.env`, and state-preservation checks are recorded.

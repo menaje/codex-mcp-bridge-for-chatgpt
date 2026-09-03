@@ -182,7 +182,38 @@ export function validateBranchStage(manifest, branch) {
 }
 
 export function deriveWorkflowContext(manifest, input) {
-  const { eventName, refName } = input;
+  const {
+    eventName,
+    refName,
+    headRef = "",
+    baseRef = "",
+    repository = "",
+    headRepository = ""
+  } = input;
+  if (eventName === "pull_request") {
+    if (baseRef !== "main") {
+      throw new Error("Release pull requests must target main.");
+    }
+    if (!RELEASE_BRANCH_PATTERN.test(headRef)) {
+      throw new Error("Release pull requests must originate from release/X.Y.Z.");
+    }
+    if (!repository || headRepository !== repository) {
+      throw new Error("Release pull requests must originate from the same repository.");
+    }
+    validateBranchStage(manifest, headRef);
+    if (manifest.release.stage !== "candidate" && manifest.release.stage !== "stable") {
+      throw new Error("Release pull requests require candidate or stable stage.");
+    }
+    return {
+      mode: `${manifest.release.stage}-pr`,
+      stage: manifest.release.stage,
+      channel: manifest.release.channel,
+      prerelease: manifest.release.stage === "candidate",
+      publish: false,
+      refName: headRef,
+      baseRef
+    };
+  }
   validateBranchStage(manifest, refName);
   if (eventName === "workflow_dispatch") {
     if (manifest.release.stage !== "candidate" || !RELEASE_BRANCH_PATTERN.test(refName)) {
@@ -193,6 +224,7 @@ export function deriveWorkflowContext(manifest, input) {
       stage: "candidate",
       channel: "prerelease",
       prerelease: true,
+      publish: true,
       refName
     };
   }
@@ -205,6 +237,7 @@ export function deriveWorkflowContext(manifest, input) {
       stage: "stable",
       channel: "stable",
       prerelease: false,
+      publish: true,
       refName
     };
   }
@@ -300,8 +333,16 @@ function checkPolicy(repoRoot = DEFAULT_REPO_ROOT) {
   return { manifest, fragments };
 }
 
+export function resolvePolicyBranch(environment = process.env) {
+  if (environment.GITHUB_EVENT_NAME === "pull_request" && environment.GITHUB_HEAD_REF) {
+    return environment.GITHUB_HEAD_REF;
+  }
+  return environment.GITHUB_REF_NAME ?? "";
+}
+
 function currentBranch(repoRoot) {
-  if (process.env.GITHUB_REF_NAME) return process.env.GITHUB_REF_NAME;
+  const workflowBranch = resolvePolicyBranch();
+  if (workflowBranch) return workflowBranch;
   try {
     return execFileSync("git", ["branch", "--show-current"], {
       cwd: repoRoot,
@@ -414,7 +455,11 @@ async function main() {
     const manifest = loadReleaseManifest();
     const context = deriveWorkflowContext(manifest, {
       eventName: process.env.GITHUB_EVENT_NAME ?? "",
-      refName: process.env.GITHUB_REF_NAME ?? ""
+      refName: process.env.GITHUB_REF_NAME ?? "",
+      headRef: process.env.GITHUB_HEAD_REF ?? "",
+      baseRef: process.env.GITHUB_BASE_REF ?? "",
+      repository: process.env.GITHUB_REPOSITORY ?? "",
+      headRepository: process.env.RELEASE_PR_HEAD_REPOSITORY ?? ""
     });
     printOutput(context);
     return;

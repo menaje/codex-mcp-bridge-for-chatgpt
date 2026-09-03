@@ -17,6 +17,7 @@ import {
   prepareCandidate,
   prepareNextCandidate,
   promoteStable,
+  resolvePolicyBranch,
   returnToDevelopment,
   validateBranchStage,
   validateChangeFragment
@@ -35,7 +36,7 @@ describe("release governance policy", () => {
       currentVersion: "0.3.0",
       bump: "minor",
       breaking: true,
-      fragmentCount: 1,
+      fragmentCount: 3,
       targetVersion: "0.4.0",
       candidateVersion: "0.4.0-rc.1",
       releaseBranch: "release/0.4.0"
@@ -67,6 +68,17 @@ describe("release governance policy", () => {
   });
 
   it("rejects branch, stage, version, and event combinations that bypass promotion", () => {
+    expect(resolvePolicyBranch({
+      GITHUB_EVENT_NAME: "pull_request",
+      GITHUB_HEAD_REF: "release/0.4.0",
+      GITHUB_REF_NAME: "17/merge"
+    })).toBe("release/0.4.0");
+    expect(resolvePolicyBranch({
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_HEAD_REF: "",
+      GITHUB_REF_NAME: "main"
+    })).toBe("main");
+
     const development = loadReleaseManifest(REPO_ROOT);
     expect(validateBranchStage(development, "dev")).toMatchObject({ stage: "development" });
     expect(() => validateBranchStage(development, "main")).toThrow(/main requires stable/);
@@ -80,7 +92,27 @@ describe("release governance policy", () => {
     expect(deriveWorkflowContext(candidate, {
       eventName: "workflow_dispatch",
       refName: "release/0.4.0"
-    })).toMatchObject({ mode: "candidate", prerelease: true });
+    })).toMatchObject({ mode: "candidate", prerelease: true, publish: true });
+    expect(deriveWorkflowContext(candidate, releasePullRequestInput())).toMatchObject({
+      mode: "candidate-pr",
+      stage: "candidate",
+      prerelease: true,
+      publish: false,
+      refName: "release/0.4.0",
+      baseRef: "main"
+    });
+    expect(() => deriveWorkflowContext(candidate, {
+      ...releasePullRequestInput(),
+      baseRef: "dev"
+    })).toThrow(/must target main/);
+    expect(() => deriveWorkflowContext(candidate, {
+      ...releasePullRequestInput(),
+      headRef: "feature/not-a-release"
+    })).toThrow(/must originate from release\/X\.Y\.Z/);
+    expect(() => deriveWorkflowContext(candidate, {
+      ...releasePullRequestInput(),
+      headRepository: "someone/codex-mcp-bridge-for-chatgpt"
+    })).toThrow(/same repository/);
     expect(() => deriveReleasePlan(candidate, [{
       schemaVersion: 1,
       releaseUnitId: "codex-mcp-bridge",
@@ -93,7 +125,13 @@ describe("release governance policy", () => {
     const stable = stableManifest("0.4.0", "0.4.0-rc.2");
     expect(validateReleaseManifest(stable)).toBe(stable);
     expect(deriveWorkflowContext(stable, { eventName: "push", refName: "main" }))
-      .toMatchObject({ mode: "stable", prerelease: false });
+      .toMatchObject({ mode: "stable", prerelease: false, publish: true });
+    expect(deriveWorkflowContext(stable, releasePullRequestInput())).toMatchObject({
+      mode: "stable-pr",
+      stage: "stable",
+      prerelease: false,
+      publish: false
+    });
     expect(() => deriveWorkflowContext(stable, { eventName: "workflow_dispatch", refName: "main" }))
       .toThrow(/Manual release runs require/);
 
@@ -148,6 +186,17 @@ function stableManifest(version: string, sourceCandidate: string): any {
   manifest.release.sourceVersion = "0.3.0";
   manifest.release.sourceCandidate = sourceCandidate;
   return manifest;
+}
+
+function releasePullRequestInput(): any {
+  return {
+    eventName: "pull_request",
+    refName: "17/merge",
+    headRef: "release/0.4.0",
+    baseRef: "main",
+    repository: "menaje/codex-mcp-bridge-for-chatgpt",
+    headRepository: "menaje/codex-mcp-bridge-for-chatgpt"
+  };
 }
 
 function fixtureRoot(): string {

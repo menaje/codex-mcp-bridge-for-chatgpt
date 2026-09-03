@@ -10,15 +10,32 @@ const MACOS_PACKAGER = readFileSync(path.join(REPO_ROOT, "macos/package-release.
 const MACOS_BUILDER = readFileSync(path.join(REPO_ROOT, "macos/build-app.sh"), "utf8");
 
 describe("macOS and generic npm release workflow", () => {
-  it("runs only for an explicit RC dispatch or a stable main promotion", () => {
+  it("validates only release PRs and publishes only explicit RC or stable promotions", () => {
     expect(WORKFLOW).toMatch(/on:\n  push:\n    branches:\n      - main/);
+    expect(WORKFLOW).toMatch(/pull_request:\n    branches:\n      - main/);
     expect(WORKFLOW).toContain("workflow_dispatch:");
-    expect(WORKFLOW).not.toContain("pull_request:");
+    expect(WORKFLOW).not.toContain("pull_request_target:");
     expect(WORKFLOW).not.toMatch(/branches:\n(?:\s+- [^\n]+\n)*\s+- dev/);
     expect(WORKFLOW).toContain("macos-check:");
     expect(WORKFLOW).toContain("runs-on: macos-15");
     expect(WORKFLOW).toContain("node scripts/release-policy.mjs github-context");
+    expect(WORKFLOW).toContain("RELEASE_PR_HEAD_REPOSITORY");
+    expect(WORKFLOW).toContain("publish: ${{ steps.policy.outputs.publish }}");
+    expect(WORKFLOW).toContain("name: Release PR validation");
+    expect(WORKFLOW).toContain("name: Stable promotion gate");
+    expect(WORKFLOW).toContain(
+      "if: ${{ github.event_name != 'pull_request' && needs.policy-context.outputs.publish == 'true' }}"
+    );
     expect(WORKFLOW.match(/gh release create/g)).toHaveLength(1);
+
+    const prJobs = WORKFLOW.slice(
+      WORKFLOW.indexOf("  release-pr-validation:"),
+      WORKFLOW.indexOf("\n  release:\n")
+    );
+    expect(prJobs).toContain("contents: read");
+    expect(prJobs).not.toContain("contents: write");
+    expect(prJobs).not.toContain("gh release create");
+    expect(prJobs).toContain("remains on HOLD until its candidate is promoted to stable");
   });
 
   it("requires ad-hoc macOS and generic npm assets before assembly", () => {

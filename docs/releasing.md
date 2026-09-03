@@ -274,11 +274,21 @@ npm run release:plan
 
 Create the exact reported `release/X.Y.Z` branch, switch to it, and then run
 `npm run release:prepare-candidate`. Only `X.Y.Z-rc.N` candidates are accepted.
+Open a draft pull request from that same-repository release branch to `main`;
+it is the only PR shape admitted by the release workflow. Candidate commits run
+read-only validation while the required Stable promotion gate remains on
+`HOLD`.
+
 Use `npm run release:next-rc` after any candidate payload change and
 `npm run release:promote` only after the final candidate passes every gate.
-The promotion preserves the numeric version, records the source RC, and removes
-the RC suffix. See [release-governance.md](release-governance.md) for the full
-lifecycle and validation ladder.
+The promotion preserves the numeric version, records the source RC, removes the
+RC suffix, and reruns the same PR's stable payload comparisons before merge. See
+[release-governance.md](release-governance.md) for the full lifecycle and
+validation ladder.
+
+Rerun an unchanged candidate commit only for a transient Actions failure. Any
+source or payload correction requires a committed fix and the next `rc.N`; a
+published candidate is immutable and is never repaired in place.
 
 If another manifest field is intentionally edited, run:
 
@@ -318,10 +328,15 @@ conversation. See
 
 ## GitHub workflow contract
 
-Only a manual run on a matching `release/X.Y.Z` branch or an explicit push to
-`main` starts `.github/workflows/ci.yml`; development pushes, release-branch
-pushes, and pull requests run no Actions. The manual path accepts only an RC and
-the `main` path accepts only a source-RC-backed stable promotion. The workflow:
+`.github/workflows/ci.yml` starts for a PR targeting `main`, a manual run on a
+matching `release/X.Y.Z` branch, or an explicit push to `main`. The PR path
+accepts only a same-repository `release/X.Y.Z` head in candidate or stable
+state, remains read-only, and never publishes. Development pushes,
+release-branch pushes, and ordinary PRs to `dev` run no release Actions. A
+candidate PR stays on `HOLD` at the required Stable promotion gate; after
+promotion, the same PR must pass its stable validations before merge. The
+manual path accepts only an RC and the `main` path accepts only a
+source-RC-backed stable promotion. The workflow:
 
 1. runs the full Node.js server checks and production dependency audit;
 2. builds the canonical npm tarball and its checksum;
@@ -329,11 +344,14 @@ the `main` path accepts only a source-RC-backed stable promotion. The workflow:
    verifies the version, minimum OS, architecture, signatures, and container;
 4. assembles exactly those npm assets and the macOS DMG, rejecting undeclared
    files and writing deterministic aggregate checksums;
-5. compares unpacked npm and macOS payloads with the named source RC before a
-   stable publication, allowing only enumerated release/build/signature metadata;
-6. refuses a repository mismatch or conflicting tag and skips an already
+5. aggregates the read-only jobs for release PRs and prevents candidate state
+   from being merged to `main`;
+6. compares unpacked npm and macOS payloads with the latest named source RC in
+   both the stable PR and final publication run, allowing only enumerated
+   release/build/signature metadata;
+7. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
-7. publishes all four assets together and marks only candidate-stage runs as
+8. publishes all four assets together and marks only candidate-stage runs as
    GitHub prereleases.
 
 The macOS job has no Apple signing or notarization secrets. Its public asset is
@@ -343,8 +361,10 @@ release notes must repeat that limitation and the safe first-launch approval
 path. A future move to Developer ID or notarization is a separate product and
 account decision; the workflow must not silently change the trust model.
 
-Development pushes stay on `dev` and do not start this workflow at all.
+Development pushes and PRs targeting `dev` do not start this workflow at all.
 Never merge, fast-forward, cherry-pick, or push development work to `main`
 unless the user explicitly instructs that specific promotion. Before that
-promotion, prepare the planned unused RC and complete both physical
-release-candidate smoke gates, including the clean-Mac Gatekeeper path.
+promotion, prepare the planned unused RC, open the release PR, and complete both
+physical release-candidate smoke gates, including the clean-Mac Gatekeeper
+path. Apply the workflow before enabling its required remote status check so
+`main` is not left waiting for a context that cannot yet run.

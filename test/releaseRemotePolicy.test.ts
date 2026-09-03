@@ -11,9 +11,19 @@ describe("repository release rulesets", () => {
     expect(main.target).toBe("branch");
     expect(main.enforcement).toBe("active");
     expect(main.conditions.ref_name.include).toEqual(["refs/heads/main"]);
-    expect(ruleTypes(main)).toEqual(expect.arrayContaining(["deletion", "non_fast_forward", "pull_request"]));
+    expect(ruleTypes(main)).toEqual(expect.arrayContaining([
+      "deletion",
+      "non_fast_forward",
+      "pull_request",
+      "required_status_checks"
+    ]));
     expect(main.rules.find((rule: any) => rule.type === "pull_request").parameters.required_approving_review_count)
       .toBe(0);
+    expect(main.rules.find((rule: any) => rule.type === "required_status_checks").parameters).toEqual({
+      do_not_enforce_on_create: false,
+      required_status_checks: [{ context: "Stable promotion gate" }],
+      strict_required_status_checks_policy: true
+    });
   });
 
   it("protects dev while keeping short-lived release branches deletable", () => {

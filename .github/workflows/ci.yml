@@ -1,12 +1,21 @@
 name: Release
 
-# Development and pull-request pushes intentionally run no Actions. A manual
-# run on release/X.Y.Z publishes an RC; a main push publishes only a promoted
-# stable release.
+# Development pushes and ordinary pull requests targeting dev intentionally run
+# no release Actions. A same-repository release/X.Y.Z pull request targeting
+# main runs read-only release validation, a manual run publishes an RC, and a
+# main push publishes only a promoted stable release.
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
 
 permissions:
@@ -24,10 +33,13 @@ jobs:
     outputs:
       mode: ${{ steps.policy.outputs.mode }}
       stage: ${{ steps.policy.outputs.stage }}
+      publish: ${{ steps.policy.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
       - id: policy
         name: Reject an invalid event, branch, version, or stage
+        env:
+          RELEASE_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
         run: node scripts/release-policy.mjs github-context >> "$GITHUB_OUTPUT"
 
   check:
@@ -227,8 +239,113 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  release-pr-validation:
+    name: Release PR validation
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - policy-context
+      - check
+      - macos-check
+      - npm-release-assets
+      - macos-release-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every read-only release validation job to pass
+        env:
+          POLICY_RESULT: ${{ needs.policy-context.result }}
+          SERVER_RESULT: ${{ needs.check.result }}
+          MACOS_RESULT: ${{ needs.macos-check.result }}
+          NPM_ASSET_RESULT: ${{ needs.npm-release-assets.result }}
+          MACOS_ASSET_RESULT: ${{ needs.macos-release-package.result }}
+          RELEASE_STAGE: ${{ needs.policy-context.outputs.stage }}
+        run: |
+          results=(
+            "$POLICY_RESULT"
+            "$SERVER_RESULT"
+            "$MACOS_RESULT"
+            "$NPM_ASSET_RESULT"
+            "$MACOS_ASSET_RESULT"
+          )
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A required release validation job did not pass: ${results[*]}" >&2
+              exit 1
+            fi
+          done
+          echo "Read-only $RELEASE_STAGE release validation passed." >> "$GITHUB_STEP_SUMMARY"
+
+  stable-promotion-gate:
+    name: Stable promotion gate
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - policy-context
+      - release-pr-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Keep candidate pull requests on hold until stable promotion
+        env:
+          VALIDATION_RESULT: ${{ needs.release-pr-validation.result }}
+          RELEASE_STAGE: ${{ needs.policy-context.outputs.stage }}
+        run: |
+          if [[ "$VALIDATION_RESULT" != "success" ]]; then
+            echo "Release PR validation did not pass." >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_STAGE" != "stable" ]]; then
+            echo "The release PR remains on HOLD until its candidate is promoted to stable." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Read release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - name: Require the latest published RC before merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+        run: |
+          if [[ "$GITHUB_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "Manifest repository $EXPECTED_REPOSITORY does not match workflow repository $GITHUB_REPOSITORY." >&2
+            exit 1
+          fi
+          candidate_is_prerelease="$(gh release view "$SOURCE_CANDIDATE_TAG" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$candidate_is_prerelease" != "true" ]]; then
+            echo "$SOURCE_CANDIDATE_TAG is not an existing GitHub prerelease." >&2
+            exit 1
+          fi
+          latest_candidate_tag="$(
+            gh release list --limit 1000 --json tagName,isPrerelease |
+              node -e '
+                const releases = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+                const stableTag = process.argv[1];
+                const prefix = `${stableTag}-rc.`;
+                const candidates = releases
+                  .filter((release) => release.isPrerelease && release.tagName.startsWith(prefix))
+                  .map((release) => ({
+                    tag: release.tagName,
+                    rc: Number(release.tagName.slice(prefix.length))
+                  }))
+                  .filter((release) => Number.isSafeInteger(release.rc) && release.rc > 0)
+                  .sort((left, right) => right.rc - left.rc);
+                process.stdout.write(candidates[0]?.tag || "");
+              ' "$RELEASE_TAG"
+          )"
+          if [[ "$latest_candidate_tag" != "$SOURCE_CANDIDATE_TAG" ]]; then
+            echo "$SOURCE_CANDIDATE_TAG is not the latest RC for $RELEASE_TAG (latest: ${latest_candidate_tag:-none})." >&2
+            exit 1
+          fi
+
   release:
     name: Publish package version
+    if: ${{ github.event_name != 'pull_request' && needs.policy-context.outputs.publish == 'true' }}
     needs:
       - policy-context
       - check

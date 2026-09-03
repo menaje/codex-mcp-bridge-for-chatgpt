@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "릴리즈 브랜치의 RC 및 Stable 승격 PR에 읽기 전용 검증과 필수 병합 게이트를 추가합니다.",
+  "breaking": false,
+  "migration": null
+}
