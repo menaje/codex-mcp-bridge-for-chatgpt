@@ -577,12 +577,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func flushSettingsAutosave() async {
+    @discardableResult
+    func flushSettingsAutosave() async -> Bool {
         settingsAutosaveDebounceTask?.cancel()
         settingsAutosaveDebounceTask = nil
-        await drainSettingsAutosave()
-        while settingsAutosaveInProgress {
-            try? await Task.sleep(nanoseconds: 50_000_000)
+        while true {
+            if settingsAutosaveInProgress {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                continue
+            }
+            if pendingSettingsDraft != nil {
+                await drainSettingsAutosave()
+                continue
+            }
+            return generalSettingsSaveState != .failed
         }
     }
 
@@ -789,12 +797,18 @@ final class AppModel: ObservableObject {
             isBusy = false
         }
 
-        await flushSettingsAutosave()
+        guard await flushSettingsAutosave() else {
+            runtimeErrorMessage = BridgeAppLocalization.string(
+                "설정 변경사항을 저장하지 못해 앱을 종료하지 않았습니다. 저장 오류를 해결한 뒤 다시 시도해 주세요.",
+                locale: interfaceLocale
+            )
+            return false
+        }
         let paths = await resolvedPaths()
         let client = await helperClient()
         do {
             do {
-                let stopped = try await client.stopRuntime(
+                let stopped = try await client.prepareApplicationShutdown(
                     force: force,
                     timeoutMilliseconds: 60_000
                 )
@@ -813,9 +827,12 @@ final class AppModel: ObservableObject {
                 let runtimeLockExists = FileManager.default.fileExists(
                     atPath: paths.runtimeLockDirectory.path
                 )
-                guard force || !runtimeLockExists else { throw error }
+                let helperSocketExists = FileManager.default.fileExists(
+                    atPath: paths.helperSocket.path
+                )
+                guard !runtimeLockExists && !helperSocketExists else { throw error }
                 logger.warning(
-                    "runtime stop RPC was unavailable during app shutdown; unloading helper: \(error.localizedDescription, privacy: .public)"
+                    "verified shutdown RPC was unavailable with no helper socket or runtime lock; unloading the inactive service: \(error.localizedDescription, privacy: .public)"
                 )
             }
 

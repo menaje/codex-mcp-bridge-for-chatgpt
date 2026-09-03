@@ -111,7 +111,10 @@
 "안전하게 종료하지 못했습니다" = "Could Not Quit Safely";
 "실행 중인 작업과 백그라운드 프로세스를 중단하고 앱의 관련 프로세스를 강제로 종료할까요? 파일 변경은 되돌아가지 않습니다." = "Interrupt running work and background processes and force-quit all app-related processes? Filesystem changes are not rolled back.";
 "관련 프로세스를 모두 종료하지 못했습니다" = "Could Not Stop All Related Processes";
+"앱을 종료하지 못했습니다" = "Could Not Quit the App";
+"설정 변경사항을 저장하지 못했습니다" = "Could Not Save Settings";
 "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요." = "The app was not quit. Review the status and try again.";
+"설정 변경사항을 저장하지 못해 앱을 종료하지 않았습니다. 저장 오류를 해결한 뒤 다시 시도해 주세요." = "The app was not quit because settings changes could not be saved. Resolve the save error and try again.";
 "진행 중인 작업이 제한 시간 안에 끝나지 않아 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요." = "The app was not quit because active work did not finish before the timeout. Review whether to force quit.";
 "일부 Agent의 백그라운드 프로세스 상태를 확인할 수 없어 안전 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요." = "The app was not quit safely because some Agents' background-process state could not be verified. Review whether to force quit.";
 "백그라운드 프로세스가 실행 중이어서 안전 종료하지 않았습니다. 강제 종료하면 해당 프로세스도 중단됩니다." = "The app was not quit safely because background processes are running. Force quit will interrupt them.";

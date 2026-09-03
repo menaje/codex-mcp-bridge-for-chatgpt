@@ -73,7 +73,10 @@ explicit **Quit App** action is different: it stops the managed runtime, verifie
 and removes captured descendant process groups, boots the helper LaunchAgent out
 of the current login session, and only then terminates the menu bar app. Its plist
 is preserved so reopening the app or starting the next user login can bootstrap
-the helper again. Graceful quit/stop/restart first blocks new Job admission, waits
+the helper again. A browser-login process started by the helper is tracked and its
+process tree is also stopped during helper shutdown. Pending native Settings edits
+must finish saving before quit; a save failure leaves the app open and reports the
+problem instead of discarding the edit. Graceful quit/stop/restart first blocks new Job admission, waits
 for active Jobs and pending admissions, and then verifies every current retained
 App Server Agent thread for background processes. It refuses to stop when a background
 process exists or that impact cannot be confirmed. Force actions refresh and

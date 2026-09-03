@@ -153,6 +153,20 @@ public struct MacOSHelperClient: Sendable {
         )
     }
 
+    public func prepareApplicationShutdown(
+        force: Bool,
+        timeoutMilliseconds: Int = 60_000
+    ) async throws -> HelperStatus {
+        try await rpc.call(
+            "helper.prepare-shutdown",
+            params: RuntimeControlParameters(
+                mode: force ? "force" : "drain",
+                timeoutMs: timeoutMilliseconds
+            ),
+            timeout: Self.controlTimeout(timeoutMilliseconds, restartAfterStop: false)
+        )
+    }
+
     public func restartRuntime(force: Bool, timeoutMilliseconds: Int = 60_000) async throws -> HelperStatus {
         try await rpc.call(
             "runtime.restart",

@@ -78,6 +78,7 @@ const helperRequestSchema = z.strictObject({
   method: z.enum([
     "helper.hello",
     "helper.status",
+    "helper.prepare-shutdown",
     "setup.apply",
     "setup.repair-permissions",
     "auth.status",
@@ -197,6 +198,7 @@ export type MacOSHelperController = {
   repairConfigurationPermissions(): Promise<RuntimeEnvStatus>;
   authStatus(): Promise<CodexLoginStatus>;
   startLogin(): Promise<{ started: true }>;
+  prepareShutdown(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus>;
   start(): Promise<MacOSHelperStatus>;
   stop(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus>;
   restart(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus>;
@@ -241,6 +243,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private restartTimer: NodeJS.Timeout | undefined;
   private stabilityTimer: NodeJS.Timeout | undefined;
   private manualStop = false;
+  private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: MacOSHelperLogEntry[] = [];
   private operation: Promise<unknown> = Promise.resolve();
@@ -468,30 +471,51 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     };
   }
 
-  async startLogin(): Promise<{ started: true }> {
-    const environment = commandEnvironment(this.envFile);
-    await new Promise<void>((resolve, reject) => {
+  startLogin(): Promise<{ started: true }> {
+    return this.exclusive(async () => {
+      if (isChildRunning(this.loginProcess)) {
+        this.appendLog("helper", "The existing Codex browser login is still in progress.");
+        return { started: true };
+      }
+
+      const environment = commandEnvironment(this.envFile);
       const child = spawn(resolveCommand("codex", environment), ["login"], {
         detached: true,
         env: environment,
         stdio: "ignore"
       });
-      child.once("spawn", () => {
-        child.unref();
-        resolve();
+      this.loginProcess = child;
+      child.once("exit", () => {
+        if (this.loginProcess === child) this.loginProcess = undefined;
       });
-      child.once("error", (error) => reject(error));
-    }).catch((error) => {
-      this.lastError = safeErrorMessage(error);
-      this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
-      throw error;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once("spawn", () => {
+            child.unref();
+            resolve();
+          });
+          child.once("error", reject);
+        });
+      } catch (error) {
+        if (this.loginProcess === child) this.loginProcess = undefined;
+        this.lastError = safeErrorMessage(error);
+        this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
+        throw error;
+      }
+      this.appendLog("helper", "Codex browser login was requested.");
+      return { started: true };
     });
-    this.appendLog("helper", "Codex browser login was requested.");
-    return { started: true };
   }
 
   start(): Promise<MacOSHelperStatus> {
     return this.exclusive(() => this.startUnlocked(true));
+  }
+
+  prepareShutdown(options: {
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<MacOSHelperStatus> {
+    return this.exclusive(() => this.prepareShutdownUnlocked(options));
   }
 
   stop(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
@@ -525,7 +549,53 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   async close(): Promise<void> {
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
-    await this.exclusive(() => this.stopUnlocked({ mode: "force", timeoutMs: 5_000 }));
+    await this.exclusive(() => this.prepareShutdownUnlocked({ mode: "force", timeoutMs: 5_000 }));
+  }
+
+  private async prepareShutdownUnlocked(options: {
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<MacOSHelperStatus> {
+    const failures: string[] = [];
+    let status: MacOSHelperStatus | undefined;
+    try {
+      status = await this.stopUnlocked(options);
+    } catch (error) {
+      if (options.mode === "drain") throw error;
+      failures.push(safeErrorMessage(error));
+    }
+    try {
+      await this.stopLoginProcessUnlocked();
+    } catch (error) {
+      failures.push(safeErrorMessage(error));
+    }
+    if (failures.length > 0) {
+      throw new Error(`HELPER_SHUTDOWN_FAILED: ${failures.join(" ")}`);
+    }
+    return status || this.snapshot();
+  }
+
+  private async stopLoginProcessUnlocked(): Promise<void> {
+    const child = this.loginProcess;
+    const pid = child?.pid;
+    if (!pid || !processIsAlive(pid)) {
+      if (this.loginProcess === child) this.loginProcess = undefined;
+      return;
+    }
+
+    let processTree: ManagedProcessIdentity[];
+    try {
+      processTree = await snapshotManagedProcessTree(pid);
+    } catch (error) {
+      throw new Error(`LOGIN_PROCESS_TREE_INSPECTION_FAILED: ${safeErrorMessage(error)}`);
+    }
+    try {
+      await terminateManagedProcessTree(processTree);
+    } catch (error) {
+      throw new Error(`LOGIN_PROCESS_TREE_CLEANUP_FAILED: ${safeErrorMessage(error)}`);
+    }
+    if (this.loginProcess === child) this.loginProcess = undefined;
+    this.appendLog("helper", "Stopped the Codex browser login process during helper shutdown.");
   }
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
@@ -1065,6 +1135,7 @@ async function dispatchHelperLine(
             "runtime.configure",
             "runtime.repair-profile",
             "runtime.logs.redacted",
+            "helper.prepare-shutdown",
             "setup.dotenv.atomic-apply",
             "setup.dotenv.repair-permissions",
             "auth.codex-browser-login"
@@ -1075,6 +1146,9 @@ async function dispatchHelperLine(
       case "helper.status":
         emptyParamsSchema.parse(request.params || {});
         result = await controller.snapshot();
+        break;
+      case "helper.prepare-shutdown":
+        result = await controller.prepareShutdown(stopParamsSchema.parse(request.params || {}));
         break;
       case "setup.apply":
         result = await controller.applyConfiguration(setupApplyParamsSchema.parse(request.params || {}));

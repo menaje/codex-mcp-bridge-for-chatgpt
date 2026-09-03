@@ -32,9 +32,13 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         terminationRequestInProgress = true
         Task { @MainActor in
             var shouldTerminate = await model.shutdownApplication(force: false)
-            if !shouldTerminate && confirmForceShutdown(model: model) {
-                shouldTerminate = await model.shutdownApplication(force: true)
-                if !shouldTerminate { presentShutdownFailure(model: model) }
+            if !shouldTerminate {
+                if model.generalSettingsSaveState == .failed {
+                    presentShutdownFailure(model: model)
+                } else if confirmForceShutdown(model: model) {
+                    shouldTerminate = await model.shutdownApplication(force: true)
+                    if !shouldTerminate { presentShutdownFailure(model: model) }
+                }
             }
             terminationRequestInProgress = false
             sender.reply(toApplicationShouldTerminate: shouldTerminate)
@@ -72,10 +76,10 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = BridgeAppLocalization.string(
-            "관련 프로세스를 모두 종료하지 못했습니다",
-            locale: model.interfaceLocale
-        )
+        let title = model.generalSettingsSaveState == .failed
+            ? "설정 변경사항을 저장하지 못했습니다"
+            : "관련 프로세스를 모두 종료하지 못했습니다"
+        alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
         alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
             "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
             locale: model.interfaceLocale

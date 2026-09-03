@@ -118,6 +118,14 @@ describe("macOS runtime helper RPC", () => {
 
     await request(socketPath, {
       jsonrpc: "2.0",
+      id: "prepare-shutdown",
+      method: "helper.prepare-shutdown",
+      params: { mode: "force", timeoutMs: 5_000 }
+    });
+    expect(controller.prepareShutdown).toHaveBeenCalledWith({ mode: "force", timeoutMs: 5_000 });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
       id: "restart",
       method: "runtime.restart",
       params: { mode: "force", timeoutMs: 5_000 }
@@ -853,6 +861,74 @@ console.log("user@example.com sk-raw-output-1234567890123456");
       codexHome
     });
   });
+
+  it.runIf(process.platform !== "win32")(
+    "stops the tracked Codex login process tree during verified helper shutdown preparation",
+    async () => {
+      const root = temporaryDirectory();
+      const bridgeRoot = path.join(root, "runtime");
+      const configDirectory = path.join(root, "config");
+      const configFile = path.join(configDirectory, ".env");
+      const processFile = path.join(root, "login-processes.json");
+      const fakeCodex = path.join(root, "fake-codex-login.mjs");
+      mkdirSync(bridgeRoot, { recursive: true });
+      mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
+      writeFileSync(fakeCodex, `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const descendant = spawn(process.execPath, ["-e", "process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+  detached: true,
+  stdio: "ignore"
+});
+descendant.unref();
+writeFileSync(${JSON.stringify(processFile)}, JSON.stringify({
+  loginPid: process.pid,
+  descendantPid: descendant.pid
+}));
+process.on("SIGINT", () => {});
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`, { mode: 0o700 });
+      writeFileSync(configFile, [
+        "CONTROL_PLANE_API_KEY=sk-supervisor-1234567890123456",
+        "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
+        `CODEX_MCP_BRIDGE_CODEX=${fakeCodex}`,
+        ""
+      ].join("\n"), { mode: 0o600 });
+      const supervisor = new MacOSBridgeSupervisor({
+        bridgeRoot,
+        envFile: configFile,
+        bridgeSocketPath: path.join(configDirectory, "run", "bridge.sock"),
+        runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+        autoRestart: false,
+        registeredProjectRoots: () => []
+      });
+      let loginPid = 0;
+      let descendantPid = 0;
+
+      try {
+        await supervisor.startLogin();
+        await eventually(() => existsAndHasContent(processFile));
+        ({ loginPid, descendantPid } = JSON.parse(readFileSync(processFile, "utf8")));
+        expect(processAlive(loginPid)).toBe(true);
+        expect(processAlive(descendantPid)).toBe(true);
+
+        const stopped = await supervisor.prepareShutdown({ mode: "force", timeoutMs: 5_000 });
+
+        expect(stopped).toMatchObject({ phase: "stopped", pid: null });
+        await eventually(() => !processAlive(loginPid));
+        await eventually(() => !processAlive(descendantPid));
+      } finally {
+        for (const pid of [loginPid, descendantPid]) {
+          if (pid > 1 && processAlive(pid)) {
+            try { process.kill(-pid, "SIGKILL"); } catch {}
+          }
+        }
+        await supervisor.close().catch(() => undefined);
+      }
+    },
+    15_000
+  );
 });
 
 function fakeController(): MacOSHelperController {
@@ -871,6 +947,7 @@ function fakeController(): MacOSHelperController {
       summary: "Logged in"
     })),
     startLogin: vi.fn(async () => ({ started: true as const })),
+    prepareShutdown: vi.fn(async () => helperStatus("stopped")),
     start: vi.fn(async () => helperStatus()),
     stop: vi.fn(async () => helperStatus("stopped")),
     restart: vi.fn(async () => helperStatus()),

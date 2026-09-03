@@ -158,7 +158,8 @@ final class BridgeModelsTests: XCTestCase {
             capabilities: [
                 "setup.dotenv.atomic-apply",
                 "setup.dotenv.repair-permissions",
-                "runtime.configure"
+                "runtime.configure",
+                "helper.prepare-shutdown"
             ]
         )
         XCTAssertTrue(HelperBootstrap.isCompatible(compatible, runtimeBuildID: "build-current"))
@@ -171,7 +172,8 @@ final class BridgeModelsTests: XCTestCase {
                 capabilities: [
                     "setup.dotenv.atomic-apply",
                     "setup.dotenv.repair-permissions",
-                    "runtime.configure"
+                    "runtime.configure",
+                    "helper.prepare-shutdown"
                 ]
             ),
             runtimeBuildID: "build-current"
@@ -183,7 +185,8 @@ final class BridgeModelsTests: XCTestCase {
                 buildID: "build-current",
                 capabilities: [
                     "setup.dotenv.atomic-apply",
-                    "setup.dotenv.repair-permissions"
+                    "setup.dotenv.repair-permissions",
+                    "runtime.configure"
                 ]
             ),
             runtimeBuildID: "build-current"

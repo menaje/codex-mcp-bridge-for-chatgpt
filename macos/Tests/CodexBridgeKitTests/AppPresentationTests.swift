@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import CodexBridgeKit
 @testable import CodexBridgeMenuBar
@@ -279,6 +280,102 @@ final class AppPresentationTests: XCTestCase {
         model.scheduleSettingsAutosave(SettingsDraft(snapshot: snapshot))
 
         XCTAssertEqual(model.generalSettingsSaveState, .idle)
+    }
+
+    @MainActor
+    func testApplicationShutdownStopsWhenPendingSettingsCannotBeSaved() async throws {
+        let root = URL(fileURLWithPath:
+            "/tmp/cb-save-\(getpid())-\(UUID().uuidString.prefix(8))",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = RuntimePaths(
+            environment: [
+                "XDG_CONFIG_HOME": root.path,
+                "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1",
+                "PATH": ProcessInfo.processInfo.environment["PATH"] ?? ""
+            ],
+            bundle: .main,
+            currentDirectory: root
+        )
+        try FileManager.default.createDirectory(
+            at: paths.bridgeSocket.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let listener = try makeTestListener(at: paths.bridgeSocket.path)
+        defer {
+            Darwin.close(listener)
+            unlink(paths.bridgeSocket.path)
+        }
+        let server = Task.detached {
+            try serveSettingsFailureOnce(listener: listener)
+        }
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let model = AppModel(
+            paths: paths,
+            loginItemController: TestLoginItemController(status: .notRegistered)
+        )
+        model.settings = snapshot
+        var edited = SettingsDraft(snapshot: snapshot)
+        edited.maxConcurrentJobs = 3
+        model.scheduleSettingsAutosave(edited)
+
+        let didShutdown = await model.shutdownApplication(force: true)
+
+        try await server.value
+        XCTAssertFalse(didShutdown)
+        XCTAssertFalse(model.applicationShutdownCompleted)
+        XCTAssertEqual(model.generalSettingsSaveState, .failed)
+        XCTAssertNotNil(model.runtimeErrorMessage)
+    }
+
+    @MainActor
+    func testApplicationShutdownUsesVerifiedHelperPreparation() async throws {
+        let root = URL(fileURLWithPath:
+            "/tmp/cb-quit-\(getpid())-\(UUID().uuidString.prefix(8))",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = RuntimePaths(
+            environment: [
+                "XDG_CONFIG_HOME": root.path,
+                "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1",
+                "PATH": ProcessInfo.processInfo.environment["PATH"] ?? ""
+            ],
+            bundle: .main,
+            currentDirectory: root
+        )
+        try FileManager.default.createDirectory(
+            at: paths.helperSocket.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let listener = try makeTestListener(at: paths.helperSocket.path)
+        defer {
+            Darwin.close(listener)
+            unlink(paths.helperSocket.path)
+        }
+        let server = Task.detached {
+            try serveHelperShutdownOnce(listener: listener)
+        }
+        let model = AppModel(
+            paths: paths,
+            loginItemController: TestLoginItemController(status: .notRegistered)
+        )
+
+        let didShutdown = await model.shutdownApplication(force: true)
+        let method = try await server.value
+
+        XCTAssertTrue(didShutdown)
+        XCTAssertTrue(model.applicationShutdownCompleted)
+        XCTAssertEqual(method, "helper.prepare-shutdown")
+        XCTAssertNil(model.runtimeErrorMessage)
     }
 
     func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
@@ -640,4 +737,127 @@ private func dashboardRow(
         DashboardRow.self,
         from: JSONSerialization.data(withJSONObject: row)
     )
+}
+
+private func makeTestListener(at socketPath: String) throws -> Int32 {
+    unlink(socketPath)
+    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { throw POSIXError(.EIO) }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = Array(socketPath.utf8)
+    guard pathBytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
+        Darwin.close(descriptor)
+        throw POSIXError(.ENAMETOOLONG)
+    }
+    withUnsafeMutableBytes(of: &address.sun_path) { destination in
+        destination.initializeMemory(as: UInt8.self, repeating: 0)
+        destination.copyBytes(from: pathBytes)
+    }
+    let length = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count + 1)
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(descriptor, $0, length)
+        }
+    }
+    guard bound == 0, Darwin.listen(descriptor, 1) == 0 else {
+        Darwin.close(descriptor)
+        throw POSIXError(.EADDRINUSE)
+    }
+    return descriptor
+}
+
+private func serveHelperShutdownOnce(listener: Int32) throws -> String {
+    let connection = Darwin.accept(listener, nil, nil)
+    guard connection >= 0 else { throw POSIXError(.ECONNABORTED) }
+    defer { Darwin.close(connection) }
+    var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+    let count = Darwin.read(connection, &buffer, buffer.count)
+    guard count > 0,
+          let request = try JSONSerialization.jsonObject(
+            with: Data(buffer.prefix(count))
+          ) as? [String: Any],
+          let requestID = request["id"] as? String,
+          let method = request["method"] as? String else {
+        throw POSIXError(.EIO)
+    }
+    let response = try JSONSerialization.data(withJSONObject: [
+        "jsonrpc": "2.0",
+        "id": requestID,
+        "result": [
+            "kind": "helper-status",
+            "generatedAt": "2026-09-03T00:00:00.000Z",
+            "phase": "stopped",
+            "pid": NSNull(),
+            "startedAt": NSNull(),
+            "lastExit": NSNull(),
+            "lastError": NSNull(),
+            "restartAttempt": 0,
+            "configuration": [
+                "path": "/private/.env",
+                "exists": true,
+                "valid": true,
+                "hasApiKey": true,
+                "hasTunnelId": true,
+                "tunnelId": "tunnel_native123",
+                "issue": NSNull()
+            ],
+            "bridge": [
+                "socketPath": "/private/bridge.sock",
+                "connected": false,
+                "acceptingNewJobs": NSNull(),
+                "activeJobs": NSNull(),
+                "pendingAdmissions": NSNull(),
+                "backgroundProcessState": NSNull(),
+                "backgroundProcesses": NSNull(),
+                "backgroundProcessAgents": NSNull(),
+                "backgroundProcessUnknownAgents": NSNull()
+            ],
+            "tunnel": [
+                "phase": "stopped",
+                "profile": NSNull(),
+                "transport": NSNull(),
+                "doctorPassed": false,
+                "processRunning": false,
+                "connected": false,
+                "lastCheckedAt": NSNull(),
+                "lastError": NSNull()
+            ]
+        ]
+    ]) + Data([0x0A])
+    try writeTestResponse(response, to: connection)
+    return method
+}
+
+private func serveSettingsFailureOnce(listener: Int32) throws {
+    let connection = Darwin.accept(listener, nil, nil)
+    guard connection >= 0 else { throw POSIXError(.ECONNABORTED) }
+    defer { Darwin.close(connection) }
+    var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+    let count = Darwin.read(connection, &buffer, buffer.count)
+    guard count > 0,
+          let request = try JSONSerialization.jsonObject(
+            with: Data(buffer.prefix(count))
+          ) as? [String: Any],
+          let requestID = request["id"] as? String else {
+        throw POSIXError(.EIO)
+    }
+    let response = try JSONSerialization.data(withJSONObject: [
+        "jsonrpc": "2.0",
+        "id": requestID,
+        "error": ["code": -32602, "message": "settings save failed"]
+    ]) + Data([0x0A])
+    try writeTestResponse(response, to: connection)
+}
+
+private func writeTestResponse(_ response: Data, to connection: Int32) throws {
+    try response.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return }
+        var sent = 0
+        while sent < bytes.count {
+            let written = Darwin.write(connection, base.advanced(by: sent), bytes.count - sent)
+            guard written > 0 else { throw POSIXError(.EPIPE) }
+            sent += written
+        }
+    }
 }

@@ -393,9 +393,31 @@ struct DashboardPopoverView: View {
 
     private func shutdownAndQuit(force: Bool) {
         Task {
-            guard await model.shutdownApplication(force: force) else { return }
+            guard await model.shutdownApplication(force: force) else {
+                presentApplicationQuitFailure()
+                return
+            }
             NSApp.terminate(nil)
         }
+    }
+
+    private func presentApplicationQuitFailure() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        let title = model.generalSettingsSaveState == .failed
+            ? "설정 변경사항을 저장하지 못했습니다"
+            : "앱을 종료하지 못했습니다"
+        alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
+        alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
+            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            locale: model.interfaceLocale
+        )
+        alert.addButton(withTitle: BridgeAppLocalization.string(
+            "확인",
+            locale: model.interfaceLocale
+        ))
+        alert.runModal()
     }
 }
 
