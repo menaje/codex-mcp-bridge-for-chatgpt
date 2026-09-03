@@ -27,7 +27,7 @@ function Require-Command([string]$Name) {
 
 $node = Require-Command "node"
 $npm = Require-Command "npm"
-$codex = Require-Command "codex"
+$codex = & (Join-Path $archiveRoot "Resolve-CodexExecutable.ps1")
 
 $nodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v([0-9]+)\.') {
@@ -35,6 +35,11 @@ if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v([0-9]+)\.') {
 }
 if ([int]$Matches[1] -lt [int]$release.prerequisites.nodeMajor) {
     throw "Node.js $($release.prerequisites.nodeMajor) or later is required; found $nodeVersion."
+}
+
+$codexVersion = (& $codex --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $codexVersion -ne "codex-cli $($release.prerequisites.codexCli)") {
+    throw "Codex CLI $($release.prerequisites.codexCli) is required; found $codexVersion."
 }
 
 & $codex mcp-server --help *> $null
@@ -58,5 +63,6 @@ if ($Mode -eq "Secure") {
     node = $nodeVersion
     npm = $npm
     codex = $codex
+    codexVersion = $codexVersion
     tunnelClient = $tunnelClient
 }

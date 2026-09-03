@@ -35,7 +35,8 @@ if ($release.target.transport -ne "http") {
     throw "This Windows package supports the HTTP transport only."
 }
 
-& (Join-Path $archiveRoot "Test-Prerequisites.ps1") -Mode $Mode | Out-Null
+$prerequisites = & (Join-Path $archiveRoot "Test-Prerequisites.ps1") -Mode $Mode
+$env:CODEX_MCP_BRIDGE_CODEX = [string]$prerequisites.codex
 
 $packageRoot = Join-Path $InstallRoot "node_modules\$($release.package.name)"
 $launcher = Join-Path $packageRoot "scripts\start-codex-mcp-bridge.mjs"

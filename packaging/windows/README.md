@@ -8,12 +8,16 @@ or background service.
 
 - 64-bit Windows on x64
 - Node.js 22 or later
-- the Codex CLI in `PATH`, with `codex mcp-server` support and an existing login
+- Codex CLI 0.145.0 installed with npm, with an existing login
 - `tunnel-client` in `PATH` for ChatGPT Secure MCP Tunnel mode
 
 Visual Studio or C++ Build Tools are not required. The installer disables npm
 install scripts and verifies the `better-sqlite3` Windows x64 binary shipped by
 the pinned dependency before reporting success.
+
+The launcher resolves npm's bundled native `codex.exe` instead of keeping the
+intermediate `codex.cmd` process in the managed runtime tree. An explicit
+`CODEX_MCP_BRIDGE_CODEX` value remains supported for custom installations.
 
 Run the commands below from this extracted directory:
 

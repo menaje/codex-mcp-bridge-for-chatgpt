@@ -22,6 +22,7 @@ const WINDOWS_PACKAGE_FILES = [
   "README.md",
   "Get-CodexBridgeStatus.ps1",
   "Install-CodexBridge.ps1",
+  "Resolve-CodexExecutable.ps1",
   "Start-CodexBridge.ps1",
   "Test-Prerequisites.ps1"
 ];

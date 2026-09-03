@@ -59,6 +59,15 @@ jobs:
         run: node -e 'const Database = require("better-sqlite3"); const database = new Database(":memory:"); database.prepare("SELECT 1").get(); database.close();'
       - name: Install supported Codex CLI
         run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
+      - name: Resolve native Windows Codex executable
+        shell: pwsh
+        run: |
+          $codex = & ./packaging/windows/Resolve-CodexExecutable.ps1
+          & $codex --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "The resolved native Codex executable could not run."
+          }
+          "CODEX_MCP_BRIDGE_CODEX=$codex" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Check App Server protocol schemas
         run: npm run app-server:compat:check
       - run: npm run check

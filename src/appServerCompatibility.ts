@@ -7,7 +7,11 @@ const CODEX_SEMVER_PATTERN = new RegExp(`^${CODEX_SEMVER_SOURCE}$`);
 const CODEX_VERSION_PATTERN = new RegExp(`^codex-cli\\s+(${CODEX_SEMVER_SOURCE})$`);
 
 export const SUPPORTED_CODEX_CLI_VERSION = manifest.toolchain.codexCli;
-export const DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS = 5_000;
+// Windows may need extra time for a cold executable launch while Defender
+// scans a newly installed binary. The packaged launcher normally resolves the
+// native codex.exe directly, while this fallback keeps command shims usable.
+export const DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS =
+  process.platform === "win32" ? 30_000 : 5_000;
 
 export type CodexCliVersionProbe = (
   command: string,

@@ -65,6 +65,7 @@ describe("Windows server release archive", () => {
         `${release.rootDirectory}/Install-CodexBridge.ps1`,
         `${release.rootDirectory}/Start-CodexBridge.ps1`,
         `${release.rootDirectory}/Get-CodexBridgeStatus.ps1`,
+        `${release.rootDirectory}/Resolve-CodexExecutable.ps1`,
         `${release.rootDirectory}/Test-Prerequisites.ps1`,
         `${release.rootDirectory}/.env.example`
       ]));
