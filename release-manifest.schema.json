@@ -176,7 +176,7 @@
         "targets": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["macos", "windows"],
+          "required": ["macos"],
           "properties": {
             "macos": {
               "type": "object",
@@ -189,24 +189,13 @@
                 "signing": { "const": "ad-hoc" },
                 "notarization": { "const": "none" }
               }
-            },
-            "windows": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["architecture", "format", "transport", "runtime"],
-              "properties": {
-                "architecture": { "const": "x64" },
-                "format": { "const": "zip" },
-                "transport": { "const": "http" },
-                "runtime": { "const": "node" }
-              }
             }
           }
         },
         "assets": {
           "type": "array",
-          "minItems": 6,
-          "maxItems": 6,
+          "minItems": 5,
+          "maxItems": 5,
           "uniqueItems": true,
           "items": {
             "enum": [
@@ -214,7 +203,6 @@
               "npm-sha256",
               "skills-archive",
               "macos-app",
-              "windows-server",
               "release-checksums"
             ]
           },
@@ -223,7 +211,6 @@
             { "contains": { "const": "npm-sha256" } },
             { "contains": { "const": "skills-archive" } },
             { "contains": { "const": "macos-app" } },
-            { "contains": { "const": "windows-server" } },
             { "contains": { "const": "release-checksums" } }
           ]
         }

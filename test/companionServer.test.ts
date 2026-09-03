@@ -21,7 +21,7 @@ afterEach(async () => {
   await Promise.allSettled(servers.splice(0).map((server) => server.close()));
 });
 
-describe.skipIf(process.platform === "win32")("native companion server", () => {
+describe("native companion server", () => {
   it("serves a versioned hello over a private Unix socket", async () => {
     const socketPath = temporarySocketPath();
     const server = await startBridgeCompanionServer({

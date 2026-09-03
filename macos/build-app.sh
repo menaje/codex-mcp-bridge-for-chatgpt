@@ -10,9 +10,13 @@ resources_directory="$contents_directory/Resources"
 runtime_directory="$resources_directory/Runtime"
 app_icon_source="$script_directory/Resources/AppIcon/app-icon-1024.png"
 app_iconset_directory="$output_directory/AppIcon.iconset"
-signing_identity="${CODE_SIGN_IDENTITY:--}"
 bundle_version="${MACOS_BUNDLE_VERSION:-1}"
 expected_architecture="${MACOS_EXPECTED_ARCHITECTURE:-}"
+
+if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then
+  echo "This project supports ad-hoc macOS signing only." >&2
+  exit 1
+fi
 
 if [[ ! "$bundle_version" =~ ^[1-9][0-9]*$ ]]; then
   echo "MACOS_BUNDLE_VERSION must be a positive integer." >&2
@@ -56,7 +60,6 @@ cp "$repository_root/package.json" "$repository_root/package-lock.json" "$runtim
 cp "$repository_root/release-manifest.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/child-shutdown.mjs" "$runtime_directory/scripts/"
-cp "$repository_root/scripts/http-health.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/launcher-options.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.d.mts" "$runtime_directory/scripts/"
@@ -84,10 +87,6 @@ if [[ -n "$expected_architecture" ]]; then
   fi
 fi
 
-if [[ "$signing_identity" == "-" ]]; then
-  codesign --force --deep --sign - "$app_bundle"
-else
-  codesign --force --deep --options runtime --timestamp --sign "$signing_identity" "$app_bundle"
-fi
+codesign --force --deep --sign - "$app_bundle"
 codesign --verify --deep --strict "$app_bundle"
 echo "$app_bundle"

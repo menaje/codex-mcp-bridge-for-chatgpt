@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -12,7 +11,6 @@ import {
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { collectSkillsRelease, verifySkillsReleaseArchive } from "./build-skills-release.mjs";
-import { collectWindowsRelease, verifyWindowsReleaseArchive } from "./build-windows-release.mjs";
 import { deriveReleaseMetadata, loadReleaseManifest } from "./release-manifest.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -24,17 +22,15 @@ export function expectedReleaseAssetNames(repoRoot = DEFAULT_REPO_ROOT) {
     metadata.checksumFilename,
     metadata.skillsArchiveFilename,
     metadata.macosArchiveFilename,
-    metadata.windowsArchiveFilename,
     metadata.releaseChecksumsFilename
   ];
 }
 
 export function writeReleaseChecksums({
   repoRoot = DEFAULT_REPO_ROOT,
-  directory,
-  sourceCommit = resolveSourceCommit(repoRoot)
+  directory
 } = {}) {
-  const context = inspectReleaseAssets({ repoRoot, directory, sourceCommit, requireChecksums: false });
+  const context = inspectReleaseAssets({ repoRoot, directory, requireChecksums: false });
   const contents = checksumContents(context.assetFiles);
   const checksumFile = path.join(context.directory, context.metadata.releaseChecksumsFilename);
   const temporary = `${checksumFile}.tmp-${process.pid}`;
@@ -44,15 +40,14 @@ export function writeReleaseChecksums({
   } finally {
     rmSync(temporary, { force: true });
   }
-  return checkReleaseAssets({ repoRoot, directory: context.directory, sourceCommit });
+  return checkReleaseAssets({ repoRoot, directory: context.directory });
 }
 
 export function checkReleaseAssets({
   repoRoot = DEFAULT_REPO_ROOT,
-  directory,
-  sourceCommit = resolveSourceCommit(repoRoot)
+  directory
 } = {}) {
-  const context = inspectReleaseAssets({ repoRoot, directory, sourceCommit, requireChecksums: true });
+  const context = inspectReleaseAssets({ repoRoot, directory, requireChecksums: true });
   const checksumFile = path.join(context.directory, context.metadata.releaseChecksumsFilename);
   const expected = checksumContents(context.assetFiles);
   const actual = readFileSync(checksumFile, "utf8");
@@ -66,7 +61,7 @@ export function checkReleaseAssets({
   };
 }
 
-function inspectReleaseAssets({ repoRoot, directory, sourceCommit, requireChecksums }) {
+function inspectReleaseAssets({ repoRoot, directory, requireChecksums }) {
   if (typeof directory !== "string" || directory.length === 0) {
     throw new Error("A release asset directory is required. Pass --directory <path>.");
   }
@@ -106,11 +101,8 @@ function inspectReleaseAssets({ repoRoot, directory, sourceCommit, requireChecks
   const skills = collectSkillsRelease(repoRoot);
   verifySkillsReleaseArchive(path.join(resolvedDirectory, metadata.skillsArchiveFilename), skills);
 
-  const windows = collectWindowsRelease({ repoRoot, packageFile, sourceCommit });
-  verifyWindowsReleaseArchive(path.join(resolvedDirectory, metadata.windowsArchiveFilename), windows);
-
   verifyDmg(path.join(resolvedDirectory, metadata.macosArchiveFilename));
-  return { directory: resolvedDirectory, metadata, sourceCommit, assetFiles };
+  return { directory: resolvedDirectory, metadata, assetFiles };
 }
 
 function checksumContents(files) {
@@ -125,14 +117,6 @@ function verifyDmg(file) {
   if (data.length < 512 || data.subarray(data.length - 512, data.length - 508).toString("ascii") !== "koly") {
     throw new Error(`${path.basename(file)} is not a UDIF disk image.`);
   }
-}
-
-function resolveSourceCommit(repoRoot) {
-  const requested = process.env.RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA;
-  if (requested) return requested.trim().toLowerCase();
-  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" })
-    .trim()
-    .toLowerCase();
 }
 
 function assertDirectory(directory) {

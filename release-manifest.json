@@ -18,7 +18,6 @@
       "docs",
       "scripts/build-fingerprint.mjs",
       "scripts/child-shutdown.mjs",
-      "scripts/http-health.mjs",
       "scripts/launcher-options.mjs",
       "scripts/managed-file.mjs",
       "scripts/managed-file.d.mts",
@@ -101,12 +100,6 @@
         "minimumVersion": "13.0",
         "signing": "ad-hoc",
         "notarization": "none"
-      },
-      "windows": {
-        "architecture": "x64",
-        "format": "zip",
-        "transport": "http",
-        "runtime": "node"
       }
     },
     "assets": [
@@ -114,7 +107,6 @@
       "npm-sha256",
       "skills-archive",
       "macos-app",
-      "windows-server",
       "release-checksums"
     ]
   }

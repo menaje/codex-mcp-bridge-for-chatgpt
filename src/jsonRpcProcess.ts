@@ -1,6 +1,5 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadLineInterface } from "node:readline";
-import { crossSpawn } from "./crossPlatformCommand.js";
 
 type JsonRpcId = number;
 
@@ -169,12 +168,12 @@ export class JsonRpcProcess {
     }
     if (this.closing) throw new Error(`${this.options.debugLabel} process is closed.`);
 
-    const child = crossSpawn(this.options.command, this.options.args, {
+    const child = spawn(this.options.command, this.options.args, {
       cwd: this.options.cwd,
       env: this.options.env || inheritedChildEnvironment(),
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
-    }) as ChildProcessWithoutNullStreams;
+    });
     this.child = child;
     this.exitPromise = new Promise<void>((resolve) => {
       this.resolveExit = resolve;

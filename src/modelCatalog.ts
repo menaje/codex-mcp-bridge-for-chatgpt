@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -9,9 +10,11 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import * as z from "zod/v4";
 import type { CodexBackendKind } from "./config.js";
-import { executeCommandText } from "./crossPlatformCommand.js";
+
+const execFileAsync = promisify(execFile);
 
 export type CodexReasoningEffort = {
   effort: string;
@@ -616,8 +619,9 @@ function emitCatalogChanged(
 }
 
 async function runCodexCatalogCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
-  const { stdout } = await executeCommandText(command, args, {
-    timeoutMs,
+  const { stdout } = await execFileAsync(command, args, {
+    encoding: "utf8",
+    timeout: timeoutMs,
     maxBuffer: 5 * 1024 * 1024
   });
   return stdout;

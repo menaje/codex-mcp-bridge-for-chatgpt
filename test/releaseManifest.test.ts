@@ -42,7 +42,7 @@ describe("release manifest", () => {
     expect(output).toContain("codex_cli_version=0.145.0\n");
   });
 
-  it("requires the cross-platform manifestVersion 2 release asset contract", () => {
+  it("requires the macOS and generic npm manifestVersion 2 release asset contract", () => {
     const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
     expect(validateReleaseManifest(manifest)).toBe(manifest);
     expect(manifest.release.assets).toEqual([
@@ -50,7 +50,6 @@ describe("release manifest", () => {
       "npm-sha256",
       "skills-archive",
       "macos-app",
-      "windows-server",
       "release-checksums"
     ]);
     expect(manifest.release.targets).toEqual({
@@ -60,12 +59,6 @@ describe("release manifest", () => {
         minimumVersion: "13.0",
         signing: "ad-hoc",
         notarization: "none"
-      },
-      windows: {
-        architecture: "x64",
-        format: "zip",
-        transport: "http",
-        runtime: "node"
       }
     });
 
@@ -95,9 +88,6 @@ describe("release manifest", () => {
       macosArchitecture: "arm64",
       macosMinimumVersion: "13.0",
       macosArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
-      windowsArchitecture: "x64",
-      windowsTransport: "http",
-      windowsArchiveFilename: "codex-mcp-bridge-for-chatgpt-0.3.0-windows-x64.zip",
       releaseChecksumsFilename: "SHA256SUMS.txt"
     });
   });

@@ -33,9 +33,9 @@ The manifest controls:
 - immutable Settings and Activity UI cache-key policy, hash algorithm and
   prefix length, retained-generation count, and required logical resources;
 - the synchronized SemVer mirror, tag prefix, stable/prerelease channel, and release title;
-- generated release-note policy and the manifest-v2 cross-platform asset contract;
-- the first public targets: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG and a
-  Windows x64 server ZIP using the existing Node runtime over HTTP transport.
+- generated release-note policy and the manifest-v2 release asset contract;
+- the first native target: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG,
+  alongside the existing generic npm server archive.
 
 ## Skills distribution
 
@@ -45,8 +45,8 @@ artifact, while the npm package is runtime-only and deliberately excludes
 `skills/`.
 
 Manifest version 2 declares the skills ZIP as one member of the complete public
-asset set. It is versioned with the same bridge SemVer as the npm package,
-macOS app, and Windows server package.
+asset set. It is versioned with the same bridge SemVer as the npm package and
+macOS app.
 
 Build an installable ZIP explicitly (the output file is intentionally chosen by
 the caller):
@@ -160,9 +160,9 @@ npm run app-server:compat:check
 ```
 
 `release:check` rejects a lock whose version metadata differs from the
-manifest. Main CI installs the exact manifest version and regenerates both
-schema formats before build/test, so ordinary unit tests remain offline and
-fixture-driven.
+manifest. The main-branch release workflow installs the exact manifest version
+and regenerates both schema formats before build/test, so ordinary unit tests
+remain offline and fixture-driven.
 
 ### App Server canary and rollback gate
 
@@ -253,35 +253,14 @@ Intel or universal packaging requires an explicit manifest change and a native
 dependency/test matrix; it is not inferred from architecture-neutral Swift
 source.
 
-### Windows direct-server distribution gate
+### Direct server distribution
 
-The Windows release keeps the original server operating model and does not add
-a GUI or background service. `scripts/build-windows-release.mjs` wraps the one
-canonical npm tarball with PowerShell prerequisite, install, foreground start,
-and status entrypoints. The archive supports Windows x64 and HTTP Secure MCP
-Tunnel transport only. Installation preserves an existing
-`%USERPROFILE%\.config\codex-mcp-bridge\.env`; a newly created or existing file
-is restricted to the current Windows user and SYSTEM by the explicit installer.
-The installer disables dependency install scripts and immediately loads the
-bundled `better-sqlite3` Windows x64 binary, so end users do not need Visual
-Studio or a C++ compiler.
-
-The following remain release-candidate gates rather than inferred support:
-
-- the full Node suite and deterministic Windows package check pass on
-  `windows-latest`;
-- every packaged PowerShell entrypoint parses successfully;
-- a clean Windows x64 VM completes install, Codex login, actual Tunnel
-  connection, foreground `Ctrl-C` shutdown, stale-lock recovery, and upgrade;
-- the HTTP launcher leaves no bridge, Codex, or tunnel process after a managed
-  shutdown;
-- stdio remains unsupported until Windows quoting and process-tree behavior are
-  independently implemented and tested.
-
-The launcher health check uses Node's built-in HTTP client rather than an
-external `curl` executable. Runtime Codex process launches use cross-platform
-command resolution so the normal npm-installed `codex.cmd` shim works on
-Windows as well as the executable entrypoint used on macOS and Linux.
+The native macOS app does not replace the existing Node.js server path. The
+canonical npm archive remains a release asset for users who choose to install,
+configure, supervise, and run that server directly in their own environment.
+The project does not create additional operating-system-specific server ZIPs,
+installers, GUIs, services, process wrappers, or support claims. Direct-server
+users retain the existing `.env`, card, SQLite, and command contracts.
 
 ### Legacy runtime namespace
 
@@ -361,26 +340,20 @@ conversation. See
 
 ## GitHub workflow contract
 
-Pull requests and pushes to `dev` or `main` run the shared Ubuntu suite, the
-Windows x64 server suite, and the native macOS arm64 suite. Only a push to
-`main` enables packaging and publication jobs. The workflow then:
+Only an explicit push to `main` starts `.github/workflows/ci.yml`; development
+and pull-request pushes run no Actions. A `main` push is therefore the deliberate
+prerelease or stable release action. The workflow then:
 
-1. builds the canonical npm tarball, its compatibility checksum, and the
-   deterministic skills ZIP once on Ubuntu;
-2. passes that exact npm tarball to Windows and embeds it in the deterministic
-   Windows server ZIP;
+1. runs the full Node.js server checks and production dependency audit;
+2. builds the canonical npm tarball, its checksum, and deterministic skills ZIP;
 3. builds the macOS app on an arm64 runner, ad-hoc signs the app and DMG, and
    verifies the version, minimum OS, architecture, signatures, and container;
-4. downloads the common, Windows, and macOS workflow artifacts into one final
-   assembly job;
-5. verifies exact filenames, the Windows embedded npm tarball, skills content,
-   DMG container format, source commit, and the individual npm checksum;
-6. rejects undeclared files and writes one deterministic `SHA256SUMS.txt` for
-   every public binary/archive asset;
-7. refuses a repository mismatch, refuses a conflicting existing tag, and
-   skips an already published release rather than replacing it;
-8. publishes all six assets together and adds `--prerelease` when the SemVer
-   contains a prerelease identifier.
+4. assembles exactly those common assets and the macOS DMG, rejecting undeclared
+   files and writing deterministic aggregate checksums;
+5. refuses a repository mismatch or conflicting tag and skips an already
+   published release rather than replacing it;
+6. publishes all five assets together and adds `--prerelease` when the manifest
+   SemVer contains a prerelease identifier.
 
 The macOS job has no Apple signing or notarization secrets. Its public asset is
 intentionally named
@@ -389,8 +362,7 @@ release notes must repeat that limitation and the safe first-launch approval
 path. A future move to Developer ID or notarization is a separate product and
 account decision; the workflow must not silently change the trust model.
 
-Development pushes stay on `dev` and cannot execute `gh release create` because
-every packaging/publication job is guarded by the exact `main` push condition.
+Development pushes stay on `dev` and do not start this workflow at all.
 Never merge, fast-forward, cherry-pick, or push development work to `main`
 unless the user explicitly instructs that specific promotion. Before that
 promotion, set a new unused SemVer and complete both physical release-candidate

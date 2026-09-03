@@ -12,7 +12,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildSkillsRelease } from "../scripts/build-skills-release.mjs";
-import { buildWindowsRelease } from "../scripts/build-windows-release.mjs";
 import { deriveReleaseMetadata, loadReleaseManifest } from "../scripts/release-manifest.mjs";
 import {
   checkReleaseAssets,
@@ -21,16 +20,13 @@ import {
 } from "../scripts/release-assets.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
-
-describe("cross-platform release asset assembly", () => {
+describe("macOS and npm release asset assembly", () => {
   it("accepts exactly one checked asset set and writes stable aggregate checksums", () => {
     const directory = createFixtureAssets();
     try {
       const result = writeReleaseChecksums({
         repoRoot: REPO_ROOT,
-        directory,
-        sourceCommit: SOURCE_COMMIT
+        directory
       });
 
       expect(result.metadata.version).toBe(loadReleaseManifest(REPO_ROOT).release.version);
@@ -41,10 +37,9 @@ describe("cross-platform release asset assembly", () => {
       );
       expect(checkReleaseAssets({
         repoRoot: REPO_ROOT,
-        directory,
-        sourceCommit: SOURCE_COMMIT
+        directory
       }).checksums).toEqual(result.checksums);
-      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(5);
+      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(4);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -53,20 +48,18 @@ describe("cross-platform release asset assembly", () => {
   it("rejects tampering and undeclared release files", () => {
     const directory = createFixtureAssets();
     try {
-      writeReleaseChecksums({ repoRoot: REPO_ROOT, directory, sourceCommit: SOURCE_COMMIT });
+      writeReleaseChecksums({ repoRoot: REPO_ROOT, directory });
       const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
-      appendFileSync(path.join(directory, metadata.windowsArchiveFilename), "tampered");
+      appendFileSync(path.join(directory, metadata.macosArchiveFilename), "tampered");
       expect(() => checkReleaseAssets({
         repoRoot: REPO_ROOT,
-        directory,
-        sourceCommit: SOURCE_COMMIT
-      })).toThrow(/Windows ZIP|SHA256SUMS/);
+        directory
+      })).toThrow(/disk image|SHA256SUMS/);
 
       writeFileSync(path.join(directory, "undeclared.txt"), "unexpected");
       expect(() => checkReleaseAssets({
         repoRoot: REPO_ROOT,
-        directory,
-        sourceCommit: SOURCE_COMMIT
+        directory
       })).toThrow("must contain exactly");
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -77,9 +70,8 @@ describe("cross-platform release asset assembly", () => {
 function createFixtureAssets(): string {
   const directory = mkdtempSync(path.join(tmpdir(), "codex-release-assets-test-"));
   const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const packed = JSON.parse(execFileSync(
-    npm,
+    "npm",
     ["pack", "--json", "--pack-destination", directory],
     { cwd: REPO_ROOT, encoding: "utf8" }
   ));
@@ -92,12 +84,6 @@ function createFixtureAssets(): string {
   buildSkillsRelease({
     repoRoot: REPO_ROOT,
     outputFile: path.join(directory, metadata.skillsArchiveFilename)
-  });
-  buildWindowsRelease({
-    repoRoot: REPO_ROOT,
-    packageFile,
-    outputFile: path.join(directory, metadata.windowsArchiveFilename),
-    sourceCommit: SOURCE_COMMIT
   });
   const fakeDmg = Buffer.alloc(1024);
   fakeDmg.write("koly", fakeDmg.length - 512, "ascii");

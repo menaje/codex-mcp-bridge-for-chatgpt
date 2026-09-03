@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const launcherPath = path.join(repositoryRoot, "scripts", "start-codex-mcp-bridge.mjs");
 
-describe.skipIf(process.platform === "win32")("managed launcher lifecycle", () => {
+describe("managed launcher lifecycle", () => {
   it("waits for tunnel readiness and shutdown, then reuses only an unchanged profile", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-lifecycle-"));
     const configDirectory = path.join(root, "config");

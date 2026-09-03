@@ -1,22 +1,22 @@
-name: CI and Release
+name: Release
 
+# A main push is the explicit prerelease/stable release action for this
+# repository. Development and pull-request pushes intentionally run no Actions.
 on:
-  pull_request:
   push:
     branches:
       - main
-      - dev
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-release-${{ github.ref }}
+  group: main-release
   cancel-in-progress: false
 
 jobs:
   check:
-    name: Check shared Node runtime
+    name: Check npm server runtime
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -35,60 +35,6 @@ jobs:
       - name: Check App Server protocol schemas
         run: npm run app-server:compat:check
       - run: npm run check
-      - run: npm run windows:check
-      - run: npm audit --omit=dev
-
-  windows-check:
-    name: Check Windows x64 server package
-    runs-on: windows-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - id: metadata
-        name: Read release manifest
-        shell: pwsh
-        run: node scripts/release-manifest.mjs github-output | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ steps.metadata.outputs.node_version }}
-          cache: npm
-      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
-      - run: npm ci --ignore-scripts
-      - name: Verify bundled Windows SQLite binary
-        shell: pwsh
-        run: node -e 'const Database = require("better-sqlite3"); const database = new Database(":memory:"); database.prepare("SELECT 1").get(); database.close();'
-      - name: Install supported Codex CLI
-        run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
-      - name: Resolve native Windows Codex executable
-        shell: pwsh
-        run: |
-          $codex = & ./packaging/windows/Resolve-CodexExecutable.ps1
-          & $codex --version
-          if ($LASTEXITCODE -ne 0) {
-            throw "The resolved native Codex executable could not run."
-          }
-          "CODEX_MCP_BRIDGE_CODEX=$codex" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Check App Server protocol schemas
-        run: npm run app-server:compat:check
-      - run: npm run check
-      - run: npm run windows:check
-      - name: Parse packaged PowerShell entrypoints
-        shell: pwsh
-        run: |
-          $allErrors = @()
-          Get-ChildItem packaging/windows -Filter *.ps1 | ForEach-Object {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              $_.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
-            $allErrors += $errors
-          }
-          if ($allErrors.Count -gt 0) {
-            throw (($allErrors | ForEach-Object { $_.Message }) -join "`n")
-          }
       - run: npm audit --omit=dev
 
   macos-check:
@@ -116,18 +62,12 @@ jobs:
         run: codesign --verify --deep --strict "macos/build/Codex MCP Bridge for ChatGPT.app"
 
   common-release-assets:
-    name: Build common release assets
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Build npm server and skills assets
     needs:
       - check
-      - windows-check
       - macos-check
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    outputs:
-      package_filename: ${{ steps.metadata.outputs.package_filename }}
-      checksum_filename: ${{ steps.metadata.outputs.checksum_filename }}
-      skills_archive_filename: ${{ steps.metadata.outputs.skills_archive_filename }}
     steps:
       - uses: actions/checkout@v7
       - id: metadata
@@ -140,7 +80,7 @@ jobs:
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
       - run: npm run build
-      - name: Build canonical npm and skills assets
+      - name: Build generic npm and skills assets
         env:
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
           CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
@@ -165,52 +105,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  windows-release-package:
-    name: Package Windows x64 server
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs:
-      - windows-check
-      - common-release-assets
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - id: metadata
-        name: Read release manifest
-        shell: pwsh
-        run: node scripts/release-manifest.mjs github-output | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ steps.metadata.outputs.node_version }}
-      - uses: actions/download-artifact@v8
-        with:
-          name: common-release-assets
-          path: release-input
-      - name: Build Windows server archive around the canonical npm package
-        shell: pwsh
-        env:
-          RELEASE_SOURCE_COMMIT: ${{ github.sha }}
-          PACKAGE_FILE: ${{ needs.common-release-assets.outputs.package_filename }}
-          WINDOWS_FILE: ${{ steps.metadata.outputs.windows_archive_filename }}
-        run: |
-          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          node scripts/build-windows-release.mjs build `
-            --package (Join-Path "release-input" $env:PACKAGE_FILE) `
-            --output (Join-Path "release-assets" $env:WINDOWS_FILE) `
-            --source-commit $env:RELEASE_SOURCE_COMMIT
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-release-asset
-          path: release-assets/${{ steps.metadata.outputs.windows_archive_filename }}
-          if-no-files-found: error
-          retention-days: 7
-
   macos-release-package:
     name: Package unnotarized macOS arm64 app
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
+      - check
       - macos-check
-      - common-release-assets
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -242,14 +141,11 @@ jobs:
           retention-days: 7
 
   release:
-    name: Assemble package version release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Publish package version
     needs:
       - check
-      - windows-check
       - macos-check
       - common-release-assets
-      - windows-release-package
       - macos-release-package
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -262,6 +158,9 @@ jobs:
       - id: metadata
         name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
       - id: release-state
         name: Validate release target
         env:
@@ -290,15 +189,6 @@ jobs:
             fi
           fi
       - if: steps.release-state.outputs.exists != 'true'
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ steps.metadata.outputs.node_version }}
-      - if: steps.release-state.outputs.exists != 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-release-asset
-          path: release-assets
-      - if: steps.release-state.outputs.exists != 'true'
         uses: actions/download-artifact@v8
         with:
           name: macos-release-asset
@@ -310,8 +200,6 @@ jobs:
           path: release-assets
       - if: steps.release-state.outputs.exists != 'true'
         name: Verify the complete release set and write aggregate checksums
-        env:
-          RELEASE_SOURCE_COMMIT: ${{ github.sha }}
         run: |
           npm run release:assets -- write --directory release-assets
           npm run release:assets -- check --directory release-assets
@@ -327,20 +215,18 @@ jobs:
           CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
           SKILLS_FILE: ${{ steps.metadata.outputs.skills_archive_filename }}
           MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
-          WINDOWS_FILE: ${{ steps.metadata.outputs.windows_archive_filename }}
           RELEASE_CHECKSUMS_FILE: ${{ steps.metadata.outputs.release_checksums_filename }}
           TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
         run: |
           release_args=(
             "$RELEASE_TAG"
             "release-assets/$MACOS_FILE#macOS arm64 app (ad-hoc signed, not notarized DMG)"
-            "release-assets/$WINDOWS_FILE#Windows x64 server package"
-            "release-assets/$PACKAGE_FILE#npm package"
+            "release-assets/$PACKAGE_FILE#generic npm server package"
             "release-assets/$CHECKSUM_FILE#npm package SHA-256"
             "release-assets/$SKILLS_FILE#installable Codex skills"
             "release-assets/$RELEASE_CHECKSUMS_FILE#all release SHA-256 checksums"
             --title "$RELEASE_TITLE"
-            --notes "The macOS arm64 app is ad-hoc signed and not Apple-notarized. On first launch, macOS users may need to approve the app in System Settings > Privacy & Security; do not disable Gatekeeper globally. Windows users should extract the Windows server package and follow its PowerShell README; no Windows GUI is included."
+            --notes "The macOS arm64 app is ad-hoc signed and not Apple-notarized. Approve only this app in System Settings > Privacy & Security if first launch is blocked; do not disable Gatekeeper globally. The npm archive remains available for users who choose to run the existing server directly in their own Node.js environment."
           )
           if [[ "$GENERATE_NOTES" == "true" ]]; then
             release_args+=(--generate-notes)

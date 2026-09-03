@@ -15,7 +15,6 @@
     "docs",
     "scripts/build-fingerprint.mjs",
     "scripts/child-shutdown.mjs",
-    "scripts/http-health.mjs",
     "scripts/launcher-options.mjs",
     "scripts/managed-file.mjs",
     "scripts/managed-file.d.mts",
@@ -38,8 +37,6 @@
     "release:version": "node scripts/release-manifest.mjs version",
     "skills:package": "node scripts/build-skills-release.mjs build",
     "skills:check": "node scripts/build-skills-release.mjs check",
-    "windows:package": "node scripts/build-windows-release.mjs build",
-    "windows:check": "node scripts/build-windows-release.mjs check",
     "release:assets": "node scripts/release-assets.mjs",
     "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "macos:check": "swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
@@ -75,12 +72,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^13.0.3",
-    "cross-spawn": "^7.0.6",
     "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/cross-spawn": "^6.0.6",
     "@types/express": "^5.0.6",
     "@types/node": "^22.12.0",
     "tsx": "^4.21.0",

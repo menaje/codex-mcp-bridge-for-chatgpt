@@ -252,29 +252,15 @@ remain distribution gates. See
 [docs/macos-app.md](docs/macos-app.md) for the architecture, setup, recovery,
 and release boundary.
 
-## Windows server package
+## Direct server runtime
 
-Windows keeps the existing direct-server model; there is no Windows GUI in the
-initial cross-platform release. The versioned Windows x64 ZIP contains the
-canonical npm tarball plus PowerShell prerequisite, install, foreground start,
-and status entrypoints. It preserves
-`%USERPROFILE%\.config\codex-mcp-bridge\.env`, applies a current-user/SYSTEM ACL,
-and officially selects the HTTP Secure MCP Tunnel transport. It verifies the
-bundled Windows SQLite binary without requiring Visual Studio or C++ Build
-Tools, and resolves the normal npm-installed `codex.cmd` entrypoint. `Ctrl-C`
-in the foreground PowerShell window performs the managed shutdown.
-
-Build and inspect the deterministic package without publishing anything:
-
-```bash
-npm run windows:check
-```
-
-The same GitHub prerelease or stable release will carry this Windows package,
-the ad-hoc-signed and explicitly unnotarized Apple Silicon app, the generic npm
-package, the skills archive, and aggregate checksums. See
-[docs/releasing.md](docs/releasing.md) for the release gates and first-launch
-notice.
+The native app is a macOS convenience layer; it does not replace the existing
+server. A release also includes the generic npm archive so users can install
+and run the Node.js server directly in an environment they manage themselves.
+No additional operating-system-specific server installer, GUI, or background
+service is produced. The existing cards, `.env`, SQLite state, and commands
+remain the same. See [docs/releasing.md](docs/releasing.md) for the release
+assets and macOS first-launch notice.
 
 ## Start locally or through Secure MCP Tunnel
 
@@ -611,15 +597,17 @@ App Server threads are checked by exact ID with `thread/read` before resume. MCP
 
 ## Development and releases
 
-Work on `dev`. CI checks Ubuntu, Windows, and macOS there, but packaging and
-`gh release create` run only for an exact push to `main`; do not promote or push
-to `main` without explicit instruction.
+Work on `dev`; development and pull-request pushes intentionally run no GitHub
+Actions. An explicit push to `main` is the release action and runs validation,
+packaging, and `gh release create` for either the manifest-selected prerelease
+or stable channel. Do not promote or push to `main` without explicit
+instruction.
 
 `package.json` is the bridge/runtime and release SemVer source of truth.
 `release-manifest.json` carries its synchronized version mirror plus the
 remaining release policy, product/package identity, personal/local plugin
 metadata, exact supported App Server CLI, toolchain, repository,
-manifest-v2 cross-platform release targets/assets, and UI resource policy.
+manifest-v2 macOS and generic npm release assets, and UI resource policy.
 Normal version change:
 
 ```bash

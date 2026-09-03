@@ -33,7 +33,6 @@ const RELEASE_ASSET_NAMES = [
   "npm-sha256",
   "skills-archive",
   "macos-app",
-  "windows-server",
   "release-checksums"
 ];
 
@@ -203,7 +202,7 @@ export function validateReleaseManifest(value) {
   if (release.channel === "prerelease" && !hasPrerelease) fail("prerelease channel requires a prerelease version");
   if (typeof release.generateNotes !== "boolean") fail("release.generateNotes must be boolean");
   const targets = requiredRecord(release.targets, "release.targets");
-  assertKeys(targets, ["macos", "windows"], "release.targets");
+  assertKeys(targets, ["macos"], "release.targets");
   const macosTarget = requiredRecord(targets.macos, "release.targets.macos");
   assertKeys(
     macosTarget,
@@ -216,16 +215,6 @@ export function validateReleaseManifest(value) {
   if (macosTarget.signing !== "ad-hoc") fail("release.targets.macos.signing must be ad-hoc");
   if (macosTarget.notarization !== "none") fail("release.targets.macos.notarization must be none");
 
-  const windowsTarget = requiredRecord(targets.windows, "release.targets.windows");
-  assertKeys(
-    windowsTarget,
-    ["architecture", "format", "transport", "runtime"],
-    "release.targets.windows"
-  );
-  if (windowsTarget.architecture !== "x64") fail("release.targets.windows.architecture must be x64");
-  if (windowsTarget.format !== "zip") fail("release.targets.windows.format must be zip");
-  if (windowsTarget.transport !== "http") fail("release.targets.windows.transport must be http");
-  if (windowsTarget.runtime !== "node") fail("release.targets.windows.runtime must be node");
   if (
     !Array.isArray(release.assets) ||
     release.assets.length !== RELEASE_ASSET_NAMES.length ||
@@ -245,7 +234,6 @@ export function deriveReleaseMetadata(manifest) {
   const tag = `${manifest.release.tagPrefix}${version}`;
   const packageFilename = `${manifest.package.name}-${version}.tgz`;
   const macosTarget = manifest.release.targets.macos;
-  const windowsTarget = manifest.release.targets.windows;
   return {
     manifestVersion: manifest.manifestVersion,
     displayName: manifest.product.displayName,
@@ -270,12 +258,6 @@ export function deriveReleaseMetadata(manifest) {
     macosMinimumVersion: macosTarget.minimumVersion,
     macosArchiveFilename:
       `Codex-MCP-Bridge-for-ChatGPT-${version}-macOS-${macosTarget.architecture}-unnotarized.${macosTarget.format}`,
-    windowsArchitecture: windowsTarget.architecture,
-    windowsFormat: windowsTarget.format,
-    windowsTransport: windowsTarget.transport,
-    windowsRuntime: windowsTarget.runtime,
-    windowsArchiveFilename:
-      `codex-mcp-bridge-for-chatgpt-${version}-windows-${windowsTarget.architecture}.${windowsTarget.format}`,
     releaseChecksumsFilename: "SHA256SUMS.txt",
     repositorySlug,
     repositoryUrl,
@@ -817,9 +799,6 @@ function printGithubOutput(metadata) {
     macos_architecture: metadata.macosArchitecture,
     macos_minimum_version: metadata.macosMinimumVersion,
     macos_archive_filename: metadata.macosArchiveFilename,
-    windows_architecture: metadata.windowsArchitecture,
-    windows_transport: metadata.windowsTransport,
-    windows_archive_filename: metadata.windowsArchiveFilename,
     release_checksums_filename: metadata.releaseChecksumsFilename,
     repository: metadata.repositorySlug,
     repository_url: metadata.repositoryUrl
