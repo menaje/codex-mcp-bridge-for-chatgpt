@@ -7,6 +7,7 @@ import SwiftUI
 final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     static var model: AppModel?
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "lifecycle")
+    private var terminationRequestInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("menu bar application finished launching")
@@ -26,11 +27,64 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model = Self.model else { return .terminateNow }
+        if model.applicationShutdownCompleted { return .terminateNow }
+        if terminationRequestInProgress { return .terminateLater }
+        terminationRequestInProgress = true
         Task { @MainActor in
-            await model.flushSettingsAutosave()
-            sender.reply(toApplicationShouldTerminate: true)
+            var shouldTerminate = await model.shutdownApplication(force: false)
+            if !shouldTerminate && confirmForceShutdown(model: model) {
+                shouldTerminate = await model.shutdownApplication(force: true)
+                if !shouldTerminate { presentShutdownFailure(model: model) }
+            }
+            terminationRequestInProgress = false
+            sender.reply(toApplicationShouldTerminate: shouldTerminate)
         }
         return .terminateLater
+    }
+
+    private func confirmForceShutdown(model: AppModel) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = BridgeAppLocalization.string(
+            "안전하게 종료하지 못했습니다",
+            locale: model.interfaceLocale
+        )
+        alert.informativeText = [
+            model.runtimeErrorMessage,
+            BridgeAppLocalization.string(
+                "실행 중인 작업과 백그라운드 프로세스를 중단하고 앱의 관련 프로세스를 강제로 종료할까요? 파일 변경은 되돌아가지 않습니다.",
+                locale: model.interfaceLocale
+            )
+        ].compactMap { $0 }.joined(separator: "\n\n")
+        alert.addButton(withTitle: BridgeAppLocalization.string(
+            "강제 종료",
+            locale: model.interfaceLocale
+        ))
+        alert.addButton(withTitle: BridgeAppLocalization.string(
+            "취소",
+            locale: model.interfaceLocale
+        ))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func presentShutdownFailure(model: AppModel) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = BridgeAppLocalization.string(
+            "관련 프로세스를 모두 종료하지 못했습니다",
+            locale: model.interfaceLocale
+        )
+        alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
+            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            locale: model.interfaceLocale
+        )
+        alert.addButton(withTitle: BridgeAppLocalization.string(
+            "확인",
+            locale: model.interfaceLocale
+        ))
+        alert.runModal()
     }
 }
 

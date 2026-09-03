@@ -97,6 +97,37 @@ final class HelperBootstrapTests: XCTestCase {
         )
     }
 
+    func testReplacementRetriesTransientLaunchdBootstrapRace() async throws {
+        let fixture = try LaunchAgentFixture(previous: Data("old-definition".utf8))
+        defer { fixture.remove() }
+        let launchctl = LaunchctlStub(results: [
+            (0, ""),
+            (5, "Bootstrap failed: 5: Input/output error"),
+            (0, ""),
+            (0, "")
+        ])
+        let bootstrap = HelperBootstrap { arguments in
+            await launchctl.run(arguments)
+        }
+
+        try await bootstrap.replaceLaunchAgentDefinition(
+            data: Data("new-definition".utf8),
+            previous: fixture.previous,
+            plistURL: fixture.plistURL,
+            domain: "gui/501",
+            service: "gui/501/test.helper",
+            loaded: true,
+            needsRestart: true
+        )
+
+        XCTAssertEqual(try Data(contentsOf: fixture.plistURL), Data("new-definition".utf8))
+        let commands = await launchctl.commands
+        XCTAssertEqual(
+            commands.map(\.first),
+            ["bootout", "bootstrap", "bootstrap", "kickstart"]
+        )
+    }
+
     func testFailedFreshInstallRemovesUnusableDefinition() async throws {
         let fixture = try LaunchAgentFixture(previous: nil)
         defer { fixture.remove() }
@@ -158,6 +189,57 @@ final class HelperBootstrapTests: XCTestCase {
             commands.map(\.first),
             ["bootout", "bootstrap", "kickstart", "bootout", "bootstrap", "kickstart"]
         )
+    }
+
+    func testStopLaunchAgentBootsOutAndVerifiesServiceRemoval() async throws {
+        let launchctl = LaunchctlStub(results: [
+            (0, "loaded"),
+            (0, ""),
+            (113, "Could not find service")
+        ])
+        let bootstrap = HelperBootstrap { arguments in
+            await launchctl.run(arguments)
+        }
+
+        try await bootstrap.stopLaunchAgent(service: "gui/501/test.helper")
+
+        let commands = await launchctl.commands
+        XCTAssertEqual(commands, [
+            ["print", "gui/501/test.helper"],
+            ["bootout", "gui/501/test.helper"],
+            ["print", "gui/501/test.helper"]
+        ])
+    }
+
+    func testStopLaunchAgentTreatsAlreadyMissingServiceAsStopped() async throws {
+        let launchctl = LaunchctlStub(results: [
+            (113, "Could not find service")
+        ])
+        let bootstrap = HelperBootstrap { arguments in
+            await launchctl.run(arguments)
+        }
+
+        try await bootstrap.stopLaunchAgent(service: "gui/501/test.helper")
+
+        let commands = await launchctl.commands
+        XCTAssertEqual(commands, [["print", "gui/501/test.helper"]])
+    }
+
+    func testStopLaunchAgentReportsBootoutFailureWithoutClaimingShutdown() async throws {
+        let launchctl = LaunchctlStub(results: [
+            (0, "loaded"),
+            (5, "bootout denied")
+        ])
+        let bootstrap = HelperBootstrap { arguments in
+            await launchctl.run(arguments)
+        }
+
+        await XCTAssertThrowsErrorAsync {
+            try await bootstrap.stopLaunchAgent(service: "gui/501/test.helper")
+        }
+
+        let commands = await launchctl.commands
+        XCTAssertEqual(commands.map(\.first), ["print", "bootout"])
     }
 }
 

@@ -68,10 +68,14 @@ as enabled. The app does not register itself silently; each Mac user enables the
 login item explicitly from native Settings.
 
 The helper owns the app-managed bridge and tunnel process tree. Closing the
-popover, Settings window, or menu bar UI leaves its LaunchAgent and runtime
-running. Graceful stop/restart first blocks new Job admission, waits for active
-Jobs and pending admissions, and then verifies every current retained App
-Server Agent thread for background processes. It refuses to stop when a background
+popover or Settings window leaves its LaunchAgent and runtime running. The
+explicit **Quit App** action is different: it stops the managed runtime, verifies
+and removes captured descendant process groups, boots the helper LaunchAgent out
+of the current login session, and only then terminates the menu bar app. Its plist
+is preserved so reopening the app or starting the next user login can bootstrap
+the helper again. Graceful quit/stop/restart first blocks new Job admission, waits
+for active Jobs and pending admissions, and then verifies every current retained
+App Server Agent thread for background processes. It refuses to stop when a background
 process exists or that impact cannot be confirmed. Force actions refresh and
 show the active/background impact immediately before confirmation; they never
 replay work or roll back filesystem changes. A process lock rejects a second launcher, and

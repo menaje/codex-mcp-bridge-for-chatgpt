@@ -7,6 +7,7 @@ struct DashboardPopoverView: View {
     @State private var showForceStopConfirmation = false
     @State private var showForceRestartConfirmation = false
     @State private var showRepairConfirmation = false
+    @State private var showApplicationQuitConfirmation = false
     @State private var idleSectionExpanded = false
 
     var body: some View {
@@ -69,6 +70,20 @@ struct DashboardPopoverView: View {
             }
         } message: {
             Text("private .env와 Bridge 상태는 유지하고, 현재 Tunnel ID로 로컬 프로필만 다시 만듭니다.")
+        }
+        .confirmationDialog(
+            "앱과 관련 프로세스를 모두 종료할까요?",
+            isPresented: $showApplicationQuitConfirmation
+        ) {
+            Button("작업을 마치고 종료") {
+                shutdownAndQuit(force: false)
+            }
+            Button("강제 종료", role: .destructive) {
+                shutdownAndQuit(force: true)
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text(applicationQuitImpactMessage)
         }
     }
 
@@ -291,8 +306,14 @@ struct DashboardPopoverView: View {
             .disabled(model.needsSetup || model.isBusy)
 
             Spacer()
-            Button("앱 종료") { NSApp.terminate(nil) }
-                .help("메뉴바 앱만 종료합니다. helper와 서버는 계속 실행됩니다.")
+            Button("앱 종료…") {
+                Task {
+                    await model.refreshRuntimeImpact()
+                    showApplicationQuitConfirmation = true
+                }
+            }
+            .disabled(model.isBusy)
+            .help("메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.")
         }
         .padding(12)
     }
@@ -335,6 +356,46 @@ struct DashboardPopoverView: View {
             message += " 중단된 작업은 자동으로 다시 실행하지 않습니다."
         }
         return message
+    }
+
+    private var applicationQuitImpactMessage: String {
+        var messages = [BridgeAppLocalization.string(
+            "메뉴 막대 앱, helper, 브리지 서버와 Tunnel을 모두 종료합니다. 앱을 다시 열거나 다음 사용자 로그인 전까지 ChatGPT의 브리지 연결을 사용할 수 없습니다.",
+            locale: model.interfaceLocale
+        )]
+        if activeJobCount > 0 || backgroundProcessCount > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "현재 활성 작업 %d개와 백그라운드 프로세스 %d개가 있습니다. 안전 종료는 작업이 끝날 때까지 기다리며, 강제 종료는 즉시 중단합니다.",
+                locale: model.interfaceLocale,
+                activeJobCount,
+                backgroundProcessCount
+            ))
+        }
+        if backgroundProcessUnknownAgents > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                locale: model.interfaceLocale,
+                backgroundProcessUnknownAgents
+            ))
+        }
+        if model.runtimeImpactErrorMessage != nil {
+            messages.append(BridgeAppLocalization.string(
+                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                locale: model.interfaceLocale
+            ))
+        }
+        messages.append(BridgeAppLocalization.string(
+            "파일 변경은 되돌아가지 않습니다.",
+            locale: model.interfaceLocale
+        ))
+        return messages.joined(separator: " ")
+    }
+
+    private func shutdownAndQuit(force: Bool) {
+        Task {
+            guard await model.shutdownApplication(force: force) else { return }
+            NSApp.terminate(nil)
+        }
     }
 }
 

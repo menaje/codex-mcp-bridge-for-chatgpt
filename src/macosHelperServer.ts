@@ -48,6 +48,9 @@ const DEFAULT_START_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const MAX_DRAIN_TIMEOUT_MS = 5 * 60_000;
 const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
+const MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS = 3_000;
+const MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS = 2_000;
+const PROCESS_TABLE_MAX_BYTES = 4 * 1_024 * 1_024;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
 const MACOS_MANAGED_TUNNEL_PROFILE = "codex-mcp-bridge-macos";
@@ -57,6 +60,12 @@ type RuntimeOutputStream = "stdout" | "stderr";
 type RuntimeOutputCapture = {
   buffers: Record<RuntimeOutputStream, Buffer>;
   discarding: Set<RuntimeOutputStream>;
+};
+
+type ManagedProcessIdentity = {
+  pid: number;
+  parentPid: number;
+  processGroupId: number;
 };
 
 const requestIdSchema = z.union([
@@ -232,6 +241,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private restartTimer: NodeJS.Timeout | undefined;
   private stabilityTimer: NodeJS.Timeout | undefined;
   private manualStop = false;
+  private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: MacOSHelperLogEntry[] = [];
   private operation: Promise<unknown> = Promise.resolve();
 
@@ -519,6 +529,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
+    await this.finishPendingProcessCleanup();
     this.reconcileManagedRuntime();
     if (this.isManagedRuntimeRunning()) return this.snapshot();
     if (this.restartTimer) {
@@ -646,6 +657,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const child = this.child;
     const managedPid = this.managedPid;
     if (!managedPid || !processIsAlive(managedPid)) {
+      await this.finishPendingProcessCleanup();
       this.phase = "stopped";
       this.child = undefined;
       this.managedPid = undefined;
@@ -725,6 +737,19 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.appendLog("helper", `Force stop continuing without a drain acknowledgement: ${safeErrorMessage(error)}`);
     }
 
+    let managedProcessTree: ManagedProcessIdentity[];
+    try {
+      managedProcessTree = await snapshotManagedProcessTree(managedPid);
+      this.pendingProcessCleanup = managedProcessTree;
+    } catch (error) {
+      if (drainStarted) {
+        await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
+      }
+      this.phase = "running";
+      this.manualStop = false;
+      throw new Error(`RUNTIME_TREE_INSPECTION_FAILED: ${safeErrorMessage(error)}`);
+    }
+
     this.phase = "stopping";
     this.appendLog(
       "helper",
@@ -751,11 +776,25 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (drainStarted && processIsAlive(managedPid)) {
       await bridgeRequest(this.bridgeSocketPath, "runtime.cancelDrain", {}).catch(() => undefined);
     }
+    await this.finishPendingProcessCleanup();
     if (this.child === child) this.child = undefined;
     if (this.managedPid === managedPid) this.managedPid = undefined;
     this.phase = "stopped";
     this.startedAt = null;
     return this.snapshot();
+  }
+
+  private async finishPendingProcessCleanup(): Promise<void> {
+    if (this.pendingProcessCleanup.length === 0) return;
+    try {
+      await terminateManagedProcessTree(this.pendingProcessCleanup);
+      this.pendingProcessCleanup = [];
+    } catch (error) {
+      this.phase = "safe-mode";
+      this.lastError = `RUNTIME_TREE_CLEANUP_FAILED: ${safeErrorMessage(error)}`;
+      this.appendLog("helper", this.lastError);
+      throw new Error(this.lastError);
+    }
   }
 
   private async adoptExistingRuntime(): Promise<boolean> {
@@ -829,7 +868,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.child = undefined;
     this.startedAt = null;
     if (this.manualStop || this.phase === "stopped") {
-      this.phase = "stopped";
+      if (this.phase !== "safe-mode") this.phase = "stopped";
       return;
     }
     this.lastExit = {
@@ -1307,6 +1346,165 @@ function processIsAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+async function snapshotManagedProcessTree(rootPid: number): Promise<ManagedProcessIdentity[]> {
+  if (process.platform === "win32") {
+    return [{ pid: rootPid, parentPid: 0, processGroupId: rootPid }];
+  }
+  const rows = await readProcessTable();
+  const root = rows.find((row) => row.pid === rootPid);
+  if (!root) {
+    if (!processIsAlive(rootPid)) return [];
+    throw new Error(`Managed runtime pid ${rootPid} is alive but absent from the process table.`);
+  }
+  const children = new Map<number, ManagedProcessIdentity[]>();
+  for (const row of rows) {
+    const current = children.get(row.parentPid) || [];
+    current.push(row);
+    children.set(row.parentPid, current);
+  }
+  const managed: ManagedProcessIdentity[] = [];
+  const pending = [rootPid];
+  const visited = new Set<number>();
+  while (pending.length > 0) {
+    const pid = pending.shift();
+    if (pid === undefined || visited.has(pid)) continue;
+    visited.add(pid);
+    const row = rows.find((candidate) => candidate.pid === pid);
+    if (row) managed.push(row);
+    for (const child of children.get(pid) || []) pending.push(child.pid);
+  }
+  return managed;
+}
+
+async function terminateManagedProcessTree(
+  captured: readonly ManagedProcessIdentity[]
+): Promise<void> {
+  if (captured.length === 0) return;
+  let running = await matchingManagedProcesses(captured);
+  if (running.length === 0) return;
+  signalManagedProcessGroups(running, "SIGTERM");
+  running = await waitForManagedProcesses(
+    captured,
+    MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS
+  );
+  if (running.length === 0) return;
+  signalManagedProcessGroups(running, "SIGKILL");
+  running = await waitForManagedProcesses(
+    captured,
+    MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS
+  );
+  if (running.length > 0) {
+    throw new Error(
+      `${running.length} captured process(es) remained after SIGKILL ` +
+      `(pid ${running.map((entry) => entry.pid).join(", ")}).`
+    );
+  }
+}
+
+async function matchingManagedProcesses(
+  captured: readonly ManagedProcessIdentity[]
+): Promise<ManagedProcessIdentity[]> {
+  if (process.platform === "win32") {
+    return captured.filter((entry) => processIsAlive(entry.pid));
+  }
+  const current = new Map(
+    (await readProcessTable()).map((entry) => [entry.pid, entry] as const)
+  );
+  return captured.filter((entry) => {
+    const observed = current.get(entry.pid);
+    return observed?.processGroupId === entry.processGroupId;
+  });
+}
+
+async function waitForManagedProcesses(
+  captured: readonly ManagedProcessIdentity[],
+  timeoutMs: number
+): Promise<ManagedProcessIdentity[]> {
+  const deadline = Date.now() + timeoutMs;
+  let running = await matchingManagedProcesses(captured);
+  while (running.length > 0 && Date.now() < deadline) {
+    await delay(50);
+    running = await matchingManagedProcesses(captured);
+  }
+  return running;
+}
+
+function signalManagedProcessGroups(
+  running: readonly ManagedProcessIdentity[],
+  signal: NodeJS.Signals
+): void {
+  if (process.platform === "win32") {
+    for (const entry of running) {
+      try {
+        process.kill(entry.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    return;
+  }
+  const groups = new Set(running.map((entry) => entry.processGroupId));
+  for (const processGroupId of groups) {
+    if (processGroupId <= 1 || processGroupId === process.pid) {
+      throw new Error(`Refusing to signal unsafe managed process group ${processGroupId}.`);
+    }
+    try {
+      process.kill(-processGroupId, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+}
+
+function readProcessTable(): Promise<ManagedProcessIdentity[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid="], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let outputBytes = 0;
+    const capture = (target: Buffer[], chunk: Buffer): void => {
+      outputBytes += chunk.length;
+      if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
+        child.kill("SIGKILL");
+        return;
+      }
+      target.push(chunk);
+    };
+    child.stdout?.on("data", (chunk: Buffer) => capture(stdout, chunk));
+    child.stderr?.on("data", (chunk: Buffer) => capture(stderr, chunk));
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
+        reject(new Error("Process table output exceeded the private helper limit."));
+        return;
+      }
+      if (code !== 0) {
+        const detail = Buffer.concat(stderr).toString("utf8").trim();
+        reject(new Error(detail || `/bin/ps exited with status ${code ?? "unknown"}.`));
+        return;
+      }
+      try {
+        const rows = Buffer.concat(stdout).toString("utf8")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => line.split(/\s+/).map(Number))
+          .map(([pid, parentPid, processGroupId]) => ({ pid, parentPid, processGroupId }))
+          .filter((row): row is ManagedProcessIdentity =>
+            Number.isSafeInteger(row.pid) && row.pid > 0 &&
+            Number.isSafeInteger(row.parentPid) && row.parentPid >= 0 &&
+            Number.isSafeInteger(row.processGroupId) && row.processGroupId > 0
+          );
+        resolve(rows);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 }
 
 function killManagedRuntimePid(pid: number, signal: NodeJS.Signals): void {

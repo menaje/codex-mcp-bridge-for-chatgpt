@@ -23,7 +23,9 @@ swift run --package-path macos CodexBridgeMenuBar
 
 When run from the repository, the app starts the helper directly from the local
 `dist` tree. A packaged app installs a per-user LaunchAgent that keeps the helper
-alive when the menu bar UI exits. The helper owns the existing bridge launcher,
+alive when the popover or Settings window closes. Explicit **Quit App** stops the
+runtime and boots that helper out for the current login session before the menu
+bar process exits. The helper owns the existing bridge launcher,
 the persistent-stdio Secure MCP Tunnel profile, crash backoff, and the versioned
 private Unix sockets.
 It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical

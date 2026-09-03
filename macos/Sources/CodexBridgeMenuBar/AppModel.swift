@@ -261,6 +261,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var generalSettingsSaveState: GeneralSettingsSaveState = .idle
     @Published private(set) var lastAutosavedSettingsRevision: Int?
     @Published private(set) var lastAutosavedDraft: SettingsDraft?
+    @Published private(set) var applicationShutdownCompleted = false
+    @Published private(set) var applicationShutdownInProgress = false
 
     private let bootstrapper = HelperBootstrap()
     private let loginItemController: any LoginItemControlling
@@ -776,6 +778,72 @@ final class AppModel: ObservableObject {
         return succeeded
     }
 
+    func shutdownApplication(force: Bool) async -> Bool {
+        if applicationShutdownCompleted { return true }
+        guard !applicationShutdownInProgress else { return false }
+        applicationShutdownInProgress = true
+        isBusy = true
+        runtimeErrorMessage = nil
+        defer {
+            applicationShutdownInProgress = false
+            isBusy = false
+        }
+
+        await flushSettingsAutosave()
+        let paths = await resolvedPaths()
+        let client = await helperClient()
+        do {
+            do {
+                let stopped = try await client.stopRuntime(
+                    force: force,
+                    timeoutMilliseconds: 60_000
+                )
+                guard stopped.phase == "stopped", stopped.pid == nil else {
+                    throw NSError(
+                        domain: "CodexBridgeApplicationShutdown",
+                        code: 1,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "RUNTIME_STOP_INCOMPLETE: The managed runtime still reports phase \(stopped.phase)."
+                        ]
+                    )
+                }
+                helperStatus = stopped
+            } catch {
+                let runtimeLockExists = FileManager.default.fileExists(
+                    atPath: paths.runtimeLockDirectory.path
+                )
+                guard force || !runtimeLockExists else { throw error }
+                logger.warning(
+                    "runtime stop RPC was unavailable during app shutdown; unloading helper: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+
+            try await bootstrapper.shutdown(paths: paths)
+            applicationShutdownCompleted = true
+            pollingTask?.cancel()
+            pollingTask = nil
+            settingsPollingTask?.cancel()
+            settingsPollingTask = nil
+            loginPollingTask?.cancel()
+            loginPollingTask = nil
+            authRefreshTask?.cancel()
+            authRefreshTask = nil
+            dashboardEnrichmentTask?.cancel()
+            dashboardEnrichmentTask = nil
+            helperStatus = nil
+            dashboard = nil
+            settings = nil
+            authStatus = nil
+            return true
+        } catch {
+            runtimeErrorMessage = localizedApplicationShutdownError(error)
+            await refreshStatus()
+            await refreshDashboard()
+            return false
+        }
+    }
+
     func restartRuntime(force: Bool) async -> Bool {
         let succeeded = await performRuntime {
             let client = await self.helperClient()
@@ -1032,6 +1100,33 @@ final class AppModel: ObservableObject {
             runtimeErrorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func localizedApplicationShutdownError(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if message.contains("DRAIN_TIMEOUT") {
+            return BridgeAppLocalization.string(
+                "진행 중인 작업이 제한 시간 안에 끝나지 않아 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요.",
+                locale: interfaceLocale
+            )
+        }
+        if message.contains("BACKGROUND_PROCESS_STATE_UNKNOWN") {
+            return BridgeAppLocalization.string(
+                "일부 Agent의 백그라운드 프로세스 상태를 확인할 수 없어 안전 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요.",
+                locale: interfaceLocale
+            )
+        }
+        if message.contains("BACKGROUND_PROCESSES_ACTIVE") {
+            return BridgeAppLocalization.string(
+                "백그라운드 프로세스가 실행 중이어서 안전 종료하지 않았습니다. 강제 종료하면 해당 프로세스도 중단됩니다.",
+                locale: interfaceLocale
+            )
+        }
+        return BridgeAppLocalization.format(
+            "앱과 관련 프로세스를 모두 종료하지 못했습니다: %@",
+            locale: interfaceLocale,
+            message
+        )
     }
 
     private func performDashboard(_ operation: () async throws -> Void) async -> Bool {

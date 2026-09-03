@@ -8,6 +8,8 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
     case readinessTimeout
     case incompatibleHelper
     case replacementBlocked(String)
+    case shutdownFailed(String)
+    case shutdownTimeout
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +25,10 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
             return "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요."
         case .replacementBlocked(let message):
             return "실행 중인 작업을 안전하게 마치지 못해 helper 갱신을 중단했습니다: \(message)"
+        case .shutdownFailed(let message):
+            return "브리지 helper를 종료하지 못했습니다: \(message)"
+        case .shutdownTimeout:
+            return "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."
         }
     }
 }
@@ -102,6 +108,88 @@ public actor HelperBootstrap {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw HelperBootstrapError.readinessTimeout
+    }
+
+    /// Stops the helper for the current login session while preserving its
+    /// LaunchAgent definition so an explicit app launch or the next login can
+    /// start the service again.
+    public func shutdown(paths: RuntimePaths) async throws {
+        if paths.isPackagedRuntime {
+            let service = "gui/\(getuid())/\(Self.launchAgentLabel)"
+            try await stopLaunchAgent(service: service)
+            try await waitForHelperShutdown(paths: paths)
+            return
+        }
+        try await stopDevelopmentHelper()
+        try await waitForRuntimeLockRelease(paths.runtimeLockDirectory)
+    }
+
+    func stopLaunchAgent(service: String) async throws {
+        let state = await launchctl(["print", service])
+        if isMissingService(state) { return }
+        guard state.status == 0 else {
+            throw HelperBootstrapError.shutdownFailed(
+                launchctlFailure("print", state.output)
+            )
+        }
+
+        let bootout = await launchctl(["bootout", service])
+        guard bootout.status == 0 || isMissingService(bootout) else {
+            throw HelperBootstrapError.shutdownFailed(
+                launchctlFailure("bootout", bootout.output)
+            )
+        }
+
+        for _ in 0..<40 {
+            let current = await launchctl(["print", service])
+            if isMissingService(current) { return }
+            guard current.status == 0 else {
+                throw HelperBootstrapError.shutdownFailed(
+                    launchctlFailure("verify bootout", current.output)
+                )
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw HelperBootstrapError.shutdownTimeout
+    }
+
+    private func stopDevelopmentHelper() async throws {
+        guard let process = developmentProcess else { return }
+        if process.isRunning { process.terminate() }
+        for _ in 0..<40 {
+            if !process.isRunning { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            for _ in 0..<20 {
+                if !process.isRunning { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        guard !process.isRunning else { throw HelperBootstrapError.shutdownTimeout }
+        developmentProcess = nil
+    }
+
+    private func waitForHelperShutdown(paths: RuntimePaths) async throws {
+        let client = MacOSHelperClient(socketPath: paths.helperSocket.path)
+        for _ in 0..<100 {
+            let helperIsReachable = (try? await client.hello()) != nil
+            let runtimeLockExists = FileManager.default.fileExists(
+                atPath: paths.runtimeLockDirectory.path
+            )
+            if !helperIsReachable && !runtimeLockExists { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw HelperBootstrapError.shutdownTimeout
+    }
+
+    private func waitForRuntimeLockRelease(_ runtimeLockDirectory: URL) async throws {
+        for _ in 0..<100 {
+            if !FileManager.default.fileExists(atPath: runtimeLockDirectory.path) { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw HelperBootstrapError.shutdownTimeout
     }
 
     private func startDevelopmentHelper(
@@ -277,7 +365,10 @@ public actor HelperBootstrap {
             }
             if !loaded || needsRestart {
                 replacementServiceMayBeLoaded = true
-                let bootstrap = await launchctl(["bootstrap", domain, plistURL.path])
+                let bootstrap = await bootstrapLaunchAgent(
+                    domain: domain,
+                    plistURL: plistURL
+                )
                 guard bootstrap.status == 0 ||
                         bootstrap.output.localizedCaseInsensitiveContains("already") else {
                     throw HelperBootstrapError.launchFailed(
@@ -345,7 +436,10 @@ public actor HelperBootstrap {
                 failures.append("previous LaunchAgent definition is unavailable")
                 return failures.joined(separator: "; ")
             }
-            let bootstrap = await launchctl(["bootstrap", domain, plistURL.path])
+            let bootstrap = await bootstrapLaunchAgent(
+                domain: domain,
+                plistURL: plistURL
+            )
             if bootstrap.status != 0 &&
                 !bootstrap.output.localizedCaseInsensitiveContains("already") {
                 failures.append(launchctlFailure("previous bootstrap", bootstrap.output))
@@ -362,6 +456,23 @@ public actor HelperBootstrap {
     private func launchctlFailure(_ operation: String, _ output: String) -> String {
         let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return detail.isEmpty ? "launchctl \(operation) failed" : "launchctl \(operation): \(detail)"
+    }
+
+    private func bootstrapLaunchAgent(
+        domain: String,
+        plistURL: URL
+    ) async -> LaunchctlResult {
+        var result = await launchctl(["bootstrap", domain, plistURL.path])
+        for retry in 1...3 {
+            if result.status == 0 ||
+                result.output.localizedCaseInsensitiveContains("already") ||
+                !result.output.localizedCaseInsensitiveContains("input/output error") {
+                return result
+            }
+            try? await Task.sleep(nanoseconds: UInt64(retry) * 250_000_000)
+            result = await launchctl(["bootstrap", domain, plistURL.path])
+        }
+        return result
     }
 
     private func isMissingService(_ result: LaunchctlResult) -> Bool {

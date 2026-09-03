@@ -433,6 +433,54 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it.runIf(process.platform !== "win32")(
+    "force stop verifies and removes detached descendants from the managed runtime tree",
+    async () => {
+      const root = temporaryDirectory();
+      const bridgeRoot = path.join(root, "runtime");
+      const configFile = path.join(root, "config", ".env");
+      const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+      const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+      const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+      const descendantPidFile = path.join(root, "detached-descendant.pid");
+      mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+      writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+      writeFakeLauncher(launcher, argumentsFile, { detachedDescendantPidFile: descendantPidFile });
+      updateRuntimeEnvFile(configFile, {
+        apiKey: "sk-supervisor-1234567890123456",
+        tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+      });
+      const supervisor = new MacOSBridgeSupervisor({
+        bridgeRoot,
+        envFile: configFile,
+        bridgeSocketPath: bridgeSocket,
+        launcherPath: launcher,
+        runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+        autoRestart: false,
+        startTimeoutMs: 5_000
+      });
+      let descendantPid = 0;
+
+      try {
+        await supervisor.start();
+        await eventually(() => existsAndHasContent(descendantPidFile));
+        descendantPid = Number(readFileSync(descendantPidFile, "utf8"));
+        expect(processAlive(descendantPid)).toBe(true);
+
+        const stopped = await supervisor.stop({ mode: "force", timeoutMs: 5_000 });
+
+        expect(stopped).toMatchObject({ phase: "stopped", pid: null });
+        await eventually(() => !processAlive(descendantPid));
+      } finally {
+        if (descendantPid > 1 && processAlive(descendantPid)) {
+          try { process.kill(-descendantPid, "SIGKILL"); } catch {}
+        }
+        await supervisor.close();
+      }
+    },
+    15_000
+  );
+
   it("re-enables admissions when a graceful-stop status request fails", async () => {
     const root = temporaryDirectory();
     const bridgeRoot = path.join(root, "runtime");
@@ -899,10 +947,12 @@ function writeFakeLauncher(
     splitRuntimeSecret?: boolean;
     writeRuntimeLock?: boolean;
     runtimeProfile?: string;
+    detachedDescendantPidFile?: string;
   } = {}
 ): void {
   writeFileSync(file, `
 import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
@@ -919,6 +969,14 @@ const transport = transportIndex >= 0 ? process.argv[transportIndex + 1] : null;
 let mutatedEnv = false;
 let acceptingNewJobs = true;
 let failedSnapshotAfterDrain = false;
+if (${JSON.stringify(options.detachedDescendantPidFile || "")}) {
+  const descendant = spawn(process.execPath, ["-e", "process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+    detached: true,
+    stdio: "ignore"
+  });
+  descendant.unref();
+  writeFileSync(${JSON.stringify(options.detachedDescendantPidFile || "")}, String(descendant.pid));
+}
 if (${JSON.stringify(Boolean(options.splitRuntimeSecret))}) {
   process.stdout.write("credential=sk-split.secret+");
   setTimeout(() => process.stdout.write("1234567890123456=suffix\\n"), 50);
@@ -1016,6 +1074,31 @@ const stop = () => server.close(() => {
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 `, { mode: 0o700 });
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function existsAndHasContent(file: string): boolean {
+  try {
+    return readFileSync(file, "utf8").trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function eventually(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  expect(predicate()).toBe(true);
 }
 
 function request(
