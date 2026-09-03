@@ -51,7 +51,8 @@ const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
   limit: z.number().int().min(5).max(50).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
-  idleOffset: z.number().int().min(0).max(1_000_000_000).optional()
+  idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
+  enrich: z.boolean().optional()
 });
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional()
@@ -216,8 +217,12 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
-        ...params,
-        inspectRuntime: true
+        limit: params.limit,
+        terminalOffset: params.terminalOffset,
+        idleOffset: params.idleOffset,
+        // Older native clients omit enrich and retain their prior all-in-one
+        // snapshot behavior. The current client sends false explicitly.
+        inspectRuntime: params.enrich !== false
       });
     }
     case "settings.snapshot": {

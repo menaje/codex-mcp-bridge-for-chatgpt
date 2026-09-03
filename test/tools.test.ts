@@ -37,12 +37,15 @@ import {
 } from "../src/dashboardCard.js";
 import {
   CodexJobRegistry,
+  ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
   CODEX_TASK_INPUT_CONTRACT_VERSION,
   CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES,
+  DASHBOARD_VIEW_PRIVATE_MAX_BYTES,
   MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
   validateActivityViewPrivateMetadata,
   validateDashboardViewPrivateMetadata
 } from "../src/tools.js";
+import { TOOL_STRUCTURED_BYTE_CAPS } from "../src/toolResultContracts.js";
 import { uiResourceRevisions } from "../src/uiResources.js";
 import {
   MAX_CODEX_INTERACTION_QUESTIONS,
@@ -419,6 +422,10 @@ class BackgroundTerminalUpstream extends FakeUpstream {
     return terminals;
   }
 
+  async listLoadedBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    return this.listBackgroundTerminals(threadId);
+  }
+
   async terminateBackgroundTerminal(
     threadId: string,
     processId: string
@@ -493,6 +500,15 @@ class DeferredProbeUpstream extends FakeUpstream {
   }
 }
 
+class DeferredProbeWithLoadedTerminalUpstream extends DeferredProbeUpstream {
+  public loadedTerminalReads = 0;
+
+  async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> {
+    this.loadedTerminalReads += 1;
+    return [];
+  }
+}
+
 class RunningProbeUpstream extends InteractionUpstream {
   public probe: CodexThreadResumeProbe = {
     state: "busy",
@@ -507,6 +523,25 @@ class RunningProbeUpstream extends InteractionUpstream {
 
   async listBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> {
     return [];
+  }
+}
+
+class HangingCardEnrichmentUpstream extends FakeUpstream {
+  public probeCalls: string[] = [];
+  public usageReads = 0;
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    return new Promise(() => undefined);
+  }
+
+  async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[] | null> {
+    return new Promise(() => undefined);
+  }
+
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
+    this.usageReads += 1;
+    return new Promise(() => undefined);
   }
 }
 
@@ -1499,6 +1534,7 @@ describe("bridge tools", () => {
           "name": "codex_dashboard_snapshot",
           "properties": [
             "conversationOffset",
+            "enrich",
             "idleOffset",
             "limit",
             "projectOffset",
@@ -1506,8 +1542,8 @@ describe("bridge tools", () => {
             "terminalOffset",
             "widgetInstanceId",
           ],
-          "propertyCount": 7,
-          "schemaBytes": 815,
+          "propertyCount": 8,
+          "schemaBytes": 950,
           "visibility": {
             "app": true,
             "model": false,
@@ -1606,13 +1642,14 @@ describe("bridge tools", () => {
             "afterVersion",
             "card",
             "cursor",
+            "enrich",
             "limit",
             "scopeId",
             "waitMs",
             "widgetInstanceId",
           ],
-          "propertyCount": 7,
-          "schemaBytes": 1584,
+          "propertyCount": 8,
+          "schemaBytes": 1728,
           "visibility": {
             "app": true,
             "model": false,
@@ -2578,7 +2615,8 @@ describe("bridge tools", () => {
     expect(upstream.usageReads).toBe(0);
 
     const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
-      scopeId: SCOPE_A
+      scopeId: SCOPE_A,
+      enrich: true
     });
     expect(dashboardView.weeklyUsage).toEqual({
       source: "codex-account-rate-limits",
@@ -2601,11 +2639,196 @@ describe("bridge tools", () => {
         ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
     );
     expect(activityPublic).not.toHaveProperty("weeklyUsage");
-    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardView.weeklyUsage);
-    expect(upstream.usageReads).toBe(2);
+    expect(activityPrivate.view.weeklyUsage).toBeNull();
+    expect(activityPrivate.view.enrichment.state).toBe("structural");
+    expect(upstream.usageReads).toBe(1);
 
     await close();
   });
+
+  it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
+    const root = temporaryRoot();
+    const upstream = new HangingCardEnrichmentUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+      CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "500"
+    });
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      config,
+      upstream
+    );
+    const activities = [];
+    for (let agentIndex = 0; agentIndex < 200; agentIndex += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Performance activity ${agentIndex + 1}`
+      });
+      activities.push(activity);
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Performance Agent ${agentIndex + 1}`
+      });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+      jobs.linkAgentThread({
+        agentId: agent.agentId,
+        threadId: `performance-thread-${agentIndex + 1}`,
+        backendKind: "app-server",
+        cwd: root,
+        sandbox: "read-only",
+        contextMode: "fresh"
+      });
+      for (let turnIndex = 0; turnIndex < 2; turnIndex += 1) {
+        const job = jobs.start({
+          activityId: activity.activityId,
+          agentId: agent.agentId,
+          contextMode: "fresh",
+          operation: "start",
+          cwd: root,
+          sandbox: "read-only",
+          scopeId: SCOPE_A,
+          requestId: `performance-request-${agentIndex}-${turnIndex}`,
+          requestHash: `performance-hash-${agentIndex}-${turnIndex}`,
+          requestHashVersion: 7,
+          exclusiveKeys: [],
+          sessionDecision: {
+            requestedMode: "new",
+            action: "start",
+            reason: "explicit-new"
+          },
+          executionMode: "foreground",
+          backendKind: "app-server"
+        }, async () => fakeCodexResult(`performance-thread-${agentIndex + 1}`));
+        await job.promise;
+      }
+    }
+
+    const dashboardStartedAt = performance.now();
+    const dashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    expect(performance.now() - dashboardStartedAt).toBeLessThan(500);
+    expect(dashboard.enrichment).toMatchObject({
+      state: "structural",
+      runtimeRequests: 0,
+      timeouts: 0
+    });
+    expect(dashboard.counts).toMatchObject({ retainedJobs: 400 });
+    expect(Buffer.byteLength(JSON.stringify(dashboard), "utf8"))
+      .toBeLessThanOrEqual(DASHBOARD_VIEW_PRIVATE_MAX_BYTES);
+    expect(upstream.probeCalls).toEqual([]);
+    expect(upstream.usageReads).toBe(0);
+
+    const activityStartedAt = performance.now();
+    const activity = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    });
+    expect(performance.now() - activityStartedAt).toBeLessThan(500);
+    const structuralActivity = privateActivityView(activity);
+    expect(structuralActivity).toMatchObject({
+      enrichment: { state: "structural", runtimeRequests: 0 },
+      agentPagination: { total: 200 }
+    });
+    expect(Buffer.byteLength(JSON.stringify(structuralActivity), "utf8"))
+      .toBeLessThanOrEqual(ACTIVITY_VIEW_PRIVATE_MAX_BYTES);
+
+    const activityProbeBaseline = upstream.probeCalls.length;
+    const activityEnrichmentStartedAt = performance.now();
+    const enrichedActivityResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: structuralActivity.mountedActivity.activityId,
+          generation: structuralActivity.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "48484848-4848-4484-8484-484848484848" }
+    });
+    expect(performance.now() - activityEnrichmentStartedAt).toBeLessThan(2_000);
+    const enrichedActivity = privateActivityView(enrichedActivityResult);
+    expect(enrichedActivity.enrichment).toMatchObject({
+      state: "enriched",
+      usageTimedOut: true
+    });
+    expect(enrichedActivity.enrichment.timeouts).toBeGreaterThan(0);
+    expect(upstream.probeCalls.length - activityProbeBaseline).toBeLessThanOrEqual(30);
+
+    const settingsStartedAt = performance.now();
+    const settings = await applicationService.settingsSnapshot();
+    expect(performance.now() - settingsStartedAt).toBeLessThan(500);
+    expect(Buffer.byteLength(JSON.stringify(settings), "utf8"))
+      .toBeLessThanOrEqual(TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration);
+
+    const dashboardProbeBaseline = upstream.probeCalls.length;
+    const enrichmentStartedAt = performance.now();
+    const enriched = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: true
+    });
+    expect(performance.now() - enrichmentStartedAt).toBeLessThan(2_000);
+    const visibleAgentCount = enriched.activeRows.length +
+      enriched.terminalRows.length + enriched.idleRows.length;
+    const dashboardProbeCount = upstream.probeCalls.length - dashboardProbeBaseline;
+    expect(dashboardProbeCount).toBeLessThanOrEqual(visibleAgentCount);
+    expect(dashboardProbeCount).toBeLessThan(200);
+    expect(enriched.enrichment).toMatchObject({
+      state: "enriched",
+      usageTimedOut: true
+    });
+    expect(enriched.enrichment.timeouts).toBeGreaterThan(0);
+    expect(enriched.counts.runtimeUnknownAgents).toBeGreaterThan(0);
+
+    const diagnostics = parseToolJson(await rawCallTool({
+      name: "codex_diagnostics",
+      arguments: {}
+    }));
+    expect(diagnostics.performance).toMatchObject({
+      stages: expect.arrayContaining([
+        expect.objectContaining({
+          name: "dashboard.structural.db-projection",
+          count: expect.any(Number),
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number)
+        }),
+        expect.objectContaining({
+          name: "dashboard.enriched.total",
+          timeouts: expect.any(Number)
+        }),
+        expect.objectContaining({ name: "activity.structural.db-projection" }),
+        expect.objectContaining({ name: "activity.enriched.total" }),
+        expect.objectContaining({ name: "settings.structural.db-projection" })
+      ]),
+      html: {
+        dashboardBytes: expect.any(Number),
+        dashboardBudgetBytes: expect.any(Number),
+        activityBytes: expect.any(Number),
+        activityBudgetBytes: expect.any(Number),
+        settingsBytes: expect.any(Number),
+        settingsBudgetBytes: expect.any(Number)
+      }
+    });
+    expect(diagnostics.performance.html.dashboardBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.dashboardBudgetBytes);
+    expect(diagnostics.performance.html.activityBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.activityBudgetBytes);
+    expect(diagnostics.performance.html.settingsBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.settingsBudgetBytes);
+
+    await close();
+  }, 15_000);
 
   it("shows every bridge-tracked conversation through a read-only Codex-runtime-only Dashboard", async () => {
     const root = temporaryRoot();
@@ -3333,7 +3556,8 @@ describe("bridge tools", () => {
     const snapshotArguments = {
       scopeId: SCOPE_A,
       widgetInstanceId: "34343434-3434-4434-8434-343434343434",
-      limit: 20
+      limit: 20,
+      enrich: true
     };
     const notLoaded = await rawCallTool({
       name: "codex_dashboard_snapshot",
@@ -3417,6 +3641,42 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("does not start a follow-up terminal read after a runtime probe times out", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeWithLoadedTerminalUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    await runTask(client, {
+      prompt: "create one App Server thread for a bounded enrichment timeout"
+    });
+
+    const snapshotPromise = rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        widgetInstanceId: "48484848-0000-4000-8000-000000000001",
+        limit: 20,
+        enrich: true
+      }
+    });
+    await vi.waitFor(() => expect(upstream.hasPendingProbe).toBe(true));
+    const timedOut = parseToolJson(await snapshotPromise);
+    expect(timedOut.enrichment).toMatchObject({
+      state: "enriched",
+      runtimeRequests: 1,
+      timeouts: 1
+    });
+    expect(upstream.loadedTerminalReads).toBe(0);
+
+    upstream.resolveProbe({ state: "resumable", runtimeStatus: "idle" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(upstream.loadedTerminalReads).toBe(0);
+
+    await close();
+  });
+
   it("marks a retained running Job as liveness-unknown when App Server reports an idle thread", async () => {
     const root = temporaryRoot();
     const upstream = new RunningProbeUpstream();
@@ -3444,7 +3704,8 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         widgetInstanceId: "35353535-3535-4535-8535-353535353535",
-        limit: 20
+        limit: 20,
+        enrich: true
       }
     });
     const mismatchView = (mismatch as { structuredContent?: any }).structuredContent;
@@ -3467,7 +3728,8 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         widgetInstanceId: "35353535-3535-4535-8535-353535353535",
-        limit: 20
+        limit: 20,
+        enrich: true
       }
     });
     const confirmedView = (confirmed as { structuredContent?: any }).structuredContent;
@@ -7335,11 +7597,21 @@ describe("bridge tools", () => {
     const activityId = completed.activityId as string;
     expect(agentId).toEqual(expect.any(String));
     expect((completedResult as { _meta?: unknown })._meta).toBeUndefined();
-    const automaticView = await presentCompactActivity(
+    const automaticStructural = await presentCompactActivity(
       client,
       activityId,
       "71717171-7171-4171-8171-717171717170"
     );
+    const automaticView = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCardProof(automaticStructural),
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "71717171-7171-4171-8171-717171717172" }
+    });
     expect(automaticView.isError, JSON.stringify(automaticView)).not.toBe(true);
     expect(privateActivityView(automaticView).feed).toMatchObject({
         mode: "compact",
@@ -7351,9 +7623,24 @@ describe("bridge tools", () => {
       });
 
     const widgetSessionId = "71717171-7171-4171-8171-717171717171";
-    const card = await client.callTool({
+    const structuralCard = await client.callTool({
       name: "codex_activity",
       arguments: { activityId },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    const structuralView = parseToolJson(structuralCard);
+    const card = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: structuralView.mountedActivity.activityId,
+          generation: structuralView.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
       _meta: { "openai/widgetSessionId": widgetSessionId }
     });
     const view = parseToolJson(card);
@@ -7384,7 +7671,8 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         widgetInstanceId: "73737373-7373-4373-8373-737373737373",
-        limit: 20
+        limit: 20,
+        enrich: true
       }
     });
     expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
@@ -7478,7 +7766,7 @@ describe("bridge tools", () => {
     });
     const activeCard = await client.callTool({
       name: "codex_activity_snapshot",
-      arguments: { card: terminateArguments.card },
+      arguments: { card: terminateArguments.card, enrich: true },
       _meta: { "openai/widgetSessionId": widgetSessionId }
     });
     const activeProcessControl = (activeCard as { _meta?: Record<string, any> })._meta
@@ -15072,6 +15360,7 @@ async function freshDashboardSnapshot(
     scopeId?: string;
     metadata?: Record<string, unknown>;
     limit?: number;
+    enrich?: boolean;
   } = {}
 ): Promise<{ result: any; view: Record<string, any> }> {
   dashboardWidgetSequence += 1;
@@ -15081,7 +15370,8 @@ async function freshDashboardSnapshot(
     arguments: {
       ...(options.scopeId ? { scopeId: options.scopeId } : {}),
       widgetInstanceId: `dddddddd-dddd-4ddd-8ddd-${widgetSuffix}`,
-      limit: options.limit || 20
+      limit: options.limit || 20,
+      enrich: options.enrich === true
     },
     ...(options.metadata ? { _meta: options.metadata } : {})
   });

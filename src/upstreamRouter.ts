@@ -164,6 +164,18 @@ export class CodexBackendRouter implements CodexUpstream {
       : [];
   }
 
+  async listLoadedBackgroundTerminals(
+    threadId: string,
+    backendKind?: CodexBackendKind
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    const kind = backendKind || this.threadBackends.get(threadId);
+    if (!kind || kind !== "app-server") return null;
+    const backend = this.backend(kind);
+    return backend.listLoadedBackgroundTerminals
+      ? backend.listLoadedBackgroundTerminals(threadId, kind)
+      : null;
+  }
+
   async terminateBackgroundTerminal(
     threadId: string,
     processId: string,

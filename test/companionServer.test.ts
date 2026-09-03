@@ -61,15 +61,41 @@ describe("native companion server", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "dashboard.snapshot",
-      params: { limit: 12, terminalOffset: 4, idleOffset: 7 }
+      params: { limit: 12, terminalOffset: 4, idleOffset: 7, enrich: false }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith({
       limit: 12,
       terminalOffset: 4,
       idleOffset: 7,
-      inspectRuntime: true
+      inspectRuntime: false
     });
     expect(dashboard).toMatchObject({ id: 1, result: { kind: "dashboard" } });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "retained-native-dashboard",
+      method: "dashboard.snapshot",
+      params: { limit: 12 }
+    });
+    expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith({
+      limit: 12,
+      terminalOffset: undefined,
+      idleOffset: undefined,
+      inspectRuntime: true
+    });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "enriched-dashboard",
+      method: "dashboard.snapshot",
+      params: { limit: 12, enrich: true }
+    });
+    expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith({
+      limit: 12,
+      terminalOffset: undefined,
+      idleOffset: undefined,
+      inspectRuntime: true
+    });
 
     const settings = await request(socketPath, {
       jsonrpc: "2.0",
@@ -95,6 +121,35 @@ describe("native companion server", () => {
     });
     expect(applicationService.updateSettings).toHaveBeenCalledWith(mutation);
     expect(updated).toMatchObject({ id: 3, result: { settings: { settingsRevision: 3 } } });
+  });
+
+  it("keeps the native Dashboard cold snapshot independent from optional enrichment", async () => {
+    const socketPath = temporarySocketPath();
+    const applicationService = fakeApplicationService();
+    vi.mocked(applicationService.dashboardSnapshot).mockImplementation(async (options = {}) => {
+      if (options.inspectRuntime) return new Promise(() => undefined);
+      return { kind: "dashboard", enrichment: { state: "structural" } } as DashboardView;
+    });
+    const server = await startBridgeCompanionServer({ socketPath, applicationService });
+    servers.push(server);
+
+    const startedAt = performance.now();
+    const response = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "native-cold-mount",
+      method: "dashboard.snapshot",
+      params: { limit: 20, enrich: false }
+    });
+    expect(performance.now() - startedAt).toBeLessThan(500);
+    expect(response).toMatchObject({
+      result: { kind: "dashboard", enrichment: { state: "structural" } }
+    });
+    expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith({
+      limit: 20,
+      terminalOffset: undefined,
+      idleOffset: undefined,
+      inspectRuntime: false
+    });
   });
 
   it("rejects malformed requests without closing the server", async () => {

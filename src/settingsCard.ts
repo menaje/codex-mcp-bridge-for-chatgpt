@@ -8,9 +8,10 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 14;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 15;
 export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 9;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
+export const SETTINGS_CARD_HTML_MAX_BYTES = 192 * 1_024;
 export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Settings`,
   description: "Localized interactive settings card for user-configurable Codex bridge preferences.",
@@ -240,7 +241,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     </form>
   </main>
   <script>
-    const BUNDLES = ${serializedUiTranslations()};
+    const BUNDLES = ${serializedUiTranslations(["common", "settings", "effort"])};
     ${uiBridgeErrorMessage.toString()}
     ${resolveHostUiLocaleTag.toString()}
     const pendingRequests = new Map();

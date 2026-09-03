@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ACTIVITY_CARD_HTML,
+  ACTIVITY_CARD_HTML_MAX_BYTES,
   shouldShowHistoricalActivityTitle
 } from "../src/activityCard.js";
 import {
@@ -9,6 +10,7 @@ import {
   dispatchDashboardExternalUrl,
   DASHBOARD_CARD_CONTENT_METADATA,
   DASHBOARD_CARD_HTML,
+  DASHBOARD_CARD_HTML_MAX_BYTES,
   groupDashboardRowsByActivity,
   shouldShowDashboardNextExecution
 } from "../src/dashboardCard.js";
@@ -16,6 +18,7 @@ import { PRODUCT_INFO } from "../src/productInfo.js";
 import { htmlForUiResource } from "../src/uiResources.js";
 import {
   SETTINGS_CARD_HTML,
+  SETTINGS_CARD_HTML_MAX_BYTES,
   uiBridgeErrorMessage
 } from "../src/settingsCard.js";
 import {
@@ -336,13 +339,36 @@ describe("human-facing UI localization", () => {
       .toEqual(["breakthrough", "novel"]);
   });
 
-  it("serializes bundles safely into both self-contained cards", () => {
+  it("serializes only each self-contained card's translation namespaces within byte budgets", () => {
     const serialized = serializedUiTranslations();
     expect(serialized).not.toContain("<");
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
-    expect(SETTINGS_CARD_HTML).toContain(serialized);
-    expect(ACTIVITY_CARD_HTML).toContain(serialized);
-    expect(DASHBOARD_CARD_HTML).toContain(serialized);
+    expect(SETTINGS_CARD_HTML).toContain(
+      serializedUiTranslations(["common", "settings", "effort"])
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      serializedUiTranslations([
+        "common", "usage", "cancellation", "activity", "agent", "job",
+        "lifecycle", "verification", "kind", "dashboard.status"
+      ])
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      serializedUiTranslations([
+        "common", "usage", "cancellation", "dashboard", "activity.lastChanged"
+      ])
+    );
+    expect(SETTINGS_CARD_HTML).not.toContain('"activity.title"');
+    expect(ACTIVITY_CARD_HTML).not.toContain('"settings.title"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('"settings.title"');
+    expect(Buffer.byteLength(SETTINGS_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      SETTINGS_CARD_HTML_MAX_BYTES
+    );
+    expect(Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      ACTIVITY_CARD_HTML_MAX_BYTES
+    );
+    expect(Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      DASHBOARD_CARD_HTML_MAX_BYTES
+    );
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
     expect(ACTIVITY_CARD_HTML).toContain('document.title=t["activity.title"]');
@@ -428,12 +454,15 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain("function standardToolCall(name,args)");
     expect(DASHBOARD_CARD_HTML).toContain("function callUiToolWithFallback");
     expect(DASHBOARD_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
-    expect(DASHBOARD_CARD_HTML).toContain("compatibilityTimeoutMs:TOOL_CALL_TIMEOUT_MS");
+    expect(DASHBOARD_CARD_HTML).toContain("compatibilityTimeoutMs:STANDARD_CALL_BUDGET_MS");
+    expect(DASHBOARD_CARD_HTML).toContain("if(compatibility)return callUiToolWithFallback");
     expect(DASHBOARD_CARD_HTML).not.toContain('typeof window.openai.callTool==="function"?Promise.resolve(false)');
     expect(DASHBOARD_CARD_HTML).not.toContain("__name");
     expect(DASHBOARD_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
     expect(DASHBOARD_CARD_HTML).not.toContain("function consumeHostResult(");
-    expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false)");
+    expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false,pageRequest=appendRequest)");
+    expect(DASHBOARD_CARD_HTML).toContain("enrich:true");
+    expect(DASHBOARD_CARD_HTML).toContain("enrich:false");
     expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false)");
     expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
     expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
@@ -719,7 +748,12 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("expectedAgentVersion:control.agentVersion");
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
-    expect(ACTIVITY_CARD_HTML).toContain('async function reload(){const card=cardProof(),args={card,limit:viewLimit}');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'async function reload(){const card=cardProof(),args={card,limit:viewLimit,enrich:false}'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false'
+    );
     expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
     expect(ACTIVITY_CARD_HTML).toContain(
       'callTool("codex_activity_rehydrate",{jobId:correlation.jobId'

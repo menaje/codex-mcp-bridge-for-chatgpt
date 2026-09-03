@@ -251,6 +251,7 @@ private func dashboardSnapshot(
         scope: "bridge-wide",
         statusSource: "codex-runtime-only",
         coverage: "bridge-known-retained",
+        enrichment: nil,
         weeklyUsage: nil,
         counts: DashboardCounts(
             trackedProjects: 1,

@@ -209,6 +209,8 @@ final class AppModel: ObservableObject {
     private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
+    private var dashboardEnrichmentTask: Task<Void, Never>?
+    private var dashboardRequestGeneration = 0
     private var paths: RuntimePaths?
     private var pathResolutionTask: Task<RuntimePaths, Never>?
 
@@ -311,6 +313,9 @@ final class AppModel: ObservableObject {
     }
 
     func refreshDashboard() async {
+        dashboardEnrichmentTask?.cancel()
+        dashboardRequestGeneration += 1
+        let generation = dashboardRequestGeneration
         guard helperStatus?.bridge.connected == true else {
             dashboard = nil
             dashboardErrorMessage = nil
@@ -321,12 +326,55 @@ final class AppModel: ObservableObject {
             dashboard = try await client.dashboard(
                 limit: pageLimit,
                 terminalOffset: 0,
-                idleOffset: 0
+                idleOffset: 0,
+                enrich: false
             )
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
+            scheduleDashboardEnrichment(
+                generation: generation,
+                terminalOffset: 0,
+                idleOffset: 0
+            )
         } catch {
             dashboardErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleDashboardEnrichment(
+        generation: Int,
+        terminalOffset: Int,
+        idleOffset: Int,
+        bucket: DashboardAppendBucket? = nil,
+        requestedOffset: Int = 0
+    ) {
+        dashboardEnrichmentTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let client = await self.bridgeClient()
+                let enriched = try await client.dashboard(
+                    limit: self.pageLimit,
+                    terminalOffset: terminalOffset,
+                    idleOffset: idleOffset,
+                    enrich: true
+                )
+                guard !Task.isCancelled, generation == self.dashboardRequestGeneration else {
+                    return
+                }
+                if let bucket, let current = self.dashboard {
+                    self.dashboard = current.mergingPage(
+                        enriched,
+                        bucket: bucket,
+                        requestedOffset: requestedOffset
+                    )
+                } else {
+                    self.dashboard = enriched
+                }
+                self.lastDashboardRefresh = Date()
+            } catch {
+                // Structural state stays usable when optional runtime probes or
+                // account usage enrichment is unavailable.
+            }
         }
     }
 
@@ -607,12 +655,16 @@ final class AppModel: ObservableObject {
     func loadMoreRecent() async {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
         let nextOffset = current.pagination.terminal.offset + current.pagination.terminal.returned
+        dashboardEnrichmentTask?.cancel()
+        dashboardRequestGeneration += 1
+        let generation = dashboardRequestGeneration
         _ = await performDashboard {
             let client = await self.bridgeClient()
             let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
-                idleOffset: 0
+                idleOffset: 0,
+                enrich: false
             )
             self.dashboard = current.mergingPage(
                 page,
@@ -620,18 +672,29 @@ final class AppModel: ObservableObject {
                 requestedOffset: nextOffset
             )
             self.lastDashboardRefresh = Date()
+            self.scheduleDashboardEnrichment(
+                generation: generation,
+                terminalOffset: nextOffset,
+                idleOffset: 0,
+                bucket: .terminal,
+                requestedOffset: nextOffset
+            )
         }
     }
 
     func loadMoreIdle() async {
         guard let current = dashboard, current.pagination.idle.hasNext else { return }
         let nextOffset = current.pagination.idle.offset + current.pagination.idle.returned
+        dashboardEnrichmentTask?.cancel()
+        dashboardRequestGeneration += 1
+        let generation = dashboardRequestGeneration
         _ = await performDashboard {
             let client = await self.bridgeClient()
             let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: 0,
-                idleOffset: nextOffset
+                idleOffset: nextOffset,
+                enrich: false
             )
             self.dashboard = current.mergingPage(
                 page,
@@ -639,6 +702,13 @@ final class AppModel: ObservableObject {
                 requestedOffset: nextOffset
             )
             self.lastDashboardRefresh = Date()
+            self.scheduleDashboardEnrichment(
+                generation: generation,
+                terminalOffset: 0,
+                idleOffset: nextOffset,
+                bucket: .idle,
+                requestedOffset: nextOffset
+            )
         }
     }
 

@@ -79,6 +79,8 @@ import {
 } from "./sessionRegistry.js";
 import {
   registerSettingsCardResource,
+  SETTINGS_CARD_HTML,
+  SETTINGS_CARD_HTML_MAX_BYTES,
   SETTINGS_CARD_CONTRACT_GENERATION,
   SETTINGS_CARD_URI
 } from "./settingsCard.js";
@@ -88,6 +90,8 @@ import {
   ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
   ACTIVITY_VIEW_METADATA_KEY,
   registerActivityCardResource,
+  ACTIVITY_CARD_HTML,
+  ACTIVITY_CARD_HTML_MAX_BYTES,
   ACTIVITY_CARD_URI
 } from "./activityCard.js";
 import {
@@ -95,6 +99,8 @@ import {
   DASHBOARD_CARD_URI,
   DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION,
   DASHBOARD_VIEW_METADATA_KEY,
+  DASHBOARD_CARD_HTML,
+  DASHBOARD_CARD_HTML_MAX_BYTES,
   registerDashboardCardResource
 } from "./dashboardCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
@@ -634,12 +640,22 @@ const dashboardModelOutputSchema = z.strictObject({
   summary: z.string()
 });
 
+const cardEnrichmentOutputSchema = z.strictObject({
+  state: z.enum(["structural", "enriched"]),
+  runtimeRequests: z.number().int().min(0),
+  cacheHits: z.number().int().min(0),
+  timeouts: z.number().int().min(0),
+  durationMs: z.number().int().min(0),
+  usageTimedOut: z.boolean()
+});
+
 const dashboardViewOutputSchema = z.strictObject({
   kind: z.literal("dashboard"),
   generatedAt: z.string(),
   scope: z.literal("bridge-wide"),
   statusSource: z.literal("codex-runtime-only"),
   coverage: z.literal("bridge-known-retained"),
+  enrichment: cardEnrichmentOutputSchema,
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   counts: dashboardCountsOutputSchema,
   projects: z.array(dashboardProjectOutputSchema).optional(),
@@ -681,6 +697,7 @@ export function validateDashboardViewPrivateMetadata(
 const activityViewOutputSchema = z.strictObject({
   scopeVersion: z.number().int().min(0),
   generatedAt: z.string(),
+  enrichment: cardEnrichmentOutputSchema,
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   aggregates: opaqueJsonObjectOutputSchema,
   agents: z.array(opaqueJsonObjectOutputSchema),
@@ -1435,6 +1452,26 @@ const diagnosticsOutputSchema = z.strictObject({
     lastClientRelistedAt: z.iso.datetime().nullable(),
     lastObservedNotificationToRelistMs: z.number().int().min(0).nullable(),
     adoptionState: z.literal("unknown")
+  }),
+  performance: z.strictObject({
+    stages: z.array(z.strictObject({
+      name: z.string(),
+      count: z.number().int().min(0),
+      p50Ms: z.number().int().min(0),
+      p95Ms: z.number().int().min(0),
+      maxMs: z.number().int().min(0),
+      requests: z.number().int().min(0),
+      timeouts: z.number().int().min(0),
+      cacheHits: z.number().int().min(0)
+    })),
+    html: z.strictObject({
+      dashboardBytes: z.number().int().min(0),
+      dashboardBudgetBytes: z.number().int().positive(),
+      activityBytes: z.number().int().min(0),
+      activityBudgetBytes: z.number().int().positive(),
+      settingsBytes: z.number().int().min(0),
+      settingsBudgetBytes: z.number().int().positive()
+    })
   }),
   forensics: z.strictObject({
     bridgeInstanceId: z.string(),
@@ -4379,6 +4416,64 @@ export class CodexJobRegistry {
   }
 }
 
+type CardPerformanceSample = {
+  durationMs: number;
+  requests: number;
+  timeouts: number;
+  cacheHits: number;
+};
+
+class CardPerformanceTracker {
+  private readonly samples = new Map<string, CardPerformanceSample[]>();
+
+  record(
+    name: string,
+    durationMs: number,
+    counters: Partial<Omit<CardPerformanceSample, "durationMs">> = {}
+  ): void {
+    const entries = this.samples.get(name) || [];
+    entries.push({
+      durationMs: Math.max(0, Math.round(durationMs)),
+      requests: counters.requests || 0,
+      timeouts: counters.timeouts || 0,
+      cacheHits: counters.cacheHits || 0
+    });
+    if (entries.length > 128) entries.splice(0, entries.length - 128);
+    this.samples.set(name, entries);
+  }
+
+  snapshot(): z.infer<typeof diagnosticsOutputSchema>["performance"] {
+    const percentile = (values: number[], fraction: number): number => {
+      if (values.length === 0) return 0;
+      return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
+    };
+    return {
+      stages: [...this.samples.entries()].sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, samples]) => {
+          const durations = samples.map((sample) => sample.durationMs).sort((a, b) => a - b);
+          return {
+            name,
+            count: samples.length,
+            p50Ms: percentile(durations, 0.5),
+            p95Ms: percentile(durations, 0.95),
+            maxMs: durations.at(-1) || 0,
+            requests: samples.reduce((total, sample) => total + sample.requests, 0),
+            timeouts: samples.reduce((total, sample) => total + sample.timeouts, 0),
+            cacheHits: samples.reduce((total, sample) => total + sample.cacheHits, 0)
+          };
+        }),
+      html: {
+        dashboardBytes: Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8"),
+        dashboardBudgetBytes: DASHBOARD_CARD_HTML_MAX_BYTES,
+        activityBytes: Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8"),
+        activityBudgetBytes: ACTIVITY_CARD_HTML_MAX_BYTES,
+        settingsBytes: Buffer.byteLength(SETTINGS_CARD_HTML, "utf8"),
+        settingsBudgetBytes: SETTINGS_CARD_HTML_MAX_BYTES
+      }
+    };
+  }
+}
+
 export function registerBridgeTools(
   server: McpServer,
   config: BridgeConfig,
@@ -4401,6 +4496,7 @@ export function registerBridgeTools(
   registerActivityCardResource(server);
   registerDashboardCardResource(server);
   const descriptorCoordinator = sharedDescriptorCoordinator || new SdkToolDescriptorCoordinator();
+  const cardPerformance = new CardPerformanceTracker();
   const ownsDescriptorCoordinator = sharedDescriptorCoordinator === undefined;
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
   const taskDescriptorSnapshot = (
@@ -4467,9 +4563,30 @@ export function registerBridgeTools(
       pendingAdmissions = Math.max(0, pendingAdmissions - 1);
     };
   };
+  const recordActivityPerformance = (
+    view: { structured: z.infer<typeof activityViewOutputSchema> },
+    startedAt: number
+  ): void => {
+    const enrichment = view.structured.enrichment;
+    cardPerformance.record(
+      enrichment.state === "enriched"
+        ? "activity.enriched.total"
+        : "activity.structural.db-projection",
+      Date.now() - startedAt,
+      {
+        requests: enrichment.runtimeRequests,
+        timeouts: enrichment.timeouts + (enrichment.usageTimedOut ? 1 : 0),
+        cacheHits: enrichment.cacheHits
+      }
+    );
+    const serializationStartedAt = Date.now();
+    JSON.stringify(view.structured);
+    cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
+  };
   const applicationService: BridgeApplicationService = {
     async dashboardSnapshot(options = {}) {
-      return buildDashboardView(
+      const startedAt = Date.now();
+      const view = await buildDashboardView(
         jobs,
         upstream,
         modelCatalog,
@@ -4480,11 +4597,24 @@ export function registerBridgeTools(
         options.limit || 20,
         options.terminalOffset || 0,
         options.idleOffset || 0,
-        options.inspectRuntime !== false,
+        options.inspectRuntime === true,
         options.legacyGrouping
       );
+      const stage = view.enrichment.state === "enriched"
+        ? "dashboard.enriched.total"
+        : "dashboard.structural.db-projection";
+      cardPerformance.record(stage, Date.now() - startedAt, {
+        requests: view.enrichment.runtimeRequests,
+        timeouts: view.enrichment.timeouts + (view.enrichment.usageTimedOut ? 1 : 0),
+        cacheHits: view.enrichment.cacheHits
+      });
+      const serializationStartedAt = Date.now();
+      JSON.stringify(view);
+      cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
+      return view;
     },
     async settingsSnapshot(options = {}) {
+      const startedAt = Date.now();
       const view = await buildSettingsView(
         config,
         userSettings,
@@ -4498,6 +4628,10 @@ export function registerBridgeTools(
         projectionStatus.descriptorProjectionUpdated;
       view.policyActivation.developerModeRefreshRequired =
         projectionStatus.developerModeRefreshRequired;
+      cardPerformance.record("settings.structural.db-projection", Date.now() - startedAt);
+      const serializationStartedAt = Date.now();
+      JSON.stringify(view);
+      cardPerformance.record("settings.serialization", Date.now() - serializationStartedAt);
       return view;
     },
     updateSettings(input) {
@@ -4584,7 +4718,10 @@ export function registerBridgeTools(
     projectOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     conversationOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
-    idleOffset: z.number().int().min(0).max(1_000_000_000).optional()
+    idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
+    enrich: z.boolean().optional().describe(
+      "Request bounded runtime and weekly-usage enrichment after the default structural snapshot."
+    )
   });
 
   server.registerTool(
@@ -4627,7 +4764,7 @@ export function registerBridgeTools(
     {
       title: "Refresh Codex Overview",
       description:
-        "App-only read-only fresh-data source for the mounted bridge-wide Codex overview. Cold mounts render only after this snapshot succeeds. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
+        "App-only read-only fresh-data source for the mounted bridge-wide Codex overview. Current clients send enrich=false for a structural snapshot independent of App Server probes and weekly usage, paint it, then send enrich=true for optional bounded enrichment. Omission retains the enriched behavior of immutable older cards. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
       inputSchema: dashboardSnapshotInput,
       outputSchema: dashboardViewOutputSchema,
       annotations: {
@@ -4659,7 +4796,10 @@ export function registerBridgeTools(
         limit: args.limit || 20,
         terminalOffset: args.terminalOffset || 0,
         idleOffset: args.idleOffset || 0,
-        inspectRuntime: true,
+        // Omission preserves retained Dashboard cards that predate the
+        // progressive contract. Generation 16 sends false explicitly, paints,
+        // and follows with true.
+        inspectRuntime: args.enrich !== false,
         legacyGrouping:
           args.projectOffset !== undefined || args.conversationOffset !== undefined
             ? {
@@ -5074,7 +5214,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Operator Diagnostics`,
       description:
-        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, and bounded forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
+        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, bounded card-stage latency/request/timeout/cache statistics, HTML byte budgets, and forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
       inputSchema: z.strictObject({}),
       outputSchema: diagnosticsOutputSchema,
       annotations: {
@@ -5159,6 +5299,7 @@ export function registerBridgeTools(
           // records that separately instead of upgrading this state by inference.
           adoptionState: "unknown" as const
         },
+        performance: cardPerformance.snapshot(),
         forensics: {
           bridgeInstanceId: jobs.bridgeInstanceId,
           startupWarnings: config.startupWarnings,
@@ -5288,6 +5429,7 @@ export function registerBridgeTools(
               : { reserve: false, presentationKind: "explicit" }
           )
         : undefined;
+      const activityStartedAt = Date.now();
       const view = await buildActivityView(
         jobs,
         upstream,
@@ -5303,6 +5445,7 @@ export function registerBridgeTools(
         undefined,
         mode === "full-history" && Boolean(args.activityId)
       );
+      recordActivityPerformance(view, activityStartedAt);
       if (renderHint) {
         (view.structured as Record<string, unknown>).presentation = renderHint;
       }
@@ -5401,6 +5544,7 @@ export function registerBridgeTools(
         jobId: job.jobId,
         requestId: job.requestId
       };
+      const activityStartedAt = Date.now();
       const view = await buildActivityView(
         jobs,
         upstream,
@@ -5413,6 +5557,7 @@ export function registerBridgeTools(
         undefined,
         presentation
       );
+      recordActivityPerformance(view, activityStartedAt);
       return activityViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -5426,7 +5571,7 @@ export function registerBridgeTools(
     {
       title: "Refresh Codex Activity Card",
       description:
-        "App-only localized Activity-feed snapshot and bounded scope-version watch. The exact mounted card proof establishes or renews a widget-session lease; superseded automatic presentations stop normally.",
+        "App-only localized Activity-feed snapshot and bounded scope-version watch. Current cards send enrich=false for structural reads and a separate enrich=true for bounded runtime/usage evidence; omission retains the enriched behavior of immutable older cards. The exact mounted card proof establishes or renews a widget-session lease; superseded automatic presentations stop normally.",
       inputSchema: z.strictObject({
         scopeId: scopeIdSchema().optional(),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
@@ -5434,7 +5579,10 @@ export function registerBridgeTools(
         afterVersion: z.number().int().min(0).optional(),
         waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
         limit: z.number().int().min(1).max(100).optional(),
-        cursor: z.string().trim().min(1).max(256).optional()
+        cursor: z.string().trim().min(1).max(256).optional(),
+        enrich: z.boolean().optional().describe(
+          "Request bounded runtime and weekly-usage enrichment after the default structural Activity snapshot."
+        )
       }),
       outputSchema: activityViewOutputSchema,
       annotations: {
@@ -5530,21 +5678,29 @@ export function registerBridgeTools(
         : undefined;
       signal?.removeEventListener("abort", onAbort);
       if (wait?.stopReason === "presentation-superseded") recordPresentationSuperseded();
+      const activityStartedAt = Date.now();
+      const view = await buildActivityView(
+        jobs,
+        upstream,
+        modelCatalog,
+        config,
+        userSettings.current,
+        scope.scopeId,
+        args.limit || 30,
+        args.card.activityId,
+        wait,
+        presentation,
+        lease,
+        args.cursor,
+        true,
+        // Retained Activity cards do not know this flag and historically
+        // received runtime-enriched snapshots. Generation 20 sends false for
+        // structural watches and true for its separate enrichment request.
+        args.enrich !== false
+      );
+      recordActivityPerformance(view, activityStartedAt);
       return activityViewResult(
-        await buildActivityView(
-          jobs,
-          upstream,
-          modelCatalog,
-          config,
-          userSettings.current,
-          scope.scopeId,
-          args.limit || 30,
-          args.card.activityId,
-          wait,
-          presentation,
-          lease,
-          args.cursor
-        ),
+        view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         activityAppResultContract
       );
@@ -5996,6 +6152,9 @@ export function registerBridgeTools(
         expectedAgentVersion: args.expectedAgentVersion,
         processId: args.processId
       });
+      if (typeof mutationResult.threadId === "string") {
+        invalidateCardRuntimeCache(upstream, mutationResult.threadId);
+      }
       jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
       return mutationToolResult(mutationResult, "app");
     }
@@ -10282,10 +10441,45 @@ async function readCodexWeeklyUsage(
   }
 }
 
+async function readCodexWeeklyUsageBounded(
+  upstream: CodexUpstream
+): Promise<{ value: CodexWeeklyUsageView | null; timedOut: boolean }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ value: null; timedOut: true }>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ value: null, timedOut: true }),
+      CARD_USAGE_TIMEOUT_MS
+    );
+  });
+  const request = readCodexWeeklyUsage(upstream).then((value) => ({
+    value,
+    timedOut: false as const
+  }));
+  const result = await Promise.race([request, timeout]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
 type DashboardRuntimeObservation = {
   state: "confirmed" | "idle" | "not-loaded" | "busy" | "orphaned" | "unknown";
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcessCount: number;
+  backgroundProcessIds?: string[];
+};
+
+type CardEnrichmentSummary = z.infer<typeof cardEnrichmentOutputSchema>;
+
+type DashboardEnrichmentInput = {
+  runtimeByAgent: Map<string, DashboardRuntimeObservation>;
+  runtimeProbeSkippedAgents: number;
+  weeklyUsage: CodexWeeklyUsageView | null;
+  summary: CardEnrichmentSummary;
+};
+
+type DashboardRuntimeCacheEntry = {
+  stamp: string;
+  expiresAt: number;
+  observation: DashboardRuntimeObservation;
 };
 
 type BridgeBackgroundProcessImpact = {
@@ -10299,8 +10493,27 @@ const DASHBOARD_RUNTIME_PROBE_LIMIT = 100;
 const DASHBOARD_RUNTIME_PROBE_CONCURRENCY = 8;
 const DASHBOARD_RUNTIME_PROBE_TIMEOUT_MS = 1_500;
 const DASHBOARD_RUNTIME_BUDGET_MS = 9_000;
+const CARD_RUNTIME_PROBE_LIMIT = 200;
+const CARD_RUNTIME_PROBE_CONCURRENCY = 8;
+const CARD_RUNTIME_PROBE_TIMEOUT_MS = 400;
+const CARD_RUNTIME_BUDGET_MS = 1_200;
+const CARD_USAGE_TIMEOUT_MS = 800;
+const CARD_RUNTIME_CACHE_TTL_MS = 5_000;
+const CARD_RUNTIME_CACHE_MAX_ENTRIES = 512;
 const DASHBOARD_HISTORY_LIMIT_PER_AGENT = 12;
 const DASHBOARD_ARCHIVED_JOB_LIMIT = 10_000;
+const dashboardRuntimeCaches = new WeakMap<
+  CodexUpstream,
+  Map<string, DashboardRuntimeCacheEntry>
+>();
+
+function invalidateCardRuntimeCache(upstream: CodexUpstream, threadId: string): void {
+  const cache = dashboardRuntimeCaches.get(upstream);
+  if (!cache) return;
+  for (const key of cache.keys()) {
+    if (key.endsWith(`\0${threadId}`)) cache.delete(key);
+  }
+}
 
 const DASHBOARD_ATTENTION_STATUSES = new Set<DashboardStatus>([
   "input-required",
@@ -10833,101 +11046,202 @@ async function inspectBridgeBackgroundProcessImpact(
 
 async function inspectDashboardRuntime(
   upstream: CodexUpstream,
-  thread: BridgeAgentThread
-): Promise<DashboardRuntimeObservation> {
+  thread: BridgeAgentThread,
+  shouldContinue: () => boolean = () => true
+): Promise<{ observation: DashboardRuntimeObservation; requests: number }> {
   const backendKind = thread.backendKind as CodexBackendKind;
   let state: DashboardRuntimeObservation["state"] = "confirmed";
+  let requests = 0;
   if (upstream.probeThread) {
     let probe: CodexThreadResumeProbe;
     try {
+      requests += 1;
       probe = await upstream.probeThread(thread.threadId, backendKind);
     } catch {
       return {
-        state: "unknown",
-        backgroundProcessState: "unknown",
-        backgroundProcessCount: 0
+        observation: {
+          state: "unknown",
+          backgroundProcessState: "unknown",
+          backgroundProcessCount: 0
+        },
+        requests
+      };
+    }
+    if (!shouldContinue()) {
+      return {
+        observation: {
+          state: "unknown",
+          backgroundProcessState: "unknown",
+          backgroundProcessCount: 0
+        },
+        requests
       };
     }
     if (probe.state === "orphaned") {
       return {
-        state: "orphaned",
-        backgroundProcessState: "unknown",
-        backgroundProcessCount: 0
+        observation: {
+          state: "orphaned",
+          backgroundProcessState: "unknown",
+          backgroundProcessCount: 0
+        },
+        requests
       };
     }
     if (probe.state === "unknown") {
       return {
-        state: "unknown",
-        backgroundProcessState: "unknown",
-        backgroundProcessCount: 0
+        observation: {
+          state: "unknown",
+          backgroundProcessState: "unknown",
+          backgroundProcessCount: 0
+        },
+        requests
       };
     }
     if (probe.state === "resumable" && probe.runtimeStatus === "notLoaded") {
       return {
-        state: "not-loaded",
-        backgroundProcessState: "confirmed",
-        backgroundProcessCount: 0
+        observation: {
+          state: "not-loaded",
+          backgroundProcessState: "confirmed",
+          backgroundProcessCount: 0
+        },
+        requests
       };
     }
     state = probe.state === "busy" ? "busy" : "idle";
   }
-  if (!upstream.listBackgroundTerminals) {
-    return { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 };
+  if (!upstream.listLoadedBackgroundTerminals) {
+    return {
+      observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
+      requests
+    };
   }
   try {
-    const terminals = await upstream.listBackgroundTerminals(thread.threadId, backendKind);
+    requests += 1;
+    const terminals = await upstream.listLoadedBackgroundTerminals(thread.threadId, backendKind);
+    if (terminals === null) {
+      return {
+        observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
+        requests
+      };
+    }
     return {
-      state,
-      backgroundProcessState: "confirmed",
-      backgroundProcessCount: terminals.length
+      observation: {
+        state,
+        backgroundProcessState: "confirmed",
+        backgroundProcessCount: terminals.length,
+        backgroundProcessIds: terminals.map((terminal) => terminal.processId)
+      },
+      requests
     };
   } catch {
-    return { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 };
+    return {
+      observation: { state, backgroundProcessState: "unknown", backgroundProcessCount: 0 },
+      requests
+    };
   }
 }
 
 async function inspectDashboardRuntimes(
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<{ agentId: string; thread: BridgeAgentThread }>
+  candidates: ReadonlyArray<{
+    agentId: string;
+    thread: BridgeAgentThread;
+    stamp: string;
+  }>
 ): Promise<{
   observations: Map<string, DashboardRuntimeObservation>;
   skipped: number;
+  requests: number;
+  cacheHits: number;
+  timeouts: number;
 }> {
   const observations = new Map<string, DashboardRuntimeObservation>();
-  const deadline = Date.now() + DASHBOARD_RUNTIME_BUDGET_MS;
+  const cache = dashboardRuntimeCaches.get(upstream) || new Map<string, DashboardRuntimeCacheEntry>();
+  dashboardRuntimeCaches.set(upstream, cache);
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  const pending = candidates.filter((candidate) => {
+    const key = `${candidate.thread.backendKind}\0${candidate.thread.threadId}`;
+    const cached = cache.get(key);
+    if (!cached || cached.stamp !== candidate.stamp || cached.expiresAt <= now) return true;
+    observations.set(candidate.agentId, cached.observation);
+    return false;
+  });
+  const cacheHits = candidates.length - pending.length;
+  const deadline = Date.now() + CARD_RUNTIME_BUDGET_MS;
   let nextIndex = 0;
   let timedOut = 0;
+  let requests = 0;
   const inspectWithTimeout = (
-    candidate: { agentId: string; thread: BridgeAgentThread },
+    candidate: { agentId: string; thread: BridgeAgentThread; stamp: string },
     timeoutMs: number
-  ): Promise<DashboardRuntimeObservation | null> => new Promise((resolve) => {
+  ): Promise<{ observation: DashboardRuntimeObservation; requests: number } | null> => new Promise((resolve) => {
     let settled = false;
-    const finish = (value: DashboardRuntimeObservation | null): void => {
+    let acceptingFollowupRequests = true;
+    const finish = (
+      value: { observation: DashboardRuntimeObservation; requests: number } | null
+    ): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve(value);
     };
-    const timer = setTimeout(() => finish(null), timeoutMs);
-    void inspectDashboardRuntime(upstream, candidate.thread)
+    const timer = setTimeout(() => {
+      acceptingFollowupRequests = false;
+      finish(null);
+    }, timeoutMs);
+    void inspectDashboardRuntime(
+      upstream,
+      candidate.thread,
+      () => acceptingFollowupRequests
+    )
       .then((value) => finish(value), () => finish({
-        state: "unknown",
-        backgroundProcessState: "unknown",
-        backgroundProcessCount: 0
+        observation: {
+          state: "unknown",
+          backgroundProcessState: "unknown",
+          backgroundProcessCount: 0
+        },
+        requests: 1
       }));
   });
   const worker = async (): Promise<void> => {
-    while (nextIndex < candidates.length) {
+    while (nextIndex < pending.length) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return;
-      const candidate = candidates[nextIndex++];
+      const candidate = pending[nextIndex++];
       if (!candidate) return;
-      const observation = await inspectWithTimeout(
+      const initiallyCountedRequests = upstream.probeThread
+        ? 1
+        : upstream.listLoadedBackgroundTerminals
+          ? 1
+          : 0;
+      requests += initiallyCountedRequests;
+      const result = await inspectWithTimeout(
         candidate,
-        Math.max(1, Math.min(DASHBOARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
+        Math.max(1, Math.min(CARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
       );
-      if (observation) {
-        observations.set(candidate.agentId, observation);
+      if (result) {
+        requests += Math.max(0, result.requests - initiallyCountedRequests);
+        observations.set(candidate.agentId, result.observation);
+        if (
+          result.observation.backgroundProcessState === "confirmed" &&
+          ["confirmed", "idle", "busy"].includes(result.observation.state)
+        ) {
+          const cacheKey = `${candidate.thread.backendKind}\0${candidate.thread.threadId}`;
+          cache.delete(cacheKey);
+          cache.set(cacheKey, {
+            stamp: candidate.stamp,
+            expiresAt: Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
+            observation: result.observation
+          });
+          while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
+            const oldestKey = cache.keys().next().value;
+            if (typeof oldestKey !== "string") break;
+            cache.delete(oldestKey);
+          }
+        }
       } else {
         timedOut += 1;
         observations.set(candidate.agentId, {
@@ -10935,18 +11249,26 @@ async function inspectDashboardRuntimes(
           backgroundProcessState: "unknown",
           backgroundProcessCount: 0
         });
+        // The upstream API has no per-request cancellation contract. Do not
+        // launch another probe from this worker while its timed-out request may
+        // still be running, so the real in-flight fan-out stays bounded by the
+        // worker count rather than only appearing bounded to the caller.
+        return;
       }
     }
   };
   await Promise.all(
     Array.from(
-      { length: Math.min(DASHBOARD_RUNTIME_PROBE_CONCURRENCY, candidates.length) },
+      { length: Math.min(CARD_RUNTIME_PROBE_CONCURRENCY, pending.length) },
       () => worker()
     )
   );
   return {
     observations,
-    skipped: timedOut + Math.max(0, candidates.length - observations.size)
+    skipped: timedOut + Math.max(0, pending.length - nextIndex),
+    requests,
+    cacheHits,
+    timeouts: timedOut
   };
 }
 
@@ -10962,12 +11284,80 @@ async function buildDashboardView(
   terminalOffset: number,
   idleOffset: number,
   inspectRuntime: boolean,
-  legacyGrouping?: { projectOffset: number; conversationOffset: number }
+  legacyGrouping?: { projectOffset: number; conversationOffset: number },
+  visibleAgentIdsOut?: Set<string>,
+  enrichment?: DashboardEnrichmentInput
 ): Promise<DashboardView> {
+  if (inspectRuntime && !enrichment) {
+    const visibleAgentIds = new Set<string>();
+    await buildDashboardView(
+      jobs,
+      upstream,
+      modelCatalog,
+      sessions,
+      scopeResolver,
+      config,
+      preferences,
+      limit,
+      terminalOffset,
+      idleOffset,
+      false,
+      legacyGrouping,
+      visibleAgentIds
+    );
+    const allAgents = listAllDashboardAgents(jobs);
+    const appServerAgents = allAgents.flatMap((agent) => {
+      if (agent.lifecycle === "archived") return [];
+      const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
+      return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
+    });
+    const candidates = appServerAgents
+      .filter(({ agent }) => visibleAgentIds.has(agent.agentId))
+      .slice(0, CARD_RUNTIME_PROBE_LIMIT)
+      .map(({ agent, thread }) => {
+        const latestJob = jobs.listForAgent(agent.agentId).at(-1);
+        return {
+          agentId: agent.agentId,
+          thread,
+          stamp: `${agent.version}:${agent.updatedAt}:${latestJob?.version || 0}:${latestJob?.updatedAt || 0}`
+        };
+      });
+    const startedAt = Date.now();
+    const [runtimeInspection, usage] = await Promise.all([
+      inspectDashboardRuntimes(upstream, candidates),
+      readCodexWeeklyUsageBounded(upstream)
+    ]);
+    return buildDashboardView(
+      jobs,
+      upstream,
+      modelCatalog,
+      sessions,
+      scopeResolver,
+      config,
+      preferences,
+      limit,
+      terminalOffset,
+      idleOffset,
+      true,
+      legacyGrouping,
+      visibleAgentIdsOut,
+      {
+        runtimeByAgent: runtimeInspection.observations,
+        runtimeProbeSkippedAgents:
+          Math.max(0, appServerAgents.length - candidates.length) + runtimeInspection.skipped,
+        weeklyUsage: usage.value,
+        summary: {
+          state: "enriched",
+          runtimeRequests: runtimeInspection.requests,
+          cacheHits: runtimeInspection.cacheHits,
+          timeouts: runtimeInspection.timeouts,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          usageTimedOut: usage.timedOut
+        }
+      }
+    );
+  }
   const now = Date.now();
-  const weeklyUsagePromise = inspectRuntime
-    ? readCodexWeeklyUsage(upstream)
-    : Promise.resolve(null);
   const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0);
   const cancellationDisplays = buildCancellationDisplayIndex(jobs);
   const displayedCancellationJobIds = new Set<string>();
@@ -11069,21 +11459,8 @@ async function buildDashboardView(
       const thread = currentThreadFor(agent.agentId);
       return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
     });
-  const runtimeCandidates = (inspectRuntime ? appServerAgents : [])
-    .filter(
-      ({ agent }) => latestJobByAgent.has(agent.agentId) || Boolean(upstream.probeThread)
-    )
-    .sort(
-      (left, right) =>
-        (latestJobByAgent.get(right.agent.agentId)?.updatedAt || right.agent.updatedAt) -
-        (latestJobByAgent.get(left.agent.agentId)?.updatedAt || left.agent.updatedAt)
-    )
-    .slice(0, DASHBOARD_RUNTIME_PROBE_LIMIT)
-    .map(({ agent, thread }) => ({ agentId: agent.agentId, thread }));
-  const runtimeInspection = await inspectDashboardRuntimes(upstream, runtimeCandidates);
-  const runtimeByAgent = runtimeInspection.observations;
-  const runtimeProbeSkippedAgents =
-    Math.max(0, appServerAgents.length - runtimeCandidates.length) + runtimeInspection.skipped;
+  const runtimeByAgent = enrichment?.runtimeByAgent || new Map<string, DashboardRuntimeObservation>();
+  const runtimeProbeSkippedAgents = enrichment?.runtimeProbeSkippedAgents ?? appServerAgents.length;
 
   const statusForJob = (job: CodexJob): DashboardStatus => {
     const status = dashboardStatusForJob(job);
@@ -11180,6 +11557,8 @@ async function buildDashboardView(
     };
   };
 
+  const agentIdByRowKey = new Map<string, string>();
+
   const jobRow = (job: CodexJob, bucket: DashboardRow["bucket"]): DashboardRow => {
     const agent = job.agentId ? agentById.get(job.agentId) : undefined;
     const thread = currentThreadFor(job.agentId);
@@ -11196,8 +11575,10 @@ async function buildDashboardView(
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
     const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
     const project = dashboardProjectIdentity(job, trackedSession, thread);
+    const rowKey = dashboardRowKey(job.agentId, job.jobId);
+    if (job.agentId) agentIdByRowKey.set(rowKey, job.agentId);
     return {
-      rowKey: dashboardRowKey(job.agentId, job.jobId),
+      rowKey,
       activityKey: dashboardActivityKey(job.activityId, job.agentId || job.jobId),
       conversationKey: dashboardConversationKey(job.scopeId),
       sessionAlias: dashboardSessionAlias(job.scopeId),
@@ -11305,6 +11686,7 @@ async function buildDashboardView(
       history: history.turns,
       historyCount: history.total
     };
+    agentIdByRowKey.set(recoveryRow.rowKey, agent.agentId);
     recoveryRows.push({ agentId: agent.agentId, row: recoveryRow });
     activeRows.push(recoveryRow);
   }
@@ -11357,7 +11739,7 @@ async function buildDashboardView(
       const currentSession = currentSessionFor(agent.agentId);
       const codexThreadUrl = codexThreadUrlFor(thread, currentSession);
       const project = dashboardProjectIdentity(thread, latestJob);
-      return {
+      const row: DashboardRow = {
         rowKey: dashboardRowKey(agent.agentId),
         activityKey: dashboardActivityKey(
           latestJob?.activityId || latestArchivedJob?.activityId,
@@ -11383,6 +11765,8 @@ async function buildDashboardView(
         history: history.turns,
         historyCount: history.total
       };
+      agentIdByRowKey.set(row.rowKey, agent.agentId);
+      return row;
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 
@@ -11435,7 +11819,11 @@ async function buildDashboardView(
     limit
   );
   const idlePage = dashboardPage(idleRows, idleOffset, limit, (row) => row.conversationKey);
-  const weeklyUsage = await weeklyUsagePromise;
+  for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows]) {
+    const agentId = agentIdByRowKey.get(row.rowKey);
+    if (agentId) visibleAgentIdsOut?.add(agentId);
+  }
+  const weeklyUsage = enrichment?.weeklyUsage || null;
   const trackedProjects = jobs.admissionStateStore
     .getProjectRegistrySnapshot()
     .projects
@@ -11448,6 +11836,14 @@ async function buildDashboardView(
     scope: "bridge-wide",
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
+    enrichment: enrichment?.summary || {
+      state: "structural",
+      runtimeRequests: 0,
+      cacheHits: 0,
+      timeouts: 0,
+      durationMs: 0,
+      usageTimedOut: false
+    },
     weeklyUsage,
     counts: {
       trackedProjects,
@@ -11593,10 +11989,12 @@ async function buildLegacyActivityView(
   selectedActivityId?: string,
   wait?: ActivityScopeWatchResult,
   presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult
+  lease?: ActivityCardLeaseTouchResult,
+  inspectRuntime = false
 ) {
   const now = Date.now();
   const allAgents = listAllScopedAgents(jobs, scopeId);
+  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const controlRows: Array<Record<string, unknown>> = [];
   const currentThreads = new Map<string, BridgeAgentThread>();
   const agentRows = allAgents.map((agent) => {
@@ -11673,42 +12071,6 @@ async function buildLegacyActivityView(
       ...(execution ? { execution } : {})
     };
   });
-  await Promise.all(agentRows.map(async (row) => {
-    const thread = currentThreads.get(row.agentId);
-    if (!thread || thread.backendKind !== "app-server" || !upstream.listBackgroundTerminals) return;
-    try {
-      const terminals = await upstream.listBackgroundTerminals(
-        thread.threadId,
-        thread.backendKind as CodexBackendKind
-      );
-      if (terminals.length === 0) return;
-      row.backgroundProcessState = "running";
-      row.backgroundProcessCount = terminals.length;
-      row.canArchive = false;
-      const agent = allAgents.find((entry) => entry.agentId === row.agentId);
-      let control = controlRows.find((entry) => entry.agentId === row.agentId);
-      if (!control) {
-        control = {
-          agentId: row.agentId,
-          agentVersion: agent?.version || null
-        };
-        controlRows.push(control);
-      }
-      control.agentVersion ??= agent?.version || null;
-      // Background-terminal termination is an idle-Agent cleanup action. Keep
-      // the process count visible while a turn is active, but do not expose a
-      // control that the authoritative mutation must reject with AGENT_BUSY.
-      const agentBusy = agent?.lifecycle === "active" ||
-        agent?.lifecycle === "waiting-input" ||
-        Boolean(agent?.currentJobId);
-      if (!agentBusy) {
-        control.backgroundProcesses = terminals.map((terminal) => ({ processId: terminal.processId }));
-      }
-    } catch {
-      row.backgroundProcessState = "unavailable";
-      row.canArchive = false;
-    }
-  }));
   const agentPriority = (row: (typeof agentRows)[number]): number => {
     if (row.displayState === "input-required" || row.displayState === "approval-required") return 0;
     if (row.backgroundProcessState !== "none") return 1;
@@ -11719,6 +12081,64 @@ async function buildLegacyActivityView(
     if (row.displayState === "idle") return 5;
     return 6;
   };
+  agentRows.sort((left, right) =>
+    agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+  );
+  const runtimeCandidates = inspectRuntime
+    ? agentRows
+        .filter((row) => row.lifecycle !== "archived")
+        .slice(0, limit)
+        .flatMap((row) => {
+          const thread = currentThreads.get(row.agentId);
+          const agent = agentById.get(row.agentId);
+          if (!thread || thread.backendKind !== "app-server" || !agent) return [];
+          return [{
+            agentId: row.agentId,
+            thread,
+            stamp: `${agent.version}:${agent.updatedAt}:${row.updatedAt}`
+          }];
+        })
+    : [];
+  const runtimeInspection = inspectRuntime
+    ? await inspectDashboardRuntimes(upstream, runtimeCandidates)
+    : {
+        observations: new Map<string, DashboardRuntimeObservation>(),
+        skipped: 0,
+        requests: 0,
+        cacheHits: 0,
+        timeouts: 0
+      };
+  for (const row of agentRows) {
+    const observation = runtimeInspection.observations.get(row.agentId);
+    if (!observation) continue;
+    if (observation.backgroundProcessState === "unknown") {
+      row.backgroundProcessState = "unavailable";
+      row.canArchive = false;
+      continue;
+    }
+    if (observation.backgroundProcessCount === 0) continue;
+    row.backgroundProcessState = "running";
+    row.backgroundProcessCount = observation.backgroundProcessCount;
+    row.canArchive = false;
+    const agent = agentById.get(row.agentId);
+    let control = controlRows.find((entry) => entry.agentId === row.agentId);
+    if (!control) {
+      control = {
+        agentId: row.agentId,
+        agentVersion: agent?.version || null
+      };
+      controlRows.push(control);
+    }
+    control.agentVersion ??= agent?.version || null;
+    const agentBusy = agent?.lifecycle === "active" ||
+      agent?.lifecycle === "waiting-input" ||
+      Boolean(agent?.currentJobId);
+    if (!agentBusy && observation.backgroundProcessIds) {
+      control.backgroundProcesses = observation.backgroundProcessIds.map(
+        (processId) => ({ processId })
+      );
+    }
+  }
   agentRows.sort((left, right) =>
     agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
   );
@@ -11844,7 +12264,8 @@ async function buildLegacyActivityView(
     interactionControls: {
       agents: controlRows
     },
-    allAgentRows: agentRows
+    allAgentRows: agentRows,
+    enrichmentStats: runtimeInspection
   };
 }
 
@@ -11923,10 +12344,12 @@ async function buildActivityView(
   presentation: ActivityViewPresentationContext = { kind: "explicit" },
   lease?: ActivityCardLeaseTouchResult,
   historyCursor?: string,
-  focusSelectedActivityPage = true
+  focusSelectedActivityPage = true,
+  inspectRuntime = false
 ) {
   const feedMode = presentation.kind === "explicit" ? "full" as const : "compact" as const;
-  const [legacy, weeklyUsage] = await Promise.all([
+  const enrichmentStartedAt = Date.now();
+  const [legacy, usage] = await Promise.all([
     buildLegacyActivityView(
       jobs,
       upstream,
@@ -11938,10 +12361,14 @@ async function buildActivityView(
       selectedActivityId,
       wait,
       presentation,
-      lease
+      lease,
+      inspectRuntime
     ),
-    readCodexWeeklyUsage(upstream)
+    inspectRuntime
+      ? readCodexWeeklyUsageBounded(upstream)
+      : Promise.resolve({ value: null, timedOut: false })
   ]);
+  const weeklyUsage = usage.value;
   const now = Date.now();
   const scopeVersion = jobs.getScopeVersion(scopeId);
   const allActivities = listAllScopedActivities(jobs, scopeId);
@@ -12374,6 +12801,14 @@ async function buildActivityView(
     interactionControls: legacy.interactionControls,
     structured: {
       ...projectedLegacy,
+      enrichment: {
+        state: inspectRuntime ? "enriched" as const : "structural" as const,
+        runtimeRequests: legacy.enrichmentStats.requests,
+        cacheHits: legacy.enrichmentStats.cacheHits,
+        timeouts: legacy.enrichmentStats.timeouts,
+        durationMs: inspectRuntime ? Math.max(0, Date.now() - enrichmentStartedAt) : 0,
+        usageTimedOut: usage.timedOut
+      },
       weeklyUsage,
       feed: {
         mode: feedMode,

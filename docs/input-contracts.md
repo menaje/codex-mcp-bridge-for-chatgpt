@@ -100,7 +100,18 @@ current status-first card. `projectOffset` and `conversationOffset` remain
 optional compatibility inputs only because immutable generation-4–6 cards
 still send them; their presence asks the server to add the older grouped
 projection, while generation 7 omits them and receives the smaller row-only
-snapshot.
+snapshot. Current cards explicitly send `enrich: false`, producing a structural
+snapshot without App Server or usage calls, render it, and then make a second
+read-only request with `enrich: true`; runtime work is limited to
+active/attention/currently visible rows. Omission preserves the enriched
+all-in-one behavior expected by immutable older Dashboard cards.
+
+`codex_activity_snapshot` uses the same optional `enrich` split. The structural
+call and long poll retain their exact card proof, widget lease, cursor, and
+scope-version semantics. A separate `enrich: true` call may add bounded runtime
+and usage evidence, but cannot broaden control authority or resume an unloaded
+historical App Server thread. Omission remains enriched for retained Activity
+cards; generation 20 sends `false` explicitly on structural reads and watches.
 
 `codex_settings_snapshot` is an app-private read-only call with one optional
 `refreshModels` boolean. The current Settings card calls it unconditionally on

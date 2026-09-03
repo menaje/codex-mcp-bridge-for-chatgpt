@@ -10,6 +10,7 @@ public struct DashboardSnapshot: Codable, Sendable {
     public let scope: String
     public let statusSource: String
     public let coverage: String
+    public let enrichment: CardEnrichment?
     public let weeklyUsage: WeeklyUsage?
     public let counts: DashboardCounts
     public var activeRows: [DashboardRow]
@@ -17,6 +18,15 @@ public struct DashboardSnapshot: Codable, Sendable {
     public var idleRows: [DashboardRow]
     public var pagination: DashboardPagination
     public let uiLocalePreference: String
+}
+
+public struct CardEnrichment: Codable, Sendable {
+    public let state: String
+    public let runtimeRequests: Int
+    public let cacheHits: Int
+    public let timeouts: Int
+    public let durationMs: Int
+    public let usageTimedOut: Bool
 }
 
 public enum DashboardAppendBucket: Sendable {
@@ -367,11 +377,18 @@ public struct DashboardParameters: Codable, Sendable {
     public var limit: Int
     public var terminalOffset: Int
     public var idleOffset: Int
+    public var enrich: Bool
 
-    public init(limit: Int = 20, terminalOffset: Int = 0, idleOffset: Int = 0) {
+    public init(
+        limit: Int = 20,
+        terminalOffset: Int = 0,
+        idleOffset: Int = 0,
+        enrich: Bool = false
+    ) {
         self.limit = limit
         self.terminalOffset = terminalOffset
         self.idleOffset = idleOffset
+        self.enrich = enrich
     }
 }
 
