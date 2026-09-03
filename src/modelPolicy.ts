@@ -4,7 +4,7 @@ import type {
   CodexModelDescriptor
 } from "./modelCatalog.js";
 
-export const MODEL_POLICY_SCHEMA_VERSION = 3 as const;
+export const MODEL_POLICY_SCHEMA_VERSION = 4 as const;
 
 export type ModelChoice = {
   model: string;
@@ -36,7 +36,6 @@ export type ModelPolicy =
     }
   | {
       mode: "automatic";
-      fallbackSelection?: ModelChoice;
       allowedSelections: AllowedSelections;
       constraints: ModelPolicyConstraints;
     };
@@ -78,6 +77,7 @@ export type ExecutionDecision = {
 };
 
 export type ModelPolicyErrorCode =
+  | "MODEL_SELECTION_REQUIRED"
   | "MODEL_SELECTION_FORBIDDEN"
   | "MODEL_POLICY_CHANGED"
   | "MODEL_UNAVAILABLE"
@@ -92,15 +92,17 @@ export class ModelPolicyError extends Error {
     readonly policyRevision: number,
     readonly nextActions: string[]
   ) {
-    super(`${code}: ${message} (policy revision ${policyRevision})`);
+    super(
+      code === "MODEL_SELECTION_REQUIRED"
+        ? `${code}: ${message}`
+        : `${code}: ${message} (policy revision ${policyRevision})`
+    );
   }
 }
 
 export type ResolveModelPolicyInput = {
   policyRevision: number;
   policy: ModelPolicy;
-  /** Migration-only model preference from legacy settings that omitted effort. */
-  legacyPreferredModel?: string;
   catalog: CodexModelCatalogSnapshot;
   operatorCeiling?: ModelChoice[];
   backendKind: CodexBackendKind;
@@ -111,12 +113,9 @@ export type ResolveModelPolicyInput = {
   currentSelection?: ModelSelection;
 };
 
-export function automaticModelPolicy(
-  fallbackSelection?: ModelChoice
-): ModelPolicy {
+export function automaticModelPolicy(): ModelPolicy {
   return {
     mode: "automatic",
-    ...(fallbackSelection ? { fallbackSelection: cloneModelChoice(fallbackSelection) } : {}),
     allowedSelections: { kind: "catalog-visible" },
     constraints: { allowDelegation: true }
   };
@@ -154,26 +153,13 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
   } else {
     throw new Error("Invalid allowed model selections.");
   }
-  if (value.fallbackSelection !== undefined && value.preferredSelection !== undefined) {
-    throw new Error("Automatic model policy cannot contain both fallbackSelection and preferredSelection.");
-  }
-  const rawFallbackSelection = value.fallbackSelection ?? value.preferredSelection;
-  const fallbackSelection = rawFallbackSelection === undefined
-    ? undefined
-    : readModelChoice(rawFallbackSelection, "automatic fallback model selection");
-  if (
-    fallbackSelection &&
-    allowedSelections.kind === "explicit" &&
-    !allowedSelections.selections.some((entry) => sameModelChoice(entry, fallbackSelection))
-  ) {
-    throw new Error("The automatic fallback model selection must be included in the explicit allowlist.");
-  }
-  if (!constraints.allowDelegation && fallbackSelection?.reasoningEffort === "ultra") {
-    throw new Error("Ultra reasoning cannot be the automatic fallback while delegation is disabled.");
+  if (value.fallbackSelection !== undefined || value.preferredSelection !== undefined) {
+    throw new Error(
+      "Automatic model policy fallback/default selections are retired; callers must choose an exact selection for new work."
+    );
   }
   return {
     mode: "automatic",
-    ...(fallbackSelection ? { fallbackSelection } : {}),
     allowedSelections,
     constraints
   };
@@ -210,42 +196,6 @@ export function validatePolicyAgainstCatalog(
   );
 }
 
-/**
- * Produce a newly saved automatic policy with one exact omission fallback.
- * Existing persisted policies may omit it for backward compatibility, but
- * Settings saves and resets should materialize a deterministic pair from the
- * same live allowlist projection used for task admission.
- */
-export function materializeAutomaticFallback(
-  policy: ModelPolicy,
-  catalog: CodexModelCatalogSnapshot,
-  operatorCeiling?: ModelChoice[],
-  policyRevision = 0
-): ModelPolicy {
-  const normalized = validateModelPolicy(policy);
-  if (normalized.mode === "fixed") return normalized;
-  const allowed = listAllowedModelSelections(normalized, catalog, operatorCeiling);
-  if (
-    normalized.fallbackSelection &&
-    allowed.some((selection) => sameModelChoice(selection, normalized.fallbackSelection))
-  ) return normalized;
-  const fallbackSelection = catalogDefaultSelection(
-    catalog,
-    normalized,
-    operatorCeiling
-  );
-  if (!fallbackSelection) {
-    throw unavailable(
-      policyRevision,
-      "The automatic model policy has no usable exact fallback selection."
-    );
-  }
-  return {
-    ...normalized,
-    fallbackSelection
-  };
-}
-
 export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDecision {
   const policy = validateModelPolicy(input.policy);
   if (
@@ -260,24 +210,8 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
 
   let effectiveSelection: ModelSelection;
   let source: ExecutionDecisionSource;
-  let configuredFallbackUnavailable = false;
   let savedSelectionSupported = true;
   let fallbackWarning: string | undefined;
-  const fallbackSelection = policy.mode === "automatic"
-    ? policy.fallbackSelection
-    : undefined;
-  const legacyPreferredModel = input.legacyPreferredModel === undefined
-    ? undefined
-    : identifier(input.legacyPreferredModel, "legacy preferred model", 200);
-  const legacyPreferredSelection =
-    policy.mode === "automatic" && !fallbackSelection && legacyPreferredModel
-      ? catalogDefaultSelection(
-          input.catalog,
-          policy,
-          input.operatorCeiling,
-          legacyPreferredModel
-        )
-      : undefined;
   if (policy.mode === "fixed") {
     if (input.requestedSelection) {
       throw new ModelPolicyError(
@@ -315,48 +249,29 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     source = "caller";
   } else if (
     input.operation === "continue" &&
-    input.currentSelection &&
-    listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
-      .some((selection) => sameModelChoice(selection, input.currentSelection)) &&
-    catalogSupportsSelection(input.catalog, input.currentSelection)
+    input.currentSelection
   ) {
     // Omission on a retained thread means inheritance, not "choose the
     // omission fallback again". The current selection still has to survive
     // the active catalog, user policy, operator ceiling, and delegation
     // intersection; a policy change can therefore require an explicit fresh
     // context on a backend that cannot override continued threads.
+    assertSelectionAllowed(
+      input.currentSelection,
+      policy,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
     effectiveSelection = cloneSelection(input.currentSelection);
     source = "thread-inherited";
-  } else if (
-    fallbackSelection &&
-    listAllowedModelSelections(policy, input.catalog, input.operatorCeiling)
-      .some((selection) => sameModelChoice(selection, fallbackSelection))
-  ) {
-    effectiveSelection = cloneSelection(fallbackSelection);
-    source = "configured-fallback";
-  } else if (legacyPreferredSelection) {
-    effectiveSelection = legacyPreferredSelection;
-    source = "configured-fallback";
   } else {
-    configuredFallbackUnavailable = Boolean(fallbackSelection || legacyPreferredModel);
-    const backendDefault = catalogDefaultSelection(input.catalog, policy, input.operatorCeiling);
-    if (!backendDefault) {
-      throw unavailable(
-        input.policyRevision,
-        "The backend catalog does not expose a usable default model and reasoning effort."
-      );
-    }
-    effectiveSelection = backendDefault;
-    source = "backend-default";
-    if (configuredFallbackUnavailable) {
-      savedSelectionSupported = false;
-      const savedLabel = fallbackSelection
-        ? selectionLabel(fallbackSelection)
-        : String(legacyPreferredModel);
-      fallbackWarning =
-        `Saved automatic fallback ${savedLabel} is unsupported by the current catalog. ` +
-        `This turn uses ${selectionLabel(backendDefault)} without rewriting the configured fallback.`;
-    }
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_REQUIRED",
+      "Automatic policy requires an exact model and reasoning effort.",
+      input.policyRevision,
+      ["codex_models"]
+    );
   }
 
   if (source === "compatibility-fallback") {
@@ -418,9 +333,7 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
     ...(fallbackWarning ? { fallbackWarning } : {}),
     source,
     appliedAt: turnOverride ? "turn-start" : "thread-start",
-    reason: `${decisionReason(source, input.operation, input.backendKind, catalogValidation)}${configuredFallbackUnavailable
-      ? " The configured automatic fallback was outside the current allowed catalog intersection."
-      : ""}`
+    reason: decisionReason(source, input.operation, input.backendKind, catalogValidation)
   };
 }
 
@@ -576,32 +489,6 @@ function assertSelectionAllowed(
   }
 }
 
-function catalogDefaultSelection(
-  catalog: CodexModelCatalogSnapshot,
-  policy: ModelPolicy,
-  operatorCeiling?: ModelChoice[],
-  preferredModel?: string
-): ModelChoice | undefined {
-  const allowedKeys = new Set(
-    listAllowedModelSelections(policy, catalog, operatorCeiling).map(modelChoiceKey)
-  );
-  const ordered = [
-    ...catalog.models.filter((model) => !model.hidden && model.isDefault),
-    ...catalog.models.filter((model) => !model.hidden && !model.isDefault)
-  ].filter((model) => !preferredModel || model.id === preferredModel);
-  for (const model of ordered) {
-    const efforts = [
-      model.defaultReasoningEffort,
-      ...model.supportedReasoningEfforts.map((entry) => entry.effort)
-    ].filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index);
-    for (const reasoningEffort of efforts) {
-      const selection: ModelSelection = { model: model.id, reasoningEffort };
-      if (allowedKeys.has(modelChoiceKey(selection))) return selection;
-    }
-  }
-  return undefined;
-}
-
 function modelPolicyKey(policy: ModelPolicy): string {
   if (policy.mode === "fixed") {
     return JSON.stringify([
@@ -612,7 +499,6 @@ function modelPolicyKey(policy: ModelPolicy): string {
   }
   return JSON.stringify([
     "automatic",
-    policy.fallbackSelection ? modelChoiceKey(policy.fallbackSelection) : null,
     policy.allowedSelections.kind,
     policy.allowedSelections.kind === "explicit"
       ? policy.allowedSelections.selections.map(modelChoiceKey).sort()
@@ -699,13 +585,6 @@ function cloneSelection(selection: ModelSelection): ModelSelection {
     model: selection.model,
     reasoningEffort: selection.reasoningEffort,
     ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
-  };
-}
-
-function cloneModelChoice(selection: ModelChoice): ModelChoice {
-  return {
-    model: selection.model,
-    reasoningEffort: selection.reasoningEffort
   };
 }
 

@@ -123,12 +123,13 @@ where it must return an authoritative, recoverable error:
 - ChatGPT conversation scope comes from host metadata; explicit `scopeId` is a
   compatibility-only input for other MCP hosts.
 - New Activities and fresh Agent contexts require a current exact project. In
-  automatic mode GPT is instructed to choose a current exact model/effort pair;
-  omission is retained only as a defensive path and resolves to the exact saved
-  fallback. Existing continue/fork calls omit both fields and inherit their
-  admission-time project and selection unless they deliberately request a
-  runtime-policy-supported model override. If an exact current project selector
-  is unknown, `projectLookup` resolves it through the same stable Task contract.
+  automatic mode GPT must choose a current exact model/effort pair. Omission
+  fails with `MODEL_SELECTION_REQUIRED` and `codex_models` as its recovery action
+  before execution state or side effects. Existing continue/fork calls may omit
+  selection and inherit their admission-time thread choice unless they
+  deliberately request a runtime-policy-supported model override. If an exact
+  current project selector is unknown, `projectLookup` resolves it through the
+  same stable Task contract without requiring a model selection.
 - The selected project's ref/revision/name, active/available state, canonical
   root, model catalog, and execution policy are checked again during serialized
   admission even if the client retained a cached descriptor. An unrelated

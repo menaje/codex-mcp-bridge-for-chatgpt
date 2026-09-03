@@ -214,7 +214,6 @@ public struct BridgeSettings: Codable, Sendable {
     public let accessStrategy: String
     public let modelPolicy: ModelPolicy
     public let usePriorityServiceTier: Bool
-    public let legacyPreferredModel: String?
     public let projects: [BridgeProject]
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
@@ -270,20 +269,17 @@ public struct AllowedSelections: Codable, Sendable {
 public struct ModelPolicy: Codable, Sendable {
     public var mode: String
     public var selection: ModelChoice?
-    public var fallbackSelection: ModelChoice?
     public var allowedSelections: AllowedSelections?
     public var constraints: ModelPolicyConstraints
 
     public init(
         mode: String,
         selection: ModelChoice? = nil,
-        fallbackSelection: ModelChoice? = nil,
         allowedSelections: AllowedSelections? = nil,
         constraints: ModelPolicyConstraints
     ) {
         self.mode = mode
         self.selection = selection
-        self.fallbackSelection = fallbackSelection
         self.allowedSelections = allowedSelections
         self.constraints = constraints
     }

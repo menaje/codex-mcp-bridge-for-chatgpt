@@ -51,7 +51,6 @@ import {
   MODEL_POLICY_SCHEMA_VERSION,
   ModelPolicyError,
   listAllowedModelSelections,
-  materializeAutomaticFallback,
   modelChoiceKey,
   modelSelectionKey,
   resolveModelPolicy,
@@ -939,7 +938,6 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
   modelPolicy: modelPolicyZod(),
   usePriorityServiceTier: z.boolean(),
-  legacyPreferredModel: z.string().optional(),
   projects: z.array(z.strictObject({
     id: z.string(),
     projectRef: z.string(),
@@ -1361,19 +1359,29 @@ const handoffOutputSchema = z.strictObject({
   ]).optional()
 });
 
+const compactCatalogEffortOutputSchema = z.strictObject({
+  id: z.string(),
+  description: z.string().optional()
+});
+
+const compactCatalogServiceTierOutputSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional()
+});
+
 const compactCatalogModelOutputSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
-  efforts: z.array(z.string()),
-  serviceTiers: z.array(z.string())
+  description: z.string().optional(),
+  efforts: z.array(compactCatalogEffortOutputSchema),
+  serviceTiers: z.array(compactCatalogServiceTierOutputSchema)
 });
 
 const codexModelsOutputSchema = z.strictObject({
   source: z.string(),
   stale: z.boolean(),
   warning: z.string().nullable(),
-  policy: modelPolicySummaryOutputSchema,
-  priority: z.boolean(),
   models: z.array(compactCatalogModelOutputSchema)
 });
 
@@ -6966,7 +6974,7 @@ export function registerBridgeTools(
     {
       title: "List Codex Models",
       description:
-        "Return only the current policy-allowed Codex models and exact reasoning efforts, plus validated catalog state and supported service tiers. App Server model/list is preferred for that backend; the installed Codex CLI is the MCP source and fallback.",
+        "Discover the exact model/reasoning-effort pairs currently allowed by saved policy, operator ceiling, and the live backend catalog before automatic-policy new or fresh work. Returns only neutral IDs, upstream-provided descriptions, catalog freshness, and factual service-tier support—never recommendations, rankings, defaults, or fallback selections.",
       inputSchema: z.strictObject({
         refresh: z
           .boolean()
@@ -7009,15 +7017,30 @@ export function registerBridgeTools(
         .map((model) => ({
           id: model.id,
           name: model.displayName,
-          efforts: [...(allowedEffortsByModel.get(model.id) || [])].sort(),
-          serviceTiers: model.serviceTiers.map(({ id }) => id).sort()
+          ...(model.description ? { description: model.description } : {}),
+          efforts: [...(allowedEffortsByModel.get(model.id) || [])]
+            .sort()
+            .map((effort) => {
+              const description = model.supportedReasoningEfforts.find(
+                (entry) => entry.effort === effort
+              )?.description;
+              return {
+                id: effort,
+                ...(description ? { description } : {})
+              };
+            }),
+          serviceTiers: [...model.serviceTiers]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((tier) => ({
+              id: tier.id,
+              name: tier.name,
+              ...(tier.description ? { description: tier.description } : {})
+            }))
         }));
       const structured = {
         source: catalog.source,
         stale: catalog.stale,
         warning: catalog.warning || null,
-        policy: modelPolicySummary(preferences.modelPolicy),
-        priority: preferences.usePriorityServiceTier,
         models
       };
       return contractedToolResult(
@@ -7300,12 +7323,7 @@ export function registerBridgeTools(
         nextRevision
       );
       validatedCatalog = catalog;
-      const resetPolicy = materializeAutomaticFallback(
-        userSettings.defaults.modelPolicy,
-        catalog,
-        config.operatorModelCeiling,
-        nextRevision
-      );
+      const resetPolicy = userSettings.defaults.modelPolicy;
       validatePolicyAgainstCatalog(
         resetPolicy,
         catalog,
@@ -7324,7 +7342,6 @@ export function registerBridgeTools(
       if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
         const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
         if (
-          current.legacyPreferredModel !== undefined ||
           !sameModelPolicy(policy, current.modelPolicy) ||
           (
             patch.usePriorityServiceTier !== undefined &&
@@ -7417,7 +7434,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Existing threads stay pinned to their creation backend. When context='fresh' crosses backends, provide handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. Existing threads stay pinned to their creation backend. When context='fresh' crosses backends, provide handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -7482,22 +7499,6 @@ export function registerBridgeTools(
           }
           return projectLookupResult(args.projectLookup.name, userSettings);
         }
-        releaseRuntimeAdmission = acquireRuntimeAdmission();
-        if (
-          preferences.projects.length === 0 &&
-          args.project === undefined &&
-          (
-            args.activityId === undefined ||
-            args.contextMode === "fresh" ||
-            args.agentName !== undefined
-          )
-        ) {
-          // A genuinely empty registry is the sole projectless, pre-reference
-          // call: it is a no-work setup probe. Checking the already-loaded
-          // registry length first ensures stale normal calls never reach a
-          // filesystem availability probe before execution-policy rejection.
-          void userSettings.resolveProject();
-        }
         if (
           preferences.accessStrategy !== "adaptive" &&
           Object.prototype.hasOwnProperty.call(args, "sandbox")
@@ -7513,9 +7514,9 @@ export function registerBridgeTools(
             "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Use a new requestId and the current descriptor."
           );
         }
-        validateTaskSelectionInput(args, preferences);
         const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
+        validateTaskSelectionInput(args, preferences, activityRequest, agentResolution);
         if (
           args.project === undefined &&
           (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
@@ -7543,6 +7544,7 @@ export function registerBridgeTools(
         if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
         }
+        releaseRuntimeAdmission = acquireRuntimeAdmission();
 
         if (agentResolution.contextMode === "fresh") {
           const backendHandoff = resolveBackendHandoff({
@@ -8124,7 +8126,9 @@ class AgentThreadResumeError extends Error {
 
 function validateTaskSelectionInput(
   args: CodexTaskArgs,
-  preferences: BridgeUserSettings
+  preferences: BridgeUserSettings,
+  activityRequest: { activityId?: string },
+  agentResolution: { contextMode: AgentContextMode }
 ): void {
   if (
     preferences.modelPolicy.mode === "fixed" &&
@@ -8135,6 +8139,18 @@ function validateTaskSelectionInput(
       "This bridge is in fixed model mode and does not accept a per-call model selection.",
       preferences.revision,
       ["Omit selection and retry; the saved fixed selection will be applied."]
+    );
+  }
+  if (
+    preferences.modelPolicy.mode === "automatic" &&
+    args.selection === undefined &&
+    (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
+  ) {
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_REQUIRED",
+      "Automatic policy requires an exact model and reasoning effort.",
+      preferences.revision,
+      ["codex_models"]
     );
   }
 }
@@ -12714,7 +12730,6 @@ function modelPolicyZod(): z.ZodType<ModelPolicy> {
     }),
     z.strictObject({
       mode: z.literal("automatic"),
-      fallbackSelection: modelChoiceZod().optional(),
       allowedSelections: z.union([
         z.strictObject({ kind: z.literal("catalog-visible") }),
         z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelChoiceZod()).min(1).max(500) })
@@ -12734,7 +12749,6 @@ function editableModelPolicyZod() {
     }),
     z.strictObject({
       mode: z.literal("automatic"),
-      fallbackSelection: modelChoiceZod(),
       allowedSelections: z.union([
         z.strictObject({ kind: z.literal("catalog-visible") }),
         z.strictObject({ kind: z.literal("explicit"), selections: z.array(modelChoiceZod()).min(1).max(500) })
@@ -12838,7 +12852,7 @@ function codexTaskInputSchema(
       "Optional requested sandbox. Current saved access settings are authoritative; a fixed access mode rejects an explicit per-call override instead of silently broadening it."
     ),
     selection: modelChoiceZod().optional().describe(
-      "Optional exact model/reasoning request. Current saved model policy and live catalog validate it at runtime; omission applies the saved policy without exposing its fallback."
+      "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
   };
   const projected = z.strictObject(publicCommon);
@@ -13570,18 +13584,6 @@ async function buildSettingsView(
         "Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
-      ...(userSettings.current.legacyPreferredModel
-        ? [
-            `Legacy model-only preference '${userSettings.current.legacyPreferredModel}' remains active; its exact default effort is materialized from the backend catalog. Priority remains an independent user preference.`
-          ]
-        : []),
-      ...(userSettings.current.modelPolicy.mode === "automatic" &&
-        !userSettings.current.modelPolicy.fallbackSelection &&
-        !userSettings.current.legacyPreferredModel
-        ? [
-            "Legacy automatic model policy has no exact saved omission fallback. The backend catalog default remains the compatibility fallback until the preselected model and reasoning effort are saved in Settings."
-          ]
-        : []),
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])
     ],
     scopeNotice:
@@ -13662,7 +13664,7 @@ function settingsViewResult(
   const actionableWarnings = [...new Set([
     ...(view.catalog.warning ? [view.catalog.warning] : []),
     ...view.warnings.filter((warning) =>
-      /MODEL_|model policy|Legacy model-only|Priority|Existing Agent threads remain pinned|handoffSummary/i
+      /MODEL_|model policy|retired automatic model default|Priority|Existing Agent threads remain pinned|handoffSummary/i
         .test(warning)
     ).map(modelVisibleSettingsWarning),
     ...unavailableProjectWarnings
@@ -13736,12 +13738,6 @@ function settingsViewResult(
 }
 
 function modelVisibleSettingsWarning(warning: string): string {
-  if (/^Legacy model-only preference '/.test(warning)) {
-    return (
-      "Legacy model-only preference remains active; its exact value is available only in " +
-      "Settings. Save an exact model/reasoning fallback to complete migration."
-    );
-  }
   return warning;
 }
 
@@ -13879,7 +13875,6 @@ async function resolveExecutionDecision(input: {
   const decision = resolveModelPolicy({
     policyRevision: input.preferences.revision,
     policy: input.preferences.modelPolicy,
-    legacyPreferredModel: input.preferences.legacyPreferredModel,
     catalog,
     operatorCeiling: effectiveModelCeiling(
       catalog,

@@ -157,7 +157,10 @@ for ChatGPT setup. No Keychain API is used for tunnel credentials.
 Native Settings preserves the retained card's catalog-drift behavior. Saved
 model/effort choices that are no longer selectable remain visible and labelled,
 while an unrelated general-setting save omits an untouched model policy instead
-of silently dropping or revalidating it. Loading, mutation, Dashboard,
+of silently dropping or revalidating it. Automatic policy configures only the
+allowed range; it stores no preferred/default/fallback pair, so new work must
+supply one exact model and effort while continue/fork omission inherits the
+retained thread. Loading, mutation, Dashboard,
 authentication, runtime, and diagnostic failures keep independent UI state so
 one successful poll cannot hide another failed action.
 While the Settings window is open it refreshes the shared snapshot every ten

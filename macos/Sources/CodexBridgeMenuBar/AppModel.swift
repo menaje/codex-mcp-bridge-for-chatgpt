@@ -30,7 +30,6 @@ struct SettingsDraft: Equatable {
     var accessStrategy: String
     var policyMode: String
     var fixedSelectionKey: String
-    var fallbackSelectionKey: String
     var allowedKind: String
     var explicitSelectionKeys: Set<String>
     var allowDelegation: Bool
@@ -45,7 +44,6 @@ struct SettingsDraft: Equatable {
     private struct PolicyState: Equatable {
         let mode: String
         let fixedSelectionKey: String
-        let fallbackSelectionKey: String
         let allowedKind: String
         let explicitSelectionKeys: Set<String>
         let allowDelegation: Bool
@@ -57,19 +55,6 @@ struct SettingsDraft: Equatable {
         accessStrategy = settings.accessStrategy
         policyMode = settings.modelPolicy.mode
         fixedSelectionKey = settings.modelPolicy.selection?.key ?? ""
-        let legacyFallback = Self.legacyFallback(in: snapshot)
-        let savedFallbackKey = settings.modelPolicy.fallbackSelection?.key
-            ?? legacyFallback?.key
-            ?? ""
-        let suggestedFallbackKey = settings.modelPolicy.mode == "automatic"
-            ? Self.selectableChoices(
-                in: snapshot,
-                allowDelegation: settings.modelPolicy.constraints.allowDelegation
-            ).first?.key ?? ""
-            : ""
-        fallbackSelectionKey = savedFallbackKey.isEmpty
-            ? suggestedFallbackKey
-            : savedFallbackKey
         allowedKind = settings.modelPolicy.allowedSelections?.kind ?? "catalog-visible"
         explicitSelectionKeys = Set(
             settings.modelPolicy.allowedSelections?.selections?.map(\ModelChoice.key) ?? []
@@ -84,7 +69,6 @@ struct SettingsDraft: Equatable {
         originalPolicyState = PolicyState(
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
-            fallbackSelectionKey: savedFallbackKey,
             allowedKind: allowedKind,
             explicitSelectionKeys: explicitSelectionKeys,
             allowDelegation: allowDelegation
@@ -106,7 +90,6 @@ struct SettingsDraft: Equatable {
         PolicyState(
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
-            fallbackSelectionKey: fallbackSelectionKey,
             allowedKind: allowedKind,
             explicitSelectionKeys: explicitSelectionKeys,
             allowDelegation: allowDelegation
@@ -166,20 +149,8 @@ struct SettingsDraft: Equatable {
 
     private static func savedChoices(in snapshot: SettingsSnapshot) -> [ModelChoice] {
         let policy = snapshot.settings.modelPolicy
-        return [policy.selection, policy.fallbackSelection, legacyFallback(in: snapshot)]
-            .compactMap { $0 } + (policy.allowedSelections?.selections ?? [])
-    }
-
-    private static func legacyFallback(in snapshot: SettingsSnapshot) -> ModelChoice? {
-        guard snapshot.settings.modelPolicy.mode == "automatic",
-              snapshot.settings.modelPolicy.fallbackSelection == nil,
-              let modelID = snapshot.settings.legacyPreferredModel,
-              let model = snapshot.catalog.models.first(where: { $0.id == modelID }),
-              let effort = model.defaultReasoningEffort
-                ?? model.supportedReasoningEfforts.first?.effort else {
-            return nil
-        }
-        return ModelChoice(model: modelID, reasoningEffort: effort)
+        return [policy.selection].compactMap { $0 } +
+            (policy.allowedSelections?.selections ?? [])
     }
 }
 
@@ -545,8 +516,7 @@ final class AppModel: ObservableObject {
                 in: snapshot,
                 allowDelegation: draft.allowDelegation,
                 preservingKeys: draft.explicitSelectionKeys.union([
-                    draft.fixedSelectionKey,
-                    draft.fallbackSelectionKey
+                    draft.fixedSelectionKey
                 ])
             ).map { ($0.key, $0) }
         )
@@ -569,16 +539,9 @@ final class AppModel: ObservableObject {
                     constraints: ModelPolicyConstraints(allowDelegation: draft.allowDelegation)
                 )
             } else {
-                guard let fallback = displayedChoices[draft.fallbackSelectionKey],
-                      selectableKeys.contains(fallback.key) else {
-                    settingsErrorMessage =
-                        "현재 사용할 수 있는 자동 정책 fallback을 선택해 주세요."
-                    return false
-                }
                 let allowed: AllowedSelections
                 if draft.allowedKind == "explicit" {
-                    var selectedKeys = draft.explicitSelectionKeys
-                    selectedKeys.insert(fallback.key)
+                    let selectedKeys = draft.explicitSelectionKeys
                     guard selectedKeys.allSatisfy(selectableKeys.contains) else {
                         settingsErrorMessage =
                             "현재 사용할 수 없는 저장된 모델 조합을 허용 목록에서 해제해 주세요."
@@ -598,7 +561,6 @@ final class AppModel: ObservableObject {
                 }
                 policy = ModelPolicy(
                     mode: "automatic",
-                    fallbackSelection: fallback,
                     allowedSelections: allowed,
                     constraints: ModelPolicyConstraints(allowDelegation: draft.allowDelegation)
                 )

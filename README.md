@@ -48,7 +48,7 @@ An Activity is a goal and verification boundary. An Agent is a long-lived collab
 - `codex_activity_cancel`: idempotently force-stop every active job in one Activity and mark it cancelled.
 - `codex_agent`: rename, archive, or restore an Agent. It never deletes an Agent.
 - `codex_cancel`: idempotently force-stop one active scope-owned turn/job using a cancellation `requestId` and exact `expectedVersion`. Filesystem changes are not rolled back.
-- `codex_models`: read the current picker-visible model catalog and exact supported efforts.
+- `codex_models`: read the neutral current policy-allowed model, reasoning-effort, and service-tier combinations with upstream descriptions.
 - `codex_settings`: render saved named projects, policy, and preferences.
 
 Omit `query` for the scoped status overview. Otherwise choose exactly one detail,
@@ -335,19 +335,18 @@ In automatic policy's explicit mode, models and reasoning efforts are selected s
 
 For automatic policy, GPT must choose one exact model/effort pair from the
 current allowed range for every new Activity, new Agent, or fresh context. The
-bridge publishes no preferred pair or task-to-model mapping. Settings also
-persists one required exact fallback pair for defensive omission handling; it is
-not exposed to GPT as a recommendation or schema default. Continue/fork
-omission inherits the admission-time selection; an explicit pair requests an
-override only when the descriptor and backend permit it. Legacy policies saved
-without an exact fallback continue to use the validated backend catalog default
-until the Settings card saves its preselected pair.
+bridge persists and publishes no preferred, default, or fallback pair and adds
+no task-to-model mapping. If selection is omitted for new work, admission fails
+with `MODEL_SELECTION_REQUIRED` and `codex_models` as the recovery action before
+any Activity, Agent, Job, session, filesystem, or upstream state is created.
+Continue/fork omission inherits the admission-time selection; an explicit pair
+requests an override only when the current policy and backend permit it.
 
 Priority is an independent user preference, not part of the model policy. GPT sees and selects only `model` and `reasoningEffort`. When Priority is enabled, the bridge validates that the chosen model supports the Priority/Fast tier and injects the catalog's `priority` (or `fast`) identifier only into the downstream Codex call. Existing MCP threads retain their admission-time tier when that backend cannot change tiers on continuation.
 
 `Show bridge threads in the Codex app` defaults off. With the App Server backend, newly created and forked threads are therefore ephemeral and stay out of the Codex app list unless the user enables this preference; existing threads are unchanged. Ephemeral threads live only in their App Server worker and cannot be resumed after that worker or the bridge restarts. The current MCP Server tool contract has no ephemeral-thread option, so the card saves the preference but explains that hiding requires switching the bridge backend to App Server and restarting.
 
-Opening Settings returns only a compact, path-free public summary. The generation-13 card ignores cached initial tool-result hydration, shows loading, and renders only after the app-private `codex_settings_snapshot` reads the current persisted settings and project registry. That snapshot resolves the model catalog through the normal short-lived cache. There is no persistent refresh control or polling; when the lookup is stale or fails, the card keeps the last-known-good catalog and shows a contextual retry action that refreshes the catalog through the same app-private data path.
+Opening Settings returns only a compact, path-free public summary. The generation-14 card ignores cached initial tool-result hydration, shows loading, and renders only after the app-private `codex_settings_snapshot` reads the current persisted settings and project registry. That snapshot resolves the model catalog through the normal short-lived cache. There is no persistent refresh control or polling; when the lookup is stale or fails, the card keeps the last-known-good catalog and shows a contextual retry action that refreshes the catalog through the same app-private data path.
 
 The Activity card has one conversation-scoped flat-feed layout. Older saved
 layout preferences are safely discarded; there is no layout selector or active
@@ -355,7 +354,7 @@ layout setting.
 
 The Projects section is the single place where Codex start folders are configured. Users enter only a project name and an existing absolute folder; the server generates a private immutable UUID and keeps it stable across rename, relocate, archive, and restore. The folders may be unrelated and live anywhere on the PC. Saving resolves folders with `realpath`, rejects files and active normalized-name/canonical-path collisions, and never derives identity from a name or slug. No project is a default: every new Activity or fresh Agent context must use one exact current selector resolved by `codex_task.projectLookup` in the same conversation. If a saved folder later disappears, its metadata remains visible for recovery but cannot admit new work until the folder is restored or the project is archived. Archived projects are not selectable; restore keeps the same UUID. Legacy project/default identifiers are intentionally not imported into this identity model.
 
-The generation-13 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project UUIDs, names, folders, order, archive state, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, `archive`, `restore`, and archived-registration `delete` variants expose only their relevant app-private fields. Ordinary settings use `settingsRevision`; the project registry uses an independent `registryRevision` that advances exactly once for each effective project transaction, regardless of the number of operations. Both generations are checked immediately before the single commit. Retained generation-9 and newer resources keep the compatible mutation boundary; earlier ID/default and single-revision contracts remain retired.
+The generation-14 Settings card saves one atomic `operation`. `reset` restores only general preferences and preserves project UUIDs, names, folders, order, archive state, and recovery metadata. `patch.settings` contains only changed policy/preferences and a bounded `projectOperations` list whose `add`, `rename`, `relocate`, `archive`, `restore`, and archived-registration `delete` variants expose only their relevant app-private fields. Ordinary settings use `settingsRevision`; the project registry uses an independent `registryRevision` that advances exactly once for each effective project transaction, regardless of the number of operations. Both generations are checked immediately before the single commit. Retained generation-9 and newer resources keep the compatible mutation boundary; earlier ID/default and single-revision contracts remain retired.
 
 `codex_task` contract v2 publishes a generic closed `{ name, projectRef, projectRevision }` shape and a same-tool no-work `projectLookup: { name }`; it never embeds the registry inventory, internal UUIDs, or paths in its descriptor. Lookup returns the exact current selector in `nextActions` and creates no Activity, Agent, Job, session, filesystem mutation, or upstream turn. `projectRef` is opaque, restart-stable, and never reused; `projectRevision` advances once for an effective rename, relocate, archive, or restore transaction affecting that project. External folder deletion, mount loss, and restoration do not rewrite the revision. The global `registryRevision` remains only the Settings compare-and-swap generation. Every new Activity or fresh Agent context requires one exact current object, even when only one project is registered. Omission fails with `PROJECT_REQUIRED`; with no registered project it returns structured `PROJECT_SETUP_REQUIRED` with `codex_settings` as the next action. Runtime ref/revision/name, active/available state, and canonical-root resolution are the safety boundary. A stale selector fails closed and returns same-tool lookup recovery without a connection Refresh; an unrelated project mutation leaves an unchanged selector valid. The project is rechecked in the same SQLite transaction as Activity, Agent creation/assignment, replay registration, and Job admission, pinning the immutable private UUID plus canonical cwd snapshot. Continue/fork omits `project`, retains that snapshot across registry changes, and returns `PROJECT_UNAVAILABLE` without fallback if the pinned folder cannot be resolved exactly. An exact admitted v7 `requestId` replay retains its original admission/result after later settings, catalog, or registry changes. Legacy `{ name, registryRevision }` and public `executionPolicyRef` inputs remain bounded cached pre-v2 migration paths only.
 
@@ -375,27 +374,27 @@ Settings are shared by the bridge instance, not isolated per ChatGPT account. Th
 
 App Server `model/list` is authoritative for an App Server target. The installed CLI catalog is the MCP source and bounded fallback. The bridge records catalog source, fetch/validation time, fingerprint, cache/LKG status, picker visibility, default model/effort, supported efforts, upgrade metadata, and service tiers.
 
-The Settings card builds model and effort options from that catalog; new upstream values do not require a card release. Each effort option contains only a short localized label. The selected effort's description appears in a separate `aria-describedby` helper below the selector. The GPT-facing stable `codex_task.selection` is one generic closed `{ model, reasoningEffort }` shape; `codex_models` and runtime admission expose and enforce the current allowed values. The bridge adds no task mapping, ranking, recommendation, or locally authored effort glossary. The saved omission fallback is not encoded as a schema default, marker, ordering hint, or public model-result summary, and catalog default flags remain app-private.
+The Settings card builds model and effort options from that catalog; new upstream values do not require a card release. Each effort option contains only a short localized label. The selected effort's description appears in a separate `aria-describedby` helper below the selector. The GPT-facing stable `codex_task.selection` is one generic closed `{ model, reasoningEffort }` shape. `codex_models` returns the neutral current allowed model/effort combinations plus upstream descriptions and service-tier support, sorted by identifier; it exposes no active policy summary, Priority state, recommendation, rank, default, or fallback. Runtime admission enforces the same intersection. The bridge adds no task mapping or locally authored effort glossary, and catalog default flags remain app-private.
 
 Contract v2 requires exact `taskContractVersion: "2"` and a 64-hex `executionEnvelopeRef`. The opaque installation-keyed envelope binds the stable input generation and operator-owned maximum/static authority: prompt bound, command/backend, allowed roots, sandbox capabilities, approval policy, model ceiling, and secret preflight. Saved access/model/presentation settings, projects, availability, and the live catalog are deliberately excluded. Their changes take effect immediately at runtime while the complete public Task descriptor stays byte-identical, so existing v2 conversations need neither `tools/list_changed` nor Developer-mode Refresh.
 
-Every new v2 call privately captures an exact mutable execution-policy HMAC over saved model/access/priority/thread-visibility/concurrency settings plus the resolved admission catalog, then rechecks it at asynchronous and serialized admission boundaries. A concurrent change returns `EXECUTION_POLICY_CHANGED` before Activity, Agent, Job, filesystem preflight, or upstream work; retry the same stable contract with a new `requestId` and no connection Refresh. `MODEL_POLICY_CHANGED`, `MODEL_UNAVAILABLE`, and `MODEL_SELECTION_FORBIDDEN` are runtime selection errors recovered through `codex_models`, current Settings, and a new logical call—not schema rediscovery. Exact admitted v7 replays return their retained result first. A cached pre-v2 descriptor remains bound to its public `executionPolicyRef` and needs one Refresh to migrate to v2 after it becomes stale. `EXECUTION_ENVELOPE_CHANGED` is reserved for an operator/static contract change and does require Refresh.
+Every new v2 call privately captures an exact mutable execution-policy HMAC over saved model/access/priority/thread-visibility/concurrency settings plus the resolved admission catalog, then rechecks it at asynchronous and serialized admission boundaries. A concurrent change returns `EXECUTION_POLICY_CHANGED` before Activity, Agent, Job, filesystem preflight, or upstream work; retry the same stable contract with a new `requestId` and no connection Refresh. `MODEL_SELECTION_REQUIRED`, `MODEL_POLICY_CHANGED`, `MODEL_UNAVAILABLE`, and `MODEL_SELECTION_FORBIDDEN` are runtime selection errors recovered through `codex_models`, current Settings, and a new logical call—not schema rediscovery. Exact admitted v7 replays return their retained result first. A cached pre-v2 descriptor remains bound to its public `executionPolicyRef` and needs one Refresh to migrate to v2 after it becomes stale. `EXECUTION_ENVELOPE_CHANGED` is reserved for an operator/static contract change and does require Refresh.
 
 Stateless Streamable HTTP remains the default. Experimental stateful HTTP and persistent stdio retain bounded notification/re-list diagnostics for genuine static descriptor or UI changes, but ordinary settings/catalog/project changes do not publish a new descriptor epoch. Transport notification or re-list evidence never proves host adoption. The byte-framed stdio integration test verifies that a saved settings change leaves the same descriptor and emits no false `tools/list_changed` notification. No separate service or external session store is introduced by either transport.
 
 Known effort IDs use deterministic locale dictionaries. An unknown upstream effort remains selectable with its canonical label and a localized generic description. Missing translation coverage is diagnostic and does not block catalog refresh.
 
 If a saved effort disappears, the bridge does not silently rewrite it. Settings
-shows a localized warning and runtime may use the policy's validated transient
-compatible fallback while recording both the warning and effective effort. An
-invalid explicit selection fails before admission and is retried from the same
-stable contract after reading `codex_models`; no connection Refresh is needed.
+shows a localized warning. An invalid automatic selection fails before admission
+and is retried from the same stable contract after reading `codex_models`; no
+connection Refresh is needed. Fixed mode retains its separately documented
+compatibility fallback without rewriting the saved fixed selection.
 
 The saved `modelPolicy` is either:
 
 - `fixed`: one exact model/effort selection; or
 - `automatic`: current catalog-visible selections or an explicit exact allowlist,
-  with one exact omission-only configured fallback for every newly saved policy.
+  with no persisted preferred/default/fallback selection.
 
 Runtime admission always rechecks the operator ceiling, saved policy, current backend catalog, and backend capability. Model aliases are not accepted.
 
@@ -638,8 +637,6 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS` | unset | Enables danger-full-access capability |
 | `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `untrusted`, `on-request`, or `never` |
 | `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | New-thread backend: `mcp-server` or `app-server` |
-| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional automatic fallback model seed; requires effort seed |
-| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional automatic fallback effort seed; requires model seed |
 | `CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING` | unset | Immutable JSON model/effort ceiling |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Successful catalog TTL |
 | `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Catalog refresh timeout |
@@ -655,7 +652,7 @@ The current product/repository/package names include **for ChatGPT**. Bare `code
 | `CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS` | unset | Explicitly enables private transaction-guarded Agent assignment recovery |
 | `CODEX_MCP_BRIDGE_DEBUG` | unset | Local diagnostics/upstream stderr |
 
-Legacy `DEFAULT_SESSION_MODE`, `AUTO_RESUME_TTL_MS`, `FAST_RETURN_MS`, and `UPSTREAM_TIMEOUT_MS` variables are ignored with migration warnings. The pre-fork `CODEX_GPT_BRIDGE_*` prefix is a temporary compatibility fallback.
+Legacy `DEFAULT_SESSION_MODE`, `AUTO_RESUME_TTL_MS`, `FAST_RETURN_MS`, `UPSTREAM_TIMEOUT_MS`, `DEFAULT_MODEL`, and `DEFAULT_REASONING_EFFORT` variables are ignored with migration warnings. The pre-fork `CODEX_GPT_BRIDGE_*` prefix is a temporary compatibility fallback.
 
 `CODEX_MCP_BRIDGE_ROOTS` remains accepted only as a backwards-compatible
 restriction for older direct-server deployments. The bundled launchers never

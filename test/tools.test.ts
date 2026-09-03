@@ -1413,10 +1413,10 @@ describe("bridge tools", () => {
     );
     expect(automaticPolicySchema.required).toEqual(expect.arrayContaining([
       "mode",
-      "fallbackSelection",
       "allowedSelections",
       "constraints"
     ]));
+    expect(automaticPolicySchema.properties).not.toHaveProperty("fallbackSelection");
     expect(settingsPatchSchema.properties.projectOperations.items.oneOf.map(
       (variant: any) => variant.properties.kind.const
     )).toEqual(["add", "rename", "relocate", "archive", "restore", "delete"]);
@@ -1946,7 +1946,7 @@ describe("bridge tools", () => {
             "operation",
           ],
           "propertyCount": 3,
-          "schemaBytes": 5089,
+          "schemaBytes": 4826,
           "visibility": {
             "app": true,
             "model": false,
@@ -1975,7 +1975,7 @@ describe("bridge tools", () => {
             "taskContractVersion",
           ],
           "propertyCount": 11,
-          "schemaBytes": 5475,
+          "schemaBytes": 5545,
           "visibility": {
             "app": false,
             "model": true,
@@ -2323,7 +2323,9 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("!elements.form.reportValidity()");
     expect(contents.text).toContain("Number.isSafeInteger(value)");
     expect(contents.text).toContain("if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy()");
-    expect(contents.text).toContain("settings.legacyPreferredModel");
+    expect(contents.text).not.toContain("settings.legacyPreferredModel");
+    expect(contents.text).not.toContain('id="preferred-model"');
+    expect(contents.text).not.toContain('id="preferred-effort"');
     expect(contents.text).toContain('id="allowed-models"');
     expect(contents.text).toContain('id="effort-groups"');
     expect(contents.text).toContain('id="use-priority-service-tier" type="checkbox"');
@@ -4486,7 +4488,7 @@ describe("bridge tools", () => {
         uiLocalePreference: "auto",
         modelPolicy: {
           mode: "automatic",
-          fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+          allowedSelections: { kind: "catalog-visible" }
         },
         projects: beforeReset.projects
       });
@@ -4757,15 +4759,18 @@ describe("bridge tools", () => {
     expect(result).toMatchObject({
       source: "codex-cli",
       stale: false,
-      warning: null,
-      policy: { mode: "automatic", delegation: true },
-      priority: false
+      warning: null
     });
+    expect(result).not.toHaveProperty("policy");
+    expect(result).not.toHaveProperty("priority");
     expect(result).not.toHaveProperty("fingerprint");
     expect(result.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol"))
       .toMatchObject({
       name: "GPT-5.6 Sol",
-      efforts: expect.arrayContaining(["high", "max"])
+      efforts: expect.arrayContaining([
+        expect.objectContaining({ id: "high" }),
+        expect.objectContaining({ id: "max" })
+      ])
     });
     expect(result.models.every((entry: Record<string, unknown>) =>
       !("defaultEffort" in entry) && !("isDefault" in entry)
@@ -4783,8 +4788,8 @@ describe("bridge tools", () => {
       properties?: Record<string, unknown>;
       additionalProperties?: boolean;
     };
-    expect(selection.description).toContain("live catalog");
-    expect(selection.description).toContain("without exposing its fallback");
+    expect(selection.description).toContain("codex_models");
+    expect(selection.description).toContain("Required at runtime");
     expect(selection).toMatchObject({
       type: "object",
       required: ["model", "reasoningEffort"],
@@ -4796,6 +4801,70 @@ describe("bridge tools", () => {
     });
     expect(JSON.stringify(selection)).not.toMatch(/gpt-5\.6-sol|frontier agentic coding/);
 
+    await close();
+  });
+
+  it("rejects missing automatic new-work selection before any execution side effect", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, bareCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const project = settings.current.projects[0]!;
+    const callWithoutSelection = (requestId: string) => bareCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId,
+        taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
+        executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+        prompt: "must not be admitted",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "No Selection Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const assertNoSideEffects = (result: any) => {
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "MODEL_SELECTION_REQUIRED",
+            message: "Automatic policy requires an exact model and reasoning effort."
+          },
+          nextActions: ["codex_models"]
+        }
+      });
+      expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+      expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+      expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+      expect(upstream.calls).toEqual([]);
+    };
+
+    assertNoSideEffects(await callWithoutSelection("47474747-4747-4747-8747-474747474747"));
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [{ model: "gpt-5.6-sol", reasoningEffort: "max" }]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    assertNoSideEffects(await callWithoutSelection("48484848-4848-4848-8848-484848484848"));
     await close();
   });
 
@@ -4825,7 +4894,6 @@ describe("bridge tools", () => {
           settings: {
             modelPolicy: {
               mode: "automatic",
-              fallbackSelection: allowedSelections[0],
               allowedSelections: { kind: "explicit", selections: allowedSelections },
               constraints: { allowDelegation: true }
             }
@@ -4841,13 +4909,9 @@ describe("bridge tools", () => {
     );
 
     const listed = parseToolJson(await client.callTool({ name: "codex_models", arguments: {} }));
-    expect(listed.policy).toMatchObject({
-      mode: "automatic",
-      allowed: "explicit",
-      allowedCount: 17
-    });
+    expect(listed).not.toHaveProperty("policy");
     const listedCounts = Object.fromEntries(
-      listed.models.map((entry: { id: string; efforts: string[] }) => [entry.id, entry.efforts.length])
+      listed.models.map((entry: { id: string; efforts: Array<{ id: string }> }) => [entry.id, entry.efforts.length])
     );
     expect(listedCounts).toEqual({
       "gpt-5.6-luna": 5,
@@ -4918,13 +4982,10 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("keeps an exact legacy model-only preference private to Settings hydration", async () => {
+  it("removes a legacy model-only preference without exposing its value", async () => {
     const root = temporaryRoot();
     const stateFile = path.join(temporaryRoot(), "settings.json");
-    const config = configFor(root, {
-      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
-      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
-    });
+    const config = configFor(root);
     const initial = new UserSettingsStore(config, { stateFile });
     initial.update({ uiLocalePreference: "ko" }, 0);
     const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
@@ -4954,11 +5015,11 @@ describe("bridge tools", () => {
     }));
     expect(JSON.stringify(publicView)).not.toContain("gpt-private-legacy-default");
     expect(publicView.warnings).toContain(
-      "Legacy model-only preference remains active; its exact value is available only in " +
-      "Settings. Save an exact model/reasoning fallback to complete migration."
+      "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work."
     );
-    expect(privateView.warnings.join(" ")).toContain("gpt-private-legacy-default");
-    expect(privateView.warnings.join(" ")).toContain("이전 모델 전용 설정");
+    expect(privateView.warnings.join(" ")).not.toContain("gpt-private-legacy-default");
+    expect(privateView.settings).not.toHaveProperty("legacyPreferredModel");
+    expect(privateView.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
     expect(privateView.warnings.join(" ")).not.toContain("Legacy model-only preference");
     expect(privateView.warnings.join(" ")).toContain(
       "기존 Agent 스레드는 처음 사용한 백엔드에 계속 고정"
@@ -5055,7 +5116,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("does not encode the saved automatic fallback in the GPT task input schema", async () => {
+  it("does not expose a fallback/default in automatic policy contracts", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
     const allowedSelections = [
@@ -5070,7 +5131,6 @@ describe("bridge tools", () => {
         modelPolicy: {
           mode: "automatic",
           allowedSelections: { kind: "explicit", selections: allowedSelections },
-          fallbackSelection: allowedSelections[0],
           constraints: { allowDelegation: true }
         }
       }
@@ -5084,8 +5144,7 @@ describe("bridge tools", () => {
         expectedRevision: 1,
         modelPolicy: {
           mode: "automatic",
-          allowedSelections: { kind: "explicit", selections: allowedSelections },
-          fallbackSelection: allowedSelections[1],
+          allowedSelections: { kind: "catalog-visible" },
           constraints: { allowDelegation: true }
         }
       }
@@ -5093,7 +5152,7 @@ describe("bridge tools", () => {
     const secondSchema = (await client.listTools()).tools
       .find((entry) => entry.name === "codex_task")!.inputSchema;
 
-    // Contract v2 never encodes the fallback or a mutable policy reference.
+    // Contract v2 never encodes mutable policy values or a fallback/default.
     expect(secondSchema).toEqual(firstSchema);
     expect(firstSchema.properties).not.toHaveProperty("executionPolicyRef");
     expect(JSON.stringify(secondSchema)).not.toContain("fallbackSelection");
@@ -5104,11 +5163,13 @@ describe("bridge tools", () => {
     const publicSettings = parseToolJson(
       await client.callTool({ name: "codex_settings", arguments: {} })
     );
-    for (const summary of [publicModels.policy, publicSettings.policy.model]) {
-      expect(summary).toMatchObject({ mode: "automatic", allowed: "explicit" });
-      expect(summary).not.toHaveProperty("model");
-      expect(summary).not.toHaveProperty("reasoningEffort");
-    }
+    expect(publicModels).not.toHaveProperty("policy");
+    expect(publicSettings.policy.model).toMatchObject({
+      mode: "automatic",
+      allowed: "catalog-visible"
+    });
+    expect(publicSettings.policy.model).not.toHaveProperty("model");
+    expect(publicSettings.policy.model).not.toHaveProperty("reasoningEffort");
     expect(publicModels.models.every((model: Record<string, unknown>) =>
       !("defaultEffort" in model) && !("isDefault" in model)
     )).toBe(true);
@@ -5232,7 +5293,6 @@ describe("bridge tools", () => {
             kind: "explicit",
             selections: [{ model: "gpt-5.6-terra", reasoningEffort: "high" }]
           },
-          fallbackSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
           constraints: { allowDelegation: true }
         }
       }
@@ -5270,7 +5330,6 @@ describe("bridge tools", () => {
         usePriorityServiceTier: true,
         modelPolicy: {
           mode: "automatic",
-          fallbackSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
           allowedSelections: {
             kind: "explicit",
             selections: [
@@ -5400,7 +5459,6 @@ describe("bridge tools", () => {
         expectedRevision: 0,
         modelPolicy: {
           mode: "automatic",
-          fallbackSelection: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
           allowedSelections: {
             kind: "explicit",
             selections: [
@@ -6405,7 +6463,6 @@ describe("bridge tools", () => {
       ];
       const policyBase = {
         mode: "automatic" as const,
-        fallbackSelection: choices[0],
         constraints: { allowDelegation: false }
       };
       const forward = {
@@ -9057,7 +9114,7 @@ describe("bridge tools", () => {
     await waitForJobStatus(client, running.jobId, "completed");
     expect(jobs.get(running.jobId)?.executionDecision).toMatchObject({
       effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      source: "configured-fallback"
+      source: "caller"
     });
     await close();
   });
@@ -12630,8 +12687,13 @@ describe("bridge tools", () => {
         expectedRevision: 0,
         modelPolicy: {
           mode: "automatic",
-          fallbackSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-          allowedSelections: { kind: "catalog-visible" },
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              { model: "gpt-5.6-terra", reasoningEffort: "high" }
+            ]
+          },
           constraints: { allowDelegation: true }
         }
       }
@@ -12668,7 +12730,7 @@ describe("bridge tools", () => {
       arguments: {
         prompt: "switch",
         agent: { mode: "existing", id: agentId, context: "continue" },
-        selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
       }
     });
     expect(modelChange.isError).toBe(true);
@@ -13568,6 +13630,7 @@ describe("bridge tools", () => {
         executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
         activityPresentationId: "78787878-7878-4878-8878-787878787878",
         prompt: "new work must now select the exact registered project",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
         activity: { mode: "new" },
         agent: { mode: "new", name: "Missing Project Agent" },
         executionMode: "foreground"
@@ -14032,7 +14095,8 @@ describe("bridge tools", () => {
       arguments: {
         prompt: "second implicit auto",
         projectId: "default",
-        activityId: first.activityId
+        activityId: first.activityId,
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       }
     });
 
@@ -14279,7 +14343,24 @@ async function connectTestClient(
     ...rest: Parameters<typeof baseCallTool> extends [unknown, ...infer Tail] ? Tail : never
   ) => {
     if (request.name !== "codex_task") return bareCallTool(request, ...rest);
-    const arguments_ = request.arguments || {};
+    const arguments_ = { ...(request.arguments || {}) } as Record<string, any>;
+    const activity = arguments_.activity as Record<string, unknown> | undefined;
+    const agent = arguments_.agent as Record<string, unknown> | undefined;
+    const admitsFreshWork =
+      activity?.mode !== "existing" ||
+      agent?.mode === "new" ||
+      (agent?.mode === "existing" && agent.context === "fresh");
+    if (
+      admitsFreshWork &&
+      settingsStore.current.modelPolicy.mode === "automatic" &&
+      !Object.prototype.hasOwnProperty.call(arguments_, "selection") &&
+      !Object.prototype.hasOwnProperty.call(arguments_, "projectLookup")
+    ) {
+      const policy = settingsStore.current.modelPolicy;
+      arguments_.selection = policy.allowedSelections.kind === "explicit"
+        ? policy.allowedSelections.selections[0]
+        : { model: "gpt-5.6-sol", reasoningEffort: "max" };
+    }
     return bareCallTool({
       ...request,
       arguments: {
@@ -14344,6 +14425,17 @@ async function connectTestClient(
                   projectRevision: 1
                 })
           };
+        }
+        if (
+          admitsFreshWork &&
+          settingsStore.current.modelPolicy.mode === "automatic" &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "selection") &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "projectLookup")
+        ) {
+          const policy = settingsStore.current.modelPolicy;
+          currentArguments.selection = policy.allowedSelections.kind === "explicit"
+            ? policy.allowedSelections.selections[0]
+            : { model: "gpt-5.6-sol", reasoningEffort: "max" };
         }
         const requestId = typeof currentArguments.requestId === "string"
           ? currentArguments.requestId

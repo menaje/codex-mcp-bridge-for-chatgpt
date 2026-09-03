@@ -7,7 +7,6 @@ import { BridgeStateStore } from "./stateStore.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
   automaticModelPolicy,
-  sameModelChoice,
   validateModelPolicy,
   type ModelPolicy
 } from "./modelPolicy.js";
@@ -35,7 +34,7 @@ export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
-const EXECUTION_POLICY_REF_CONTRACT_VERSION = 3;
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 4;
 const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 1;
 
 export type BridgeUserSettings = {
@@ -48,8 +47,6 @@ export type BridgeUserSettings = {
   accessStrategy: AccessStrategy;
   modelPolicy: ModelPolicy;
   usePriorityServiceTier: boolean;
-  /** Migration-only compatibility for legacy model-only preferences. */
-  legacyPreferredModel?: string;
   /** App-private composed registry view. UUID/cwd are stripped from public results. */
   projects: ProjectTarget[];
   uiLocalePreference: UiLocalePreference;
@@ -67,7 +64,6 @@ export type BridgeUserSettingsPatch = Partial<
     | "registryRevision"
     | "revision"
     | "updatedAt"
-    | "legacyPreferredModel"
     | "projects"
   >
 > & {
@@ -116,14 +112,7 @@ export class UserSettingsStore {
       settingsRevision: 0,
       updatedAt: null,
       accessStrategy: config.defaultAccessStrategy,
-      modelPolicy: automaticModelPolicy(
-        config.defaultModel && config.defaultReasoningEffort
-          ? {
-              model: config.defaultModel,
-              reasoningEffort: config.defaultReasoningEffort
-            }
-          : undefined
-      ),
+      modelPolicy: automaticModelPolicy(),
       usePriorityServiceTier: false,
       uiLocalePreference: "auto",
       maxConcurrentJobs: config.maxConcurrentJobs,
@@ -178,7 +167,6 @@ export class UserSettingsStore {
         contract: EXECUTION_POLICY_REF_CONTRACT_VERSION,
         accessStrategy: settings.accessStrategy,
         modelPolicy: canonicalExecutionModelPolicy(settings.modelPolicy),
-        legacyPreferredModel: settings.legacyPreferredModel || null,
         usePriorityServiceTier: settings.usePriorityServiceTier,
         // Bind only catalog fields that can alter admission or dispatch.
         // GPT-facing names and guidance may refresh Settings/UI catalog data,
@@ -327,10 +315,6 @@ export class UserSettingsStore {
       settingsRevision: this.settings.settingsRevision,
       updatedAt: this.settings.updatedAt
     } as GeneralSettings;
-    // Replacing a migrated model-only preference with an exact policy must
-    // remove the compatibility marker before validation. Validating first made
-    // it impossible for the Settings card to complete that migration.
-    if (patch.modelPolicy !== undefined) delete merged.legacyPreferredModel;
     const candidate = this.validateGeneral(merged);
     const generalChanged = hasGeneralPatch &&
       canonicalGeneralSettings(candidate) !== canonicalGeneralSettings(this.settings);
@@ -424,17 +408,6 @@ export class UserSettingsStore {
     }
     if (candidate.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) {
       throw new Error("Invalid settings schema version.");
-    }
-    if (candidate.legacyPreferredModel !== undefined) {
-      validateIdentifier(candidate.legacyPreferredModel, "legacy preferred model", 200);
-      if (
-        candidate.modelPolicy.mode !== "automatic" ||
-        candidate.modelPolicy.fallbackSelection !== undefined
-      ) {
-        throw new Error(
-          "A legacy model-only preference is valid only for an automatic policy without an exact configured fallback."
-        );
-      }
     }
     candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
     if (typeof candidate.usePriorityServiceTier !== "boolean") {
@@ -544,35 +517,19 @@ export class UserSettingsStore {
   ): { settings: GeneralSettings; changed: boolean } {
     const candidate = readGeneralSettings(source, sourceLabel, settingsRevision);
     let changed = needsGeneralSettingsRewrite(source);
+    const rawPolicy = isRecord(source.modelPolicy) ? source.modelPolicy : undefined;
     if (
-      candidate.modelPolicy.mode === "automatic" &&
-      !candidate.modelPolicy.fallbackSelection &&
-      !candidate.legacyPreferredModel &&
-      this.config.defaultModel &&
-      this.config.defaultReasoningEffort
+      (
+        rawPolicy?.mode === "automatic" &&
+        (rawPolicy.fallbackSelection !== undefined || rawPolicy.preferredSelection !== undefined)
+      ) ||
+      typeof source.legacyPreferredModel === "string" ||
+      typeof source.defaultModel === "string" ||
+      typeof source.defaultReasoningEffort === "string"
     ) {
-      const configured = {
-        model: this.config.defaultModel,
-        reasoningEffort: this.config.defaultReasoningEffort
-      };
-      const inAllowedRange = candidate.modelPolicy.allowedSelections.kind === "catalog-visible" ||
-        candidate.modelPolicy.allowedSelections.selections.some((selection) =>
-          sameModelChoice(selection, configured)
-        );
-      if (
-        inAllowedRange &&
-        (candidate.modelPolicy.constraints.allowDelegation ||
-          configured.reasoningEffort !== "ultra")
-      ) {
-        candidate.modelPolicy = {
-          ...candidate.modelPolicy,
-          fallbackSelection: configured
-        };
-        changed = true;
-        this.warnings.push(
-          "Automatic model policy was missing an exact fallback; the configured model/effort seed was persisted as its omission fallback."
-        );
-      }
+      this.warnings.push(
+        "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work."
+      );
     }
     if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
       candidate.accessStrategy = "read-only";
@@ -751,6 +708,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
       "defaultCwd",
       "defaultModel",
       "defaultReasoningEffort",
+      "legacyPreferredModel",
       "completionDeliveryMode",
       "activityCardView",
       "taskTimeoutMs",
@@ -772,29 +730,22 @@ function readGeneralSettings(
   if (!isRecord(value)) throw new Error(`Invalid bridge settings at ${source}.`);
   const accessStrategy = value.accessStrategy as AccessStrategy;
   const migratedPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
-  const legacyModel = typeof value.defaultModel === "string" ? value.defaultModel : undefined;
-  const legacyEffort = typeof value.defaultReasoningEffort === "string"
-    ? value.defaultReasoningEffort
-    : undefined;
   const hasMigratablePolicy =
-    (value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION || value.schemaVersion === 2) &&
+    (
+      value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 3 ||
+      value.schemaVersion === 2
+    ) &&
     value.modelPolicy;
   const modelPolicy = hasMigratablePolicy
     ? validateModelPolicy(migratedPolicy.value)
-    : automaticModelPolicy(
-        legacyModel && legacyEffort
-          ? { model: legacyModel, reasoningEffort: legacyEffort }
-          : undefined
-      );
+    : automaticModelPolicy();
   const updatedAt = value.updatedAt === null || typeof value.updatedAt === "string"
     ? value.updatedAt
     : null;
   const maxConcurrentJobs = typeof value.maxConcurrentJobs === "number"
     ? value.maxConcurrentJobs
     : 1;
-  const persistedLegacyPreferredModel = typeof value.legacyPreferredModel === "string"
-    ? value.legacyPreferredModel
-    : undefined;
   return {
     schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
     settingsRevision,
@@ -804,9 +755,6 @@ function readGeneralSettings(
     usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
       ? value.usePriorityServiceTier
       : migratedPolicy.usedFastTier,
-    ...(persistedLegacyPreferredModel || (legacyModel && !legacyEffort)
-      ? { legacyPreferredModel: persistedLegacyPreferredModel || legacyModel }
-      : {}),
     uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
       ? value.uiLocalePreference
       : "auto",
@@ -912,8 +860,11 @@ function migrateModelPolicyServiceTiers(value: unknown): {
   } else if (value.mode === "automatic") {
     const fallbackSelection = value.fallbackSelection ?? value.preferredSelection;
     if (fallbackSelection !== undefined) {
-      migrated.fallbackSelection = withoutTier(fallbackSelection);
+      // Preserve the legacy service-tier preference, but never retain the
+      // retired omission fallback itself.
+      withoutTier(fallbackSelection);
     }
+    delete migrated.fallbackSelection;
     delete migrated.preferredSelection;
     if (isRecord(value.allowedSelections) && Array.isArray(value.allowedSelections.selections)) {
       const seen = new Set<string>();
@@ -942,12 +893,6 @@ function validateIntegerRange(
 ): void {
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${label} must be an integer between ${minimum} and ${maximum} ${unit}.`);
-  }
-}
-
-function validateIdentifier(value: string, label: string, maximum: number): void {
-  if (!value.trim() || value !== value.trim() || value.length > maximum || /[\r\n]/u.test(value)) {
-    throw new Error(`Invalid ${label}.`);
   }
 }
 

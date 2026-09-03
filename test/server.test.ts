@@ -1318,6 +1318,7 @@ describe("http server", () => {
         prompt: "must not attach to completed Activity",
         taskContractVersion: thirdTaskContract.taskContractVersion,
         executionEnvelopeRef: thirdTaskContract.executionEnvelopeRef,
+        selection: thirdTaskContract.selection,
         activity: { mode: "existing", id: activityId }
       }
     });
@@ -1408,6 +1409,7 @@ async function currentTaskContract(client: Client): Promise<{
   taskContractVersion: "2";
   executionEnvelopeRef: string;
   project: { name: string; projectRef: string; projectRevision: number };
+  selection: { model: string; reasoningEffort: string };
 }> {
   const task = (await client.listTools()).tools.find((tool) => tool.name === "codex_task");
   const properties = task?.inputSchema.properties as Record<string, any> | undefined;
@@ -1439,7 +1441,8 @@ async function currentTaskContract(client: Client): Promise<{
   return {
     taskContractVersion,
     executionEnvelopeRef,
-    project
+    project,
+    selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
   };
 }
 

@@ -157,14 +157,11 @@ For an automatic policy with an explicit range, the card selects models first an
 
 In automatic mode, GPT chooses one exact allowed model/effort pair for every
 new Activity, new Agent, or fresh context. The bridge publishes no preferred
-pair or task-to-model mapping. The card labels the
-required exact fallback as the default used when GPT does not choose. It is an
-omission-only compatibility fallback, not a preferred/recommended model and is
-not published as a JSON Schema default. Continue/fork omission keeps the
+pair, default, fallback, or task-to-model mapping. Omission for new work returns
+`MODEL_SELECTION_REQUIRED` with `codex_models` as the next action before any
+execution state or upstream call is created. Continue/fork omission keeps the
 admission-time selection; supplying an exact pair deliberately requests an
-override only when the current runtime policy, catalog, and backend support it. A legacy
-policy without an exact fallback uses the validated backend catalog default
-until the card saves its preselected pair.
+override only when the current runtime policy, catalog, and backend support it.
 
 Stable Task contract v2 exposes one generic closed `codex_task.selection`
 object with `model` and `reasoningEffort` strings. Use `codex_models` and current
@@ -173,7 +170,7 @@ ranking, recommendation, or its own reasoning-effort glossary.
 
 The Priority checkbox is intentionally separate. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Priority, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it.
 
-The public Settings call returns only a compact path-free summary. Generation 13 starts with its editor hidden and calls the app-private `codex_settings_snapshot`; only that fresh response is rendered, so reopening an old conversation cannot paint the original settings metadata. The model catalog uses the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails and uses the same snapshot path with `refreshModels: true`.
+The public Settings call returns only a compact path-free summary. Generation 14 starts with its editor hidden and calls the app-private `codex_settings_snapshot`; only that fresh response is rendered, so reopening an old conversation cannot paint the original settings metadata. The model catalog uses the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails and uses the same snapshot path with `refreshModels: true`.
 
 A saved model/access/presentation setting, catalog, project registry, or project
 availability change takes effect for runtime admission immediately. None changes
@@ -194,10 +191,10 @@ policy and resolved catalog fingerprint, then rechecks it before filesystem
 preflight and inside serialized admission. A concurrent save returns retryable
 `EXECUTION_POLICY_CHANGED` before any Activity, Agent, Job, filesystem, or
 upstream side effect; retry the same v2 contract with a new `requestId` and no
-connection Refresh. `MODEL_POLICY_CHANGED`, `MODEL_UNAVAILABLE`, and
-`MODEL_SELECTION_FORBIDDEN` are runtime selection errors recovered through
-`codex_models` or Settings. Exact admitted v7 replays return their retained
-result first. A cached pre-v2 conversation remains bound to its public
+connection Refresh. `MODEL_SELECTION_REQUIRED`, `MODEL_POLICY_CHANGED`,
+`MODEL_UNAVAILABLE`, and `MODEL_SELECTION_FORBIDDEN` are runtime selection
+errors recovered through `codex_models` or Settings. Exact admitted v7 replays
+return their retained result first. A cached pre-v2 conversation remains bound to its public
 `executionPolicyRef` and needs one Refresh to migrate to v2 after that ref is
 stale.
 
@@ -219,7 +216,7 @@ Existing Agents stay pinned. To move one deliberately, use that Agent with
 fresh context and an explicit handoff summary; only the summary reaches the new
 backend thread, not the prior transcript or backend state.
 
-Settings card generation 13 sends independent `expectedSettingsRevision` and
+Settings card generation 14 sends independent `expectedSettingsRevision` and
 `expectedRegistryRevision` CAS values with exactly one `reset` or `patch`
 operation. A patch groups ordinary settings and a bounded atomic list of project
 `add`, `rename`, `relocate`, `archive`, `restore`, and archived-registration `delete` operations; it never replaces
@@ -647,6 +644,9 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - `PROJECT_REGISTRY_CHANGED`: the selected project is stale; use the same-tool lookup recovery and a new `requestId`. No work was admitted and no connection Refresh is required. A cached pre-v2 legacy selector must migrate once.
 - `PROJECT_NAME_CONFLICT` / `PROJECT_CWD_CONFLICT`: choose a unique active normalized name/canonical folder.
 - `PROJECT_UNAVAILABLE`: restore the exact pinned folder, or fix/archive the **Needs recovery** project. The bridge does not fall back elsewhere.
+- `MODEL_SELECTION_REQUIRED`: call `codex_models`, choose one exact returned
+  model/reasoning-effort pair, and retry with a new `requestId`. No Activity,
+  Agent, Job, session, filesystem, or upstream work was created.
 - `MODEL_POLICY_CHANGED`: call `codex_models` for the current policy-allowed
   values and retry the same stable contract with a new `requestId`. No stale
   selection is admitted and no connection Refresh is required.

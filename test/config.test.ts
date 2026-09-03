@@ -28,8 +28,8 @@ describe("config policy", () => {
     expect(config.defaultApprovalPolicy).toBe("on-request");
     expect(config.maxConcurrentJobs).toBe(30);
     expect(config.enableRecoveryTools).toBe(false);
-    expect(config.defaultModel).toBeUndefined();
-    expect(config.defaultReasoningEffort).toBeUndefined();
+    expect(config).not.toHaveProperty("defaultModel");
+    expect(config).not.toHaveProperty("defaultReasoningEffort");
     expect(config.operatorModelCeiling).toBeUndefined();
     expect(config.modelCatalogCacheTtlMs).toBe(600000);
     expect(config.modelCatalogTimeoutMs).toBe(30000);
@@ -75,7 +75,7 @@ describe("config policy", () => {
     })).toThrow(/positive integer/);
   });
 
-  it("loads the optional exact automatic-policy model and effort seed", () => {
+  it("ignores retired automatic-policy model and effort seeds", () => {
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
@@ -99,8 +99,8 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS: "300000"
     });
 
-    expect(config.defaultModel).toBe("gpt-5.6-sol");
-    expect(config.defaultReasoningEffort).toBe("max");
+    expect(config).not.toHaveProperty("defaultModel");
+    expect(config).not.toHaveProperty("defaultReasoningEffort");
     expect(config.operatorModelCeiling).toEqual([
       { model: "gpt-5.6-sol", reasoningEffort: "max" },
       { model: "gpt-5.6-terra", reasoningEffort: "high" }
@@ -123,24 +123,26 @@ describe("config policy", () => {
     expect(config.startupWarnings).toEqual([
       expect.stringContaining("UPSTREAM_TIMEOUT_MS is retired"),
       expect.stringContaining("DEFAULT_SESSION_MODE is retired"),
-      expect.stringContaining("AUTO_RESUME_TTL_MS is retired")
+      expect.stringContaining("AUTO_RESUME_TTL_MS is retired"),
+      expect.stringContaining("DEFAULT_MODEL and CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT are retired")
     ]);
   });
 
-  it("requires a default model when a default reasoning effort is configured", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "high"
-      })
-    ).toThrow(/requires CODEX_MCP_BRIDGE_DEFAULT_MODEL/);
+  it("ignores either retired model seed independently", () => {
+    for (const retired of [
+      { CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "high" },
+      { CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol" }
+    ]) {
+      const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", ...retired });
+      expect(config).not.toHaveProperty("defaultModel");
+      expect(config).not.toHaveProperty("defaultReasoningEffort");
+      expect(config.startupWarnings).toEqual([
+        expect.stringContaining("retired and ignored")
+      ]);
+    }
   });
 
-  it("requires an exact default pair and validates the operator selection ceiling", () => {
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol"
-    })).toThrow(/requires CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT/);
+  it("validates the operator selection ceiling", () => {
     expect(() => loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: "not-json"
