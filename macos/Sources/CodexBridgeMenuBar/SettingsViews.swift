@@ -320,7 +320,7 @@ private struct GeneralSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                Toggle("Codex 앱에 새 스레드 표시", isOn: $draft.showBridgeThreadsInCodexApp)
+                Toggle("새 Agent 작업을 Codex 앱에 보존", isOn: $draft.showBridgeThreadsInCodexApp)
                 Text(threadVisibilityDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -467,9 +467,9 @@ private struct GeneralSettingsPane: View {
     private var threadVisibilityDescription: String {
         let key: String
         if snapshot.capabilities.defaultBackend == "app-server" {
-            key = "App Server에서 새로 만드는 스레드를 Codex 앱 목록에도 표시합니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+            key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
         } else {
-            key = "MCP Server는 스레드 숨김을 지원하지 않습니다. 이 선택은 App Server로 전환한 뒤 새 스레드부터 적용됩니다."
+            key = "MCP Server에서는 이 설정으로 Codex 앱 연결 여부를 바꿀 수 없습니다. App Server로 전환한 뒤 만드는 새 작업과 새 컨텍스트부터 적용됩니다."
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }

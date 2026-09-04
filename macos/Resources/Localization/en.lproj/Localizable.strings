@@ -66,9 +66,14 @@
 "개수" = "Count";
 "1부터 운영 한도 %d까지 직접 입력할 수 있습니다. 등록된 에이전트 수가 아니라 동시에 실행할 작업의 상한입니다." = "Enter a value from 1 to the operator limit of %d. This limits concurrent tasks, not the number of registered Agents.";
 "30을 넘기면 CPU·메모리·API 사용량이 크게 증가할 수 있습니다." = "Values above 30 can substantially increase CPU, memory, and API usage.";
-"Codex 앱에 새 스레드 표시" = "Show New Threads in the Codex App";
-"App Server에서 새로 만드는 스레드를 Codex 앱 목록에도 표시합니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다." = "Shows newly created App Server threads in the Codex app. When off, they are ephemeral and cannot continue after the server restarts.";
-"MCP Server는 스레드 숨김을 지원하지 않습니다. 이 선택은 App Server로 전환한 뒤 새 스레드부터 적용됩니다." = "MCP Server cannot hide threads. This preference applies to new threads after switching to App Server.";
+"새 Agent 작업을 Codex 앱에 보존" = "Keep New Agent Tasks in the Codex App";
+"켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다." = "When enabled, new tasks and fresh contexts are saved as persistent threads and show an 'Open in Codex' button in the overview. Existing ephemeral tasks are unchanged. When disabled, threads are ephemeral and cannot continue after the server restarts.";
+"MCP Server에서는 이 설정으로 Codex 앱 연결 여부를 바꿀 수 없습니다. App Server로 전환한 뒤 만드는 새 작업과 새 컨텍스트부터 적용됩니다." = "This setting cannot change Codex app availability for MCP Server tasks. It applies to new tasks and fresh contexts created after switching to App Server.";
+"새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?" = "Open New Agent Tasks in the Codex App?";
+"켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다." = "New tasks and fresh contexts will be kept in the Codex app, with an 'Open in Codex' button for each Agent. Existing ephemeral tasks are unchanged.";
+"새 작업부터 켜기" = "Enable for New Tasks";
+"Codex에서 열기" = "Open in Codex";
+"Codex 앱에서 이 Agent 작업을 엽니다." = "Opens this Agent task in the Codex app.";
 "액티비티 카드 표시" = "Show Activity Cards";
 "항상" = "Always";
 "백그라운드 작업만" = "Background Tasks Only";

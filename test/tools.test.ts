@@ -3483,7 +3483,9 @@ describe("bridge tools", () => {
 
     const hiddenSession = sessions.get(threadId);
     expect(hiddenSession).toBeDefined();
-    sessions.restoreInMemory(threadId);
+    const legacySession = { ...hiddenSession! };
+    delete legacySession.visibleInCodexApp;
+    sessions.restoreInMemory(threadId, legacySession);
     const { view: missingVisibilityProvenanceView } = await freshDashboardSnapshot(rawCallTool, {
       scopeId: SCOPE_A
     });

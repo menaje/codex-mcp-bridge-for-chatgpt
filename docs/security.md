@@ -23,9 +23,13 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   non-ephemeral App Server row may contain a `codex://threads/<uuid>` candidate
   used by **Open in Codex** only when the selected thread has an exact matching
   retained tracked session. That matching session's creation-time visibility
-  bit is retained; only a legacy matching session without the bit falls back to
-  the current preference. The exact thread UUID is preferred over the matching
-  session-tree UUID because forks can share the latter. For a UUID-shaped ChatGPT
+  bit must be explicitly retained as true; a legacy session without provenance
+  is omitted rather than inferred from the current preference. The exact thread UUID is preferred over the matching
+  session-tree UUID because forks can share the latter. The native macOS client
+  also requires an installed handler for the `codex:` scheme before rendering
+  the button. The route is local and is not assumed to be a documented
+  cross-device iOS route; mobile Codex access remains subject to the ChatGPT
+  Remote host connection. For a UUID-shaped ChatGPT
   session value only, the row may separately contain a best-effort
   `https://chatgpt.com/c/<uuid>` candidate used by **Open conversation**; this orchestration
   link is independent of Codex-app visibility, while the host

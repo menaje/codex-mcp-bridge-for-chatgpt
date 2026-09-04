@@ -568,6 +568,14 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func enableCodexThreadPersistence() {
+        guard let snapshot = settings else { return }
+        var draft = SettingsDraft(snapshot: snapshot)
+        guard !draft.showBridgeThreadsInCodexApp else { return }
+        draft.showBridgeThreadsInCodexApp = true
+        scheduleSettingsAutosave(draft)
+    }
+
     func cancelPendingSettingsAutosave() {
         settingsAutosaveDebounceTask?.cancel()
         settingsAutosaveDebounceTask = nil

@@ -11747,10 +11747,8 @@ async function buildDashboardView(
         session.threadId.toLowerCase() === target.threadId.toLowerCase()
     );
     if (!visibilitySession) return undefined;
-    const visibleInCodexApp = visibilitySession.visibleInCodexApp ??
-      preferences.showBridgeThreadsInCodexApp;
     return dashboardCodexThreadUrl(
-      visibleInCodexApp,
+      visibilitySession.visibleInCodexApp === true,
       target,
       visibilitySession
     );

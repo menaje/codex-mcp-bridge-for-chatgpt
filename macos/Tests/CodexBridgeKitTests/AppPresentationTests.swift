@@ -283,6 +283,26 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testDashboardCanEnableCodexThreadPersistenceThroughAutosave() throws {
+        let snapshot = try settingsSnapshot(
+            showBridgeThreadsInCodexApp: false,
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let model = AppModel()
+        model.settings = snapshot
+
+        model.enableCodexThreadPersistence()
+
+        XCTAssertEqual(model.generalSettingsSaveState, .pending)
+        model.cancelPendingSettingsAutosave()
+    }
+
+    @MainActor
     func testApplicationShutdownStopsWhenPendingSettingsCannotBeSaved() async throws {
         let root = URL(fileURLWithPath:
             "/tmp/cb-save-\(getpid())-\(UUID().uuidString.prefix(8))",
@@ -590,6 +610,7 @@ private func dashboardStatus(runtimeUnknownAgents: Int = 0) throws -> DashboardS
 private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
+    showBridgeThreadsInCodexApp: Bool = true,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     catalogModels: [[String: Any]],
@@ -606,7 +627,7 @@ private func settingsSnapshot(
         "projects": [],
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
-        "showBridgeThreadsInCodexApp": true,
+        "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
         "activityCardVisibility": "always",
         "completionHandoff": "off"
     ]

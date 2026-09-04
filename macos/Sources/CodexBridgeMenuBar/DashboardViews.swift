@@ -173,6 +173,26 @@ struct DashboardPopoverView: View {
                 Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if shouldOfferCodexThreadPersistence {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(
+                            "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?",
+                            systemImage: "arrow.up.forward.app"
+                        )
+                        .font(.caption.weight(.semibold))
+                        Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Button("새 작업부터 켜기") {
+                            model.enableCodexThreadPersistence()
+                        }
+                        .buttonStyle(.link)
+                        .disabled(model.generalSettingsSaveState.isActive)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                }
                 if model.authStatus?.authenticated != true {
                     Button {
                         ConnectionRepairWindowController.shared.show(model: model)
@@ -262,6 +282,12 @@ struct DashboardPopoverView: View {
             return "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
         }
         return "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+    }
+
+    private var shouldOfferCodexThreadPersistence: Bool {
+        guard let settings = model.settings else { return false }
+        return settings.capabilities.defaultBackend == "app-server" &&
+            !settings.settings.showBridgeThreadsInCodexApp
     }
 
     private var footer: some View {
@@ -780,9 +806,14 @@ private struct DashboardRowView: View {
                             Link("대화", destination: url)
                         }
                     }
-                    if let url = DashboardLink.codexThread(row.codexThreadUrl) {
-                        Button("Codex") { NSWorkspace.shared.open(url) }
-                            .buttonStyle(.link)
+                    if let url = DashboardLink.availableCodexThread(row.codexThreadUrl) {
+                        Button {
+                            NSWorkspace.shared.open(url)
+                        } label: {
+                            Label("Codex에서 열기", systemImage: "arrow.up.forward.app")
+                        }
+                        .buttonStyle(.link)
+                        .help("Codex 앱에서 이 Agent 작업을 엽니다.")
                     }
                 }
             }
@@ -1155,6 +1186,8 @@ private enum StatusPresentation {
 }
 
 enum DashboardLink {
+    private static let codexApplicationBundleIdentifiers = Set(["com.openai.codex"])
+
     static func conversation(_ value: String?) -> URL? {
         guard let value,
               let url = URL(string: value),
@@ -1195,6 +1228,16 @@ enum DashboardLink {
         guard components.count == 1,
               UUID(uuidString: components[0]) != nil,
               urlComponents.percentEncodedPath == "/\(components[0])" else {
+            return nil
+        }
+        return url
+    }
+
+    static func availableCodexThread(_ value: String?) -> URL? {
+        guard let url = codexThread(value),
+              let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: url),
+              let bundleIdentifier = Bundle(url: applicationURL)?.bundleIdentifier,
+              codexApplicationBundleIdentifiers.contains(bundleIdentifier) else {
             return nil
         }
         return url
