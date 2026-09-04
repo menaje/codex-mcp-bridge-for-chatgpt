@@ -145,7 +145,11 @@ struct DashboardPopoverView: View {
             BridgeBrandStatusIcon(health: .unavailable, size: 48)
             Text("브리지 서버에 연결할 수 없습니다")
                 .font(.headline)
-            Text(model.helperStatus?.lastError ?? model.runtimeErrorMessage ?? model.statusErrorMessage ?? "서버가 중지되었거나 시작 중입니다.")
+            Text(model.helperStatus?.lastError ?? model.runtimeErrorMessage ??
+                 model.statusErrorMessage ?? BridgeAppLocalization.string(
+                    "서버가 중지되었거나 시작 중입니다.",
+                    locale: model.interfaceLocale
+                 ))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -224,7 +228,10 @@ struct DashboardPopoverView: View {
                 }
                 if model.helperStatus?.tunnel.connected != true {
                     Label(
-                        model.helperStatus?.tunnel.lastError ?? "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                        model.helperStatus?.tunnel.lastError ?? BridgeAppLocalization.string(
+                            "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                            locale: model.interfaceLocale
+                        ),
                         systemImage: "network.slash"
                     )
                     .font(.caption)
@@ -276,13 +283,15 @@ struct DashboardPopoverView: View {
     }
 
     private var authenticationNotice: String {
+        let key: String
         if model.authErrorMessage != nil {
-            return "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+        } else if model.authStatus?.installed == false {
+            key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+        } else {
+            key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
         }
-        if model.authStatus?.installed == false {
-            return "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
-        }
-        return "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
 
     private var shouldOfferCodexThreadPersistence: Bool {
@@ -372,17 +381,32 @@ struct DashboardPopoverView: View {
     }
 
     private func forceImpactMessage(restarting: Bool) -> String {
-        var message = "활성 작업 \(activeJobCount)개와 백그라운드 프로세스 \(backgroundProcessCount)개가 중단될 수 있습니다. 파일 변경은 되돌아가지 않습니다."
+        var messages = [BridgeAppLocalization.format(
+            "활성 작업 %d개와 백그라운드 프로세스 %d개가 중단될 수 있습니다. 파일 변경은 되돌아가지 않습니다.",
+            locale: model.interfaceLocale,
+            activeJobCount,
+            backgroundProcessCount
+        )]
         if backgroundProcessUnknownAgents > 0 {
-            message += " 또한 \(backgroundProcessUnknownAgents)개 Agent의 백그라운드 상태를 확인하지 못했습니다."
+            messages.append(BridgeAppLocalization.format(
+                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                locale: model.interfaceLocale,
+                backgroundProcessUnknownAgents
+            ))
         }
         if model.runtimeImpactErrorMessage != nil {
-            message += " 최신 백그라운드 영향 범위를 확인하지 못했으므로 표시된 수보다 영향이 클 수 있습니다."
+            messages.append(BridgeAppLocalization.string(
+                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                locale: model.interfaceLocale
+            ))
         }
         if restarting {
-            message += " 중단된 작업은 자동으로 다시 실행하지 않습니다."
+            messages.append(BridgeAppLocalization.string(
+                "중단된 작업은 자동으로 다시 실행하지 않습니다.",
+                locale: model.interfaceLocale
+            ))
         }
-        return message
+        return messages.joined(separator: " ")
     }
 
     private var applicationQuitImpactMessage: String {
@@ -465,6 +489,7 @@ struct DashboardPopoverView: View {
 }
 
 private struct WeeklyUsageView: View {
+    @Environment(\.locale) private var locale
     let usage: WeeklyUsage
 
     private var remainingPercent: Double {
@@ -481,7 +506,7 @@ private struct WeeklyUsageView: View {
             }
             ProgressView(value: remainingPercent, total: 100)
             if let resetsAt = usage.resetsAt {
-                Text("초기화: \(DisplayFormat.dateTime(resetsAt))")
+                Text("초기화: \(DisplayFormat.dateTime(resetsAt, locale: locale))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -519,6 +544,7 @@ private struct CountsGrid: View {
 }
 
 private struct CountTile: View {
+    @Environment(\.locale) private var locale
     let title: String
     let value: Int
     let symbol: String
@@ -527,7 +553,7 @@ private struct CountTile: View {
         VStack(spacing: 4) {
             HStack(spacing: 4) {
                 Image(systemName: symbol)
-                Text(title).lineLimit(1)
+                Text(BridgeAppLocalization.string(title, locale: locale)).lineLimit(1)
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -542,6 +568,7 @@ private struct CountTile: View {
 }
 
 private struct DashboardSection: View {
+    @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let title: String
     let emptyText: String
@@ -558,7 +585,7 @@ private struct DashboardSection: View {
             sectionHeader
             if isExpanded {
                 if rows.isEmpty {
-                    Text(emptyText)
+                    Text(BridgeAppLocalization.string(emptyText, locale: locale))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
@@ -609,7 +636,10 @@ private struct DashboardSection: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(disclosureExpanded.wrappedValue ? "펼침" : "접힘")
+            .accessibilityValue(BridgeAppLocalization.string(
+                disclosureExpanded.wrappedValue ? "펼침" : "접힘",
+                locale: locale
+            ))
         } else {
             sectionTitle
         }
@@ -617,7 +647,7 @@ private struct DashboardSection: View {
 
     private var sectionTitle: some View {
         HStack(spacing: 6) {
-            Text(title).font(.headline)
+            Text(BridgeAppLocalization.string(title, locale: locale)).font(.headline)
             if let total {
                 Text("\(total)")
                     .font(.caption.monospacedDigit())
@@ -650,6 +680,7 @@ private struct DashboardActivityGroup: Identifiable {
 }
 
 private struct DashboardActivityGroupView: View {
+    @Environment(\.locale) private var locale
     let group: DashboardActivityGroup
     let marksRecentActivity: Bool
 
@@ -666,7 +697,10 @@ private struct DashboardActivityGroupView: View {
                         Text(activityTitle)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(2)
-                        Text(first.projectName ?? "프로젝트 없음")
+                        Text(first.projectName ?? BridgeAppLocalization.string(
+                            "프로젝트 없음",
+                            locale: locale
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -708,7 +742,10 @@ private struct DashboardActivityGroupView: View {
                 }
             }
         }
-        return marksRecentActivity ? "최근 Activity 없음" : "제목 없는 Activity"
+        return BridgeAppLocalization.string(
+            marksRecentActivity ? "최근 Activity 없음" : "제목 없는 Activity",
+            locale: locale
+        )
     }
 }
 
@@ -728,13 +765,14 @@ private enum DashboardRowPresentation {
 }
 
 private struct CancellationDisclosure: View {
+    @Environment(\.locale) private var locale
     let cancellation: CancellationDisplay
 
     var body: some View {
         DisclosureGroup("취소 사유") {
             VStack(alignment: .leading, spacing: 3) {
                 Text(cancellation.reason).textSelection(.enabled)
-                Text("\(cancellationTargetLabel(cancellation.targetKind)) · \(cancellationStatusLabel(cancellation.status)) · \(DisplayFormat.dateTime(cancellation.requestedAt))")
+                Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
                     .foregroundStyle(.secondary)
             }
             .font(.caption)
@@ -744,6 +782,7 @@ private struct CancellationDisclosure: View {
 }
 
 private struct DashboardRowView: View {
+    @EnvironmentObject private var model: AppModel
     let row: DashboardRow
     let presentation: DashboardRowPresentation
     let enclosingActivityTitle: String?
@@ -768,7 +807,7 @@ private struct DashboardRowView: View {
                 }
                 Spacer()
                 if row.status != "idle" || !presentation.suppressesRedundantIdleStatus {
-                    Text(StatusPresentation.label(row.status))
+                    Text(StatusPresentation.label(row.status, locale: model.interfaceLocale))
                         .font(.caption2.weight(.medium))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -776,13 +815,28 @@ private struct DashboardRowView: View {
                 }
             }
             if row.latestTurn != nil {
-                Text("\(row.bucket == "idle" ? "최근 실행" : "실행"): \(DashboardExecutionPresentation.turnText(row.latestTurn?.execution))")
+                Text(BridgeAppLocalization.format(
+                    "%@: %@",
+                    locale: model.interfaceLocale,
+                    BridgeAppLocalization.string(
+                        row.bucket == "idle" ? "최근 실행" : "실행",
+                        locale: model.interfaceLocale
+                    ),
+                    DashboardExecutionPresentation.turnText(
+                        row.latestTurn?.execution,
+                        locale: model.interfaceLocale
+                    )
+                ))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             if let next = nextExecution {
-                Text("다음 실행 설정: \(executionText(next))")
+                Text(BridgeAppLocalization.format(
+                    "다음 실행 설정: %@",
+                    locale: model.interfaceLocale,
+                    executionText(next)
+                ))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -836,7 +890,10 @@ private struct DashboardRowView: View {
                 }
                 .buttonStyle(.plain)
                 .font(.caption)
-                .accessibilityValue(historyExpanded ? "펼침" : "접힘")
+                .accessibilityValue(BridgeAppLocalization.string(
+                    historyExpanded ? "펼침" : "접힘",
+                    locale: model.interfaceLocale
+                ))
 
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
@@ -859,13 +916,16 @@ private struct DashboardRowView: View {
                                     }
                                     Text(turnTimeText(item.turn))
                                         .foregroundStyle(.secondary)
-                                    Text(DashboardExecutionPresentation.turnText(item.turn.execution))
+                                    Text(DashboardExecutionPresentation.turnText(
+                                        item.turn.execution,
+                                        locale: model.interfaceLocale
+                                    ))
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.secondary)
                                     if let cancellation = item.turn.cancellation {
                                         Text(cancellation.reason)
                                             .foregroundStyle(.secondary)
-                                        Text("\(cancellationTargetLabel(cancellation.targetKind)) · \(cancellationStatusLabel(cancellation.status))")
+                                        Text("\(cancellationTargetLabel(cancellation.targetKind, locale: model.interfaceLocale)) · \(cancellationStatusLabel(cancellation.status, locale: model.interfaceLocale))")
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
@@ -890,14 +950,17 @@ private struct DashboardRowView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(row.agentName), \(row.activityTitle ?? "Activity"), \(StatusPresentation.label(row.status))"
+            "\(row.agentName), \(row.activityTitle ?? "Activity"), \(StatusPresentation.label(row.status, locale: model.interfaceLocale))"
         )
     }
 
     private var secondaryTitle: String? {
         if presentation == .idle {
-            let activity = row.latestTurn?.activityTitle ?? row.activityTitle ?? "최근 Activity 없음"
-            return "\(activity) · \(row.projectName ?? "프로젝트 없음")"
+            let activity = row.latestTurn?.activityTitle ?? row.activityTitle ??
+                BridgeAppLocalization.string("최근 Activity 없음", locale: model.interfaceLocale)
+            let project = row.projectName ??
+                BridgeAppLocalization.string("프로젝트 없음", locale: model.interfaceLocale)
+            return "\(activity) · \(project)"
         }
         return nil
     }
@@ -919,31 +982,52 @@ private struct DashboardRowView: View {
     }
 
     private func executionText(_ execution: DashboardExecution) -> String {
-        DashboardExecutionPresentation.text(execution)
+        DashboardExecutionPresentation.text(execution, locale: model.interfaceLocale)
     }
 
     private var rowTimeText: String {
         let workTime: String
         if row.bucket == "active" {
-            workTime = "작업시간 \(DisplayFormat.duration(row.elapsedMs))"
+            workTime = BridgeAppLocalization.format(
+                "작업시간 %@",
+                locale: model.interfaceLocale,
+                DisplayFormat.duration(row.elapsedMs, locale: model.interfaceLocale)
+            )
         } else if let duration = row.latestTurn?.durationMs {
-            workTime = "작업시간 \(DisplayFormat.duration(duration))"
+            workTime = BridgeAppLocalization.format(
+                "작업시간 %@",
+                locale: model.interfaceLocale,
+                DisplayFormat.duration(duration, locale: model.interfaceLocale)
+            )
         } else {
-            workTime = "작업시간 확인 불가"
+            workTime = BridgeAppLocalization.string(
+                "작업시간 확인 불가",
+                locale: model.interfaceLocale
+            )
         }
         guard row.bucket != "active" else { return workTime }
         let lastWorkedAt = row.latestTurn?.endedAt ?? row.latestTurn?.updatedAt ?? row.updatedAt
-        return "\(workTime) · \(DisplayFormat.relative(lastWorkedAt))"
+        return "\(workTime) · \(DisplayFormat.relative(lastWorkedAt, locale: model.interfaceLocale))"
     }
 
     private func turnTimeText(_ turn: DashboardTurn) -> String {
-        var values = [StatusPresentation.label(turn.status)]
+        var values = [StatusPresentation.label(turn.status, locale: model.interfaceLocale)]
         if let duration = turn.durationMs {
-            values.append("작업시간 \(DisplayFormat.duration(duration))")
+            values.append(BridgeAppLocalization.format(
+                "작업시간 %@",
+                locale: model.interfaceLocale,
+                DisplayFormat.duration(duration, locale: model.interfaceLocale)
+            ))
         } else {
-            values.append("작업시간 확인 불가")
+            values.append(BridgeAppLocalization.string(
+                "작업시간 확인 불가",
+                locale: model.interfaceLocale
+            ))
         }
-        values.append(DisplayFormat.relative(turn.endedAt ?? turn.updatedAt))
+        values.append(DisplayFormat.relative(
+            turn.endedAt ?? turn.updatedAt,
+            locale: model.interfaceLocale
+        ))
         return values.joined(separator: " · ")
     }
 }
@@ -974,11 +1058,17 @@ struct ConnectionRepairView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         LabeledContent(
                             "Bridge",
-                            value: model.helperStatus?.bridge.connected == true ? "준비됨" : "연결 안 됨"
+                            value: BridgeAppLocalization.string(
+                                model.helperStatus?.bridge.connected == true ? "준비됨" : "연결 안 됨",
+                                locale: model.interfaceLocale
+                            )
                         )
                         LabeledContent(
                             "Secure MCP Tunnel",
-                            value: model.helperStatus?.tunnel.connected == true ? "연결됨" : "연결 안 됨"
+                            value: BridgeAppLocalization.string(
+                                model.helperStatus?.tunnel.connected == true ? "연결됨" : "연결 안 됨",
+                                locale: model.interfaceLocale
+                            )
                         )
                         if let profile = model.helperStatus?.tunnel.profile {
                             LabeledContent("프로필", value: profile)
@@ -1014,9 +1104,12 @@ struct ConnectionRepairView: View {
                             }
                         }
                         SecureField(
-                            model.helperStatus?.configuration.hasApiKey == true
-                                ? "새 키를 입력할 때만 교체"
-                                : "Runtime API key",
+                            BridgeAppLocalization.string(
+                                model.helperStatus?.configuration.hasApiKey == true
+                                    ? "새 키를 입력할 때만 교체"
+                                    : "Runtime API key",
+                                locale: model.interfaceLocale
+                            ),
                             text: $apiKey
                         )
                         TextField("tunnel_…", text: $tunnelId)
@@ -1028,7 +1121,10 @@ struct ConnectionRepairView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                         if let issue = model.helperStatus?.configuration.issue {
-                            Label(runtimeConfigurationIssue(issue), systemImage: "exclamationmark.triangle")
+                            Label(
+                                runtimeConfigurationIssue(issue, locale: model.interfaceLocale),
+                                systemImage: "exclamationmark.triangle"
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                             if issue.contains("permissions are too broad") {
@@ -1060,8 +1156,14 @@ struct ConnectionRepairView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
                             model.loginInProgress
-                                ? "브라우저 로그인을 기다리고 있습니다."
-                                : model.authStatus?.summary ?? "로그인 상태를 확인하고 있습니다.",
+                                ? BridgeAppLocalization.string(
+                                    "브라우저 로그인을 기다리고 있습니다.",
+                                    locale: model.interfaceLocale
+                                )
+                                : model.authStatus?.summary ?? BridgeAppLocalization.string(
+                                    "로그인 상태를 확인하고 있습니다.",
+                                    locale: model.interfaceLocale
+                                ),
                             systemImage: model.authStatus?.authenticated == true
                                 ? "checkmark.circle.fill"
                                 : "person.crop.circle.badge.exclamationmark"
@@ -1112,7 +1214,7 @@ struct ConnectionRepairView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(model.logs) { entry in
-                                Text("\(DisplayFormat.dateTime(entry.at)) · \(entry.source): \(entry.message)")
+                                Text("\(DisplayFormat.dateTime(entry.at, locale: model.interfaceLocale)) · \(entry.source): \(entry.message)")
                                     .textSelection(.enabled)
                             }
                         }
@@ -1149,23 +1251,25 @@ struct ConnectionRepairView: View {
 }
 
 private enum StatusPresentation {
-    static func label(_ status: String) -> String {
+    static func label(_ status: String, locale: Locale) -> String {
+        let key: String
         switch status {
-        case "running": return "실행 중"
-        case "background-process-running": return "백그라운드 실행"
-        case "input-required": return "입력 필요"
-        case "approval-required": return "승인 필요"
-        case "terminating": return "종료 중"
-        case "termination-failed": return "종료 실패"
-        case "liveness-unknown": return "상태 불명"
-        case "completed": return "완료"
-        case "failed": return "실패"
-        case "interrupted": return "중단"
-        case "cancelled": return "취소"
-        case "idle": return "유휴"
-        case "orphaned": return "연결 끊김"
+        case "running": key = "실행 중"
+        case "background-process-running": key = "백그라운드 실행"
+        case "input-required": key = "입력 필요"
+        case "approval-required": key = "승인 필요"
+        case "terminating": key = "종료 중"
+        case "termination-failed": key = "종료 실패"
+        case "liveness-unknown": key = "상태 불명"
+        case "completed": key = "완료"
+        case "failed": key = "실패"
+        case "interrupted": key = "중단"
+        case "cancelled": key = "취소"
+        case "idle": key = "유휴"
+        case "orphaned": key = "연결 끊김"
         default: return status
         }
+        return BridgeAppLocalization.string(key, locale: locale)
     }
 
     static func symbol(_ status: String) -> String {
@@ -1339,17 +1443,31 @@ enum DashboardExecutionPresentation {
             normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
     }
 
-    static func text(_ execution: DashboardExecution) -> String {
+    static func text(
+        _ execution: DashboardExecution,
+        locale: Locale = Locale(identifier: "ko")
+    ) -> String {
         let model = execution.modelDisplayName ?? execution.model
-        let current = "\(model) · \(execution.reasoningEffort)"
+        let effort = BridgeAppLocalization.reasoningEffortLabel(
+            execution.reasoningEffort,
+            locale: locale
+        )
+        let current = "\(model) · \(effort)"
         guard let rerouted = execution.reroutedModelDisplayName ?? execution.reroutedModel else {
             return current
         }
-        return "\(current) → \(rerouted) (reroute)"
+        let reroute = BridgeAppLocalization.string("경로 변경", locale: locale)
+        return "\(current) → \(rerouted) (\(reroute))"
     }
 
-    static func turnText(_ execution: DashboardExecution?) -> String {
-        execution.map(text) ?? "모델 · 추론 확인 불가"
+    static func turnText(
+        _ execution: DashboardExecution?,
+        locale: Locale = Locale(identifier: "ko")
+    ) -> String {
+        execution.map { text($0, locale: locale) } ?? BridgeAppLocalization.string(
+            "모델 · 추론 확인 불가",
+            locale: locale
+        )
     }
 
     private static func normalized(_ value: String) -> String {
@@ -1357,38 +1475,41 @@ enum DashboardExecutionPresentation {
     }
 }
 
-private func cancellationTargetLabel(_ value: String) -> String {
+private func cancellationTargetLabel(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "activity": return "Activity"
-    case "job": return "작업"
+    case "activity": key = "Activity"
+    case "job": key = "작업"
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func cancellationStatusLabel(_ value: String) -> String {
+private func cancellationStatusLabel(_ value: String, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "requested": return "요청됨"
-    case "succeeded": return "처리됨"
-    case "failed": return "실패"
+    case "requested": key = "요청됨"
+    case "succeeded": key = "처리됨"
+    case "failed": key = "실패"
     default: return value
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func runtimeConfigurationIssue(_ value: String) -> String {
+private func runtimeConfigurationIssue(_ value: String, locale: Locale) -> String {
+    let key: String
     if value.contains("not configured") {
-        return "런타임 연결 정보가 아직 저장되지 않았습니다."
+        key = "런타임 연결 정보가 아직 저장되지 않았습니다."
+    } else if value.contains("permissions are too broad") {
+        key = "연결 정보 파일 또는 폴더의 접근 권한이 너무 넓습니다. 앱 전용 권한으로 제한해 주세요."
+    } else if value.contains("regular, non-symlink") {
+        key = "연결 정보는 심볼릭 링크가 아닌 일반 파일이어야 합니다."
+    } else if value.contains("CONTROL_PLANE_API_KEY") {
+        key = "Tunnel runtime API key가 없거나 형식이 올바르지 않습니다."
+    } else if value.contains("CONTROL_PLANE_TUNNEL_ID") {
+        key = "Tunnel ID가 없거나 형식이 올바르지 않습니다."
+    } else {
+        return value
     }
-    if value.contains("permissions are too broad") {
-        return "연결 정보 파일 또는 폴더의 접근 권한이 너무 넓습니다. 앱 전용 권한으로 제한해 주세요."
-    }
-    if value.contains("regular, non-symlink") {
-        return "연결 정보는 심볼릭 링크가 아닌 일반 파일이어야 합니다."
-    }
-    if value.contains("CONTROL_PLANE_API_KEY") {
-        return "Tunnel runtime API key가 없거나 형식이 올바르지 않습니다."
-    }
-    if value.contains("CONTROL_PLANE_TUNNEL_ID") {
-        return "Tunnel ID가 없거나 형식이 올바르지 않습니다."
-    }
-    return value
+    return BridgeAppLocalization.string(key, locale: locale)
 }

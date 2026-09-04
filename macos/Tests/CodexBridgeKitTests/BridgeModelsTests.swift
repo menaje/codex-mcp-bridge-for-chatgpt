@@ -9,6 +9,16 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertNil(DisplayFormat.parseDate("not-a-date"))
     }
 
+    @MainActor
+    func testDisplayFormatUsesRequestedLocaleForDurations() {
+        let english = DisplayFormat.duration(65_000, locale: Locale(identifier: "en"))
+        let korean = DisplayFormat.duration(65_000, locale: Locale(identifier: "ko"))
+
+        XCTAssertEqual(english, "1m 5s")
+        XCTAssertEqual(korean, "1분 5초")
+        XCTAssertNotEqual(english, korean)
+    }
+
     func testSettingsMutationKeepsIndependentRevisionsAndNestedPatch() throws {
         let mutation = SettingsMutation(
             expectedSettingsRevision: 7,

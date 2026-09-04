@@ -194,9 +194,12 @@ private struct GeneralSettingsPane: View {
                     .foregroundStyle(.secondary)
                 if draft.accessStrategy == "always-full" {
                     Label(
-                        snapshot.capabilities.allowDangerFullAccess
-                            ? "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다."
-                            : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 서버 탭에서 최대 권한을 변경할 수 있습니다.",
+                        BridgeAppLocalization.string(
+                            snapshot.capabilities.allowDangerFullAccess
+                                ? "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다."
+                                : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 서버 탭에서 최대 권한을 변경할 수 있습니다.",
+                            locale: model.interfaceLocale
+                        ),
                         systemImage: "exclamationmark.shield.fill"
                     )
                     .font(.caption)
@@ -287,6 +290,9 @@ private struct GeneralSettingsPane: View {
                         Text(localeLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
+                Text("자동을 선택하면 macOS 앱은 Mac의 언어를, GPT 카드는 ChatGPT의 표시 언어를 따릅니다. 두 화면의 언어가 다를 수 있습니다. 언어를 직접 선택하면 앱과 GPT 카드에 동일하게 적용됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("동시 실행 에이전트 작업 수") {
                     HStack(spacing: 6) {
                         TextField(
@@ -352,7 +358,10 @@ private struct GeneralSettingsPane: View {
                 )
                 .disabled(model.loginItemOperationInProgress)
 
-                Text("이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.")
+                Text(BridgeAppLocalization.string(
+                    "이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.",
+                    locale: model.interfaceLocale
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -573,7 +582,12 @@ private struct GeneralSettingsPane: View {
                 locale: model.interfaceLocale
             )
         }
-        return "\(effort?.label ?? choice.reasoningEffort)\(unavailable)"
+        let label = BridgeAppLocalization.reasoningEffortLabel(
+            choice.reasoningEffort,
+            fallback: effort?.label,
+            locale: model.interfaceLocale
+        )
+        return "\(label)\(unavailable)"
     }
 }
 
@@ -1071,6 +1085,13 @@ private func localeLabel(_ value: String, locale: Locale) -> String {
     case "auto": return BridgeAppLocalization.string("자동", locale: locale)
     case "ko": return "한국어"
     case "en": return "English"
+    case "ja": return "日本語"
+    case "zh-Hans": return "简体中文"
+    case "zh-Hant": return "繁體中文"
+    case "es": return "Español"
+    case "fr": return "Français"
+    case "de": return "Deutsch"
+    case "pt": return "Português"
     default: return value
     }
 }
@@ -1096,14 +1117,16 @@ private func handoffLabel(_ value: String, locale: Locale) -> String {
     return BridgeAppLocalization.string(key, locale: locale)
 }
 
-private func phaseLabel(_ value: String?) -> String {
+private func phaseLabel(_ value: String?, locale: Locale) -> String {
+    let key: String
     switch value {
-    case "running": return "실행 중"
-    case "starting": return "시작 중"
-    case "draining": return "작업 종료 대기 중"
-    case "stopping": return "중지 중"
-    case "backoff": return "재시작 대기 중"
-    case "safe-mode": return "안전 모드"
-    default: return "중지됨"
+    case "running": key = "실행 중"
+    case "starting": key = "시작 중"
+    case "draining": key = "작업 종료 대기 중"
+    case "stopping": key = "중지 중"
+    case "backoff": key = "재시작 대기 중"
+    case "safe-mode": key = "안전 모드"
+    default: key = "중지됨"
     }
+    return BridgeAppLocalization.string(key, locale: locale)
 }

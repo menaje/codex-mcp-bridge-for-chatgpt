@@ -217,7 +217,11 @@ the returned revision. A newer card-side revision replaces an untouched form,
 but never overwrites a locally edited draft; a genuine conflict pauses autosave
 and requires an explicit, confirmed reload. Language selection updates the
 native locale immediately and the persisted preference continues to localize
-the retained cards. The user concurrency preference defaults to 30 and accepts
+the retained cards. English, Korean, Japanese, Simplified and Traditional
+Chinese, Spanish, French, German, and Portuguese share one explicit preference.
+Automatic follows the language of the host displaying each surface, while an
+explicit selection keeps the app and cards on the same language. The user
+concurrency preference defaults to 30 and accepts
 direct numeric input up to the operator ceiling, which defaults to 100.
 
 Runtime/Node discovery starts off the main actor so a slow or broken executable

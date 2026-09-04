@@ -233,7 +233,10 @@ Graceful stop/restart also verifies retained App Server background processes;
 unknown or nonzero impact requires the separately confirmed force action. The
 native Settings window automatically saves ordinary preferences, applies its
 language selection to the native UI immediately, and follows card-side revisions
-without overwriting a locally edited draft. Backend and maximum-access changes
+without overwriting a locally edited draft. The same explicit language selection
+applies to the native app and retained cards across English, Korean, Japanese,
+Simplified and Traditional Chinese, Spanish, French, German, and Portuguese;
+Automatic follows each surface's host language. Backend and maximum-access changes
 remain an explicit private-dotenv apply and server restart.
 
 Build and verify the current host-architecture development app with:

@@ -343,7 +343,7 @@ final class AppModel: ObservableObject {
     }
 
     func previewInterfaceLocale(_ preference: String) {
-        guard ["auto", "ko", "en"].contains(preference) else { return }
+        guard BridgeAppLocalization.supportedPreferences.contains(preference) else { return }
         interfaceLocalePreviewActive = true
         interfaceLocalePreference = preference
     }
@@ -388,7 +388,7 @@ final class AppModel: ObservableObject {
             beginPolling()
         } catch {
             logger.error("helper bootstrap failed: \(error.localizedDescription, privacy: .public)")
-            startupErrorMessage = error.localizedDescription
+            startupErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -406,7 +406,7 @@ final class AppModel: ObservableObject {
             statusErrorMessage = nil
         } catch {
             helperStatus = nil
-            statusErrorMessage = error.localizedDescription
+            statusErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -439,7 +439,7 @@ final class AppModel: ObservableObject {
                 idleOffset: 0
             )
         } catch {
-            dashboardErrorMessage = error.localizedDescription
+            dashboardErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -498,7 +498,7 @@ final class AppModel: ObservableObject {
             }
             settingsLoadErrorMessage = nil
         } catch {
-            settingsLoadErrorMessage = error.localizedDescription
+            settingsLoadErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -511,7 +511,7 @@ final class AppModel: ObservableObject {
             runtimeImpactErrorMessage = nil
         } catch {
             runtimeImpact = nil
-            runtimeImpactErrorMessage = error.localizedDescription
+            runtimeImpactErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -667,8 +667,11 @@ final class AppModel: ObservableObject {
                 try loginItemController.unregister()
             }
         } catch {
-            loginItemErrorMessage =
-                "로그인 시 실행 설정을 변경하지 못했습니다: \(error.localizedDescription)"
+            loginItemErrorMessage = BridgeAppLocalization.format(
+                "로그인 시 실행 설정을 변경하지 못했습니다: %@",
+                locale: interfaceLocale,
+                localizedErrorDescription(error)
+            )
         }
     }
 
@@ -705,7 +708,7 @@ final class AppModel: ObservableObject {
             }
         } catch {
             authStatus = nil
-            authErrorMessage = error.localizedDescription
+            authErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -764,7 +767,7 @@ final class AppModel: ObservableObject {
             beginLoginPolling()
             return true
         } catch {
-            authErrorMessage = error.localizedDescription
+            authErrorMessage = localizedErrorDescription(error)
             return false
         }
     }
@@ -1075,7 +1078,7 @@ final class AppModel: ObservableObject {
             logs = try await client.logs(limit: 100).entries
             logsErrorMessage = nil
         } catch {
-            logsErrorMessage = error.localizedDescription
+            logsErrorMessage = localizedErrorDescription(error)
         }
     }
 
@@ -1111,7 +1114,7 @@ final class AppModel: ObservableObject {
                 }
                 await refreshSettings()
             }
-            settingsErrorMessage = message
+            settingsErrorMessage = localizedErrorDescription(error)
             return false
         }
     }
@@ -1124,9 +1127,13 @@ final class AppModel: ObservableObject {
             try await operation()
             return true
         } catch {
-            runtimeErrorMessage = error.localizedDescription
+            runtimeErrorMessage = localizedErrorDescription(error)
             return false
         }
+    }
+
+    private func localizedErrorDescription(_ error: Error) -> String {
+        BridgeAppLocalization.errorDescription(error, locale: interfaceLocale)
     }
 
     private func localizedApplicationShutdownError(_ error: Error) -> String {
@@ -1152,7 +1159,7 @@ final class AppModel: ObservableObject {
         return BridgeAppLocalization.format(
             "앱과 관련 프로세스를 모두 종료하지 못했습니다: %@",
             locale: interfaceLocale,
-            message
+            localizedErrorDescription(error)
         )
     }
 
@@ -1164,7 +1171,7 @@ final class AppModel: ObservableObject {
             try await operation()
             return true
         } catch {
-            dashboardErrorMessage = error.localizedDescription
+            dashboardErrorMessage = localizedErrorDescription(error)
             return false
         }
     }

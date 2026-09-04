@@ -86,6 +86,13 @@ follow changes from the retained Settings card; autosave preserves newer local
 edits while one save is in flight, and a genuine external revision conflict
 pauses autosave until an explicitly confirmed reload. The selected native UI
 locale changes optimistically and is also sent to the Settings snapshot service.
+
+One shared preference supports Automatic, English, Korean, Japanese, Simplified
+and Traditional Chinese, Spanish, French, German, and Portuguese. An explicit
+language applies to both the native app and retained cards. Automatic follows
+the language of the host displaying each surface, so the macOS app and a ChatGPT
+card can differ only while Automatic is selected.
+
 Runtime discovery runs away from the menu-bar UI thread.
 
 ## Build an app bundle
@@ -94,6 +101,11 @@ Runtime discovery runs away from the menu-bar UI thread.
 ./macos/build-app.sh
 open "macos/build/Codex MCP Bridge for ChatGPT.app"
 ```
+
+`Resources/Localization/Localizable.xcstrings` is the native translation source.
+Run `npm run macos:localizations:sync` after adding SwiftUI text, fill every new
+locale entry, and use `npm run macos:localizations:check` to verify source-key,
+placeholder, and nine-language coverage.
 
 The current build is an ad-hoc-signed development artifact for the host
 architecture. Node.js, Codex CLI, and `tunnel-client` remain managed external

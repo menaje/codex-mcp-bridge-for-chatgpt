@@ -5,6 +5,53 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class AppPresentationTests: XCTestCase {
+    func testNativeLocalizationSupportsEverySharedExplicitLocale() {
+        let expected = [
+            "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"
+        ]
+
+        XCTAssertEqual(BridgeAppLocalization.supportedLanguageCodes, expected)
+        XCTAssertEqual(BridgeAppLocalization.supportedPreferences, ["auto"] + expected)
+        for language in expected {
+            XCTAssertEqual(BridgeAppLocalization.languageCode(for: language), language)
+            XCTAssertEqual(
+                BridgeAppLocalization.languageCode(
+                    for: BridgeAppLocalization.locale(for: language)
+                ),
+                language
+            )
+        }
+    }
+
+    func testNativeLocalizationDoesNotTreatUnknownExplicitLocaleAsAutomatic() {
+        XCTAssertEqual(BridgeAppLocalization.locale(for: "unknown").identifier, "en")
+        XCTAssertEqual(BridgeAppLocalization.languageCode(for: "unknown"), "en")
+    }
+
+    func testNativeLocalizationNormalizesRegionalLocales() {
+        let cases = [
+            "en-GB": "en",
+            "ko-KR": "ko",
+            "ja-JP": "ja",
+            "zh-CN": "zh-Hans",
+            "zh-SG": "zh-Hans",
+            "zh-TW": "zh-Hant",
+            "zh-HK": "zh-Hant",
+            "es-MX": "es",
+            "fr-CA": "fr",
+            "de-AT": "de",
+            "pt-BR": "pt"
+        ]
+
+        for (identifier, expected) in cases {
+            XCTAssertEqual(
+                BridgeAppLocalization.languageCode(for: Locale(identifier: identifier)),
+                expected,
+                identifier
+            )
+        }
+    }
+
     @MainActor
     func testPrimaryAppWindowsUseStageManagerPrimaryBehavior() {
         let window = NSWindow(
@@ -532,7 +579,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(items[1].turn.execution?.reasoningEffort, "high")
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[0].turn.execution),
-            "Terra · max"
+            "Terra · 최대"
         )
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[2].turn.execution),

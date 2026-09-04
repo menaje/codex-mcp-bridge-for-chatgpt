@@ -3,11 +3,18 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>ko</string>
+    <string>en</string>
     <key>CFBundleLocalizations</key>
     <array>
         <string>ko</string>
         <string>en</string>
+        <string>ja</string>
+        <string>zh-Hans</string>
+        <string>zh-Hant</string>
+        <string>es</string>
+        <string>fr</string>
+        <string>de</string>
+        <string>pt</string>
     </array>
     <key>CFBundleExecutable</key>
     <string>CodexBridgeMenuBar</string>
