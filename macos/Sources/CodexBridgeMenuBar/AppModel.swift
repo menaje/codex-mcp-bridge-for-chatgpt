@@ -505,6 +505,8 @@ final class AppModel: ObservableObject {
     func refreshRuntimeImpact() async {
         isBusy = true
         defer { isBusy = false }
+        runtimeImpact = nil
+        runtimeImpactErrorMessage = nil
         do {
             let client = await bridgeClient()
             runtimeImpact = try await client.runtimeStatus(inspectBackgroundProcesses: true)

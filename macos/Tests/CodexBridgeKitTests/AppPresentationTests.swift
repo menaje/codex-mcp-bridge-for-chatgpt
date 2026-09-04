@@ -5,6 +5,59 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class AppPresentationTests: XCTestCase {
+    func testApplicationQuitConfirmationOnlyAppearsWhenShutdownImpactExistsOrIsUnknown() {
+        func impact(
+            activeJobs: Int = 0,
+            pendingAdmissions: Int = 0,
+            backgroundProcessState: String = "confirmed",
+            backgroundProcesses: Int = 0,
+            backgroundProcessUnknownAgents: Int = 0
+        ) -> RuntimeAdmissionSnapshot {
+            RuntimeAdmissionSnapshot(
+                acceptingNewJobs: true,
+                activeJobs: activeJobs,
+                pendingAdmissions: pendingAdmissions,
+                backgroundProcessState: backgroundProcessState,
+                backgroundProcesses: backgroundProcesses,
+                backgroundProcessAgents: backgroundProcesses > 0 ? 1 : 0,
+                backgroundProcessUnknownAgents: backgroundProcessUnknownAgents
+            )
+        }
+
+        XCTAssertFalse(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(activeJobs: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(pendingAdmissions: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(backgroundProcesses: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(backgroundProcessUnknownAgents: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(backgroundProcessState: "unknown"),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: nil,
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(),
+            refreshFailed: true
+        ))
+    }
+
     func testNativeLocalizationSupportsEverySharedExplicitLocale() {
         let expected = [
             "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"

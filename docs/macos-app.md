@@ -82,9 +82,11 @@ must finish saving before quit; a save failure leaves the app open and reports t
 problem instead of discarding the edit. Graceful quit/stop/restart first blocks new Job admission, waits
 for active Jobs and pending admissions, and then verifies every current retained
 App Server Agent thread for background processes. It refuses to stop when a background
-process exists or that impact cannot be confirmed. Force actions refresh and
-show the active/background impact immediately before confirmation; they never
-replay work or roll back filesystem changes. A process lock rejects a second launcher, and
+process exists or that impact cannot be confirmed. **Quit App** refreshes that
+impact first and starts graceful shutdown immediately when no work or background
+process can be affected. It offers graceful and force choices only when work may
+be interrupted or the impact cannot be confirmed. Force actions never replay
+work or roll back filesystem changes. A process lock rejects a second launcher, and
 unexpected exits use bounded exponential backoff before safe mode.
 The lock stays in one canonical per-user namespace even when a CLI selects an
 alternate dotenv. If the helper crashes while its detached runtime remains

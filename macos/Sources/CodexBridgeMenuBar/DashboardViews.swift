@@ -2,6 +2,20 @@ import AppKit
 import CodexBridgeKit
 import SwiftUI
 
+enum ApplicationQuitConfirmationPolicy {
+    static func requiresConfirmation(
+        for impact: RuntimeAdmissionSnapshot?,
+        refreshFailed: Bool
+    ) -> Bool {
+        guard !refreshFailed, let impact else { return true }
+        return impact.activeJobs > 0 ||
+            impact.pendingAdmissions > 0 ||
+            impact.backgroundProcesses > 0 ||
+            impact.backgroundProcessUnknownAgents > 0 ||
+            impact.backgroundProcessState != "confirmed"
+    }
+}
+
 struct DashboardPopoverView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
@@ -345,7 +359,14 @@ struct DashboardPopoverView: View {
             Button("앱 종료…") {
                 Task {
                     await model.refreshRuntimeImpact()
-                    showApplicationQuitConfirmation = true
+                    if ApplicationQuitConfirmationPolicy.requiresConfirmation(
+                        for: model.runtimeImpact,
+                        refreshFailed: model.runtimeImpactErrorMessage != nil
+                    ) {
+                        showApplicationQuitConfirmation = true
+                    } else {
+                        shutdownAndQuit(force: false)
+                    }
                 }
             }
             .disabled(model.isBusy)

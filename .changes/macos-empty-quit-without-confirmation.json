@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "macOS 앱 종료 시 진행 중인 작업이나 백그라운드 영향이 없으면 강제 종료 선택창 없이 안전하게 종료합니다.",
+  "breaking": false,
+  "migration": null
+}
