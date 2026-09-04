@@ -1,9 +1,29 @@
 import Darwin
+import AppKit
 import XCTest
 @testable import CodexBridgeKit
 @testable import CodexBridgeMenuBar
 
 final class AppPresentationTests: XCTestCase {
+    @MainActor
+    func testPrimaryAppWindowsUseStageManagerPrimaryBehavior() {
+        let window = NSWindow(
+            contentRect: .zero,
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+
+        PrimaryAppWindowPresentation.configure(window)
+
+        XCTAssertEqual(window.level, .normal)
+        XCTAssertTrue(window.collectionBehavior.contains(.managed))
+        XCTAssertTrue(window.collectionBehavior.contains(.primary))
+        XCTAssertTrue(window.collectionBehavior.contains(.participatesInCycle))
+        XCTAssertFalse(window.collectionBehavior.contains(.auxiliary))
+        XCTAssertFalse(window.collectionBehavior.contains(.canJoinAllApplications))
+    }
+
     func testBrandMarkScalesInsideItsSquare() {
         let bounds = CGRect(x: 0, y: 0, width: 18, height: 18)
         let mark = BridgeBrandMarkShape().path(in: bounds).boundingRect

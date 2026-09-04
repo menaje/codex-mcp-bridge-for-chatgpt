@@ -3,6 +3,7 @@ import CodexBridgeKit
 import SwiftUI
 
 struct DashboardPopoverView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var showForceStopConfirmation = false
     @State private var showForceRestartConfirmation = false
@@ -195,7 +196,7 @@ struct DashboardPopoverView: View {
                 }
                 if model.authStatus?.authenticated != true {
                     Button {
-                        ConnectionRepairWindowController.shared.show(model: model)
+                        presentConnectionRepairWindow()
                     } label: {
                         Label(
                             authenticationNotice,
@@ -293,7 +294,7 @@ struct DashboardPopoverView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                SettingsWindowController.shared.show(model: model)
+                presentSettingsWindow()
             } label: {
                 Label("설정", systemImage: "gearshape")
             }
@@ -311,7 +312,7 @@ struct DashboardPopoverView: View {
                 }
                 Divider()
                 Button("연결 정보 및 로그인…") {
-                    ConnectionRepairWindowController.shared.show(model: model)
+                    presentConnectionRepairWindow()
                 }
                 Button("Tunnel 프로필 복구…") {
                     showRepairConfirmation = true
@@ -425,6 +426,22 @@ struct DashboardPopoverView: View {
             }
             NSApp.terminate(nil)
         }
+    }
+
+    private func presentSettingsWindow() {
+        dismissMenuBarWindow()
+        SettingsWindowController.shared.show(model: model)
+    }
+
+    private func presentConnectionRepairWindow() {
+        dismissMenuBarWindow()
+        ConnectionRepairWindowController.shared.show(model: model)
+    }
+
+    private func dismissMenuBarWindow() {
+        let menuBarWindow = NSApp.keyWindow
+        dismiss()
+        menuBarWindow?.orderOut(nil)
     }
 
     private func presentApplicationQuitFailure() {

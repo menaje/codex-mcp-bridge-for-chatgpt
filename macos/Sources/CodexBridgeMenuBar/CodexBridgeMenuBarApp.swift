@@ -93,6 +93,38 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
+enum PrimaryAppWindowPresentation {
+    private static var visibleWindowIDs = Set<ObjectIdentifier>()
+
+    static let collectionBehavior: NSWindow.CollectionBehavior = [
+        .managed,
+        .primary,
+        .participatesInCycle
+    ]
+
+    static func configure(_ window: NSWindow) {
+        window.level = .normal
+        window.collectionBehavior = collectionBehavior
+    }
+
+    static func show(_ window: NSWindow) {
+        visibleWindowIDs.insert(ObjectIdentifier(window))
+        // A UIElement app is otherwise treated like an auxiliary overlay by
+        // Stage Manager. Become a regular app only while a primary window is open.
+        _ = NSApp.setActivationPolicy(.regular)
+        window.makeKeyAndOrderFront(nil)
+        window.makeMain()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func didClose(_ window: NSWindow) {
+        visibleWindowIDs.remove(ObjectIdentifier(window))
+        guard visibleWindowIDs.isEmpty else { return }
+        _ = NSApp.setActivationPolicy(.accessory)
+    }
+}
+
+@MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
@@ -110,6 +142,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             settingsWindow.title = "Codex MCP Bridge for ChatGPT"
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
+            PrimaryAppWindowPresentation.configure(settingsWindow)
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
             settingsWindow.contentView = NSHostingView(
                 rootView: NativeSettingsView()
@@ -119,8 +152,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             settingsWindow.center()
             window = settingsWindow
         }
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            PrimaryAppWindowPresentation.show(window)
+        }
         model.setSettingsWindowVisible(true)
         model.refreshLoginItemStatus()
         Task {
@@ -131,6 +165,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            PrimaryAppWindowPresentation.didClose(window)
+        }
         model?.setSettingsWindowVisible(false)
     }
 }
@@ -151,6 +188,7 @@ final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
             repairWindow.title = "Codex MCP Bridge for ChatGPT"
             repairWindow.isReleasedWhenClosed = false
             repairWindow.delegate = self
+            PrimaryAppWindowPresentation.configure(repairWindow)
             repairWindow.setFrameAutosaveName("CodexBridgeConnectionRepairWindow")
             repairWindow.contentView = NSHostingView(
                 rootView: ConnectionRepairView()
@@ -160,12 +198,19 @@ final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
             repairWindow.center()
             window = repairWindow
         }
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            PrimaryAppWindowPresentation.show(window)
+        }
         Task {
             if model.helperStatus == nil { await model.start() }
             await model.refreshStatus()
             await model.refreshAuthStatus()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            PrimaryAppWindowPresentation.didClose(window)
         }
     }
 }
