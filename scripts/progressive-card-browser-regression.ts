@@ -95,6 +95,66 @@ const dashboardPage = (total = 0) => ({
   hasPrevious: false,
   hasNext: false
 });
+const dashboardTurn = (
+  activityKey: string,
+  activityTitle: string,
+  model: string | null,
+  reasoningEffort: string | null
+) => ({
+  activityKey,
+  activityTitle,
+  ...(model && reasoningEffort
+    ? {
+        execution: {
+          model,
+          modelDisplayName: model === "gpt-5.6-sol" ? "GPT-5.6 Sol" : "GPT-5.6 Terra",
+          reasoningEffort,
+          isCurrent: false
+        }
+      }
+    : {}),
+  status: "completed",
+  startedAt: "2026-09-02T23:58:00.000Z",
+  updatedAt: "2026-09-02T23:59:00.000Z",
+  endedAt: "2026-09-02T23:59:00.000Z",
+  durationMs: 60_000
+});
+const dashboardLatest = dashboardTurn(
+  "activity-a",
+  "Repeated title",
+  "gpt-5.6-sol",
+  "high"
+);
+const dashboardHistoryRow = {
+  rowKey: "row-a",
+  activityKey: "activity-a",
+  conversationKey: "conversation-a",
+  sessionAlias: "Session TEST",
+  bucket: "recent",
+  projectKey: "project-a",
+  projectName: "Project A",
+  agentName: "History Agent",
+  activityTitle: "Repeated title",
+  execution: {
+    model: "gpt-5.6-terra",
+    modelDisplayName: "GPT-5.6 Terra",
+    reasoningEffort: "xhigh",
+    isCurrent: true
+  },
+  status: "completed",
+  createdAt: dashboardLatest.startedAt,
+  updatedAt: dashboardLatest.updatedAt,
+  elapsedMs: dashboardLatest.durationMs,
+  backgroundProcessCount: 0,
+  latestTurn: dashboardLatest,
+  history: [
+    dashboardTurn("activity-a", "Repeated title", "gpt-5.6-terra", "max"),
+    dashboardTurn("activity-b", "Repeated title", "gpt-5.6-sol", "high"),
+    dashboardTurn("activity-b", "Repeated title", null, null),
+    dashboardTurn("activity-c", "Different title", "gpt-5.6-sol", "medium")
+  ],
+  historyCount: 4
+};
 const dashboardView = (state: "structural" | "enriched") => ({
   kind: "dashboard",
   generatedAt: state === "structural"
@@ -108,7 +168,7 @@ const dashboardView = (state: "structural" | "enriched") => ({
   counts: {
     trackedProjects: 1,
     trackedConversations: 1,
-    retainedJobs: 0,
+    retainedJobs: 5,
     active: 0,
     running: 0,
     inputRequired: 0,
@@ -119,7 +179,7 @@ const dashboardView = (state: "structural" | "enriched") => ({
     backgroundProcessAgents: state === "enriched" ? 1 : 0,
     runtimeUnknownAgents: 0,
     runtimeProbeSkippedAgents: 0,
-    completed: 0,
+    completed: 5,
     failed: 0,
     interrupted: 0,
     cancelled: 0,
@@ -127,11 +187,11 @@ const dashboardView = (state: "structural" | "enriched") => ({
     orphanedAgents: 0
   },
   activeRows: [],
-  terminalRows: [],
+  terminalRows: [dashboardHistoryRow],
   idleRows: [],
   pagination: {
     active: dashboardPage(),
-    terminal: dashboardPage(),
+    terminal: { ...dashboardPage(1), returned: 1 },
     idle: dashboardPage()
   },
   uiLocalePreference: "ko"
@@ -322,6 +382,34 @@ try {
   const dashboardStructural = JSON.parse(await cli(["eval", "()=>({elapsed:window.__structuralPaintElapsed,calls:window.__cardCalls,errors:window.__cardErrors,background:document.querySelector('#background-count').textContent})"]));
   assert(dashboardStructural.elapsed < 500, `Dashboard compatibility paint took ${dashboardStructural.elapsed}ms`);
   assert(dashboardStructural.calls[0]?.args?.enrich === false, "Dashboard did not request structure first");
+  const dashboardPresentation = JSON.parse(await cli([
+    "eval",
+    "()=>({titles:[...document.querySelectorAll('#terminal-list .row-title')].map(node=>node.textContent),boundaries:[...document.querySelectorAll('#terminal-list .history-activity-boundary')].map(node=>node.textContent),executions:[...document.querySelectorAll('#terminal-list .execution')].map(node=>node.textContent)})"
+  ]));
+  assert(
+    dashboardPresentation.titles.filter((title: string) => title === "Repeated title").length === 1,
+    "Dashboard repeated the enclosing Activity title in Agent history"
+  );
+  assert(
+    dashboardPresentation.boundaries.filter((title: string) => title === "이전 Activity").length === 1,
+    "Dashboard lost or duplicated a same-title Activity boundary"
+  );
+  assert(
+    dashboardPresentation.titles.includes("Different title"),
+    "Dashboard omitted a distinct historical Activity title"
+  );
+  for (const execution of [
+    "GPT-5.6 Sol · high",
+    "GPT-5.6 Terra · max",
+    "모델 · 추론 확인 불가",
+    "GPT-5.6 Sol · medium",
+    "다음 실행 설정: GPT-5.6 Terra · xhigh"
+  ]) {
+    assert(
+      dashboardPresentation.executions.includes(execution),
+      `Dashboard omitted turn execution detail: ${execution}`
+    );
+  }
   await cli(["run-code", "async page=>{await page.waitForFunction(()=>document.querySelector('#background-count').textContent==='1',null,{timeout:2500})}"]);
   const dashboardEnriched = JSON.parse(await cli(["eval", "()=>({calls:window.__cardCalls,errors:window.__cardErrors})"]));
   assert(dashboardEnriched.calls.some((call: any) => call.args?.enrich === true), "Dashboard enrichment was not requested");
@@ -329,7 +417,12 @@ try {
   await cli(["goto", "about:blank"]);
   await cli(["go-back"]);
   await cli(["run-code", "async page=>{await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden,null,{timeout:2000})}"]);
-  report.dashboard = { structural: dashboardStructural, enriched: dashboardEnriched, reentry: true };
+  report.dashboard = {
+    structural: dashboardStructural,
+    presentation: dashboardPresentation,
+    enriched: dashboardEnriched,
+    reentry: true
+  };
 
   await cli(["goto", `${baseUrl}/settings.html`]);
   await cli(["run-code", "async page=>{await page.waitForFunction(()=>!document.querySelector('#settings-form').hidden,null,{timeout:2000})}"]);

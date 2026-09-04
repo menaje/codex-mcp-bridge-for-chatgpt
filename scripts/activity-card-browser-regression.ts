@@ -61,7 +61,12 @@ const view = {
               role: null,
               displayState: "completed",
               durationMs: 2_000,
-              backgroundProcessCount: 0
+              backgroundProcessCount: 0,
+              execution: {
+                model: "gpt-5.6-sol",
+                modelDisplayName: "GPT-5.6 Sol",
+                reasoningEffort: "max"
+              }
             }
           ],
           cancellations: [],
@@ -327,7 +332,9 @@ type BrowserState = {
   count: string;
   title: string;
   recentTitle: string;
+  recentExecution: string;
   idleAgentName: string;
+  idleExecution: string;
   idleExpanded: string;
   idlePanelHidden: boolean;
   message: string;
@@ -347,7 +354,9 @@ async function browserState(framed = false): Promise<BrowserState> {
       count:document.querySelector("#current-count").textContent,
       title:document.querySelector(".row .name")&&document.querySelector(".row .name").textContent||"",
       recentTitle:document.querySelector(".groups .group-list .row .name")&&document.querySelector(".groups .group-list .row .name").textContent||"",
+      recentExecution:document.querySelector(".groups .group-list .row .activity-agent .execution")&&document.querySelector(".groups .group-list .row .activity-agent .execution").textContent||"",
       idleAgentName:document.querySelector("#group-idle .activity-agent .name")&&document.querySelector("#group-idle .activity-agent .name").textContent||"",
+      idleExecution:document.querySelector("#group-idle .activity-agent .execution")&&document.querySelector("#group-idle .activity-agent .execution").textContent||"",
       idleExpanded:document.querySelector('[aria-controls="group-idle"]')&&document.querySelector('[aria-controls="group-idle"]').getAttribute("aria-expanded")||"",
       idlePanelHidden:Boolean(document.querySelector("#group-idle")&&document.querySelector("#group-idle").hidden),
       message:document.querySelector("#message").textContent,
@@ -371,7 +380,9 @@ function assertRendered(name: string, state: BrowserState): void {
   assert(state.count === "· 1", `${name}: active count was not rendered`);
   assert(state.title === browserTitle, `${name}: Activity row was not rendered`);
   assert(state.recentTitle === recentTitle, `${name}: recent Activity was not visible by default`);
+  assert(state.recentExecution === "GPT-5.6 Sol · max", `${name}: per-Agent execution was not rendered`);
   assert(state.idleAgentName === idleAgentName, `${name}: idle Agent detail was not rendered`);
+  assert(state.idleExecution === "모델 · 추론 확인 불가", `${name}: unavailable idle execution was omitted`);
   assert(state.idleExpanded === "false", `${name}: idle section did not start collapsed`);
   assert(state.idlePanelHidden, `${name}: idle section content was visible by default`);
   assert(!state.messageIsError, `${name}: card rendered an error state`);
@@ -385,6 +396,8 @@ function assertRestoredFullHistory(name: string, state: BrowserState): void {
   assert(state.count === "· 2", `${name}: full-history count was not rendered`);
   assert(state.title === browserTitle, `${name}: Activity row was not rendered`);
   assert(state.recentTitle === recentTitle, `${name}: Activity history was not rendered`);
+  assert(state.recentExecution === "GPT-5.6 Sol · max", `${name}: full-history Agent execution was not rendered`);
+  assert(state.idleExecution === "모델 · 추론 확인 불가", `${name}: full-history unavailable execution was omitted`);
   assert(state.message.includes("복구된 전체 Activity"), `${name}: restored-view status was not rendered`);
   assert(state.refreshLabel === "실시간 Activity 열기", `${name}: live promotion action was not exposed`);
   assert(!state.messageIsError, `${name}: card rendered an error state`);

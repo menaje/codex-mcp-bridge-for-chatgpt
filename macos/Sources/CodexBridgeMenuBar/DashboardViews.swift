@@ -575,8 +575,7 @@ private struct DashboardSection: View {
                             DashboardRowView(
                                 row: row,
                                 presentation: .idle,
-                                suppressHistoricalExecution: false,
-                                suppressNextExecution: false
+                                enclosingActivityTitle: row.activityTitle
                             )
                         }
                     }
@@ -679,18 +678,6 @@ private struct DashboardActivityGroupView: View {
                 Text("Agent \(group.rows.count)명")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let execution = commonHistoricalExecution {
-                    Text("실행: \(DashboardExecutionPresentation.text(execution))")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                if let execution = commonNextExecution {
-                    Text("다음 실행 설정: \(DashboardExecutionPresentation.text(execution))")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
                 if let cancellation = activityCancellation {
                     CancellationDisclosure(cancellation: cancellation)
                 }
@@ -698,8 +685,7 @@ private struct DashboardActivityGroupView: View {
                     DashboardRowView(
                         row: row,
                         presentation: marksRecentActivity ? .nestedIdleAgent : .nestedAgent,
-                        suppressHistoricalExecution: commonHistoricalExecution != nil,
-                        suppressNextExecution: commonNextExecution != nil
+                        enclosingActivityTitle: activityTitle
                     )
                 }
             }
@@ -712,14 +698,6 @@ private struct DashboardActivityGroupView: View {
         group.rows.compactMap(\.latestTurn?.cancellation).first {
             $0.targetKind == "activity"
         }
-    }
-
-    private var commonHistoricalExecution: DashboardExecution? {
-        DashboardExecutionPresentation.commonHistorical(in: group.rows)
-    }
-
-    private var commonNextExecution: DashboardExecution? {
-        DashboardExecutionPresentation.commonNext(in: group.rows)
     }
 
     private var activityTitle: String {
@@ -768,8 +746,7 @@ private struct CancellationDisclosure: View {
 private struct DashboardRowView: View {
     let row: DashboardRow
     let presentation: DashboardRowPresentation
-    let suppressHistoricalExecution: Bool
-    let suppressNextExecution: Bool
+    let enclosingActivityTitle: String?
     @State private var historyExpanded = false
 
     var body: some View {
@@ -798,8 +775,8 @@ private struct DashboardRowView: View {
                         .background(.quaternary, in: Capsule())
                 }
             }
-            if let execution = historicalExecution {
-                Text("\(row.bucket == "idle" ? "최근 실행" : "실행"): \(executionText(execution))")
+            if row.latestTurn != nil {
+                Text("\(row.bucket == "idle" ? "최근 실행" : "실행"): \(DashboardExecutionPresentation.turnText(row.latestTurn?.execution))")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -863,21 +840,29 @@ private struct DashboardRowView: View {
 
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(history.enumerated()), id: \.offset) { _, turn in
+                        ForEach(Array(historyItems.enumerated()), id: \.offset) { _, item in
                             HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: StatusPresentation.symbol(turn.status))
-                                    .foregroundStyle(StatusPresentation.color(turn.status))
+                                Image(systemName: StatusPresentation.symbol(item.turn.status))
+                                    .foregroundStyle(StatusPresentation.color(item.turn.status))
                                     .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(turn.activityTitle ?? StatusPresentation.label(turn.status))
-                                    Text(turnTimeText(turn))
-                                        .foregroundStyle(.secondary)
-                                    if let execution = turn.execution {
-                                        Text("\(execution.modelDisplayName ?? execution.model) · \(execution.reasoningEffort)")
-                                            .font(.caption2.monospaced())
+                                    switch item.heading {
+                                    case .none:
+                                        EmptyView()
+                                    case .boundary:
+                                        Text("이전 Activity")
+                                            .font(.caption2.weight(.medium))
                                             .foregroundStyle(.secondary)
+                                    case .title(let title):
+                                        Text(title)
+                                            .fontWeight(.semibold)
                                     }
-                                    if let cancellation = turn.cancellation {
+                                    Text(turnTimeText(item.turn))
+                                        .foregroundStyle(.secondary)
+                                    Text(DashboardExecutionPresentation.turnText(item.turn.execution))
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                    if let cancellation = item.turn.cancellation {
                                         Text(cancellation.reason)
                                             .foregroundStyle(.secondary)
                                         Text("\(cancellationTargetLabel(cancellation.targetKind)) · \(cancellationStatusLabel(cancellation.status))")
@@ -917,15 +902,19 @@ private struct DashboardRowView: View {
         return nil
     }
 
-    private var historicalExecution: DashboardExecution? {
-        suppressHistoricalExecution ? nil : row.latestTurn?.execution
-    }
-
     private var nextExecution: DashboardExecution? {
-        guard !suppressNextExecution else { return nil }
         return DashboardExecutionPresentation.next(
             current: row.execution,
             latest: row.latestTurn?.execution
+        )
+    }
+
+    private var historyItems: [DashboardHistoryItem] {
+        DashboardHistoryPresentation.items(
+            history: row.history ?? [],
+            latestTurn: row.latestTurn,
+            enclosingActivityKey: row.activityKey,
+            enclosingActivityTitle: enclosingActivityTitle ?? row.activityTitle
         )
     }
 
@@ -1261,6 +1250,77 @@ enum DashboardLink {
     }
 }
 
+enum DashboardHistoryActivityHeading: Equatable {
+    case none
+    case boundary
+    case title(String)
+}
+
+struct DashboardHistoryItem {
+    let turn: DashboardTurn
+    let heading: DashboardHistoryActivityHeading
+}
+
+enum DashboardHistoryPresentation {
+    static func items(
+        history: [DashboardTurn],
+        latestTurn: DashboardTurn?,
+        enclosingActivityKey: String?,
+        enclosingActivityTitle: String?
+    ) -> [DashboardHistoryItem] {
+        var previousTurn = latestTurn
+        var items: [DashboardHistoryItem] = []
+        for turn in history {
+            items.append(DashboardHistoryItem(
+                turn: turn,
+                heading: heading(
+                    for: turn,
+                    previousTurn: previousTurn,
+                    enclosingActivityKey: enclosingActivityKey,
+                    enclosingActivityTitle: enclosingActivityTitle
+                )
+            ))
+            previousTurn = turn
+        }
+        return items
+    }
+
+    static func heading(
+        for turn: DashboardTurn,
+        previousTurn: DashboardTurn?,
+        enclosingActivityKey: String?,
+        enclosingActivityTitle: String?
+    ) -> DashboardHistoryActivityHeading {
+        let currentIdentity = activityIdentity(
+            key: turn.activityKey,
+            title: turn.activityTitle
+        )
+        let previousIdentity = previousTurn.flatMap {
+            activityIdentity(key: $0.activityKey, title: $0.activityTitle)
+        } ?? activityIdentity(key: enclosingActivityKey, title: enclosingActivityTitle)
+        if currentIdentity == previousIdentity { return .none }
+
+        guard let title = nonEmpty(turn.activityTitle) else { return .boundary }
+        if title == nonEmpty(previousTurn?.activityTitle) ||
+            title == nonEmpty(enclosingActivityTitle) {
+            return .boundary
+        }
+        return .title(title)
+    }
+
+    private static func activityIdentity(key: String?, title: String?) -> String? {
+        if let key = nonEmpty(key) { return "key:\(key)" }
+        if let title = nonEmpty(title) { return "legacy-title:\(title)" }
+        return nil
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 enum DashboardExecutionPresentation {
     static func next(
         current: DashboardExecution?,
@@ -1279,29 +1339,6 @@ enum DashboardExecutionPresentation {
             normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
     }
 
-    static func commonHistorical(in rows: [DashboardRow]) -> DashboardExecution? {
-        guard rows.count > 1, let first = rows.first?.latestTurn?.execution else { return nil }
-        return rows.allSatisfy { row in
-            guard let execution = row.latestTurn?.execution else { return false }
-            return matches(execution, first)
-        } ? first : nil
-    }
-
-    static func commonNext(in rows: [DashboardRow]) -> DashboardExecution? {
-        guard rows.count > 1, let firstRow = rows.first,
-              let first = next(
-                  current: firstRow.execution,
-                  latest: firstRow.latestTurn?.execution
-              ) else { return nil }
-        return rows.allSatisfy { row in
-            guard let execution = next(
-                current: row.execution,
-                latest: row.latestTurn?.execution
-            ) else { return false }
-            return matches(execution, first)
-        } ? first : nil
-    }
-
     static func text(_ execution: DashboardExecution) -> String {
         let model = execution.modelDisplayName ?? execution.model
         let current = "\(model) · \(execution.reasoningEffort)"
@@ -1309,6 +1346,10 @@ enum DashboardExecutionPresentation {
             return current
         }
         return "\(current) → \(rerouted) (reroute)"
+    }
+
+    static func turnText(_ execution: DashboardExecution?) -> String {
+        execution.map(text) ?? "모델 · 추론 확인 불가"
     }
 
     private static func normalized(_ value: String) -> String {

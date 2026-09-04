@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Activity 계층의 중복 제목은 줄이되 각 Agent 턴의 모델과 추론 정보는 실행 위치에 유지합니다.",
+  "breaking": false,
+  "migration": null
+}

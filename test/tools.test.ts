@@ -2608,7 +2608,9 @@ describe("bridge tools", () => {
             expect(html).toContain("function appendCancellation(parent,cancellation,key)");
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
-            expect(html).toContain("function appendExecution(parent,execution,next=false)");
+            expect(html).toContain(
+              "function appendExecution(parent,execution,next=false,required=false)"
+            );
             expect(html).toContain(
               "function renderActivityRows(parent,rows,recentActivity=false)"
             );

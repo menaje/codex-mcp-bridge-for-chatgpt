@@ -40,15 +40,18 @@ visible. Swift does not issue App Server runtime probes itself.
 The native popover and both retained ChatGPT cards use the same presentation
 rules. Active, recent, and idle sections are Activity-first with one or more
 Agents nested below; an idle heading is explicitly the Agent's latest Activity,
-not a current assignment. Project/conversation context and an exact execution
-selection shared by every nested Agent appear once on the Activity. Agent state,
-background processes, differing execution settings, and work time remain on the
-Agent. Active work shows only accumulated work time; past work adds relative age
-and omits absolute start, update, and end timestamps. The native UI never prints
-the private compatibility session alias. Active and recent sections start open;
-idle starts collapsed. A native Agent's retained-history label and chevron share
-one full-width click target, and expanded history remains left-aligned with the
-rest of the row.
+not a current assignment. Project/conversation context appears once on the
+Activity. Agent state, background processes, work time, and the latest actual
+model/reasoning effort remain on every Agent even when sibling values match;
+different next-run settings remain separately labelled per Agent. Active work
+shows only accumulated work time; past work adds relative age and omits absolute
+start, update, and end timestamps. The native UI never prints the private
+compatibility session alias. Active and recent sections start open; idle starts
+collapsed. A native Agent's retained-history label and chevron share one
+full-width click target, and expanded history remains left-aligned with the rest
+of the row. Same-Activity history omits the already visible Activity title;
+distinct same-title Activities retain a neutral previous-Activity boundary, and
+every historical turn keeps its own model/reasoning line or an unavailable label.
 
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content plus a small Server tab for the

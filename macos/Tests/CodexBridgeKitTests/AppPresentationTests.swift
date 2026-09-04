@@ -473,49 +473,73 @@ final class AppPresentationTests: XCTestCase {
         ))
     }
 
-    func testDashboardHoistsOnlyExecutionSelectionsSharedByEveryAgent() throws {
-        let historical = try dashboardExecution(
+    func testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution() throws {
+        let firstExecution = try dashboardExecution(
             model: "gpt-5.6-sol",
             displayName: "Sol",
             effort: "high",
             reroutedModel: nil,
             isCurrent: false
         )
-        let current = try dashboardExecution(
+        let secondExecution = try dashboardExecution(
             model: "gpt-5.6-terra",
             displayName: "Terra",
             effort: "max",
             reroutedModel: nil,
-            isCurrent: true
+            isCurrent: false
         )
-        let matchingRows = try [
-            dashboardRow(id: "agent-a", execution: current, latestExecution: historical),
-            dashboardRow(id: "agent-b", execution: current, latestExecution: historical)
+        let latest = try dashboardTurn(
+            activityKey: "activity-a",
+            activityTitle: "Repeated title",
+            execution: firstExecution
+        )
+        let history = try [
+            dashboardTurn(
+                activityKey: "activity-a",
+                activityTitle: "Repeated title",
+                execution: secondExecution
+            ),
+            dashboardTurn(
+                activityKey: "activity-b",
+                activityTitle: "Repeated title",
+                execution: firstExecution
+            ),
+            dashboardTurn(
+                activityKey: "activity-b",
+                activityTitle: "Repeated title",
+                execution: nil
+            ),
+            dashboardTurn(
+                activityKey: "activity-c",
+                activityTitle: "Different title",
+                execution: secondExecution
+            )
         ]
+        let items = DashboardHistoryPresentation.items(
+            history: history,
+            latestTurn: latest,
+            enclosingActivityKey: "activity-a",
+            enclosingActivityTitle: "Repeated title"
+        )
 
         XCTAssertEqual(
-            DashboardExecutionPresentation.commonHistorical(in: matchingRows)?.model,
-            historical.model
+            items.map(\.heading),
+            [.none, .boundary, .none, .title("Different title")]
+        )
+        XCTAssertEqual(items[0].turn.execution?.model, "gpt-5.6-terra")
+        XCTAssertEqual(items[0].turn.execution?.reasoningEffort, "max")
+        XCTAssertEqual(items[1].turn.execution?.model, "gpt-5.6-sol")
+        XCTAssertEqual(items[1].turn.execution?.reasoningEffort, "high")
+        XCTAssertEqual(
+            DashboardExecutionPresentation.turnText(items[0].turn.execution),
+            "Terra · max"
         )
         XCTAssertEqual(
-            DashboardExecutionPresentation.commonNext(in: matchingRows)?.model,
-            current.model
+            DashboardExecutionPresentation.turnText(items[2].turn.execution),
+            "모델 · 추론 확인 불가"
         )
-
-        let different = try dashboardExecution(
-            model: "gpt-5.6-terra",
-            displayName: "Terra",
-            effort: "high",
-            reroutedModel: nil,
-            isCurrent: true
-        )
-        let mixedRows = try [
-            matchingRows[0],
-            dashboardRow(id: "agent-c", execution: different, latestExecution: historical)
-        ]
-        XCTAssertNil(DashboardExecutionPresentation.commonNext(in: mixedRows))
-        XCTAssertNil(DashboardExecutionPresentation.commonHistorical(in: [matchingRows[0]]))
     }
+
 }
 
 @MainActor
@@ -734,49 +758,27 @@ private func dashboardExecution(
     )
 }
 
-private func dashboardRow(
-    id: String,
-    execution: DashboardExecution?,
-    latestExecution: DashboardExecution?
-) throws -> DashboardRow {
-    var row: [String: Any] = [
-        "rowKey": id,
-        "activityKey": "activity-shared",
-        "conversationKey": "conversation-shared",
-        "sessionAlias": "Session TEST",
-        "bucket": "idle",
-        "projectKey": "project-shared",
-        "agentName": id,
-        "status": "idle",
-        "createdAt": "2026-09-03T00:00:00.000Z",
+private func dashboardTurn(
+    activityKey: String?,
+    activityTitle: String?,
+    execution: DashboardExecution?
+) throws -> DashboardTurn {
+    var turn: [String: Any] = [
+        "status": "completed",
         "updatedAt": "2026-09-03T00:01:00.000Z",
-        "elapsedMs": 60_000,
-        "backgroundProcessCount": 0,
-        "history": [],
-        "historyCount": 0
+        "endedAt": "2026-09-03T00:01:00.000Z",
+        "durationMs": 60_000
     ]
+    if let activityKey { turn["activityKey"] = activityKey }
+    if let activityTitle { turn["activityTitle"] = activityTitle }
     if let execution {
-        row["execution"] = try JSONSerialization.jsonObject(
+        turn["execution"] = try JSONSerialization.jsonObject(
             with: JSONEncoder().encode(execution)
         )
     }
-    if let latestExecution {
-        row["latestTurn"] = [
-            "activityKey": "activity-shared",
-            "activityTitle": "Shared Activity",
-            "execution": try JSONSerialization.jsonObject(
-                with: JSONEncoder().encode(latestExecution)
-            ),
-            "status": "completed",
-            "startedAt": "2026-09-03T00:00:00.000Z",
-            "updatedAt": "2026-09-03T00:01:00.000Z",
-            "endedAt": "2026-09-03T00:01:00.000Z",
-            "durationMs": 60_000
-        ]
-    }
     return try JSONDecoder().decode(
-        DashboardRow.self,
-        from: JSONSerialization.data(withJSONObject: row)
+        DashboardTurn.self,
+        from: JSONSerialization.data(withJSONObject: turn)
     )
 }
 

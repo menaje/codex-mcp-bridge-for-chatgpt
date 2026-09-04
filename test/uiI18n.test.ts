@@ -2,13 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ACTIVITY_CARD_HTML,
   ACTIVITY_CARD_HTML_MAX_BYTES,
-  commonActivityAgentExecution,
   groupActivityIdleAgentsByActivity,
   shouldShowHistoricalActivityTitle
 } from "../src/activityCard.js";
 import {
-  commonDashboardExecution,
-  commonDashboardNextExecution,
+  dashboardHistoryActivityHeading,
   dashboardHistoryActivityIdentity,
   dashboardExecutionsEqual,
   dispatchDashboardExternalUrl,
@@ -355,7 +353,8 @@ describe("human-facing UI localization", () => {
       serializedUiTranslations([
         "common", "usage", "cancellation", "activity", "agent", "job",
         "lifecycle", "verification", "kind", "dashboard.status", "dashboard.time",
-        "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity"
+        "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity",
+        "dashboard.execution"
       ])
     );
     expect(DASHBOARD_CARD_HTML).toContain(
@@ -511,10 +510,10 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain("expandedHistories");
     expect(DASHBOARD_CARD_HTML).toContain('node("details","history")');
     expect(DASHBOARD_CARD_HTML).toContain(
-      "function renderHistoryTurn(turn,key,showActivityTitle)"
+      "function renderHistoryTurn(turn,key,heading)"
     );
     expect(DASHBOARD_CARD_HTML).toContain(
-      "activityIdentity!==previousActivityIdentity"
+      "dashboardHistoryActivityHeading(historicalTurn,previousTurn,enclosingActivity)"
     );
     expect(DASHBOARD_CARD_HTML).toContain(
       'if(active)return turn.durationMs==null?t["dashboard.time.durationUnknown"]'
@@ -541,8 +540,10 @@ describe("human-facing UI localization", () => {
       'if(!suppressIdleStatus||row.status!=="idle")head.appendChild(state)'
     );
     expect(DASHBOARD_CARD_HTML).toContain(
-      "Boolean(commonNextExecution),recentActivity"
+      "appendAgentBody(agent,row,true,recentActivity,group.activityTitle)"
     );
+    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardExecution");
+    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardNextExecution");
     expect(DASHBOARD_CARD_HTML).not.toContain("head.append(title,state)");
     expect(DASHBOARD_CARD_HTML).toContain(
       "shouldShowDashboardNextExecution(row.execution,turn&&turn.execution)"
@@ -700,7 +701,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
     expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
     expect(ACTIVITY_CARD_HTML).toContain('return model+" · "+execution.reasoningEffort');
-    expect(ACTIVITY_CARD_HTML).toContain('text=prefix+executionText(execution)');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'text=prefix+(execution?executionText(execution):t["dashboard.execution.unavailable"])'
+    );
     expect(ACTIVITY_CARD_HTML).not.toContain(
       't["activity.reasoningEffort"]+" "+execution.reasoningEffort'
     );
@@ -727,9 +730,9 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain("summary.push(...workspaces)");
     expect(ACTIVITY_CARD_HTML).toContain("appendActivityAgents(content,row,readOnly)");
     expect(ACTIVITY_CARD_HTML).toContain('node("div","activity-agent-list")');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "appendExecutions(content,[{execution:commonExecution}],false)"
-    );
+    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(identity,[agent],false)");
+    expect(ACTIVITY_CARD_HTML).not.toContain("commonActivityAgentExecution");
+    expect(ACTIVITY_CARD_HTML).toContain('t["dashboard.execution.unavailable"]');
     expect(ACTIVITY_CARD_HTML).toContain(
       "agentSummary=[agent.role,agentWorkTime(agent)]"
     );
@@ -944,38 +947,20 @@ describe("human-facing UI localization", () => {
     ]);
   });
 
-  it("hoists only exact execution details shared by every nested Agent", () => {
-    const shared = {
-      model: "gpt-5.6-sol",
-      reasoningEffort: "high",
-      reroutedModel: "gpt-5.6-terra"
+  it("deduplicates Dashboard history by opaque Activity identity and visible heading", () => {
+    const enclosing = {
+      activityKey: "activity-a",
+      activityTitle: "Repeated title"
     };
-    expect(commonActivityAgentExecution([
-      { execution: shared },
-      { execution: { ...shared, model: "GPT-5.6-SOL", reasoningEffort: "HIGH" } }
-    ])).toBe(shared);
-    expect(commonActivityAgentExecution([
-      { execution: shared },
-      { execution: { ...shared, reasoningEffort: "max" } }
-    ])).toBeNull();
-
-    const latest = { ...shared, isCurrent: false };
-    const current = { ...shared, isCurrent: true };
-    expect(commonDashboardExecution([
-      { latestTurn: { execution: latest } },
-      { latestTurn: { execution: { ...latest } } }
-    ])).toBe(latest);
-    expect(commonDashboardNextExecution([
-      { execution: current, latestTurn: null },
-      { execution: { ...current }, latestTurn: null }
-    ])).toBe(current);
-    expect(commonDashboardNextExecution([
-      { execution: current, latestTurn: null },
-      { execution: { ...current, reasoningEffort: "max" }, latestTurn: null }
-    ])).toBeNull();
-  });
-
-  it("deduplicates Dashboard history by opaque Activity identity", () => {
+    const sameActivity = { ...enclosing };
+    const sameTitleDifferentActivity = {
+      activityKey: "activity-b",
+      activityTitle: "Repeated title"
+    };
+    const distinctActivity = {
+      activityKey: "activity-c",
+      activityTitle: "Different title"
+    };
     expect(dashboardHistoryActivityIdentity({
       activityKey: "activity-a",
       activityTitle: "Repeated title"
@@ -987,6 +972,23 @@ describe("human-facing UI localization", () => {
     expect(dashboardHistoryActivityIdentity({ activityTitle: "Legacy title" }))
       .toBe("legacy-title:Legacy title");
     expect(dashboardHistoryActivityIdentity(null)).toBeNull();
+    expect(dashboardHistoryActivityHeading(sameActivity, enclosing, enclosing))
+      .toEqual({ kind: "none" });
+    expect(dashboardHistoryActivityHeading(
+      sameTitleDifferentActivity,
+      sameActivity,
+      enclosing
+    )).toEqual({ kind: "boundary" });
+    expect(dashboardHistoryActivityHeading(
+      distinctActivity,
+      sameTitleDifferentActivity,
+      enclosing
+    )).toEqual({ kind: "title", title: "Different title" });
+    expect(dashboardHistoryActivityHeading(
+      { activityKey: "activity-d" },
+      distinctActivity,
+      enclosing
+    )).toEqual({ kind: "boundary" });
   });
 
   it("shows next-run settings only when the current selection differs from the last run", () => {
@@ -1019,6 +1021,10 @@ describe("human-facing UI localization", () => {
     )).toBe(true);
     expect(UI_TRANSLATIONS.ko["dashboard.execution.next"])
       .toBe("다음 실행 설정: {execution}");
+    expect(UI_TRANSLATIONS.ko["dashboard.execution.unavailable"])
+      .toBe("모델 · 추론 확인 불가");
+    expect(UI_TRANSLATIONS.ko["dashboard.history.activityBoundary"])
+      .toBe("이전 Activity");
   });
 
   it("dispatches Dashboard deep links through the host and falls back on host failure", async () => {
