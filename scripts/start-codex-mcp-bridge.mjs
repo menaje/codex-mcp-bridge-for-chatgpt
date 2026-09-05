@@ -25,6 +25,10 @@ import {
 } from "./tunnel-profile.mjs";
 import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
 
+if (process.platform === "darwin") {
+  process.title = "Codex MCP Bridge Launcher";
+}
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const MANAGED_APP_RUNTIME_EXACT_KEYS = new Set([

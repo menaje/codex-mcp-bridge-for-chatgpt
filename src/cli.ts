@@ -9,6 +9,10 @@ import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { BridgeStateStore } from "./stateStore.js";
 
+if (process.platform === "darwin") {
+  process.title = "Codex MCP Bridge Server";
+}
+
 const config = loadConfig();
 const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
 const appServerLateResponses = new AppServerLateResponseJournal(stateStore);

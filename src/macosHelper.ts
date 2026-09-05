@@ -8,6 +8,10 @@ import {
   startMacOSHelperServer
 } from "./macosHelperServer.js";
 
+if (process.platform === "darwin") {
+  process.title = "Codex MCP Bridge Helper";
+}
+
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultBridgeRoot = resolve(sourceDirectory, "..");
 const args = parseArguments(process.argv.slice(2));

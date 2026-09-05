@@ -33,6 +33,14 @@ It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical
 per-user launcher lock. A restarted helper can safely adopt a still-healthy
 app-managed runtime instead of duplicating it.
 
+On macOS, Activity Monitor identifies the menu-bar app as **Codex MCP Bridge for
+ChatGPT** and the Node.js processes by their roles: **Codex MCP Bridge Helper**
+for background supervision, **Codex MCP Bridge Launcher** for bridge and tunnel
+lifecycle, and **Codex MCP Bridge Server** for MCP requests. Both the stdio and
+HTTP server entry points use the Server name. Search for **Codex MCP Bridge** to
+find these processes together. The separate `tunnel-client` and `codex` processes
+keep their own names.
+
 The everyday Settings window contains General, Projects, and Server tabs backed
 by the same application service as the retained Settings card. General changes
 are debounced, serialized, and saved automatically; server backend and maximum

@@ -13,6 +13,10 @@ import { BridgeStateStore } from "./stateStore.js";
 import { CodexUpstreamPool } from "./upstream.js";
 import { CodexBackendRouter } from "./upstreamRouter.js";
 
+if (process.platform === "darwin") {
+  process.title = "Codex MCP Bridge Server";
+}
+
 // stdio has no HTTP authentication boundary. Force the same loopback/no-auth
 // configuration used behind Secure MCP Tunnel while retaining every execution,
 // project, model, and persistence policy from the operator environment.
