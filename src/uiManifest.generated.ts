@@ -1002,8 +1002,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "activity": {
-      "digest": "1a8d38a1fbdf98d45400c858be037378400c3924ec08e766355b3dd931bcd990",
-      "uri": "ui://codex-mcp-bridge/activity/1a8d38a1fbdf.html",
+      "digest": "f251773f7789feedffc19923779518968ad9d953684daba2aed60ad77ee6542f",
+      "uri": "ui://codex-mcp-bridge/activity/f251773f7789.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -1026,10 +1026,39 @@ export const UI_RESOURCE_MANIFEST = {
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 25
+          "codex/uiContractGeneration": 26
         }
       },
       "previous": [
+        {
+          "digest": "1a8d38a1fbdf98d45400c858be037378400c3924ec08e766355b3dd931bcd990",
+          "uri": "ui://codex-mcp-bridge/activity/1a8d38a1fbdf.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+              "description": "Localized compact current-work summary with an explicit paginated Activity history view.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows current Codex work compactly and opens paginated scoped Activity history on explicit request.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 25
+            }
+          }
+        },
         {
           "digest": "0c222c0232f9717424607344a0a9c6b7d5665066f670922d1d6af58da68ba93f",
           "uri": "ui://codex-mcp-bridge/activity/0c222c0232f9.html",

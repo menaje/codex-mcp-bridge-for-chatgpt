@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Activity 카드의 대화 범위를 후속 조회에 유지하고 일시 오류 뒤 새로고침·사용량 조회와 실시간 갱신이 복구되도록 수정합니다.",
+  "breaking": false,
+  "migration": null
+}

@@ -780,14 +780,14 @@ describe("human-facing UI localization", () => {
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
     expect(ACTIVITY_CARD_HTML).toContain(
-      'async function reload(){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false}'
+      'async function reload(retry=true){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false}'
     );
     expect(ACTIVITY_CARD_HTML).toContain(
       'afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false'
     );
     expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
     expect(ACTIVITY_CARD_HTML).toContain(
-      'callTool("codex_activity_rehydrate",rehydrateArgs(correlation,false)'
+      'readActivityView("codex_activity_rehydrate",rehydrateArgs(correlation,false)'
     );
     expect(ACTIVITY_CARD_HTML).toContain("function callUiToolWithFallback");
     expect(ACTIVITY_CARD_HTML).toContain("function withUiToolCallTimeout");

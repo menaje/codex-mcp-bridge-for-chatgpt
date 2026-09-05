@@ -88,6 +88,7 @@ import {
   ACTIVITY_BOOTSTRAP_METADATA_KEY,
   ACTIVITY_CARD_CONTRACT_GENERATION,
   ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
+  ACTIVITY_SCOPE_METADATA_KEY,
   ACTIVITY_VIEW_METADATA_KEY,
   registerActivityCardResource,
   ACTIVITY_CARD_HTML,
@@ -13209,6 +13210,7 @@ async function buildActivityView(
     : legacy.structured;
 
   return {
+    scopeId,
     interactionControls: legacy.interactionControls,
     structured: {
       ...projectedLegacy,
@@ -13370,6 +13372,9 @@ function activityViewResult(
     attention: view.structured.aggregates.needsAttention
   };
   const appHydration = {
+    // Keep compatibility routing out of the closed public and app output
+    // schemas so immutable cards can continue using their cached descriptors.
+    [ACTIVITY_SCOPE_METADATA_KEY]: view.scopeId,
     [ACTIVITY_VIEW_METADATA_KEY]: privateView,
     interactionControls: contract === activityRehydrateResultContract
       ? { agents: [] }

@@ -2586,7 +2586,7 @@ describe("bridge tools", () => {
             expect(html).toContain("renderWeeklyUsage(next.weeklyUsage)");
             expect(html).toContain("function appendCancellations(parent,row)");
             expect(html).toContain('node("details","cancellation")');
-            expect(html).toContain('callTool("codex_activity_rehydrate"');
+            expect(html).toContain('readActivityView("codex_activity_rehydrate"');
             expect(html).toContain('correlation.kind==="historical"?{jobId:correlation.jobId,requestId:correlation.requestId,limit:viewLimit}');
             expect(html).toContain('{mode:"full-history",limit:viewLimit');
             expect(html).toContain('mountedPresentation.kind==="historical"');
@@ -4320,6 +4320,63 @@ describe("bridge tools", () => {
     );
 
     await close();
+  });
+
+  it("retains private Activity scope routing when the host omits metadata on app reads", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    try {
+      const task = parseToolJson(await runTask(client, { prompt: "inspect Activity routing" }));
+      const opened = await rawCallTool({
+        name: "codex_activity",
+        arguments: { scopeId: SCOPE_A, mode: "full-history", activityId: task.activityId }
+      });
+      const view = privateActivityView(opened);
+      const scopeId = (opened as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"];
+      expect(scopeId).toBe(SCOPE_A);
+      expect(view).not.toHaveProperty("scopeId");
+      expect((opened as { structuredContent?: Record<string, unknown> }).structuredContent)
+        .not.toHaveProperty("scopeId");
+      const args = {
+        scopeId,
+        widgetInstanceId: "42424242-4242-4242-8242-424242424242",
+        card: {
+          activityId: task.activityId,
+          generation: view.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      };
+      for (const enrich of [false, true]) {
+        const result = await rawCallTool({ name: "codex_activity_snapshot", arguments: { ...args, enrich } });
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        expect((result as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"]).toBe(SCOPE_A);
+        expect(privateActivityView(result)).toMatchObject({
+          enrichment: { state: enrich ? "enriched" : "structural" }
+        });
+        expect((result as { structuredContent?: Record<string, unknown> }).structuredContent)
+          .not.toHaveProperty("scopeId");
+      }
+      const restored = await rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: { scopeId, widgetInstanceId: args.widgetInstanceId, mode: "full-history", activityId: task.activityId, enrich: true }
+      });
+      expect(restored.isError, JSON.stringify(restored)).not.toBe(true);
+      expect((restored as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"]).toBe(SCOPE_A);
+      expect(privateActivityView(restored)).toMatchObject({ watcherPolicy: { live: false } });
+      const conflictingHost = await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: args,
+        _meta: { "openai/session": "other-chatgpt-conversation" }
+      });
+      expect(conflictingHost.isError).toBe(true);
+      expect(JSON.stringify(conflictingHost)).toContain("no longer valid in this scope");
+      const { scopeId: _scope, ...noRouting } = args;
+      const missing = await rawCallTool({ name: "codex_activity_snapshot", arguments: noRouting });
+      expect(missing.isError).toBe(true);
+      expect(JSON.stringify(missing)).toContain("requires ChatGPT conversation metadata");
+    } finally {
+      await close();
+    }
   });
 
   it("rehydrates a cold task shell as a one-shot read-only historical Activity", async () => {

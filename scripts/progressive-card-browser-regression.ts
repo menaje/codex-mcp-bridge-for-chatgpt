@@ -303,8 +303,54 @@ function prelude(kind: "activity" | "dashboard" | "settings"): string {
   </script>`;
 }
 
+function recoveryPrelude(historical = false): string {
+  const initial = activityFixture("structural", 7, "복구 검사 Activity");
+  const restored = historical ? {
+    ...initial,
+    mountedPresentation: { kind: "historical", jobId: "recovery-job", requestId: "recovery-request" },
+    watcherPolicy: { ...initial.watcherPolicy, live: false, mode: "one-shot" }
+  } : initial;
+  return `<script>
+    window.__cardCalls=[];
+    window.__cardErrors=[];
+    window.__failEnrichment=1;
+    window.__failRefresh=0;
+    window.__pendingWatch=null;
+    window.__duplicateWatches=0;
+    window.__fixtureScope="41414141-4141-4141-8141-414141414141";
+    window.__fixtureView=${JSON.stringify(restored)};
+    window.addEventListener("error",event=>window.__cardErrors.push(String(event.message)));
+    window.addEventListener("unhandledrejection",event=>window.__cardErrors.push(String(event.reason)));
+    window.openai={
+      locale:"ko-KR",notifyIntrinsicHeight:()=>{},
+      toolResponseMetadata:{"codex/activityScopeId":window.__fixtureScope},
+      toolOutput:window.__fixtureView,
+      callTool:async(name,args)=>{
+        window.__cardCalls.push({name,args});
+        const failure=()=>({isError:true,content:[{type:"text",text:"Temporarily unavailable"}]});
+        if(args.scopeId!==window.__fixtureScope)return{isError:true,content:[{type:"text",text:"Activity snapshot requires conversation scope"}]};
+        if(args.afterVersion!==undefined){
+          if(window.__pendingWatch){window.__duplicateWatches++;return failure()}
+          return new Promise(resolve=>{window.__pendingWatch=()=>{
+            window.__pendingWatch=null;
+            resolve({structuredContent:{...window.__fixtureView,generatedAt:new Date().toISOString()}});
+          }});
+        }
+        if(args.enrich===true&&window.__failEnrichment-->0)return failure();
+        if(args.enrich!==true&&window.__failRefresh-->0)return failure();
+        const view={...window.__fixtureView,generatedAt:new Date().toISOString(),enrichment:${JSON.stringify(enrichment("enriched"))}};
+        if(args.enrich!==true)view.enrichment=${JSON.stringify(enrichment("structural"))};
+        else view.weeklyUsage={remainingPercent:42,resetsAt:null};
+        return{structuredContent:view};
+      }
+    };
+  </script>`;
+}
+
 const fixtures = {
   "activity.html": ACTIVITY_CARD_HTML.replace("</head>", `${prelude("activity")}</head>`),
+  "activity-recovery.html": ACTIVITY_CARD_HTML.replace("</head>", `${recoveryPrelude()}</head>`),
+  "activity-historical-recovery.html": ACTIVITY_CARD_HTML.replace("</head>", `${recoveryPrelude(true)}</head>`),
   "dashboard.html": DASHBOARD_CARD_HTML.replace("</head>", `${prelude("dashboard")}</head>`),
   "settings.html": SETTINGS_CARD_HTML.replace("</head>", `${prelude("settings")}</head>`)
 };
@@ -376,6 +422,38 @@ try {
   assert(activityManual.busy === "false", "Activity remained busy after refresh");
   assert(activityManual.errors.length === 0, `Activity refresh browser errors: ${activityManual.errors.join("; ")}`);
   report.activity = { structural: activityStructural, enriched: activityEnriched, manual: activityManual };
+
+  for (const historical of [false, true]) {
+    await cli(["goto", `${baseUrl}/activity-${historical ? "historical-" : ""}recovery.html`]);
+    await cli(["run-code", "async page=>{await page.waitForFunction(()=>document.querySelector('#weekly-usage-value')?.textContent==='42%',null,{timeout:5000})}"]);
+    const recovered = JSON.parse(await cli(["eval", "()=>({calls:window.__cardCalls,errors:window.__cardErrors})"]));
+    assert(recovered.calls.filter((call: any) => call.args.enrich === true).length >= 2,
+      "Activity did not retry a transient enrichment failure");
+    if (historical) {
+      assert(recovered.calls.every((call: any) => call.name === "codex_activity_rehydrate" && call.args.afterVersion === undefined),
+        "Historical enrichment recovery acquired a live watcher");
+    } else {
+      const refreshCount = recovered.calls.filter((call: any) => call.args.enrich === false && call.args.afterVersion === undefined).length;
+      await cli(["eval", "()=>{window.__failRefresh=1;document.querySelector('#refresh').click()}"]);
+      await cli(["run-code", `async page=>{await page.waitForFunction(count=>window.__cardCalls.filter(call=>call.args.enrich===false&&call.args.afterVersion===undefined).length>=count+2&&document.querySelector('main.card').getAttribute('aria-busy')==='false',${refreshCount},{timeout:5000})}`]);
+      const beforeWatch = JSON.parse(await cli(["eval", "()=>({count:window.__cardCalls.filter(call=>call.args.afterVersion!==undefined).length,duplicates:window.__duplicateWatches})"]));
+      assert(beforeWatch.duplicates === 0, "Activity refresh opened a second watch before the first finished");
+      await cli(["eval", "()=>window.__pendingWatch?.()"]);
+      await cli(["run-code", `async page=>{await page.waitForFunction(count=>window.__cardCalls.filter(call=>call.args.afterVersion!==undefined).length>count,${beforeWatch.count},{timeout:5000})}`]);
+
+      // Exhaust the immediate retries, then finish the old watch. Live updates
+      // must resume without another click, even though its result is obsolete.
+      await cli(["eval", "()=>{window.__failRefresh=3;document.querySelector('#refresh').click()}"]);
+      await cli(["run-code", "async page=>{await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('새로고침하지 못해'),null,{timeout:5000})}"]);
+      const failedWatchCount = JSON.parse(await cli(["eval", "()=>window.__cardCalls.filter(call=>call.args.afterVersion!==undefined).length"]));
+      await cli(["eval", "()=>window.__pendingWatch?.()"]);
+      await cli(["run-code", `async page=>{await page.waitForFunction(count=>window.__cardCalls.filter(call=>call.args.afterVersion!==undefined).length>count,${failedWatchCount},{timeout:5000})}`]);
+      assert(JSON.parse(await cli(["eval", "()=>window.__duplicateWatches"])) === 0,
+        "Recovery leaked overlapping Activity watchers");
+    }
+    assert(recovered.errors.length === 0, "Activity recovery produced browser errors");
+    report[historical ? "historicalRecovery" : "liveRecovery"] = recovered;
+  }
 
   await cli(["goto", `${baseUrl}/dashboard.html`]);
   await cli(["run-code", "async page=>{await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden,null,{timeout:2000})}"]);
