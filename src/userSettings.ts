@@ -357,6 +357,7 @@ export class UserSettingsStore {
     });
 
     this.settings = committedSettings;
+    this.config.codexService?.setAppVisibility(this.settings.showBridgeThreadsInCodexApp);
     this.persistStandaloneState();
     return this.current;
   }

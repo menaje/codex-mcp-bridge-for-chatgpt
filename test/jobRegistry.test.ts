@@ -11,6 +11,18 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("CodexJobRegistry persistence", () => {
+  it.each([
+    ["SDK_AUTH_REQUIRED", "authentication-failure"], ["Codex SDK request failed (TimeoutError).", "sdk-timeout"],
+    ["Codex SDK request failed (CancelledError).", "sdk-abort"], ["CODEX_WORKER_LOST: SDK worker exited", "worker-loss"]
+  ])("records SDK failure provenance for %s without inventing user cancellation", async (message, origin) => {
+    const root = temporaryRoot();
+    const stateFile = path.join(root, "jobs.json");
+    const registry = persistentRegistry(root, stateFile);
+    const job = registry.start({ ...jobInput(root), backendKind: "codex-sdk" }, async () => { throw new Error(message); });
+    await job.promise;
+    expect(persistentRegistry(root, stateFile).get(job.jobId)).toMatchObject({ backendKind: "codex-sdk", terminalOrigin: origin });
+    expect(registry.listCancellationIntents({ jobId: job.jobId })).toHaveLength(0);
+  });
   it("retains completed results across bridge registry restarts", async () => {
     const root = temporaryRoot();
     const stateFile = path.join(root, "private", "jobs.json");

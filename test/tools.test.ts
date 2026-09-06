@@ -840,6 +840,8 @@ describe("bridge tools", () => {
         acceptingNewJobs: true,
         activeJobs: 0,
         pendingAdmissions: 1,
+        pendingInteractions: 0,
+        memoryOnlyThreads: 0,
         backgroundProcessState: "unknown",
         backgroundProcesses: 0,
         backgroundProcessAgents: 0,
@@ -849,6 +851,8 @@ describe("bridge tools", () => {
         acceptingNewJobs: false,
         activeJobs: 0,
         pendingAdmissions: 1,
+        pendingInteractions: 0,
+        memoryOnlyThreads: 0,
         backgroundProcessState: "unknown",
         backgroundProcesses: 0,
         backgroundProcessAgents: 0,
@@ -861,6 +865,8 @@ describe("bridge tools", () => {
           acceptingNewJobs: false,
           activeJobs: 1,
           pendingAdmissions: 0,
+          pendingInteractions: 0,
+          memoryOnlyThreads: 0,
           backgroundProcessState: "unknown",
           backgroundProcesses: 0,
           backgroundProcessAgents: 0,
@@ -873,6 +879,8 @@ describe("bridge tools", () => {
         acceptingNewJobs: false,
         activeJobs: 0,
         pendingAdmissions: 0,
+          pendingInteractions: 0,
+          memoryOnlyThreads: 0,
         backgroundProcessState: "unknown",
         backgroundProcesses: 0,
         backgroundProcessAgents: 0,
@@ -934,6 +942,29 @@ describe("bridge tools", () => {
     } finally {
       await bridge.close();
     }
+  });
+
+  it("defers safe shutdown for a loaded SDK thread without calling unsupported process inventory", async () => {
+    class SdkShutdownUpstream extends ShutdownImpactUpstream {
+      loaded = true;
+      canResumeThread(): boolean { return this.loaded; }
+    }
+    const upstream = new SdkShutdownUpstream();
+    const bridge = await connectTestClient(configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "codex-sdk" }), upstream);
+    try {
+      bridge.settings.update({ showBridgeThreadsInCodexApp: true }, bridge.settings.current.revision);
+      const completed = parseToolJson(await runTask(bridge.client, { prompt: "complete an SDK task before shutdown" }));
+      expect(completed.threadId).toBe("thread-1");
+      await expect(bridge.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true })).resolves.toMatchObject({
+        backgroundProcessState: "unknown", backgroundProcesses: 0, backgroundProcessUnknownAgents: 1
+      });
+      upstream.loaded = false;
+      await expect(bridge.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true })).resolves.toMatchObject({
+        backgroundProcessState: "confirmed", backgroundProcesses: 0, backgroundProcessUnknownAgents: 0
+      });
+      expect(upstream.loadedTerminalReads).toEqual([]);
+      expect(upstream.resumedTerminalReads).toEqual([]);
+    } finally { await bridge.close(); }
   });
 
   it("publishes the consolidated Activity, settings, and Codex tools", async () => {
@@ -2647,11 +2678,13 @@ describe("bridge tools", () => {
             expect(html).toContain(
               "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
             );
-            expect(html).toContain("safeCodexThreadUrl(row.codexThreadUrl)");
+            expect(html).not.toContain("safeCodexThreadUrl");
+            expect(html).not.toContain("row.codexThreadUrl");
+            expect(html).not.toContain("codex-session-link");
             expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
               .toMatchObject({
                 "openai/widgetCSP": {
-                  redirect_domains: ["https://chatgpt.com", "codex://threads"]
+                  redirect_domains: ["https://chatgpt.com"]
                 }
               });
           }

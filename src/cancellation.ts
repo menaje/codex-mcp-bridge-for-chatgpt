@@ -26,10 +26,23 @@ export const JOB_TERMINAL_ORIGINS = [
   "assignment-containment",
   "bridge-restart",
   "worker-loss",
+  "sdk-abort",
+  "sdk-timeout",
+  "authentication-failure",
+  "usage-limit",
   "legacy-unattributed-cancellation"
 ] as const;
 
 export type JobTerminalOrigin = (typeof JOB_TERMINAL_ORIGINS)[number];
+
+/** Non-sensitive SDK/runtime evidence; transport disconnects are observations, never cancels. */
+export function sdkFailureOrigin(message: string, upstreamKind?: string): JobTerminalOrigin {
+  if (upstreamKind === "unauthorized" || message.includes("SDK_AUTH_REQUIRED")) return "authentication-failure";
+  if (upstreamKind === "usageLimitExceeded") return "usage-limit";
+  if (/TimeoutError|SDK.*timed out|request timed out/i.test(message)) return "sdk-timeout";
+  if (/AbortError|CancelledError/.test(message)) return "sdk-abort";
+  return "upstream-failure";
+}
 
 export type CancellationPresentation = {
   kind: "automatic" | "explicit";

@@ -1,5 +1,9 @@
+import { execFile as execCatalogFile } from "node:child_process";
+import { promisify as promisifyCatalog } from "node:util";
+import { ContextualModelCatalog } from "./contextualModelCatalog.js";
 import { createServer, type Server as HttpServer } from "node:http";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { SdkModelCatalog } from "./sdkModelCatalog.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   StreamableHTTPServerTransport,
@@ -382,6 +386,7 @@ export function createBridgeMcpServer(
   const effectiveScopeResolver = scopeResolver || new ScopeResolver({
     stateStore: fallbackStateStore
   });
+  config.codexService?.setVisibilityProvider(() => settingsStore.current.showBridgeThreadsInCodexApp);
   const effectiveModelCatalog = modelCatalog || createModelCatalog(config, upstream);
   if (upstream instanceof CodexBackendRouter) {
     for (const session of sessionRegistry.list()) {
@@ -477,6 +482,7 @@ export function createHttpServer(
     stateFile: config.settingsStateFile,
     stateStore
   });
+  config.codexService?.setVisibilityProvider(() => userSettings.current.showBridgeThreadsInCodexApp);
   const projectAvailability = new TaskProjectAvailabilityProjection(config);
   const scopeResolver = new ScopeResolver({ stateStore });
   const statefulMcpSessions = config.mcpTransportMode === "stateful"
@@ -982,13 +988,19 @@ function transportObservationContext(body: unknown): {
 
 export function createModelCatalog(
   config: BridgeConfig,
-  upstream: CodexUpstream
+  upstream: CodexUpstream,
+  environment?: NodeJS.ProcessEnv
 ): CodexModelCatalogProvider {
+  if (config.codexService) {
+    const service = config.codexService;
+    return new ContextualModelCatalog(config.defaultBackend, () => service.modelRevision(), () =>
+      createModelCatalog({ ...config, codexService: undefined }, upstream, service.environment), kind => service.readAccount(kind));
+  }
   const cliCatalog = new CodexCliModelCatalog(
-    config.codexCommand,
+    config.codexCommandResolver || config.codexCommand,
     config.modelCatalogCacheTtlMs,
     config.modelCatalogTimeoutMs,
-    undefined,
+    environment ? async (command, args, timeoutMs) => (await promisifyCatalog(execCatalogFile)(command, args, { env: environment, timeout: timeoutMs, maxBuffer: 5 * 1024 * 1024 })).stdout : undefined,
     undefined,
     config.modelCatalogStateFile
   );
@@ -997,7 +1009,9 @@ export function createModelCatalog(
     config.defaultBackend,
     cliCatalog,
     () => upstream.listModels?.("app-server") as Promise<unknown>,
-    config.modelCatalogCacheTtlMs
+    config.modelCatalogCacheTtlMs,
+    undefined,
+    new SdkModelCatalog(() => upstream.listModels!("codex-sdk"), config.modelCatalogCacheTtlMs)
   );
 }
 

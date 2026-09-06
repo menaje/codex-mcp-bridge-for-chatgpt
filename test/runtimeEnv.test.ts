@@ -133,7 +133,8 @@ describe("runtime environment", () => {
     chmodSync(directory, 0o755);
     expect(inspectRuntimeEnvFile(file)).toMatchObject({
       valid: false,
-      issue: expect.stringContaining("directory permissions are too broad")
+      issue: expect.stringContaining("directory permissions are too broad"),
+      issueProblem: { code: "runtime-env-permissions-too-broad", arguments: {} }
     });
     chmodSync(file, 0o644);
 
@@ -157,12 +158,14 @@ describe("runtime environment", () => {
     expect(inspectRuntimeEnvFile(file)).toMatchObject({
       exists: false,
       valid: false,
-      issue: expect.stringContaining("directory permissions are too broad")
+      issue: expect.stringContaining("directory permissions are too broad"),
+      issueProblem: { code: "runtime-env-permissions-too-broad", arguments: {} }
     });
     expect(repairRuntimeEnvPermissions(file)).toMatchObject({
       exists: false,
       valid: false,
-      issue: expect.stringContaining("not configured")
+      issue: expect.stringContaining("not configured"),
+      issueProblem: { code: "runtime-env-not-configured", arguments: {} }
     });
     expect(lstatSync(directory).mode & 0o777).toBe(0o700);
 
@@ -235,7 +238,8 @@ describe("runtime environment", () => {
         defaultBackend: "mcp-server",
         maximumAccess: "read-only"
       },
-      issue: null
+      issue: null,
+      issueProblem: null
     });
     expect(JSON.stringify(status)).not.toContain("sk-native");
   });
@@ -463,7 +467,8 @@ describe("runtime environment", () => {
     expect(inspectRuntimeEnvFile(dangling)).toMatchObject({
       exists: true,
       valid: false,
-      issue: expect.stringContaining("regular, non-symlink file")
+      issue: expect.stringContaining("regular, non-symlink file"),
+      issueProblem: { code: "runtime-env-not-regular", arguments: {} }
     });
     expect(() => loadRuntimeEnvFile(dangling)).toThrow("regular, non-symlink file");
     expect(() => repairRuntimeEnvPermissions(dangling)).toThrow("regular, non-symlink file");

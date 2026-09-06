@@ -10,7 +10,7 @@
       "const": "./release-manifest.schema.json"
     },
     "manifestVersion": {
-      "const": 3
+      "const": 4
     },
     "product": {
       "type": "object",
@@ -202,9 +202,19 @@
             "macos": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["architecture", "format", "minimumVersion", "signing", "notarization"],
+              "required": ["architectures", "format", "minimumVersion", "signing", "notarization"],
               "properties": {
-                "architecture": { "const": "arm64" },
+                "architectures": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "uniqueItems": true,
+                  "prefixItems": [
+                    { "const": "arm64" },
+                    { "const": "x64" }
+                  ],
+                  "items": false
+                },
                 "format": { "const": "dmg" },
                 "minimumVersion": { "const": "13.0" },
                 "signing": { "const": "ad-hoc" },
@@ -215,21 +225,23 @@
         },
         "assets": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 5,
+          "maxItems": 5,
           "uniqueItems": true,
           "items": {
             "enum": [
               "npm-tarball",
               "npm-sha256",
-              "macos-app",
+              "macos-arm64-app",
+              "macos-x64-app",
               "release-checksums"
             ]
           },
           "allOf": [
             { "contains": { "const": "npm-tarball" } },
             { "contains": { "const": "npm-sha256" } },
-            { "contains": { "const": "macos-app" } },
+            { "contains": { "const": "macos-arm64-app" } },
+            { "contains": { "const": "macos-x64-app" } },
             { "contains": { "const": "release-checksums" } }
           ]
         }

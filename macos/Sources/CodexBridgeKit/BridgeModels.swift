@@ -11,6 +11,7 @@ public struct DashboardSnapshot: Codable, Sendable {
     public let statusSource: String
     public let coverage: String
     public let enrichment: CardEnrichment?
+    public let codexAccount: CodexAccountUsage?
     public let weeklyUsage: WeeklyUsage?
     public let counts: DashboardCounts
     public var activeRows: [DashboardRow]
@@ -194,6 +195,7 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     public let projectName: String?
     public let agentName: String
     public let activityTitle: String?
+    public let tokenUsage: CodexTokenUsage?
     public let execution: DashboardExecution?
     public let status: String
     public let createdAt: String
@@ -547,6 +549,29 @@ public struct RuntimeOperatorConfiguration: Codable, Equatable, Sendable {
     }
 }
 
+public struct BridgeStatusProblem: Codable, Equatable, Sendable {
+    public let code: String
+    public let arguments: [String: String]
+
+    public init(code: String, arguments: [String: String] = [:]) {
+        self.code = code
+        self.arguments = arguments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code, arguments
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = try container.decode(String.self, forKey: .code)
+        arguments = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .arguments
+        ) ?? [:]
+    }
+}
+
 public struct RuntimeConfigurationStatus: Codable, Sendable {
     public let path: String
     public let exists: Bool
@@ -556,10 +581,11 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
     public let tunnelId: String?
     public let operatorConfiguration: RuntimeOperatorConfiguration
     public let issue: String?
+    public let issueProblem: BridgeStatusProblem?
 
     private enum CodingKeys: String, CodingKey {
         case path, exists, valid, hasApiKey, hasTunnelId, tunnelId
-        case operatorConfiguration, issue
+        case operatorConfiguration, issue, issueProblem
     }
 
     public init(from decoder: Decoder) throws {
@@ -578,6 +604,7 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
             maximumAccess: "read-only"
         )
         issue = try container.decodeIfPresent(String.self, forKey: .issue)
+        issueProblem = try container.decodeIfPresent(BridgeStatusProblem.self, forKey: .issueProblem)
     }
 }
 
@@ -602,6 +629,7 @@ public struct HelperTunnelStatus: Codable, Sendable {
     public let connected: Bool
     public let lastCheckedAt: String?
     public let lastError: String?
+    public let lastProblem: BridgeStatusProblem?
 }
 
 public struct HelperExitStatus: Codable, Sendable {
@@ -618,6 +646,7 @@ public struct HelperStatus: Codable, Sendable {
     public let startedAt: String?
     public let lastExit: HelperExitStatus?
     public let lastError: String?
+    public let lastProblem: BridgeStatusProblem?
     public let restartAttempt: Int
     public let configuration: RuntimeConfigurationStatus
     public let bridge: HelperBridgeStatus

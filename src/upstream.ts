@@ -132,7 +132,9 @@ export type CodexThreadResumeProbe = (
 ) & CodexThreadLineage;
 
 export type UpstreamWorkerAssignment = {
-  backendKind: "mcp-server" | "app-server";
+  backendKind: CodexBackendKind;
+  runtime?: { sdk?: string; python?: string; codex: string; channel?: "stable";
+    requestedAuthMode?: "chatgpt" | "api-key"; resolvedAuthMode?: "chatgpt" | "api-key" };
   workerId: string;
   workerGeneration: number;
   workerPid?: number;
@@ -163,6 +165,7 @@ export type CodexThreadStartRequest = {
   approvalPolicy: ApprovalPolicy;
   selection: ModelSelection;
   /** App Server only: keep the new thread in memory instead of materializing it on disk. */
+  contextId?: string;
   ephemeral?: boolean;
 };
 
@@ -179,6 +182,7 @@ export type CodexThreadForkRequest = {
   prompt: string;
   selection?: ModelSelection;
   /** App Server only: keep the fork in memory instead of materializing it on disk. */
+  contextId?: string;
   ephemeral?: boolean;
 };
 
@@ -200,6 +204,8 @@ export type CodexUpstream = {
   capabilities?(backendKind?: CodexBackendKind): BackendCapabilities;
   listModels?(backendKind?: CodexBackendKind): Promise<unknown>;
   /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
+  accountRevision?(): string;
+  readAccountSnapshot?(): Promise<import("./codexAccount.js").CodexAccountSnapshot | null>;
   readAccountRateLimits?(): Promise<CodexWeeklyUsage | null>;
   startThread?(
     input: CodexThreadStartRequest,
@@ -306,7 +312,8 @@ export class CodexStdioUpstream implements CodexUpstream {
   constructor(
     private readonly codexCommand: string,
     private readonly connectionFactory?: CodexConnectionFactory,
-    private readonly workerId = "mcp-0"
+    private readonly workerId = "mcp-0",
+    private readonly environment?: NodeJS.ProcessEnv
   ) {}
 
   async listTools(): Promise<unknown> {
@@ -479,6 +486,7 @@ export class CodexStdioUpstream implements CodexUpstream {
     const rpc = new JsonRpcProcess({
       command: this.codexCommand,
       args: ["mcp-server"],
+      ...(this.environment ? { env: this.environment } : {}),
       debugLabel: `codex-mcp:${this.workerId}:g${generation}`
     });
     const transport = new ProcessMcpTransport(rpc);
@@ -518,13 +526,14 @@ export class CodexUpstreamPool implements CodexUpstream {
   constructor(
     codexCommand: string,
     poolSize = 4,
-    connectionFactoryForWorker?: (index: number) => CodexConnectionFactory | undefined
+    connectionFactoryForWorker?: (index: number) => CodexConnectionFactory | undefined,
+    environment?: NodeJS.ProcessEnv
   ) {
     if (!Number.isInteger(poolSize) || poolSize <= 0) {
       throw new Error("Codex upstream pool size must be a positive integer.");
     }
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
-      upstream: new CodexStdioUpstream(codexCommand, connectionFactoryForWorker?.(index), `mcp-${index}`),
+      upstream: new CodexStdioUpstream(codexCommand, connectionFactoryForWorker?.(index), `mcp-${index}`, environment),
       activeCalls: 0,
       index
     }));

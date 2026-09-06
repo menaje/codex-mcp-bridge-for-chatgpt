@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep weekly usage stable, show used Spark allowances, and simplify Codex account and runtime settings.",
+  "breaking": false,
+  "migration": null
+}

@@ -5,6 +5,43 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class AppPresentationTests: XCTestCase {
+    func testEarlierApplicationInstanceWinsSingleInstanceSelection() {
+        let earlier = Date(timeIntervalSince1970: 100)
+        let later = Date(timeIntervalSince1970: 200)
+
+        XCTAssertEqual(
+            AppSingleInstanceSelection.primaryProcessIdentifier(
+                current: AppInstanceIdentity(processIdentifier: 20, launchDate: later),
+                running: [
+                    AppInstanceIdentity(processIdentifier: 10, launchDate: earlier)
+                ]
+            ),
+            10
+        )
+        XCTAssertEqual(
+            AppSingleInstanceSelection.primaryProcessIdentifier(
+                current: AppInstanceIdentity(processIdentifier: 10, launchDate: earlier),
+                running: [
+                    AppInstanceIdentity(processIdentifier: 20, launchDate: later)
+                ]
+            ),
+            10
+        )
+    }
+
+    func testAppBundleProhibitsMultipleInstances() throws {
+        let macOSDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: macOSDirectory.appendingPathComponent("Info.plist"))
+        let propertyList = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+
+        XCTAssertEqual(propertyList["LSMultipleInstancesProhibited"] as? Bool, true)
+    }
+
     func testApplicationQuitConfirmationOnlyAppearsWhenShutdownImpactExistsOrIsUnknown() {
         func impact(
             activeJobs: Int = 0,
@@ -105,6 +142,49 @@ final class AppPresentationTests: XCTestCase {
         }
     }
 
+    func testNativeLocalizationTreatsLegacyTunnelPollAsProgress() {
+        XCTAssertTrue(BridgeAppLocalization.isTunnelConnectionPending(
+            problem: nil,
+            diagnosticMessage: "Waiting for a successful control-plane poll."
+        ))
+        XCTAssertNil(BridgeAppLocalization.statusProblemDescription(
+            problem: nil,
+            diagnosticMessage: "Waiting for a successful control-plane poll.",
+            context: .tunnel,
+            locale: Locale(identifier: "ko")
+        ))
+    }
+
+    func testNativeLocalizationDoesNotExposeBackendStatusDiagnostics() {
+        XCTAssertEqual(
+            BridgeAppLocalization.statusProblemDescription(
+                problem: BridgeStatusProblem(code: "tunnel-process-not-running"),
+                diagnosticMessage: "The tunnel-client process is not running.",
+                context: .tunnel,
+                locale: Locale(identifier: "ko")
+            ),
+            "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.statusProblemDescription(
+                problem: nil,
+                diagnosticMessage: "Unexpected English helper diagnostic.",
+                context: .helper,
+                locale: Locale(identifier: "ko")
+            ),
+            "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.statusProblemDescription(
+                problem: BridgeStatusProblem(code: "runtime-env-owner-mismatch"),
+                diagnosticMessage: nil,
+                context: .runtimeConfiguration,
+                locale: Locale(identifier: "ko")
+            ),
+            "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다."
+        )
+    }
+
     @MainActor
     func testPrimaryAppWindowsUseStageManagerPrimaryBehavior() {
         let window = NSWindow(
@@ -136,16 +216,51 @@ final class AppPresentationTests: XCTestCase {
     @MainActor
     func testMenuBarBrandImagesAreDistinctTemplates() {
         let healthy = BridgeMenuBarIcon.templateImage(for: .healthy)
+        let checking = BridgeMenuBarIcon.templateImage(for: .checking)
         let attention = BridgeMenuBarIcon.templateImage(for: .attention)
         let unavailable = BridgeMenuBarIcon.templateImage(for: .unavailable)
 
-        for image in [healthy, attention, unavailable] {
+        for image in [healthy, checking, attention, unavailable] {
             XCTAssertTrue(image.isTemplate)
             XCTAssertEqual(image.size, CGSize(width: 18, height: 18))
             XCTAssertNotNil(image.tiffRepresentation)
         }
+        XCTAssertNotEqual(healthy.tiffRepresentation, checking.tiffRepresentation)
+        XCTAssertNotEqual(checking.tiffRepresentation, attention.tiffRepresentation)
         XCTAssertNotEqual(healthy.tiffRepresentation, attention.tiffRepresentation)
         XCTAssertNotEqual(attention.tiffRepresentation, unavailable.tiffRepresentation)
+    }
+
+    @MainActor
+    func testStartupAndTunnelReadinessUseCheckingHealthInsteadOfUnavailable() throws {
+        let model = AppModel()
+
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+
+        model.helperStatus = try helperStatus(
+            phase: "starting",
+            bridgeConnected: false,
+            tunnelConnected: false
+        )
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+
+        model.helperStatus = try helperStatus(
+            phase: "starting",
+            bridgeConnected: true,
+            tunnelConnected: false
+        )
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+
+        model.helperStatus = try helperStatus(
+            phase: "stopped",
+            bridgeConnected: false,
+            tunnelConnected: false
+        )
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .unavailable)
     }
 
     @MainActor
@@ -190,23 +305,44 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testHealthyRuntimeStillRequiresCodexAuthentication() throws {
+    func testHealthyRuntimeDistinguishesLoadingFromAuthenticationProblems() throws {
         let model = AppModel()
         model.helperStatus = try helperStatus()
 
-        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.health, .checking)
         model.authStatus = try loginStatus(installed: true, authenticated: false)
         XCTAssertEqual(model.health, .attention)
         model.authStatus = try loginStatus(installed: false, authenticated: false)
         XCTAssertEqual(model.health, .unavailable)
         model.authStatus = try loginStatus(installed: true, authenticated: true)
-        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.health, .checking)
         model.dashboard = try dashboardStatus()
         XCTAssertEqual(model.health, .healthy)
         model.dashboard = try dashboardStatus(runtimeUnknownAgents: 18)
         XCTAssertEqual(model.health, .healthy)
         model.dashboardErrorMessage = "stale"
         XCTAssertEqual(model.health, .attention)
+    }
+
+    @MainActor
+    func testAuthenticationNoticeDistinguishesCheckingFromLoggedOut() throws {
+        let model = AppModel()
+
+        XCTAssertFalse(model.shouldShowCodexAuthenticationNotice)
+        XCTAssertTrue(model.shouldShowCodexWeeklyUsage)
+        model.authStatus = try loginStatus(installed: true, authenticated: false)
+        XCTAssertTrue(model.shouldShowCodexAuthenticationNotice)
+        XCTAssertFalse(model.shouldShowCodexWeeklyUsage)
+        model.authStatus = try loginStatus(installed: false, authenticated: false)
+        XCTAssertTrue(model.shouldShowCodexAuthenticationNotice)
+        XCTAssertFalse(model.shouldShowCodexWeeklyUsage)
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        XCTAssertFalse(model.shouldShowCodexAuthenticationNotice)
+        XCTAssertTrue(model.shouldShowCodexWeeklyUsage)
+        model.authStatus = nil
+        model.authErrorMessage = "status failed"
+        XCTAssertTrue(model.shouldShowCodexAuthenticationNotice)
+        XCTAssertTrue(model.shouldShowCodexWeeklyUsage)
     }
 
     func testSettingsDraftPreservesUnavailableSavedSelectionUntilPolicyChanges() throws {
@@ -640,6 +776,456 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testRemoteClientStartsWithoutLocalHelperAndQuitsWithoutRuntimeControl() async throws {
+        let profile = remoteProfile(
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "작업실"
+        )
+        let preferences = TestConnectionStore(BridgeConnectionPreferences(
+            mode: .remoteClient,
+            activeServerId: profile.serverId,
+            profiles: [profile]
+        ))
+        let credentials = TestCredentialStore([
+            profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+        ])
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "server-workroom"),
+            settings: try settingsSnapshot(
+                policy: [
+                    "mode": "automatic",
+                    "allowedSelections": ["kind": "catalog-visible"],
+                    "constraints": ["allowDelegation": true]
+                ],
+                catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+            )
+        )
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: preferences,
+            credentialStore: credentials,
+            remoteClientFactory: { _, _ in
+                client.recordFactoryCall()
+                return client
+            }
+        )
+
+        await model.start()
+
+        XCTAssertTrue(model.isRemoteClient)
+        XCTAssertNil(model.helperStatus)
+        XCTAssertEqual(model.remoteHello?.server.id, profile.serverId)
+        XCTAssertEqual(model.dashboard?.scope, "server-workroom")
+        XCTAssertNotNil(model.settings)
+        XCTAssertTrue(model.bridgeConnected)
+
+        var draft = try SettingsDraft(snapshot: XCTUnwrap(model.settings))
+        draft.maxConcurrentJobs += 1
+        model.scheduleSettingsAutosave(draft)
+        let settingsFlushed = await model.flushSettingsAutosave()
+        XCTAssertTrue(settingsFlushed)
+        XCTAssertEqual(client.settingsUpdateCallCount, 1)
+
+        XCTAssertNotNil(model.activeRemoteProfile?.lastConnectedAt)
+        XCTAssertTrue(model.renameRemoteServer(profile.serverId, name: "이름 변경"))
+        await model.refreshAll()
+        await model.refreshStatus()
+        XCTAssertEqual(client.factoryCallCount, 1)
+        XCTAssertEqual(client.closeCallCount, 0)
+
+        let didQuit = await model.shutdownApplication(force: false)
+        XCTAssertTrue(didQuit)
+        XCTAssertTrue(model.applicationShutdownCompleted)
+        XCTAssertEqual(client.runtimeStatusCallCount, 0)
+        XCTAssertEqual(client.closeCallCount, 1)
+    }
+
+    @MainActor
+    func testLateDashboardFromPreviousRemoteServerCannotOverwriteActiveServer() async throws {
+        let firstProfile = remoteProfile(
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "첫 서버"
+        )
+        let secondProfile = remoteProfile(
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "둘째 서버"
+        )
+        let settings = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let first = TestRemoteClient(
+            profile: firstProfile,
+            dashboard: try dashboardStatus(scope: "server-first"),
+            settings: settings,
+            dashboardDelayNanoseconds: 250_000_000
+        )
+        let second = TestRemoteClient(
+            profile: secondProfile,
+            dashboard: try dashboardStatus(scope: "server-second"),
+            settings: settings
+        )
+        let clients = [firstProfile.serverId: first, secondProfile.serverId: second]
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                mode: .remoteClient,
+                activeServerId: firstProfile.serverId,
+                profiles: [firstProfile, secondProfile]
+            )),
+            credentialStore: TestCredentialStore([
+                firstProfile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE",
+                secondProfile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDF"
+            ]),
+            remoteClientFactory: { profile, _ in
+                let client = clients[profile.serverId]!
+                client.recordFactoryCall()
+                return client
+            }
+        )
+        await model.refreshStatus()
+        let staleRefresh = Task { @MainActor in
+            await model.refreshDashboard()
+        }
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let activated = await model.activateRemoteServer(secondProfile.serverId)
+        XCTAssertTrue(activated)
+        await staleRefresh.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(model.activeRemoteProfile?.serverId, secondProfile.serverId)
+        XCTAssertEqual(model.remoteHello?.server.id, secondProfile.serverId)
+        XCTAssertEqual(model.dashboard?.scope, "server-second")
+        XCTAssertEqual(first.factoryCallCount, 1)
+        XCTAssertEqual(first.closeCallCount, 1)
+        XCTAssertEqual(second.factoryCallCount, 1)
+        XCTAssertEqual(second.closeCallCount, 0)
+
+        let removed = await model.removeRemoteServer(firstProfile.serverId)
+        XCTAssertTrue(removed)
+        await model.refreshStatus()
+        XCTAssertEqual(second.factoryCallCount, 1)
+        XCTAssertEqual(second.closeCallCount, 0)
+        let didQuit = await model.shutdownApplication(force: false)
+        XCTAssertTrue(didQuit)
+        XCTAssertEqual(second.closeCallCount, 1)
+    }
+
+    @MainActor
+    func testRemoteRePairingReplacesCredentialAndRemovingActiveServerClosesItsClient() async throws {
+        let profile = remoteProfile(
+            id: "55555555-5555-4555-8555-555555555555",
+            name: "다시 페어링할 서버"
+        )
+        let backupProfile = remoteProfile(
+            id: "66666666-6666-4666-8666-666666666666",
+            name: "다른 서버"
+        )
+        let settings = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let old = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "before-pairing"),
+            settings: settings
+        )
+        let repaired = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "after-pairing"),
+            settings: settings
+        )
+        let backup = TestRemoteClient(
+            profile: backupProfile,
+            dashboard: try dashboardStatus(scope: "backup-server"),
+            settings: settings
+        )
+        let clients = ["old-credential": old, "new-credential": repaired, "backup-credential": backup]
+        let credentials = TestCredentialStore([
+            profile.serverId: "old-credential",
+            backupProfile.serverId: "backup-credential"
+        ])
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                mode: .remoteClient,
+                activeServerId: profile.serverId,
+                profiles: [backupProfile, profile]
+            )),
+            credentialStore: credentials,
+            remoteClientFactory: { _, credential in
+                let client = clients[credential]!
+                client.recordFactoryCall()
+                return client
+            },
+            remotePairingFactory: { _, _, _ in
+                RemotePairingResult(profile: profile, credential: "new-credential")
+            }
+        )
+        await model.refreshAll()
+        XCTAssertEqual(model.dashboard?.scope, "before-pairing")
+
+        let paired = await model.pairRemoteServer(
+            invitation: "fresh-invitation", profileName: "서버", deviceName: "Mac"
+        )
+        XCTAssertTrue(paired)
+        XCTAssertEqual(model.dashboard?.scope, "after-pairing")
+        XCTAssertEqual(try credentials.credential(for: profile.serverId), "new-credential")
+        XCTAssertEqual(old.factoryCallCount, 1)
+        XCTAssertEqual(old.closeCallCount, 1)
+        XCTAssertEqual(repaired.factoryCallCount, 1)
+        XCTAssertEqual(repaired.closeCallCount, 0)
+
+        let removed = await model.removeRemoteServer(profile.serverId)
+        XCTAssertTrue(removed)
+        XCTAssertNil(try credentials.credential(for: profile.serverId))
+        XCTAssertEqual(model.activeRemoteProfile?.serverId, backupProfile.serverId)
+        XCTAssertEqual(model.dashboard?.scope, "backup-server")
+        XCTAssertEqual(repaired.closeCallCount, 1)
+        XCTAssertEqual(backup.factoryCallCount, 1)
+        let didQuit = await model.shutdownApplication(force: false)
+        XCTAssertTrue(didQuit)
+        XCTAssertEqual(backup.closeCallCount, 1)
+    }
+
+    @MainActor
+    func testRemoteClientRecoversAfterTemporaryConnectionFailure() async throws {
+        let profile = remoteProfile(
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "복구 서버"
+        )
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "server-recovered"),
+            settings: try settingsSnapshot(
+                policy: [
+                    "mode": "automatic",
+                    "allowedSelections": ["kind": "catalog-visible"],
+                    "constraints": ["allowDelegation": true]
+                ],
+                catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+            ),
+            helloFailures: 1
+        )
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                mode: .remoteClient,
+                activeServerId: profile.serverId,
+                profiles: [profile]
+            )),
+            credentialStore: TestCredentialStore([
+                profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+            ]),
+            remoteClientFactory: { _, _ in client }
+        )
+
+        await model.refreshAll()
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertNil(model.dashboard)
+        XCTAssertNotNil(model.connectionErrorMessage)
+
+        await model.refreshAll()
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.dashboard?.scope, "server-recovered")
+        XCTAssertNotNil(model.settings)
+        XCTAssertNil(model.connectionErrorMessage)
+    }
+
+    @MainActor
+    func testPairingWhileHostingRegistersServerBeforeModeSwitch() async throws {
+        let profile = remoteProfile(
+            id: "44444444-4444-4444-8444-444444444444",
+            name: "등록할 서버"
+        )
+        let preferences = TestConnectionStore(BridgeConnectionPreferences())
+        let credentials = TestCredentialStore()
+        let credential = "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: preferences,
+            credentialStore: credentials,
+            remotePairingFactory: { invitation, deviceName, profileName in
+                XCTAssertEqual(invitation, "pairing-invitation")
+                XCTAssertEqual(deviceName, "거실 Mac")
+                XCTAssertEqual(profileName, "내 서버")
+                return RemotePairingResult(profile: profile, credential: credential)
+            }
+        )
+
+        let paired = await model.pairRemoteServer(
+            invitation: "pairing-invitation",
+            profileName: "내 서버",
+            deviceName: "거실 Mac"
+        )
+
+        XCTAssertTrue(paired)
+        XCTAssertFalse(model.isRemoteClient)
+        XCTAssertEqual(preferences.value.mode, .localHost)
+        XCTAssertEqual(model.activeRemoteProfile?.serverId, profile.serverId)
+        XCTAssertEqual(try credentials.credential(for: profile.serverId), credential)
+        XCTAssertTrue(model.prepareRemoteServerForModeSwitch(profile.serverId))
+        XCTAssertFalse(model.isRemoteClient)
+    }
+}
+
+@MainActor
+private final class TestConnectionStore: BridgeConnectionPreferencesStoring {
+    private(set) var value: BridgeConnectionPreferences
+
+    init(_ value: BridgeConnectionPreferences) {
+        self.value = value
+    }
+
+    func load() -> BridgeConnectionPreferences { value }
+    func save(_ preferences: BridgeConnectionPreferences) throws { value = preferences }
+}
+
+private final class TestCredentialStore: RemoteCredentialStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String]
+
+    init(_ values: [String: String] = [:]) {
+        self.values = values
+    }
+
+    func credential(for serverId: String) throws -> String? {
+        lock.withLock { values[serverId] }
+    }
+
+    func saveCredential(_ credential: String, for serverId: String) throws {
+        lock.withLock { values[serverId] = credential }
+    }
+
+    func deleteCredential(for serverId: String) throws {
+        lock.withLock { _ = values.removeValue(forKey: serverId) }
+    }
+}
+
+private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked Sendable {
+    private let helloValue: RemoteCompanionHello
+    private let dashboardValue: DashboardSnapshot
+    private let settingsValue: SettingsSnapshot
+    private let dashboardDelayNanoseconds: UInt64
+    private let lock = NSLock()
+    private var runtimeCalls = 0
+    private var settingsUpdateCalls = 0
+    private var factoryCalls = 0
+    private var closeCalls = 0
+    private var remainingHelloFailures: Int
+
+    init(
+        profile: RemoteServerProfile,
+        dashboard: DashboardSnapshot,
+        settings: SettingsSnapshot,
+        dashboardDelayNanoseconds: UInt64 = 0,
+        helloFailures: Int = 0
+    ) {
+        helloValue = RemoteCompanionHello(
+            protocol: RemoteServerProtocolInfo(
+                name: remoteCompanionProtocolName,
+                version: remoteCompanionProtocolVersion
+            ),
+            server: RemoteServerIdentity(
+                id: profile.serverId,
+                displayName: profile.serverDisplayName,
+                certificateSha256: profile.certificateSha256
+            ),
+            bridge: CompanionBridgeInfo(
+                name: "codex-mcp-bridge",
+                title: "Codex MCP Bridge",
+                version: profile.bridgeVersion,
+                buildId: profile.bridgeBuildId
+            ),
+            capabilities: profile.capabilities
+        )
+        dashboardValue = dashboard
+        settingsValue = settings
+        self.dashboardDelayNanoseconds = dashboardDelayNanoseconds
+        remainingHelloFailures = helloFailures
+    }
+
+    var runtimeStatusCallCount: Int { lock.withLock { runtimeCalls } }
+    var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
+    var factoryCallCount: Int { lock.withLock { factoryCalls } }
+    var closeCallCount: Int { lock.withLock { closeCalls } }
+
+    func recordFactoryCall() {
+        lock.withLock { factoryCalls += 1 }
+    }
+
+    func close() {
+        lock.withLock { closeCalls += 1 }
+    }
+
+    func hello() async throws -> RemoteCompanionHello {
+        let shouldFail = lock.withLock {
+            guard remainingHelloFailures > 0 else { return false }
+            remainingHelloFailures -= 1
+            return true
+        }
+        if shouldFail { throw RemoteCompanionError.unauthorized }
+        return helloValue
+    }
+
+    func dashboard(
+        limit: Int,
+        terminalOffset: Int,
+        idleOffset: Int,
+        enrich: Bool
+    ) async throws -> DashboardSnapshot {
+        if dashboardDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: dashboardDelayNanoseconds)
+        }
+        return dashboardValue
+    }
+
+    func settings(refreshModels: Bool, locale: String) async throws -> SettingsSnapshot {
+        settingsValue
+    }
+
+    func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot {
+        lock.withLock { settingsUpdateCalls += 1 }
+        return settingsValue
+    }
+
+    func runtimeStatus(inspectBackgroundProcesses: Bool) async throws -> RuntimeAdmissionSnapshot {
+        lock.withLock { runtimeCalls += 1 }
+        return RuntimeAdmissionSnapshot(
+            acceptingNewJobs: true,
+            activeJobs: 0,
+            pendingAdmissions: 0,
+            backgroundProcessState: "confirmed",
+            backgroundProcesses: 0,
+            backgroundProcessAgents: 0,
+            backgroundProcessUnknownAgents: 0
+        )
+    }
+}
+
+private func remoteProfile(id: String, name: String) -> RemoteServerProfile {
+    RemoteServerProfile(
+        serverId: id,
+        name: name,
+        endpoint: "https://example.invalid:8766",
+        certificateSha256: String(repeating: "a", count: 64),
+        serverDisplayName: name,
+        bridgeVersion: "0.3.0",
+        bridgeBuildId: "test-build",
+        capabilities: ["dashboard.read", "settings.read", "settings.write", "runtime.read"],
+        lastConnectedAt: nil
+    )
 }
 
 @MainActor
@@ -680,15 +1266,19 @@ private enum TestLoginItemError: LocalizedError {
     }
 }
 
-private func helperStatus() throws -> HelperStatus {
+private func helperStatus(
+    phase: String = "running",
+    bridgeConnected: Bool = true,
+    tunnelConnected: Bool = true
+) throws -> HelperStatus {
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
-      "phase":"running","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
+      "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":true,"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
-      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":true,"lastCheckedAt":null,"lastError":null}
+      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
+      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
     }
     """#.data(using: .utf8)!
     return try JSONDecoder().decode(HelperStatus.self, from: json)
@@ -703,7 +1293,10 @@ private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLo
     return try JSONDecoder().decode(CodexLoginStatus.self, from: data)
 }
 
-private func dashboardStatus(runtimeUnknownAgents: Int = 0) throws -> DashboardSnapshot {
+private func dashboardStatus(
+    runtimeUnknownAgents: Int = 0,
+    scope: String = "bridge-wide"
+) throws -> DashboardSnapshot {
     let counts: [String: Any] = [
         "trackedProjects": 0,
         "trackedConversations": 0,
@@ -738,7 +1331,7 @@ private func dashboardStatus(runtimeUnknownAgents: Int = 0) throws -> DashboardS
     let data = try JSONSerialization.data(withJSONObject: [
         "kind": "dashboard",
         "generatedAt": "2026-09-03T00:00:00.000Z",
-        "scope": "bridge-wide",
+        "scope": scope,
         "statusSource": "codex-runtime-only",
         "coverage": "complete",
         "counts": counts,

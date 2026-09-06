@@ -466,7 +466,7 @@ function readPersistedSession(
     (sandbox !== "read-only" && sandbox !== "workspace-write" && sandbox !== "danger-full-access") ||
     !isTimestamp(value.createdAt) ||
     !isTimestamp(value.lastUsedAt) ||
-    (backendKind !== "mcp-server" && backendKind !== "app-server") ||
+    (backendKind !== "mcp-server" && backendKind !== "app-server" && backendKind !== "codex-sdk") ||
     (policyRevision !== undefined && (!Number.isInteger(policyRevision) || (policyRevision as number) < 0))
   ) {
     return undefined;

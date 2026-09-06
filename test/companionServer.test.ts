@@ -7,7 +7,8 @@ import {
   COMPANION_PROTOCOL_NAME,
   COMPANION_PROTOCOL_VERSION,
   startBridgeCompanionServer,
-  type BridgeCompanionServer
+  type BridgeCompanionServer,
+  type RemoteCompanionControl
 } from "../src/companionServer.js";
 import type {
   BridgeApplicationService,
@@ -204,7 +205,10 @@ describe("native companion server", () => {
       id: "hello-after-invalid",
       method: "companion.hello"
     });
-    expect(valid).toMatchObject({ id: "hello-after-invalid", result: { protocol: { version: 1 } } });
+    expect(valid).toMatchObject({
+      id: "hello-after-invalid",
+      result: { protocol: { version: COMPANION_PROTOCOL_VERSION } }
+    });
   });
 
   it("exposes a bounded runtime drain gate without adding MCP authority", async () => {
@@ -239,6 +243,59 @@ describe("native companion server", () => {
       params: {}
     });
     expect(applicationService.cancelDrain).toHaveBeenCalledOnce();
+  });
+
+  it("keeps remote publication and device controls on the private local socket", async () => {
+    const socketPath = temporarySocketPath();
+    const remoteManagement = fakeRemoteManagement();
+    const server = await startBridgeCompanionServer({
+      socketPath,
+      applicationService: fakeApplicationService(),
+      remoteManagement
+    });
+    servers.push(server);
+
+    const hello = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "hello-with-remote-controls",
+      method: "companion.hello",
+      params: {}
+    });
+    expect(hello.result.capabilities).toContain("remote-management.configure");
+
+    const configured = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "remote-configure",
+      method: "remote.configure",
+      params: {
+        enabled: true,
+        endpoint: "https://studio.example:8766",
+        displayName: "Studio"
+      }
+    });
+    expect(remoteManagement.configure).toHaveBeenCalledWith({
+      enabled: true,
+      endpoint: "https://studio.example:8766",
+      displayName: "Studio"
+    });
+    expect(configured.result).toMatchObject({ enabled: false, serverId: expect.any(String) });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "remote-pair",
+      method: "remote.pairing.begin",
+      params: { expiresInSeconds: 120 }
+    });
+    expect(remoteManagement.beginPairing).toHaveBeenCalledWith(120);
+
+    const deviceId = "11111111-1111-4111-8111-111111111111";
+    await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "remote-revoke",
+      method: "remote.devices.revoke",
+      params: { deviceId }
+    });
+    expect(remoteManagement.revokeDevice).toHaveBeenCalledWith(deviceId);
   });
 
   it("refuses to replace an active socket and removes only its own socket on close", async () => {
@@ -296,6 +353,31 @@ function fakeApplicationService(): BridgeApplicationService {
       backgroundProcessAgents: 1,
       backgroundProcessUnknownAgents: 0
     }))
+  };
+}
+
+function fakeRemoteManagement(): RemoteCompanionControl {
+  const status = {
+    enabled: false,
+    listening: false,
+    endpoint: null,
+    displayName: "Studio",
+    serverId: "11111111-1111-4111-8111-111111111111",
+    certificateSha256: null,
+    lastError: null,
+    devices: []
+  };
+  return {
+    status: vi.fn(() => status),
+    configure: vi.fn(async () => status),
+    beginPairing: vi.fn(async () => ({
+      invitation: "invitation",
+      endpoint: "https://studio.example:8766",
+      serverId: status.serverId,
+      certificateSha256: "a".repeat(64),
+      expiresAt: "2026-09-04T00:05:00.000Z"
+    })),
+    revokeDevice: vi.fn(async () => status)
   };
 }
 

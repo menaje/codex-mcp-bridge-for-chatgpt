@@ -1,13 +1,109 @@
 import CodexBridgeKit
 import AppKit
+import Darwin
 import OSLog
 import SwiftUI
+
+struct AppInstanceIdentity: Equatable {
+    let processIdentifier: pid_t
+    let launchDate: Date?
+}
+
+enum AppSingleInstanceSelection {
+    static func primaryProcessIdentifier(
+        current: AppInstanceIdentity,
+        running: [AppInstanceIdentity]
+    ) -> pid_t {
+        let candidates = [current] + running.filter {
+            $0.processIdentifier != current.processIdentifier
+        }
+        return candidates.min { lhs, rhs in
+            let lhsDate = lhs.launchDate ?? .distantFuture
+            let rhsDate = rhs.launchDate ?? .distantFuture
+            if lhsDate != rhsDate { return lhsDate < rhsDate }
+            return lhs.processIdentifier < rhs.processIdentifier
+        }?.processIdentifier ?? current.processIdentifier
+    }
+}
+
+@MainActor
+enum AppSingleInstanceCoordinator {
+    private static var lockFileDescriptor: Int32 = -1
+
+    static func acquireOrActivateExistingInstance() -> Bool {
+        if let existing = preferredExistingApplication() {
+            existing.activate(options: [.activateAllWindows])
+            return false
+        }
+
+        let lockURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("com.menaje.codex-mcp-bridge.menu-bar.lock")
+        let descriptor = lockURL.path.withCString {
+            Darwin.open($0, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        }
+        guard descriptor >= 0 else {
+            return true
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor)
+            activateAnyExistingApplication()
+            return false
+        }
+        lockFileDescriptor = descriptor
+        return true
+    }
+
+    private static func preferredExistingApplication() -> NSRunningApplication? {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return nil }
+        let currentProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+        let current = AppInstanceIdentity(
+            processIdentifier: currentProcessIdentifier,
+            launchDate: NSRunningApplication.current.launchDate
+        )
+        let applications = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter {
+                !$0.isTerminated && $0.processIdentifier != currentProcessIdentifier
+            }
+        let primaryProcessIdentifier = AppSingleInstanceSelection.primaryProcessIdentifier(
+            current: current,
+            running: applications.map {
+                AppInstanceIdentity(
+                    processIdentifier: $0.processIdentifier,
+                    launchDate: $0.launchDate
+                )
+            }
+        )
+        guard primaryProcessIdentifier != currentProcessIdentifier else { return nil }
+        return applications.first {
+            $0.processIdentifier == primaryProcessIdentifier
+        }
+    }
+
+    private static func activateAnyExistingApplication() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        let currentProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+        NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first {
+                !$0.isTerminated && $0.processIdentifier != currentProcessIdentifier
+            }?
+            .activate(options: [.activateAllWindows])
+    }
+}
 
 @MainActor
 final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     static var model: AppModel?
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "lifecycle")
     private var terminationRequestInProgress = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard AppSingleInstanceCoordinator.acquireOrActivateExistingInstance() else {
+            logger.info("another menu bar application instance is already running")
+            Darwin._exit(EXIT_SUCCESS)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("menu bar application finished launching")
@@ -221,7 +317,9 @@ struct CodexBridgeMenuBarApp: App {
     @StateObject private var model: AppModel
 
     init() {
-        let appModel = AppModel()
+        let appModel = AppModel(
+            connectionStore: UserDefaultsBridgeConnectionStore()
+        )
         _model = StateObject(wrappedValue: appModel)
         BridgeAppDelegate.model = appModel
     }

@@ -23,14 +23,25 @@ describe("managed runtime status", () => {
         processRunning: true,
         connected: true,
         lastCheckedAt: new Date().toISOString(),
-        lastError: null
+        lastError: null,
+        lastProblem: {
+          code: "tunnel-readiness-probe-failed",
+          arguments: { probe: "control-plane" }
+        }
       }
     });
     expect(readManagedRuntimeStatus(file)).toMatchObject({
       protocol: MANAGED_RUNTIME_STATUS_PROTOCOL,
       phase: "running",
       stale: false,
-      tunnel: { connected: true, doctorPassed: true }
+      tunnel: {
+        connected: true,
+        doctorPassed: true,
+        lastProblem: {
+          code: "tunnel-readiness-probe-failed",
+          arguments: { probe: "control-plane" }
+        }
+      }
     });
   });
 
@@ -67,6 +78,20 @@ describe("managed runtime status", () => {
     writeFileSync(file, `${JSON.stringify(status)}\n`, { mode: 0o600 });
     expect(readManagedRuntimeStatus(file)).toBeNull();
   });
+
+  it("rejects malformed machine-readable tunnel problems", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-status-"));
+    const file = path.join(root, "run", "status.json");
+    writeManagedRuntimeStatus(file, {
+      phase: "running",
+      runtimeBuildId: "build-one",
+      tunnel: {
+        ...connectedTunnel(),
+        lastProblem: { code: "NOT_STABLE", arguments: {} }
+      }
+    });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+  });
 });
 
 function connectedTunnel() {
@@ -78,6 +103,7 @@ function connectedTunnel() {
     processRunning: true,
     connected: true,
     lastCheckedAt: new Date().toISOString(),
-    lastError: null
+    lastError: null,
+    lastProblem: null
   };
 }

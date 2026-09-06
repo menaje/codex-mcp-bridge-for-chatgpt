@@ -46,7 +46,8 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
         typeof parsed.tunnel.lastCheckedAt === "string" ||
         parsed.tunnel.lastCheckedAt === null
       ) ||
-      !(typeof parsed.tunnel.lastError === "string" || parsed.tunnel.lastError === null)
+      !(typeof parsed.tunnel.lastError === "string" || parsed.tunnel.lastError === null) ||
+      !validStatusProblem(parsed.tunnel.lastProblem)
     ) {
       return null;
     }
@@ -56,9 +57,27 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
     if (ageMs < -5_000) return null;
     return {
       ...parsed,
+      tunnel: {
+        ...parsed.tunnel,
+        lastProblem: parsed.tunnel.lastProblem ?? null
+      },
       stale: ageMs > maximumAgeMs
     };
   } catch {
     return null;
   }
+}
+
+function validStatusProblem(value) {
+  if (value === undefined || value === null) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (typeof value.code !== "string" || !/^[a-z0-9-]{1,80}$/.test(value.code)) return false;
+  if (!value.arguments || typeof value.arguments !== "object" || Array.isArray(value.arguments)) {
+    return false;
+  }
+  return Object.entries(value.arguments).every(([key, entry]) =>
+    /^[a-zA-Z][a-zA-Z0-9]{0,39}$/.test(key) &&
+    typeof entry === "string" &&
+    entry.length <= 500
+  );
 }

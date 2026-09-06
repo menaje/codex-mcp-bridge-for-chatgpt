@@ -22,7 +22,7 @@ import type {
 import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-export const COMPANION_PROTOCOL_VERSION = 1;
+export const COMPANION_PROTOCOL_VERSION = 2;
 export const COMPANION_MAX_REQUEST_BYTES = 1024 * 1024;
 export const COMPANION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const COMPANION_MAX_CLIENTS = 8;
@@ -43,7 +43,11 @@ const requestSchema = z.strictObject({
     "settings.update",
     "runtime.snapshot",
     "runtime.beginDrain",
-    "runtime.cancelDrain"
+    "runtime.cancelDrain",
+    "remote.status",
+    "remote.configure",
+    "remote.pairing.begin",
+    "remote.devices.revoke"
   ]),
   params: z.unknown().optional()
 });
@@ -62,6 +66,17 @@ const settingsSnapshotParamsSchema = z.strictObject({
 const runtimeSnapshotParamsSchema = z.strictObject({
   inspectBackgroundProcesses: z.boolean().optional()
 });
+const remoteConfigureParamsSchema = z.strictObject({
+  enabled: z.boolean(),
+  endpoint: z.string().min(1).max(2_048),
+  displayName: z.string().min(1).max(120)
+});
+const remotePairingParamsSchema = z.strictObject({
+  expiresInSeconds: z.number().int().min(60).max(900).optional()
+});
+const remoteRevokeParamsSchema = z.strictObject({
+  deviceId: z.string().uuid()
+});
 
 type CompanionRequest = z.infer<typeof requestSchema>;
 type JsonRpcId = z.infer<typeof requestIdSchema> | null;
@@ -74,7 +89,58 @@ export type BridgeCompanionServer = {
 export type BridgeCompanionServerOptions = {
   socketPath: string;
   applicationService: BridgeApplicationService;
+  remoteManagement?: RemoteCompanionControl;
 };
+
+export type RemoteCompanionDevice = {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  capabilities: string[];
+};
+
+export type RemoteCompanionStatus = {
+  enabled: boolean;
+  listening: boolean;
+  endpoint: string | null;
+  displayName: string;
+  serverId: string;
+  certificateSha256: string | null;
+  lastError: string | null;
+  lastProblem?: {
+    code: string;
+    arguments: Record<string, string>;
+  } | null;
+  devices: RemoteCompanionDevice[];
+};
+
+export type RemotePairingInvitation = {
+  invitation: string;
+  endpoint: string;
+  serverId: string;
+  certificateSha256: string;
+  expiresAt: string;
+};
+
+export type RemoteCompanionControl = {
+  status(): RemoteCompanionStatus;
+  configure(input: {
+    enabled: boolean;
+    endpoint: string;
+    displayName: string;
+  }): Promise<RemoteCompanionStatus>;
+  beginPairing(expiresInSeconds?: number): Promise<RemotePairingInvitation>;
+  revokeDevice(deviceId: string): Promise<RemoteCompanionStatus>;
+};
+
+export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
+  "companion.hello",
+  "dashboard.snapshot",
+  "settings.snapshot",
+  "settings.update",
+  "runtime.snapshot"
+]);
 
 export type PrivateJsonLineServerOptions = {
   socketPath: string;
@@ -99,7 +165,11 @@ export async function startBridgeCompanionServer(
     maxRequestBytes: COMPANION_MAX_REQUEST_BYTES,
     maxResponseBytes: COMPANION_MAX_RESPONSE_BYTES,
     maxClients: COMPANION_MAX_CLIENTS,
-    dispatch: (line) => dispatchLine(line, options.applicationService),
+    dispatch: (line) => dispatchLine(
+      line,
+      options.applicationService,
+      options.remoteManagement
+    ),
     requestTooLarge: () => errorResponse(null, -32600, "Companion request is too large."),
     internalError: (error) => errorResponse(null, -32603, safeErrorMessage(error))
   });
@@ -170,7 +240,8 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
 
 async function dispatchLine(
   line: string,
-  applicationService: BridgeApplicationService
+  applicationService: BridgeApplicationService,
+  remoteManagement?: RemoteCompanionControl
 ): Promise<Record<string, unknown>> {
   let decoded: unknown;
   try {
@@ -178,13 +249,21 @@ async function dispatchLine(
   } catch {
     return errorResponse(null, -32700, "Invalid JSON.");
   }
+  return dispatchCompanionPayload(decoded, applicationService, remoteManagement);
+}
+
+export async function dispatchCompanionPayload(
+  decoded: unknown,
+  applicationService: BridgeApplicationService,
+  remoteManagement?: RemoteCompanionControl
+): Promise<Record<string, unknown>> {
   const parsed = requestSchema.safeParse(decoded);
   if (!parsed.success) {
     return errorResponse(requestId(decoded), -32600, "Invalid companion request.");
   }
   const request = parsed.data;
   try {
-    const result = await dispatchRequest(request, applicationService);
+    const result = await dispatchRequest(request, applicationService, remoteManagement);
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return errorResponse(request.id, -32602, safeErrorMessage(error));
@@ -193,7 +272,8 @@ async function dispatchLine(
 
 async function dispatchRequest(
   request: CompanionRequest,
-  applicationService: BridgeApplicationService
+  applicationService: BridgeApplicationService,
+  remoteManagement?: RemoteCompanionControl
 ): Promise<unknown> {
   switch (request.method) {
     case "companion.hello":
@@ -213,7 +293,14 @@ async function dispatchRequest(
           "dashboard.read",
           "settings.read",
           "settings.write",
-          "runtime.drain"
+          "runtime.drain",
+          ...(remoteManagement
+            ? [
+                "remote-management.configure",
+                "remote-management.pair",
+                "remote-management.devices.revoke"
+              ]
+            : [])
         ]
       };
     case "dashboard.snapshot": {
@@ -251,7 +338,31 @@ async function dispatchRequest(
     case "runtime.cancelDrain":
       emptyParamsSchema.parse(request.params || {});
       return applicationService.cancelDrain();
+    case "remote.status":
+      emptyParamsSchema.parse(request.params || {});
+      return requireRemoteManagement(remoteManagement).status();
+    case "remote.configure":
+      return requireRemoteManagement(remoteManagement).configure(
+        remoteConfigureParamsSchema.parse(request.params || {})
+      );
+    case "remote.pairing.begin": {
+      const params = remotePairingParamsSchema.parse(request.params || {});
+      return requireRemoteManagement(remoteManagement).beginPairing(
+        params.expiresInSeconds
+      );
+    }
+    case "remote.devices.revoke": {
+      const params = remoteRevokeParamsSchema.parse(request.params || {});
+      return requireRemoteManagement(remoteManagement).revokeDevice(params.deviceId);
+    }
   }
+}
+
+function requireRemoteManagement(
+  controller: RemoteCompanionControl | undefined
+): RemoteCompanionControl {
+  if (!controller) throw new Error("REMOTE_MANAGEMENT_UNAVAILABLE");
+  return controller;
 }
 
 function writeResponse(

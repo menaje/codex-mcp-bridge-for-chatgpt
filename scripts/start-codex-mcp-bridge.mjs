@@ -112,7 +112,8 @@ let tunnelState = {
   processRunning: false,
   connected: false,
   lastCheckedAt: null,
-  lastError: null
+  lastError: null,
+  lastProblem: null
 };
 
 main().catch((error) => {
@@ -146,7 +147,6 @@ async function main() {
         )
       : undefined;
   enforceManagedAppAuthenticationBoundary();
-  ensurePrerequisites();
   ensureBuilt();
   activeRuntimeBuildId = installedRuntimeBuildId();
   runtimeLocks = acquireRuntimeOwnershipLocks(
@@ -218,14 +218,6 @@ function isManagedAppRuntimeKey(name) {
   return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name);
 }
 
-function ensurePrerequisites() {
-  const codex = spawnSync(process.env.CODEX_MCP_BRIDGE_CODEX || "codex", ["mcp-server", "--help"], {
-    encoding: "utf8"
-  });
-  if (codex.status !== 0) {
-    throw new Error("Codex CLI with mcp-server support is required and must be available in PATH.");
-  }
-}
 
 function ensureBuilt() {
   const outputPaths = requiredBuildOutputs(tunnelTransport)
@@ -369,7 +361,8 @@ async function startSecureTunnel({ tunnelId }) {
     processRunning: false,
     connected: false,
     lastCheckedAt: new Date().toISOString(),
-    lastError: null
+    lastError: null,
+    lastProblem: null
   };
   publishRuntimeStatus();
   const tunnel = spawnChild(tunnelClient, [
@@ -399,7 +392,8 @@ async function startSecureTunnel({ tunnelId }) {
     processRunning: true,
     connected: true,
     lastCheckedAt: new Date().toISOString(),
-    lastError: null
+    lastError: null,
+    lastProblem: null
   };
   publishRuntimeStatus();
   beginTunnelHealthMonitoring(tunnelClient, childEnvironment, tunnel);
@@ -477,7 +471,8 @@ function spawnChild(command, childArgs, options = {}) {
           processRunning: false,
           connected: false,
           lastCheckedAt: new Date().toISOString(),
-          lastError: "The tunnel-client process exited unexpectedly."
+          lastError: "The tunnel-client process exited unexpectedly.",
+          lastProblem: statusProblem("tunnel-process-exited")
         };
         tryPublishRuntimeStatus();
       }
@@ -531,7 +526,11 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
       processRunning: true,
       connected,
       lastCheckedAt: new Date().toISOString(),
-      lastError: connected ? null : "Waiting for a successful control-plane poll."
+      // A control-plane poll that has not succeeded yet is normal startup
+      // progress, not an error. The native client presents phase=starting in
+      // its selected language.
+      lastError: null,
+      lastProblem: null
     };
     publishRuntimeStatus();
     if (connected) return;
@@ -557,7 +556,14 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
           ? null
           : processRunning
             ? "The tunnel readiness probe is failing; reconnecting may be in progress."
-            : "The tunnel-client process is not running."
+            : "The tunnel-client process is not running.",
+        lastProblem: connected
+          ? null
+          : statusProblem(
+              processRunning
+                ? "tunnel-readiness-probe-failed"
+                : "tunnel-process-not-running"
+            )
       };
       publishRuntimeStatus();
     } catch (error) {
@@ -566,7 +572,8 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
         phase: "degraded",
         connected: false,
         lastCheckedAt: new Date().toISOString(),
-        lastError: safeStatusText(error instanceof Error ? error.message : String(error))
+        lastError: safeStatusText(error instanceof Error ? error.message : String(error)),
+        lastProblem: statusProblem("tunnel-health-probe-failed")
       };
       tryPublishRuntimeStatus();
     } finally {
@@ -630,6 +637,10 @@ function safeStatusText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
+}
+
+function statusProblem(code, arguments_ = {}) {
+  return { code, arguments: arguments_ };
 }
 
 function isIgnorableNoAuthDoctorFailure(output) {

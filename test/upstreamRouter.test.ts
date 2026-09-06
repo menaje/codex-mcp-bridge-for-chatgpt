@@ -119,10 +119,11 @@ describe("CodexBackendRouter", () => {
     expect(router.canSteerThread("app-thread")).toBe(true);
     router.bindThread("mcp-thread", "mcp-server");
     expect(router.canSteerThread("mcp-thread")).toBe(false);
-    await router.respondToInteraction("interaction-1", { decision: "accept" });
+    await router.callTool("codex-reply", { threadId: "app-thread", prompt: "continue" });
+    await router.respondToInteraction("app-server-0:1:interaction-1", { decision: "accept" });
     expect(app.forceAssignments).toEqual([assignment]);
     expect(app.steers).toEqual([{ threadId: "app-thread", prompt: "guide" }]);
-    expect(app.interactions).toEqual([{ interactionId: "interaction-1", response: { decision: "accept" } }]);
+    expect(app.interactions).toEqual([{ interactionId: "app-server-0:1:interaction-1", response: { decision: "accept" } }]);
     await router.close();
   });
 });

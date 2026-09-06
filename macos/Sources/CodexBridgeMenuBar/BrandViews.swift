@@ -86,6 +86,10 @@ struct BridgeMenuBarIcon: View {
             switch health {
             case .healthy:
                 break
+            case .checking:
+                context?.setStrokeColor(NSColor.black.cgColor)
+                context?.setLineWidth(1.4)
+                context?.strokeEllipse(in: CGRect(x: 13, y: 0.5, width: 5, height: 5))
             case .attention:
                 context?.fillEllipse(in: CGRect(x: 13, y: 0.5, width: 5, height: 5))
             case .unavailable:
@@ -134,6 +138,7 @@ struct BridgeBrandStatusIcon: View {
     private var badgeSymbol: String {
         switch health {
         case .healthy: return "checkmark.circle.fill"
+        case .checking: return "ellipsis.circle.fill"
         case .attention: return "exclamationmark.circle.fill"
         case .unavailable: return "xmark.circle.fill"
         }
@@ -142,8 +147,71 @@ struct BridgeBrandStatusIcon: View {
     private var badgeColor: Color {
         switch health {
         case .healthy: return .green
+        case .checking: return .blue
         case .attention: return .orange
         case .unavailable: return .red
         }
+    }
+}
+
+/// A disclosure control whose complete header row, including its title, is clickable.
+/// SwiftUI's macOS disclosure label can otherwise feel like only the chevron is active.
+struct FullRowDisclosure<Label: View, Content: View>: View {
+    @Environment(\.locale) private var locale
+    @Binding private var isExpanded: Bool
+    private let label: Label
+    private let content: Content
+
+    init(
+        isExpanded: Binding<Bool>,
+        @ViewBuilder label: () -> Label,
+        @ViewBuilder content: () -> Content
+    ) {
+        _isExpanded = isExpanded
+        self.label = label()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    label
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(BridgeAppLocalization.string(
+                isExpanded ? "펼침" : "접힘",
+                locale: locale
+            ))
+
+            if isExpanded {
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
+                    .padding(.leading, 18)
+            }
+        }
+    }
+}
+
+extension FullRowDisclosure where Label == Text {
+    init(
+        _ title: LocalizedStringKey,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(isExpanded: isExpanded, label: { Text(title) }, content: content)
     }
 }

@@ -35,9 +35,9 @@ The manifest controls:
   prefix length, retained-generation count, and required logical resources;
 - the single release unit, synchronized SemVer mirror, independent stage,
   derived publication channel, source-RC provenance, tag prefix, and release title;
-- generated release-note policy and the manifest-v3 release asset contract;
-- the first native target: an ad-hoc-signed, unnotarized macOS 13+ arm64 DMG,
-  alongside the existing generic npm server archive.
+- generated release-note policy and the manifest-v4 release asset contract;
+- two native targets: ad-hoc-signed, unnotarized macOS 13+ `arm64` and `x64`
+  DMGs alongside the existing generic npm server archive.
 
 ## Archived skill documents
 
@@ -46,10 +46,11 @@ history and possible future reference. ChatGPT does not consume these files,
 so they are not an active product surface and must not be installed or packaged.
 
 The archive directory is deliberately outside the npm `files` allowlist and is
-not copied into the native macOS app. Manifest version 3 does not declare a
+not copied into the native macOS app. Manifest version 4 does not declare a
 skills artifact, and the release workflow neither builds nor publishes a skills
-ZIP. A complete release therefore contains only the macOS DMG, generic npm
-server tarball, npm tarball checksum, and aggregate checksum file.
+ZIP. A complete release therefore contains only the two architecture-specific
+macOS DMGs, generic npm server tarball, npm tarball checksum, and aggregate
+checksum file.
 
 ## Personal/local plugin package identity
 
@@ -206,8 +207,8 @@ recorded for the release candidate:
 - VoiceOver labels, full keyboard navigation, light/dark appearance, sleep and
   wake, network loss and recovery, and helper crash recovery are checked on a
   physical Mac;
-- the supported architecture matrix and any bundled native artifacts are
-  recorded (the initial target is Apple Silicon only);
+- the Apple Silicon and Intel architecture matrix and bundled native artifacts
+  are recorded and verified independently;
 - the quarantined-download first-launch path is tested on a clean Mac, including
   the per-app approval in **System Settings > Privacy & Security**; the
   documentation never asks users to disable Gatekeeper globally;
@@ -223,17 +224,18 @@ recorded for the release candidate:
 
 The current `macos/build-app.sh` output is host-architecture and ad-hoc signed.
 `macos/package-release.sh` is the separate public packaging boundary: it checks
-the manifest version, minimum macOS version, exact arm64 architecture, app
-signature, and DMG container, then emits a filename containing
+the manifest version, minimum macOS version, selected `arm64`/`x64` native
+architecture, matching `better-sqlite3` prebuild, app signature, and DMG
+container, then emits a filename containing
 `unnotarized`. It deliberately needs no Apple developer account, certificate,
 App Store Connect key, or GitHub signing secret. Because Apple does not trust or
 notarize this artifact, downloaded copies can require the user's explicit
 per-app approval before first launch.
 
-The initial distribution manifest intentionally supports Apple Silicon only.
-Intel or universal packaging requires an explicit manifest change and a native
-dependency/test matrix; it is not inferred from architecture-neutral Swift
-source.
+The distribution manifest supports separate Apple Silicon and Intel packages.
+Both are built on matching GitHub-hosted native runners and both must pass before
+promotion. Universal packaging remains unsupported and is not inferred from
+architecture-neutral Swift source.
 
 ### Direct server distribution
 
@@ -340,9 +342,10 @@ source-RC-backed stable promotion. The workflow:
 
 1. runs the full Node.js server checks and production dependency audit;
 2. builds the canonical npm tarball and its checksum;
-3. builds the macOS app on an arm64 runner, ad-hoc signs the app and DMG, and
-   verifies the version, minimum OS, architecture, signatures, and container;
-4. assembles exactly those npm assets and the macOS DMG, rejecting undeclared
+3. builds the macOS app on native arm64 and Intel runners, ad-hoc signs both app
+   and DMG variants, and verifies the version, minimum OS, architecture,
+   signatures, bundled native module, and container;
+4. assembles exactly those npm assets and both macOS DMGs, rejecting undeclared
    files and writing deterministic aggregate checksums;
 5. aggregates the read-only jobs for release PRs and prevents candidate state
    from being merged to `main`;
@@ -351,15 +354,15 @@ source-RC-backed stable promotion. The workflow:
    release/build/signature metadata;
 7. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
-8. publishes all four assets together and marks only candidate-stage runs as
+8. publishes all five assets together and marks only candidate-stage runs as
    GitHub prereleases.
 
-The macOS job has no Apple signing or notarization secrets. Its public asset is
-intentionally named
-`Codex-MCP-Bridge-for-ChatGPT-<version>-macOS-arm64-unnotarized.dmg`, and the
-release notes must repeat that limitation and the safe first-launch approval
-path. A future move to Developer ID or notarization is a separate product and
-account decision; the workflow must not silently change the trust model.
+The macOS jobs have no Apple signing or notarization secrets. Their public assets
+are intentionally named with `macOS-arm64-unnotarized.dmg` and
+`macOS-x64-unnotarized.dmg`, and the release notes must identify both variants
+and the safe first-launch approval path. A future move to Developer ID or
+notarization is a separate product and account decision; the workflow must not
+silently change the trust model.
 
 Development pushes and PRs targeting `dev` do not start this workflow at all.
 Never merge, fast-forward, cherry-pick, or push development work to `main`

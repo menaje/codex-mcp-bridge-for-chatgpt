@@ -1,94 +1,133 @@
 import AppKit
 import CodexBridgeKit
 import SwiftUI
+import SystemConfiguration
+
+private func detectedRemoteManagementEndpoint() -> String {
+    let configuredLocalName = (SCDynamicStoreCopyLocalHostName(nil) as String?)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let processHostName = ProcessInfo.processInfo.hostName
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let host: String
+    if let configuredLocalName, !configuredLocalName.isEmpty {
+        host = configuredLocalName.hasSuffix(".local")
+            ? configuredLocalName
+            : "\(configuredLocalName).local"
+    } else if !processHostName.isEmpty {
+        host = processHostName
+    } else {
+        host = "localhost"
+    }
+    var components = URLComponents()
+    components.scheme = "https"
+    components.host = host
+    components.port = 8766
+    return components.string ?? "https://\(host):8766"
+}
 
 struct NativeSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var syncState = SettingsDraftSyncState()
     @State private var showDiscardDraftConfirmation = false
+    @State private var selectedTab = "general"
 
     var body: some View {
-        Group {
-            if model.needsSetup {
-                ConnectionRepairView()
-            } else if let snapshot = model.settings, let draft = syncState.draft {
-                VStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        BridgeBrandStatusIcon(health: model.health, size: 32)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Codex MCP Bridge for ChatGPT")
-                                .font(.headline)
-                            Text("전역 설정")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                BridgeBrandStatusIcon(health: model.health, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Codex MCP Bridge for ChatGPT")
+                        .font(.headline)
+                    HStack(spacing: 5) {
+                        Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
+                        Text(model.connectionTargetName)
+                        Text(BridgeAppLocalization.string(
+                            model.isRemoteClient ? "· 원격 서버 설정" : "· 이 Mac의 서버 설정",
+                            locale: model.interfaceLocale
+                        ))
                     }
-                    if syncState.externalChangeDetected {
-                        HStack(spacing: 10) {
-                            Label(
-                                "다른 화면에서 설정이 변경되어 자동 저장을 멈췄습니다. 편집 내용을 유지하려면 확인한 뒤 최신 값을 다시 불러와 주세요.",
-                                systemImage: "arrow.triangle.2.circlepath"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            Spacer()
-                            Button("최신 값 불러오기…") {
-                                showDiscardDraftConfirmation = true
-                            }
-                        }
-                    }
-                    TabView {
-                        GeneralSettingsPane(
-                            snapshot: snapshot,
-                            draft: binding(for: draft),
-                            didReset: {
-                                synchronizeDraft(force: true)
-                                model.restorePersistedInterfaceLocale()
-                            }
-                        )
-                            .environmentObject(model)
-                            .tabItem { Label("일반", systemImage: "gearshape") }
-                        ProjectsSettingsPane(snapshot: snapshot)
-                            .environmentObject(model)
-                            .tabItem { Label("프로젝트", systemImage: "folder") }
-                        RuntimeStatusPane(snapshot: snapshot)
-                            .environmentObject(model)
-                            .tabItem { Label("서버", systemImage: "server.rack") }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    if model.health == .checking {
+                        Text("브리지 연결을 확인하고 있습니다…")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
                     }
                 }
-                .padding(18)
-            } else if model.helperStatus?.bridge.connected != true {
-                VStack(spacing: 12) {
-                    BridgeBrandStatusIcon(health: .unavailable, size: 52)
-                    Text("설정을 불러오려면 브리지 서버를 시작해 주세요.")
-                    Button("서버 시작") { Task { await model.startRuntime() } }
-                        .buttonStyle(.borderedProminent)
-                    if let error = model.runtimeErrorMessage ?? model.statusErrorMessage {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
-                }
-            } else {
-                VStack(spacing: 12) {
-                    if let error = model.settingsLoadErrorMessage {
-                        BridgeBrandStatusIcon(health: .attention, size: 52)
-                        Text("설정을 불러오지 못했습니다.")
-                            .font(.headline)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
-                        Button("다시 시도") { Task { await model.refreshSettings() } }
-                    } else {
-                        BridgeBrandMark()
-                            .frame(width: 44, height: 44)
-                        ProgressView("설정을 불러오는 중…")
+                Spacer()
+            }
+            if syncState.externalChangeDetected {
+                HStack(spacing: 10) {
+                    Label(
+                        "다른 화면에서 설정이 변경되어 자동 저장을 멈췄습니다. 편집 내용을 유지하려면 확인한 뒤 최신 값을 다시 불러와 주세요.",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    Spacer()
+                    Button("최신 값 불러오기…") {
+                        showDiscardDraftConfirmation = true
                     }
                 }
             }
+            TabView(selection: $selectedTab) {
+                ConnectionSettingsPane()
+                    .environmentObject(model)
+                    .tabItem { Label("연결", systemImage: "network") }
+                    .tag("connection")
+
+                if !model.isRemoteClient {
+                    CodexRuntimeSettingsPane(isSelected: selectedTab == "codex")
+                        .environmentObject(model)
+                        .tabItem { Label("Codex", systemImage: "terminal") }
+                        .tag("codex")
+                }
+
+                if model.needsSetup {
+                    ConnectionRepairView()
+                        .tabItem { Label("서버", systemImage: "wrench.and.screwdriver") }
+                        .tag("general")
+                } else if let snapshot = model.settings, let draft = syncState.draft {
+                    GeneralSettingsPane(
+                        snapshot: snapshot,
+                        draft: binding(for: draft),
+                        didReset: {
+                            synchronizeDraft(force: true)
+                            model.restorePersistedInterfaceLocale()
+                        }
+                    )
+                        .environmentObject(model)
+                        .tabItem { Label("일반", systemImage: "gearshape") }
+                        .tag("general")
+                    ProjectsSettingsPane(snapshot: snapshot, usesRemotePaths: model.isRemoteClient)
+                        .environmentObject(model)
+                        .tabItem { Label("프로젝트", systemImage: "folder") }
+                        .tag("projects")
+                    if !model.isRemoteClient {
+                        RuntimeStatusPane(snapshot: snapshot)
+                            .environmentObject(model)
+                            .tabItem { Label("서버", systemImage: "server.rack") }
+                            .tag("server")
+                    }
+                } else {
+                    SettingsConnectionUnavailablePane()
+                        .environmentObject(model)
+                        .tabItem { Label("서버 설정", systemImage: "gearshape") }
+                        .tag("general")
+                }
+            }
         }
+        .padding(18)
         .environment(\.locale, model.interfaceLocale)
-        .onAppear { synchronizeDraft() }
+        .onAppear {
+            synchronizeDraft()
+            if model.settings == nil { selectedTab = "connection" }
+        }
+        .onChange(of: model.connectionContextID) { _ in
+            syncState = SettingsDraftSyncState()
+            synchronizeDraft(force: true)
+            selectedTab = model.settings == nil ? "connection" : "general"
+        }
         .onChange(of: model.settings?.settings.settingsRevision) { revision in
             guard let snapshot = model.settings else { return }
             if revision == model.lastAutosavedSettingsRevision,
@@ -138,12 +177,680 @@ struct NativeSettingsView: View {
     }
 }
 
+private struct ConnectionSettingsPane: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showRemoteModeConfirmation = false
+    @State private var showRemoteConnectionSheet = false
+    @State private var confirmRemoteModeAfterSheet = false
+    @State private var showDisableRemoteConnectionConfirmation = false
+    @State private var profileDeletionTarget: RemoteServerProfile?
+    @State private var deviceRevocationTarget: RemoteManagementDevice?
+    @State private var activeProfileName = ""
+    @State private var hostedEndpoint = detectedRemoteManagementEndpoint()
+    @State private var hostedDisplayName = Host.current().localizedName ?? "Codex MCP Bridge"
+    @State private var pairingInvitationCopied = false
+    @State private var advancedConnectionSettingsExpanded = false
+
+    var body: some View {
+        Form {
+            Section("앱 역할") {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(BridgeAppLocalization.string(
+                            model.isRemoteClient ? "기존 서버에 연결" : "이 Mac에서 서버 실행",
+                            locale: model.interfaceLocale
+                        ))
+                            .font(.headline)
+                        Text(BridgeAppLocalization.string(
+                            model.isRemoteClient
+                                ? "이 앱은 선택한 서버의 현황과 설정만 사용하며, 이 Mac에서 helper·Bridge·Tunnel·Codex를 시작하지 않습니다."
+                                : "이 Mac이 helper·Bridge·Tunnel·Codex runtime을 소유하고 실행합니다.",
+                            locale: model.interfaceLocale
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.isRemoteClient {
+                        Button("이 Mac에서 실행") {
+                            Task { await model.setConnectionMode(.localHost) }
+                        }
+                    } else {
+                        Button("기존 서버에 연결…") {
+                            showRemoteConnectionSheet = true
+                        }
+                    }
+                }
+            }
+
+            if model.isRemoteClient {
+                remoteClientSections
+            } else {
+                hostedServerSections
+            }
+
+            Section("이 Mac의 앱 설정") {
+                Toggle(
+                    "로그인 시 메뉴 막대 앱 실행",
+                    isOn: Binding(
+                        get: { model.menuBarLoginItemStatus.isEnabled },
+                        set: { model.setMenuBarLaunchAtLogin($0) }
+                    )
+                )
+                .disabled(model.loginItemOperationInProgress)
+
+                Text(BridgeAppLocalization.string(
+                    model.isRemoteClient
+                        ? "이 앱은 선택한 서버의 현황과 설정만 사용하며, 이 Mac에서 helper·Bridge·Tunnel·Codex를 시작하지 않습니다."
+                        : "이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.",
+                    locale: model.interfaceLocale
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                switch model.menuBarLoginItemStatus {
+                case .enabled:
+                    Label("다음 사용자 로그인부터 메뉴 막대 앱이 자동으로 열립니다.", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .requiresApproval:
+                    Label("macOS에서 로그인 항목 실행 승인이 필요합니다.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button("로그인 항목 설정 열기") {
+                        model.openLoginItemsSystemSettings()
+                    }
+                case .notFound:
+                    Label("설치된 앱 번들에서 로그인 항목을 찾지 못했습니다.", systemImage: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                case .unknown:
+                    Label("로그인 항목 상태를 확인할 수 없습니다.", systemImage: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                case .notRegistered:
+                    EmptyView()
+                }
+
+                if let error = model.loginItemErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            synchronizeProfileName()
+            guard !model.isRemoteClient else { return }
+            Task {
+                await model.refreshRemoteManagementStatus()
+                synchronizeHostedFields()
+            }
+        }
+        .onChange(of: model.connectionPreferences.activeServerId) { _ in
+            synchronizeProfileName()
+        }
+        .onChange(of: model.remoteManagementStatus) { _ in
+            synchronizeHostedFields()
+        }
+        .onChange(of: model.remotePairingInvitation) { invitation in
+            if invitation == nil { pairingInvitationCopied = false }
+        }
+        .onChange(of: model.bridgeConnected) { connected in
+            guard connected, !model.isRemoteClient else { return }
+            Task { await model.refreshRemoteManagementStatus() }
+        }
+        .sheet(
+            isPresented: $showRemoteConnectionSheet,
+            onDismiss: {
+                guard confirmRemoteModeAfterSheet else { return }
+                confirmRemoteModeAfterSheet = false
+                showRemoteModeConfirmation = true
+            }
+        ) {
+            RemoteServerConnectionSheet { shouldSwitchMode in
+                confirmRemoteModeAfterSheet = shouldSwitchMode
+                showRemoteConnectionSheet = false
+            }
+            .environmentObject(model)
+        }
+        .confirmationDialog(
+            "원격 클라이언트 모드로 전환할까요?",
+            isPresented: $showRemoteModeConfirmation
+        ) {
+            Button("작업을 마치고 원격 모드로 전환") {
+                Task { await model.setConnectionMode(.remoteClient) }
+            }
+            Button("강제로 중지하고 전환", role: .destructive) {
+                Task { await model.setConnectionMode(.remoteClient, force: true) }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("이 Mac이 실행 중인 서버와 Tunnel을 먼저 종료합니다. 원격 모드에서는 앱을 종료해도 선택한 원격 서버를 중지하지 않습니다.")
+        }
+        .confirmationDialog(
+            "다른 Mac 연결을 끌까요?",
+            isPresented: $showDisableRemoteConnectionConfirmation
+        ) {
+            Button("다른 Mac 연결 끄기", role: .destructive) {
+                Task {
+                    await model.configureRemoteManagement(
+                        enabled: false,
+                        endpoint: hostedEndpoint,
+                        displayName: hostedDisplayName
+                    )
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("등록된 기기는 유지되지만 다시 켤 때까지 이 서버에 연결할 수 없습니다.")
+        }
+        .confirmationDialog(
+            "저장된 서버를 이 Mac에서 삭제할까요?",
+            isPresented: Binding(
+                get: { profileDeletionTarget != nil },
+                set: { if !$0 { profileDeletionTarget = nil } }
+            ),
+            presenting: profileDeletionTarget
+        ) { profile in
+            Button("서버 프로필 및 자격 증명 삭제", role: .destructive) {
+                Task {
+                    if await model.removeRemoteServer(profile.serverId) {
+                        profileDeletionTarget = nil
+                    }
+                }
+            }
+        } message: { profile in
+            Text("‘\(profile.name)’ 서버 자체와 다른 기기의 등록은 변경하지 않습니다.")
+        }
+        .confirmationDialog(
+            "이 기기의 원격 접속 권한을 폐기할까요?",
+            isPresented: Binding(
+                get: { deviceRevocationTarget != nil },
+                set: { if !$0 { deviceRevocationTarget = nil } }
+            ),
+            presenting: deviceRevocationTarget
+        ) { device in
+            Button("접속 권한 폐기", role: .destructive) {
+                Task {
+                    if await model.revokeRemoteDevice(device.id) {
+                        deviceRevocationTarget = nil
+                    }
+                }
+            }
+        } message: { device in
+            Text("‘\(device.name)’의 자격 증명은 즉시 더 이상 사용할 수 없습니다.")
+        }
+    }
+
+    @ViewBuilder
+    private var remoteClientSections: some View {
+        Section("활성 서버") {
+            if model.connectionPreferences.profiles.isEmpty {
+                Label("저장된 서버가 없습니다. 아래 페어링 초대를 입력해 첫 서버를 등록하세요.", systemImage: "server.rack")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("새 서버 페어링") {
+                        showRemoteConnectionSheet = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isBusy)
+                }
+            } else {
+                ForEach(model.connectionPreferences.profiles) { profile in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(profile.name).font(.headline)
+                                if profile.serverId == model.connectionPreferences.activeServerId {
+                                    Text("활성").font(.caption2).padding(4).background(.quaternary, in: Capsule())
+                                }
+                            }
+                            Text(profile.endpoint)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text("서버 ID \(profile.serverId)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        if profile.serverId != model.connectionPreferences.activeServerId {
+                            Button("전환") {
+                                Task { await model.activateRemoteServer(profile.serverId) }
+                            }
+                        }
+                        Button(role: .destructive) {
+                            profileDeletionTarget = profile
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("새 서버 페어링") {
+                        showRemoteConnectionSheet = true
+                    }
+                    .disabled(model.isBusy)
+                }
+            }
+            if let profile = model.activeRemoteProfile {
+                HStack {
+                    TextField("활성 서버 표시 이름", text: $activeProfileName)
+                    Button("이름 저장") {
+                        _ = model.renameRemoteServer(profile.serverId, name: activeProfileName)
+                    }
+                    .disabled(activeProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            if let hello = model.remoteHello {
+                Label(
+                    "\(hello.server.displayName) · Bridge \(hello.bridge.version) · 연결됨",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundStyle(.green)
+            } else if model.activeRemoteProfile != nil {
+                Label("선택한 서버에 연결되지 않았습니다.", systemImage: "network.slash")
+                    .foregroundStyle(.orange)
+                Button("다시 연결") { Task { await model.refreshAll() } }
+            }
+        }
+
+        if let error = model.connectionErrorMessage {
+            Section("연결 오류") {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hostedServerSections: some View {
+        Section("다른 Mac에서 이 서버 관리") {
+            Text("이 Mac의 이름과 접속 주소를 자동으로 사용합니다. 연결할 기기에 전달할 것은 아래에서 만드는 페어링 초대뿐입니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("다른 기기에 표시할 서버 이름", text: $hostedDisplayName)
+            HStack {
+                if let status = model.remoteManagementStatus {
+                    Label(
+                        remoteManagementStatusText(status),
+                        systemImage: status.listening ? "lock.shield.fill" : "lock.slash"
+                    )
+                    .foregroundStyle(status.listening ? .green : status.enabled ? .orange : .secondary)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        await model.configureRemoteManagement(
+                            enabled: true,
+                            endpoint: hostedEndpoint,
+                            displayName: hostedDisplayName
+                        )
+                    }
+                } label: {
+                    Text(remoteManagementActionTitle)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    hostedEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        hostedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        model.isBusy
+                )
+                if model.remoteManagementStatus?.enabled == true {
+                    Button("연결 끄기…", role: .destructive) {
+                        showDisableRemoteConnectionConfirmation = true
+                    }
+                    .disabled(model.isBusy)
+                }
+            }
+            FullRowDisclosure(
+                "고급 연결 설정",
+                isExpanded: $advancedConnectionSettingsExpanded
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("자동 감지한 주소입니다. 다른 사설 DNS 또는 VPN 주소를 사용해야 할 때만 변경하세요.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text("HTTPS 주소")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 76, alignment: .leading)
+                        TextField(text: $hostedEndpoint) {
+                            EmptyView()
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                    }
+                    if let status = model.remoteManagementStatus {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("서버 ID: \(status.serverId)")
+                            if let fingerprint = status.certificateSha256 {
+                                Text("인증서 SHA-256: \(fingerprint)")
+                            }
+                        }
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            if let error = model.remoteManagementErrorMessage ??
+                model.remoteManagementStatusErrorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+
+        if model.remoteManagementStatus?.listening == true {
+            Section("기기 페어링") {
+                Text("클라이언트 Mac의 연결 화면에 붙여넣을 1회용 초대를 만듭니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("5분 동안 유효한 새 페어링 초대 만들고 복사") {
+                    pairingInvitationCopied = false
+                    Task {
+                        if await model.beginRemotePairing(),
+                           let pairing = model.remotePairingInvitation {
+                            copyToPasteboard(pairing.invitation)
+                            pairingInvitationCopied = true
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isBusy)
+                if let pairing = model.remotePairingInvitation {
+                    if pairingInvitationCopied {
+                        Label("페어링 초대를 클립보드에 복사했습니다.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                    HStack {
+                        Text("\(DisplayFormat.dateTime(pairing.expiresAt, locale: model.interfaceLocale))까지 1회만 사용할 수 있습니다.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("초대 복사") {
+                            copyToPasteboard(pairing.invitation)
+                            pairingInvitationCopied = true
+                        }
+                    }
+                }
+            }
+
+            Section("등록된 기기") {
+                if model.remoteManagementStatus?.devices.isEmpty != false {
+                    Text("등록된 원격 기기가 없습니다.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.remoteManagementStatus?.devices ?? []) { device in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.name).font(.headline)
+                            Text(device.lastSeenAt.map {
+                                BridgeAppLocalization.format(
+                                    "마지막 접속 %@",
+                                    locale: model.interfaceLocale,
+                                    $0
+                                )
+                            } ?? BridgeAppLocalization.string(
+                                "아직 접속하지 않음",
+                                locale: model.interfaceLocale
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("폐기…", role: .destructive) {
+                            deviceRevocationTarget = device
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func synchronizeProfileName() {
+        activeProfileName = model.activeRemoteProfile?.name ?? ""
+    }
+
+    private func remoteManagementStatusText(_ status: RemoteManagementStatus) -> String {
+        if status.listening {
+            return BridgeAppLocalization.string(
+                "연결 받을 준비됨",
+                locale: model.interfaceLocale
+            )
+        }
+        if status.enabled {
+            return BridgeAppLocalization.string("시작 실패", locale: model.interfaceLocale)
+        }
+        return BridgeAppLocalization.string("꺼짐", locale: model.interfaceLocale)
+    }
+
+    private var remoteManagementActionTitle: String {
+        if model.remoteManagementStatus?.listening == true {
+            return BridgeAppLocalization.string("설정 저장", locale: model.interfaceLocale)
+        }
+        if model.remoteManagementStatus?.enabled == true {
+            return BridgeAppLocalization.string("다시 시작", locale: model.interfaceLocale)
+        }
+        return BridgeAppLocalization.string("다른 Mac 연결 켜기", locale: model.interfaceLocale)
+    }
+
+    private func synchronizeHostedFields() {
+        let detectedEndpoint = detectedRemoteManagementEndpoint()
+        if let status = model.remoteManagementStatus {
+            hostedEndpoint = status.endpoint ?? detectedEndpoint
+            if status.endpoint != nil || status.enabled {
+                hostedDisplayName = status.displayName
+            }
+        } else if hostedEndpoint.isEmpty {
+            hostedEndpoint = detectedEndpoint
+        }
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+}
+
+private struct RemoteServerConnectionSheet: View {
+    @EnvironmentObject private var model: AppModel
+    let onComplete: (Bool) -> Void
+    @State private var invitation = ""
+    @State private var profileName = ""
+    @State private var deviceName = Host.current().localizedName ?? "Mac"
+    @State private var selectedServerId = ""
+    @State private var optionalFieldsExpanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.isRemoteClient ? "새 서버 페어링" : "기존 서버에 연결")
+                        .font(.title2.bold())
+                    Text("서버에서 복사한 페어링 초대 하나로 주소와 보안 정보를 함께 확인합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            Form {
+                if !model.isRemoteClient, !model.connectionPreferences.profiles.isEmpty {
+                    Section("저장된 서버 사용") {
+                        Picker("서버", selection: $selectedServerId) {
+                            ForEach(model.connectionPreferences.profiles) { profile in
+                                Text(profile.name).tag(profile.serverId)
+                            }
+                        }
+                        HStack {
+                            Spacer()
+                            Button("선택한 서버로 연결") {
+                                if model.prepareRemoteServerForModeSwitch(selectedServerId) {
+                                    onComplete(true)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(selectedServerId.isEmpty || model.isBusy)
+                        }
+                    }
+                }
+
+                Section("새 서버 페어링") {
+                    Text("서버 Mac에서 ‘새 페어링 초대 만들고 복사’를 누른 뒤 여기에 붙여넣으세요.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $invitation)
+                        .font(.caption.monospaced())
+                        .frame(minHeight: 76)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    HStack {
+                        Button("클립보드에서 붙여넣기") {
+                            if let copied = NSPasteboard.general.string(forType: .string) {
+                                invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+                        Spacer()
+                    }
+                    TextField("서버에 표시할 이 기기 이름", text: $deviceName)
+                    FullRowDisclosure("선택 사항", isExpanded: $optionalFieldsExpanded) {
+                        TextField("저장할 서버 이름(선택)", text: $profileName)
+                    }
+                    HStack {
+                        Spacer()
+                        Button(model.isRemoteClient ? "페어링하고 활성화" : "서버 확인 및 등록") {
+                            let shouldSwitchMode = !model.isRemoteClient
+                            Task {
+                                if await model.pairRemoteServer(
+                                    invitation: invitation,
+                                    profileName: profileName,
+                                    deviceName: deviceName
+                                ) {
+                                    onComplete(shouldSwitchMode)
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                model.isBusy
+                        )
+                    }
+                    Text("기기 자격 증명은 macOS Keychain에만 저장됩니다. 서버 주소나 프로필에는 비밀값이 포함되지 않습니다.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let error = model.connectionErrorMessage {
+                    Section("연결 오류") {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("취소") { onComplete(false) }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 540, height: model.isRemoteClient ? 480 : 590)
+        .environment(\.locale, model.interfaceLocale)
+        .onAppear {
+            selectedServerId = model.connectionPreferences.activeServerId ??
+                model.connectionPreferences.profiles.first?.serverId ?? ""
+        }
+    }
+}
+
+private struct SettingsConnectionUnavailablePane: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 12) {
+            BridgeBrandStatusIcon(
+                health: model.isBridgeConnectionChecking ? .checking : .unavailable,
+                size: 52
+            )
+            if !model.bridgeConnected, model.isBridgeConnectionChecking {
+                ProgressView()
+                Text("브리지 연결을 확인하고 있습니다…")
+                    .font(.headline)
+                Text("연결되는 대로 현황을 표시합니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if model.isRemoteClient {
+                if model.activeRemoteProfile == nil {
+                    Text("연결 탭에서 서버를 페어링해 주세요.")
+                        .font(.headline)
+                    Text("원격 모드에서는 이 Mac의 helper나 Codex runtime을 시작하지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("원격 서버 설정을 불러오지 못했습니다.")
+                        .font(.headline)
+                    if let error = model.connectionErrorMessage ??
+                        model.statusErrorMessage ?? model.settingsLoadErrorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                    Button("다시 연결") { Task { await model.refreshAll() } }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else if !model.bridgeConnected {
+                Text("설정을 불러오려면 이 Mac의 브리지 서버를 시작해 주세요.")
+                Button("서버 시작") { Task { await model.startRuntime() } }
+                    .buttonStyle(.borderedProminent)
+                if let error = model.runtimeErrorMessage ?? model.statusErrorMessage {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            } else if let error = model.settingsLoadErrorMessage {
+                Text("설정을 불러오지 못했습니다.").font(.headline)
+                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                Button("다시 시도") { Task { await model.refreshSettings() } }
+            } else {
+                ProgressView("설정을 불러오는 중…")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(30)
+    }
+}
+
 private struct GeneralSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
     @Binding var draft: SettingsDraft
     let didReset: () -> Void
     @State private var showResetConfirmation = false
+    @State private var allowedModelsExpanded = false
+    @State private var expandedModelIDs = Set<String>()
 
     private var choices: [ModelChoice] {
         SettingsDraft.displayedChoices(
@@ -192,6 +899,9 @@ private struct GeneralSettingsPane: View {
                 Text(accessDescription(draft.accessStrategy, locale: model.interfaceLocale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("각 작업이 요청할 기본 권한입니다. 서버 탭의 최대 접근 권한을 넘을 수 없습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if draft.accessStrategy == "always-full" {
                     Label(
                         BridgeAppLocalization.string(
@@ -231,24 +941,31 @@ private struct GeneralSettingsPane: View {
                         Text("명시적으로 선택").tag("explicit")
                     }
                     if draft.allowedKind == "explicit" {
-                        DisclosureGroup("허용 모델과 추론 수준") {
+                        FullRowDisclosure(
+                            "허용 모델과 추론 수준",
+                            isExpanded: $allowedModelsExpanded
+                        ) {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(modelIDs, id: \.self) { modelID in
-                                    DisclosureGroup(modelLabel(modelID)) {
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            ForEach(choices(for: modelID), id: \.key) { choice in
-                                                Toggle(
-                                                    effortLabel(choice),
-                                                    isOn: explicitBinding(choice.key)
-                                                )
-                                                .disabled(
-                                                    !selectableChoiceKeys.contains(choice.key) &&
-                                                    !draft.explicitSelectionKeys.contains(choice.key)
-                                                )
+                                    FullRowDisclosure(
+                                        isExpanded: modelExpansionBinding(modelID),
+                                        label: { Text(modelLabel(modelID)) },
+                                        content: {
+                                            VStack(alignment: .leading, spacing: 5) {
+                                                ForEach(choices(for: modelID), id: \.key) { choice in
+                                                    Toggle(
+                                                        effortLabel(choice),
+                                                        isOn: explicitBinding(choice.key)
+                                                    )
+                                                    .disabled(
+                                                        !selectableChoiceKeys.contains(choice.key) &&
+                                                        !draft.explicitSelectionKeys.contains(choice.key)
+                                                    )
+                                                }
                                             }
+                                            .padding(.leading, 2)
                                         }
-                                        .padding(.leading, 8)
-                                    }
+                                    )
                                 }
                             }
                             .padding(.vertical, 4)
@@ -295,12 +1012,10 @@ private struct GeneralSettingsPane: View {
                     .foregroundStyle(.secondary)
                 LabeledContent("동시 실행 에이전트 작업 수") {
                     HStack(spacing: 6) {
-                        TextField(
-                            "개수",
-                            value: concurrentJobsBinding,
-                            format: .number
-                        )
-                        .frame(width: 58)
+                        TextField(value: concurrentJobsBinding, format: .number) {
+                            EmptyView()
+                        }
+                        .frame(width: 46)
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
                         Stepper(
@@ -348,55 +1063,6 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
-            Section("Mac 앱") {
-                Toggle(
-                    "로그인 시 메뉴 막대 앱 열기",
-                    isOn: Binding(
-                        get: { model.menuBarLoginItemStatus.isEnabled },
-                        set: { model.setMenuBarLaunchAtLogin($0) }
-                    )
-                )
-                .disabled(model.loginItemOperationInProgress)
-
-                Text(BridgeAppLocalization.string(
-                    "이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.",
-                    locale: model.interfaceLocale
-                ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                switch model.menuBarLoginItemStatus {
-                case .enabled:
-                    Label("다음 사용자 로그인부터 메뉴 막대 앱이 자동으로 열립니다.", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                case .requiresApproval:
-                    Label("macOS에서 로그인 항목 실행 승인이 필요합니다.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Button("로그인 항목 설정 열기") {
-                        model.openLoginItemsSystemSettings()
-                    }
-                case .notFound:
-                    Label("설치된 앱 번들에서 로그인 항목을 찾지 못했습니다.", systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                case .unknown:
-                    Label("로그인 항목 상태를 확인할 수 없습니다.", systemImage: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                case .notRegistered:
-                    EmptyView()
-                }
-
-                if let error = model.loginItemErrorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-            }
-
             if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
                 Section("저장하지 못한 이유") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -416,8 +1082,6 @@ private struct GeneralSettingsPane: View {
                     Spacer()
                     autosaveStatus
                 }
-            } footer: {
-                Text("변경사항은 자동으로 저장되어 기존 ChatGPT 카드와 공유됩니다. 프로젝트 등록은 일반 설정 초기화에 포함되지 않습니다.")
             }
         }
         .formStyle(.grouped)
@@ -427,8 +1091,6 @@ private struct GeneralSettingsPane: View {
                     if await model.resetGeneralSettings() { didReset() }
                 }
             }
-        } message: {
-            Text("등록된 프로젝트는 유지됩니다.")
         }
     }
 
@@ -476,11 +1138,21 @@ private struct GeneralSettingsPane: View {
     private var threadVisibilityDescription: String {
         let key: String
         if snapshot.capabilities.defaultBackend == "app-server" {
-            key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+            key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
         } else {
             key = "MCP Server에서는 이 설정으로 Codex 앱 연결 여부를 바꿀 수 없습니다. App Server로 전환한 뒤 만드는 새 작업과 새 컨텍스트부터 적용됩니다."
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
+    }
+
+    private func modelExpansionBinding(_ modelID: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedModelIDs.contains(modelID) },
+            set: { expanded in
+                if expanded { expandedModelIDs.insert(modelID) }
+                else { expandedModelIDs.remove(modelID) }
+            }
+        )
     }
 
     private func explicitBinding(_ key: String) -> Binding<Bool> {
@@ -598,6 +1270,7 @@ private struct RuntimeStatusPane: View {
     @State private var maximumAccess = "read-only"
     @State private var showApplyConfirmation = false
     @State private var showForceConfirmation = false
+    @State private var backendTransitionDetailsExpanded = false
 
     private var savedConfiguration: RuntimeOperatorConfiguration? {
         model.helperStatus?.configuration.operatorConfiguration
@@ -617,13 +1290,14 @@ private struct RuntimeStatusPane: View {
     }
 
     private var canRetryWithForce: Bool {
-        guard let error = model.runtimeErrorMessage else { return false }
-        return error.contains("BACKGROUND_PROCESS") || error.contains("DRAIN_TIMEOUT")
+        model.runtimeFailureCanRetryWithForce
     }
 
     private var backendDescription: String {
         let key: String
-        if defaultBackend == "app-server" {
+        if defaultBackend == "codex-sdk" {
+            key = "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다. 기존 CLI 선택은 유지됩니다."
+        } else if defaultBackend == "app-server" {
             key = "실험적 방식입니다. 스레드와 백그라운드 프로세스를 더 세밀하게 제어하고 Codex 앱에 표시되지 않는 임시 스레드를 지원합니다."
         } else {
             key = "안정적인 기본 방식입니다. 호환성과 복구 안정성을 우선하며 일부 스레드·백그라운드 프로세스 제어는 제한됩니다."
@@ -637,11 +1311,16 @@ private struct RuntimeStatusPane: View {
                 Picker("Codex 실행 백엔드", selection: $defaultBackend) {
                     Text("App Server").tag("app-server")
                     Text("MCP Server").tag("mcp-server")
+                    Text("Python SDK · 실험적").tag("codex-sdk")
+                        .disabled(model.sdkRuntime?.selection?.available != true)
                 }
                 Text(backendDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                DisclosureGroup("백엔드 전환 시 알아둘 점") {
+                FullRowDisclosure(
+                    "백엔드 전환 시 알아둘 점",
+                    isExpanded: $backendTransitionDetailsExpanded
+                ) {
                     Text("변경 사항은 서버를 재시작한 뒤 새 에이전트 또는 새로 시작한 에이전트부터 적용됩니다. 기존 에이전트는 생성 당시 백엔드를 계속 사용하며, 다른 백엔드로 새로 시작할 때는 이전 작업을 요약해 전달해야 합니다.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -652,7 +1331,7 @@ private struct RuntimeStatusPane: View {
                     Text("작업 폴더 쓰기").tag("workspace-write")
                     Text("전체 접근").tag("full-access")
                 }
-                Text("이 값은 기존 비공개 .env에 저장되며 키체인을 사용하지 않습니다. 적용할 때 진행 중인 작업을 안전하게 비운 뒤 서버를 재시작합니다.")
+                Text("일반 탭의 접근 전략과 별개인 서버 안전 상한입니다. 어떤 작업도 이 권한을 넘을 수 없습니다. 변경하면 진행 중인 작업을 안전하게 비운 뒤 서버가 재시작됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if maximumAccess == "full-access" {
@@ -767,6 +1446,7 @@ private struct RuntimeStatusPane: View {
 private struct ProjectsSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
+    let usesRemotePaths: Bool
     @State private var editor: ProjectEditor?
     @State private var deletionTarget: BridgeProject?
 
@@ -783,12 +1463,19 @@ private struct ProjectsSettingsPane: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("프로젝트").font(.title2.bold())
-                    Text("프로젝트 이름과 연결할 기존 폴더를 관리합니다. 앱은 실제 폴더나 파일을 이동하지 않습니다.")
+                    Text(BridgeAppLocalization.string(
+                        usesRemotePaths
+                            ? "선택한 서버의 프로젝트를 관리합니다. 모든 경로는 원격 서버 호스트의 파일시스템 기준입니다."
+                            : "프로젝트 이름과 연결할 기존 폴더를 관리합니다. 앱은 실제 폴더나 파일을 이동하지 않습니다.",
+                        locale: model.interfaceLocale
+                    ))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
-                    if let folder = chooseFolder() {
+                    if usesRemotePaths {
+                        editor = .add(name: "", cwd: "")
+                    } else if let folder = chooseFolder() {
                         editor = .add(
                             name: folder.lastPathComponent,
                             cwd: folder.path
@@ -821,7 +1508,9 @@ private struct ProjectsSettingsPane: View {
                         availability: availability[project.id],
                         rename: { editor = .rename(project) },
                         relocate: {
-                            if let folder = chooseFolder() {
+                            if usesRemotePaths {
+                                editor = .relocate(project)
+                            } else if let folder = chooseFolder() {
                                 Task {
                                     await model.applyProjectOperation(
                                         .relocate(projectId: project.id, cwd: folder.path)
@@ -850,7 +1539,7 @@ private struct ProjectsSettingsPane: View {
             }
         }
         .sheet(item: $editor) { editor in
-            ProjectEditorSheet(editor: editor) { operation in
+            ProjectEditorSheet(editor: editor, usesRemotePaths: usesRemotePaths) { operation in
                 let succeeded = await model.applyProjectOperation(operation)
                 if succeeded { self.editor = nil }
                 return succeeded
@@ -955,12 +1644,14 @@ private struct ProjectRow: View {
 private enum ProjectEditor: Identifiable {
     case add(name: String, cwd: String)
     case rename(BridgeProject)
+    case relocate(BridgeProject)
     case restore(BridgeProject)
 
     var id: String {
         switch self {
         case .add: return "add"
         case .rename(let project): return "rename-\(project.id)"
+        case .relocate(let project): return "relocate-\(project.id)"
         case .restore(let project): return "restore-\(project.id)"
         }
     }
@@ -971,19 +1662,25 @@ private struct ProjectEditorSheet: View {
     @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let editor: ProjectEditor
+    let usesRemotePaths: Bool
     let save: (ProjectOperation) async -> Bool
     @State private var name: String
     @State private var cwd: String
     @State private var isSaving = false
 
-    init(editor: ProjectEditor, save: @escaping (ProjectOperation) async -> Bool) {
+    init(
+        editor: ProjectEditor,
+        usesRemotePaths: Bool,
+        save: @escaping (ProjectOperation) async -> Bool
+    ) {
         self.editor = editor
+        self.usesRemotePaths = usesRemotePaths
         self.save = save
         switch editor {
         case .add(let name, let cwd):
             _name = State(initialValue: name)
             _cwd = State(initialValue: cwd)
-        case .rename(let project), .restore(let project):
+        case .rename(let project), .relocate(let project), .restore(let project):
             _name = State(initialValue: project.name)
             _cwd = State(initialValue: project.cwd)
         }
@@ -997,18 +1694,35 @@ private struct ProjectEditorSheet: View {
                 EmptyView()
             } else {
                 HStack {
-                    TextField("폴더", text: $cwd).textFieldStyle(.roundedBorder)
-                    Button("선택…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = false
-                        panel.canChooseDirectories = true
-                        panel.prompt = BridgeAppLocalization.string("연결", locale: locale)
-                        panel.message = BridgeAppLocalization.string(
-                            "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+                    TextField(
+                        BridgeAppLocalization.string(
+                            usesRemotePaths ? "서버의 절대 폴더 경로" : "폴더",
                             locale: locale
-                        )
-                        if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
+                        ),
+                        text: $cwd
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    if !usesRemotePaths {
+                        Button("선택…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = false
+                            panel.canChooseDirectories = true
+                            panel.prompt = BridgeAppLocalization.string("연결", locale: locale)
+                            panel.message = BridgeAppLocalization.string(
+                                "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+                                locale: locale
+                            )
+                            if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
+                        }
                     }
+                }
+                if usesRemotePaths {
+                    Label(
+                        "이 Mac의 폴더가 아니라 원격 서버에서 존재하는 절대 경로를 입력하세요. 서버가 최종 경로와 허용 범위를 검증합니다.",
+                        systemImage: "network"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
             if let error = model.settingsErrorMessage {
@@ -1029,7 +1743,11 @@ private struct ProjectEditorSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                .disabled(
+                    name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        requiresPath && cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        isSaving
+                )
             }
         }
         .padding(20)
@@ -1041,6 +1759,7 @@ private struct ProjectEditorSheet: View {
         switch editor {
         case .add: key = "프로젝트 추가"
         case .rename: key = "프로젝트 이름 변경"
+        case .relocate: key = "연결 폴더 변경"
         case .restore: key = "프로젝트 복원"
         }
         return BridgeAppLocalization.string(key, locale: locale)
@@ -1052,9 +1771,16 @@ private struct ProjectEditorSheet: View {
             return .add(name: name, cwd: cwd)
         case .rename(let project):
             return .rename(projectId: project.id, name: name)
+        case .relocate(let project):
+            return .relocate(projectId: project.id, cwd: cwd)
         case .restore(let project):
             return .restore(projectId: project.id, name: name, cwd: cwd)
         }
+    }
+
+    private var requiresPath: Bool {
+        if case .rename = editor { return false }
+        return true
     }
 }
 

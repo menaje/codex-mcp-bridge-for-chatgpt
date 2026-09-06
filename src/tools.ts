@@ -36,6 +36,7 @@ import type {
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
+  isCodexBackendKind,
   enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -49,6 +50,7 @@ import {
 } from "./modelCatalog.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
+  backendSupports,
   ModelPolicyError,
   listAllowedModelSelections,
   modelChoiceKey,
@@ -165,6 +167,7 @@ import {
   CANCELLATION_REASON_MAX_LENGTH,
   JOB_TERMINAL_ORIGINS,
   cancellationTerminationCorrelation,
+  sdkFailureOrigin,
   type BeginCancellationOperationInput,
   type CancellationIntentRecord,
   type CancellationOperationRecord,
@@ -382,8 +385,8 @@ const taskStructuredErrorOutputSchema = z.strictObject({
 });
 
 const backendHandoffAuditOutputSchema = z.strictObject({
-  sourceBackend: z.enum(["mcp-server", "app-server"]),
-  targetBackend: z.enum(["mcp-server", "app-server"]),
+  sourceBackend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
+  targetBackend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
   sourceThreadId: z.string(),
   continuity: z.literal("explicit-summary-only"),
   summarySha256: z.string()
@@ -443,7 +446,7 @@ const codexTaskOutputSchema = z.strictObject({
   jobVersion: z.number().int().min(1).nullable(),
   activityVersion: z.number().int().min(1).nullable(),
   executionMode: z.enum(ACTIVITY_EXECUTION_MODES).nullable(),
-  backend: z.enum(["mcp-server", "app-server"]).nullable(),
+  backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
   requestedModel: z.string().nullable(),
   requestedReasoningEffort: z.string().nullable(),
@@ -509,6 +512,7 @@ const cancellationDisplayOutputSchema = z.strictObject({
 const dashboardTurnOutputSchema = z.strictObject({
   activityKey: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   activityTitle: z.string().nullable(),
+  tokenUsage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number(), totalTokens: z.number() }).optional(),
   execution: dashboardExecutionOutputSchema.optional(),
   status: z.enum(DASHBOARD_STATUSES),
   startedAt: z.string().nullable(),
@@ -657,6 +661,7 @@ const dashboardViewOutputSchema = z.strictObject({
   statusSource: z.literal("codex-runtime-only"),
   coverage: z.literal("bridge-known-retained"),
   enrichment: cardEnrichmentOutputSchema,
+  codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   counts: dashboardCountsOutputSchema,
   projects: z.array(dashboardProjectOutputSchema).optional(),
@@ -1037,7 +1042,7 @@ const settingsViewOutputSchema = z.strictObject({
       archived: z.boolean()
     })),
     maxConcurrentJobs: z.number().int().positive(),
-    defaultBackend: z.enum(["mcp-server", "app-server"]),
+    defaultBackend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
     operatorModelCeiling: z.array(modelChoiceZod()).nullable(),
@@ -1150,6 +1155,7 @@ const jobWaitOutputSchema = z.strictObject({
 });
 
 const jobSemanticOutputSchema = z.strictObject({
+  runtime: opaqueJsonObjectOutputSchema.optional(),
   status: z.enum(ACTIVITY_JOB_STATUSES),
   terminal: z.boolean(),
   async: z.boolean(),
@@ -1160,7 +1166,7 @@ const jobSemanticOutputSchema = z.strictObject({
   agentId: z.string().nullable(),
   contextMode: z.enum(AGENT_CONTEXT_MODES).nullable(),
   executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
-  backendKind: z.enum(["mcp-server", "app-server"]),
+  backendKind: z.enum(["mcp-server", "app-server", "codex-sdk"]),
   threadId: z.string().nullable(),
   turnId: z.string().nullable(),
   versions: z.strictObject({
@@ -1230,6 +1236,7 @@ const statusCountsOutputSchema = z.strictObject({
 });
 
 const statusItemOutputSchema = z.strictObject({
+  runtime: z.string().optional(),
   type: z.enum(["session", "job", "activity", "agent", "thread"]),
   id: z.string(),
   label: z.string().optional(),
@@ -1247,7 +1254,7 @@ const statusItemOutputSchema = z.strictObject({
   }).optional(),
   execution: z.strictObject({
     mode: z.enum(ACTIVITY_EXECUTION_MODES),
-    backend: z.enum(["mcp-server", "app-server"]),
+    backend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
     sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"])
   }).optional(),
   result: modelResultAvailabilityOutputSchema.optional(),
@@ -1259,6 +1266,7 @@ const statusItemOutputSchema = z.strictObject({
 });
 
 const codexStatusOutputSchema = z.strictObject({
+  runtimes: z.array(z.string()).optional(),
   kind: z.enum(["overview", "page", "activity", "thread", "job"]),
   scope: z.strictObject({
     mode: z.enum(["all", "scoped", "policy-only"]),
@@ -1426,7 +1434,7 @@ const diagnosticsOutputSchema = z.strictObject({
     product: z.string(),
     build: opaqueJsonObjectOutputSchema,
     auth: z.enum(["bearer-token", "none"]),
-    backend: z.enum(["mcp-server", "app-server"])
+    backend: z.enum(["mcp-server", "app-server", "codex-sdk"])
   }),
   storage: z.strictObject({
     backend: z.enum(["sqlite", "memory", "split-json"]),
@@ -1981,6 +1989,7 @@ type CodexJob = {
   executionMode: ActivityExecutionMode;
   backendKind: string;
   trackingState: "connected" | "liveness-unknown" | "worker-lost" | "orphaned";
+  runtime?: UpstreamWorkerAssignment["runtime"];
   bridgeInstanceId?: string;
   workerId?: string;
   workerGeneration?: number;
@@ -3567,7 +3576,10 @@ export class CodexJobRegistry {
       undo = onComplete?.(result) || undefined;
       job.threadId = job.sessionDecision.threadId;
       job.status = "failed";
-      job.terminalOrigin = "upstream-failure";
+      const failure = isRecord(result.structuredContent) && isRecord(result.structuredContent.error) ? result.structuredContent.error : {};
+      job.terminalOrigin = job.backendKind === "codex-sdk"
+        ? sdkFailureOrigin(toolResultErrorMessage(result), typeof failure.upstreamKind === "string" ? failure.upstreamKind : undefined)
+        : "upstream-failure";
       job.cancellationIntentId = undefined;
       job.result = retained.result;
       job.resultBytes = retained.originalBytes;
@@ -3600,7 +3612,8 @@ export class CodexJobRegistry {
     const workerLost =
       error instanceof Error && error.message.startsWith("CODEX_WORKER_LOST:");
     job.status = workerLost ? "interrupted" : "failed";
-    job.terminalOrigin = workerLost ? "worker-loss" : "upstream-failure";
+    job.terminalOrigin = workerLost ? "worker-loss" : job.backendKind === "codex-sdk"
+      ? sdkFailureOrigin(error instanceof Error ? error.message : "") : "upstream-failure";
     if (workerLost) job.trackingState = "worker-lost";
     job.cancellationIntentId = undefined;
     job.result = undefined;
@@ -3760,7 +3773,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
-    if (job.backendKind !== "app-server" || !job.threadId || !this.upstream?.steerThread) {
+    if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
     this.rememberSteeringPrompt(job.jobId, prompt);
@@ -3890,6 +3903,7 @@ export class CodexJobRegistry {
   private recordWorkerAssignment(job: CodexJob, assignment: UpstreamWorkerAssignment): void {
     if (job.status !== "running") return;
     job.backendKind = assignment.backendKind;
+    job.runtime = safeRuntimeMetadata(assignment.runtime);
     job.trackingState = "connected";
     job.workerId = assignment.workerId;
     job.workerGeneration = assignment.workerGeneration;
@@ -4000,7 +4014,7 @@ export class CodexJobRegistry {
       impactIntentByJobId.set(job.jobId, containment);
     }
     const now = Date.now();
-    const initiallyTerminating = target.backendKind === "app-server" ? [target] : possibleAffected;
+    const initiallyTerminating = backendSupports(target.backendKind, "supportsPreciseCancellation") ? [target] : possibleAffected;
     this.activityTransaction(() => {
       for (const job of initiallyTerminating) {
         const intent = impactIntentByJobId.get(job.jobId);
@@ -4013,7 +4027,7 @@ export class CodexJobRegistry {
         job.cancelRequestedAt ||= now;
         job.cancellationIntentId = intent.intentId;
         job.terminalOrigin = undefined;
-        job.error = target.backendKind === "app-server"
+        job.error = backendSupports(target.backendKind, "supportsPreciseCancellation")
           ? "Force-stop is interrupting the exact Codex App Server turn; process-group termination is the automatic fallback."
           : "Force-stop is terminating the exact Codex worker process group.";
         this.recordChange(job);
@@ -4025,7 +4039,7 @@ export class CodexJobRegistry {
       }
     });
     const assignment: UpstreamWorkerAssignment = {
-      backendKind: target.backendKind === "app-server" ? "app-server" : "mcp-server",
+      backendKind: isCodexBackendKind(target.backendKind) ? target.backendKind : "mcp-server",
       workerId: target.workerId,
       workerGeneration: target.workerGeneration,
       ...(target.workerPid !== undefined ? { workerPid: target.workerPid } : {}),
@@ -4578,6 +4592,9 @@ export function registerBridgeTools(
       acceptingNewJobs,
       activeJobs: jobs.runningCount(),
       pendingAdmissions,
+      pendingInteractions: jobs.list(config.maxRetainedJobs).reduce((count, job) => count + job.pendingInteractions.length, 0),
+      memoryOnlyThreads: sessions.list().filter(session => session.backendKind === "app-server" && session.visibleInCodexApp === false &&
+        upstream.canResumeThread?.(session.threadId, session.backendKind) === true).length,
       backgroundProcessState: backgroundProcessImpact.state,
       backgroundProcesses: backgroundProcessImpact.processes,
       backgroundProcessAgents: backgroundProcessImpact.agents,
@@ -4636,6 +4653,15 @@ export function registerBridgeTools(
         options.inspectRuntime === true,
         options.legacyGrouping
       );
+      if (config.codexService) view.codexAccount = config.codexService.cachedAccount(config.defaultBackend);
+      if (config.codexService && options.inspectRuntime) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const account = await Promise.race([config.codexService.readAccount(config.defaultBackend, true),
+          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), CARD_USAGE_TIMEOUT_MS); })]);
+        if (timer) clearTimeout(timer);
+        view.codexAccount = account || config.codexService.cachedAccount(config.defaultBackend);
+        if (account?.authMode === "api-key") view.weeklyUsage = null;
+      }
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
         : "dashboard.structural.db-projection";
@@ -5220,6 +5246,7 @@ export function registerBridgeTools(
       }
       const structured = {
         kind: "overview" as const,
+        ...(config.runtimeStatusResolver ? { runtimes: await config.runtimeStatusResolver().catch(() => ["Runtime status unavailable; saved selections were preserved."]) } : {}),
         scopeView: statusScopeView,
         scopeCounts,
         pagination,
@@ -7189,7 +7216,7 @@ export function registerBridgeTools(
           const cancellationTargets: string[] = [];
           const groupedMcpWorkers = new Set<string>();
           for (const job of activeJobs) {
-            if (job.backendKind === "app-server") {
+            if (backendSupports(job.backendKind, "supportsPreciseCancellation")) {
               cancellationTargets.push(job.jobId);
               continue;
             }
@@ -8979,9 +9006,10 @@ async function startNewSession(input: {
     "approval-policy": input.config.defaultApprovalPolicy
   };
   const ephemeralAppServerThread =
-    input.config.defaultBackend === "app-server" &&
+    backendSupports(input.config.defaultBackend, "supportsEphemeralThreads") &&
     !input.preferences.showBridgeThreadsInCodexApp;
-  if (input.config.defaultBackend === "app-server") {
+  const storage = await input.config.codexService?.sessionPolicy(input.config.defaultBackend, input.preferences.showBridgeThreadsInCodexApp);
+  if (backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")) {
     payload.ephemeral = ephemeralAppServerThread;
   }
   applyModelSelection(payload, executionDecision.effectiveSelection, input.config.defaultBackend);
@@ -9021,12 +9049,13 @@ async function startNewSession(input: {
       ? input.upstream.startThread(
           {
             backendKind: input.config.defaultBackend,
+            ...(storage?.contextId ? { contextId: storage.contextId } : {}),
             prompt,
             cwd,
             sandbox,
             approvalPolicy: input.config.defaultApprovalPolicy,
             selection: executionDecision.effectiveSelection,
-            ...(input.config.defaultBackend === "app-server"
+            ...(backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")
               ? { ephemeral: ephemeralAppServerThread }
               : {})
           },
@@ -9055,7 +9084,7 @@ async function startNewSession(input: {
         policyRevision: executionDecision.policyRevision,
         backendKind: assignment.backendKind,
         visibleInCodexApp:
-          assignment.backendKind === "app-server" && !ephemeralAppServerThread,
+          storage?.visibleInCodexApp ?? (backendSupports(assignment.backendKind, "supportsThreadInspection") && !ephemeralAppServerThread),
         contextMode: input.contextMode,
         sessionId: assignment.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId
@@ -9080,8 +9109,8 @@ async function startNewSession(input: {
         policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
         visibleInCodexApp:
-          (extractResultBackendKind(result) || input.config.defaultBackend) === "app-server" &&
-          !ephemeralAppServerThread,
+          storage?.visibleInCodexApp ?? (backendSupports((extractResultBackendKind(result) || input.config.defaultBackend), "supportsThreadInspection") &&
+          !ephemeralAppServerThread),
         sessionId: lineage.sessionId,
         forkedFromThreadId: lineage.forkedFromThreadId,
         contextMode: input.contextMode
@@ -9191,7 +9220,7 @@ async function continueTrackedSession(input: {
     run: (onProgress, onAssigned) => {
       const recordAssignment = (assignment: UpstreamWorkerAssignment) => {
         onAssigned(assignment);
-        if (executionStateApplied || input.session.backendKind !== "app-server") return;
+        if (executionStateApplied || !backendSupports(input.session.backendKind, "supportsTurnSelection")) return;
         executionStateApplied = true;
         try {
           input.sessions.updateExecution(
@@ -9211,7 +9240,7 @@ async function continueTrackedSession(input: {
             backendKind: input.session.backendKind,
             threadId: input.session.threadId,
             prompt: input.prompt,
-            ...(input.session.backendKind === "app-server"
+            ...(backendSupports(input.session.backendKind, "supportsTurnSelection")
               ? { selection: input.executionDecision.effectiveSelection }
               : {})
           },
@@ -9224,8 +9253,8 @@ async function continueTrackedSession(input: {
         prompt: input.prompt,
         ...backendRoutingArgument(input.session.backendKind)
       };
-      if (input.session.backendKind === "app-server") {
-        applyModelSelection(payload, input.executionDecision.effectiveSelection, "app-server");
+      if (backendSupports(input.session.backendKind, "supportsTurnSelection")) {
+        applyModelSelection(payload, input.executionDecision.effectiveSelection, input.session.backendKind);
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
@@ -9295,6 +9324,7 @@ async function forkTrackedSession(input: {
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
     );
   }
+  const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId);
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
   const forcedSandbox = forcedSandboxForStrategy(input.config, input.preferences);
@@ -9366,8 +9396,8 @@ async function forkTrackedSession(input: {
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
         visibleInCodexApp:
-          input.session.backendKind === "app-server" &&
-          input.preferences.showBridgeThreadsInCodexApp,
+          storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
+          input.preferences.showBridgeThreadsInCodexApp),
         contextMode: "fork",
         sessionId: assignment.sessionId || input.session.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
@@ -9391,8 +9421,8 @@ async function forkTrackedSession(input: {
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
         visibleInCodexApp:
-          input.session.backendKind === "app-server" &&
-          input.preferences.showBridgeThreadsInCodexApp,
+          storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
+          input.preferences.showBridgeThreadsInCodexApp),
         sessionId: lineage.sessionId,
         contextMode: "fork",
         forkedFromThreadId: lineage.forkedFromThreadId || input.session.threadId
@@ -9754,7 +9784,7 @@ function validatePublicSteeringTarget(
     };
   }
   if (
-    job.backendKind !== "app-server" ||
+    !backendSupports(job.backendKind, "supportsSteering") ||
     !job.threadId ||
     !upstream.steerThread ||
     !upstream.canSteerThread
@@ -9772,7 +9802,7 @@ function validatePublicSteeringTarget(
     !thread ||
     thread.scopeId !== scopeId ||
     thread.agentId !== agent.agentId ||
-    thread.backendKind !== "app-server" ||
+    !backendSupports(thread.backendKind, "supportsSteering") ||
     !thread.isCurrent ||
     agent.currentThreadId !== job.threadId
   ) {
@@ -9975,6 +10005,7 @@ function formatJobStatus(
     contextMode: job.contextMode || null,
     executionMode: job.executionMode,
     backendKind: job.backendKind,
+    ...(job.runtime ? { runtime: safeRuntimeMetadata(job.runtime) } : {}),
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
     versions: {
@@ -10313,7 +10344,7 @@ async function terminateAgentBackgroundProcess(input: {
   const currentThread = initial.currentThread;
   if (
     !currentThread ||
-    currentThread.backendKind !== "app-server" ||
+    !backendSupports(currentThread.backendKind, "supportsBackgroundTerminals") ||
     !input.upstream.listBackgroundTerminals ||
     !input.upstream.terminateBackgroundTerminal
   ) {
@@ -10431,6 +10462,8 @@ export type BridgeRuntimeAdmissionSnapshot = {
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
+  pendingInteractions?: number;
+  memoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;
@@ -10574,6 +10607,7 @@ async function readCodexWeeklyUsage(
 }
 
 type CardUsageCacheEntry = {
+  revision?: string;
   freshUntil: number;
   retainUntil: number;
   value: CodexWeeklyUsageView;
@@ -10586,7 +10620,7 @@ function cachedCodexWeeklyUsage(
   freshOnly = false
 ): CodexWeeklyUsageView | null {
   const cached = cardUsageCaches.get(upstream);
-  if (!cached) return null;
+  if (!cached || cached.revision !== upstream.accountRevision?.()) return null;
   const now = Date.now();
   if (cached.retainUntil <= now) {
     cardUsageCaches.delete(upstream);
@@ -10599,6 +10633,7 @@ function cachedCodexWeeklyUsage(
 async function readCodexWeeklyUsageBounded(
   upstream: CodexUpstream
 ): Promise<{ value: CodexWeeklyUsageView | null; timedOut: boolean }> {
+  const revision = upstream.accountRevision?.();
   const fresh = cachedCodexWeeklyUsage(upstream, true);
   if (fresh) return { value: fresh, timedOut: false };
   const fallback = cachedCodexWeeklyUsage(upstream);
@@ -10613,18 +10648,17 @@ async function readCodexWeeklyUsageBounded(
     );
   });
   const request = readCodexWeeklyUsage(upstream).then((value) => {
+    if (revision !== upstream.accountRevision?.()) return { value: null, timedOut: false as const };
     if (value) {
       const now = Date.now();
       cardUsageCaches.set(upstream, {
-        freshUntil: now + CARD_USAGE_CACHE_TTL_MS,
+        revision,        freshUntil: now + CARD_USAGE_CACHE_TTL_MS,
         retainUntil: now + CARD_USAGE_STALE_TTL_MS,
         value
       });
     }
-    return {
-      value: value || fallback,
-      timedOut: false as const
-    };
+    if (!value) cardUsageCaches.delete(upstream);
+    return { value, timedOut: false as const };
   });
   const result = await Promise.race([request, timeout]);
   if (timer) clearTimeout(timer);
@@ -10729,7 +10763,7 @@ function dashboardCodexThreadUrl(
 ): string | undefined {
   if (!visibleInCodexApp) return undefined;
   for (const source of sources) {
-    if (!source || source.backendKind !== "app-server") continue;
+    if (!source || !backendSupports(source.backendKind, "supportsThreadInspection")) continue;
     const threadId = source.threadId.trim().toLowerCase();
     const sessionId = source.sessionId?.trim().toLowerCase();
     // Codex deep links address an exact thread. Normal App Server threads use
@@ -11152,8 +11186,10 @@ async function inspectBridgeBackgroundProcessImpact(
   const threads = new Map<string, Pick<BridgeAgentThread, "threadId" | "backendKind">>();
   for (const agent of listAllDashboardAgents(jobs)) {
     const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
-    if (thread?.backendKind !== "app-server") continue;
-    threads.set(`${thread.backendKind}\0${thread.threadId}`, thread);
+    if (thread && backendSupports(thread.backendKind, "supportsBackgroundTerminals")) threads.set(`${thread.backendKind}\0${thread.threadId}`, thread);
+    for (const sdkThread of jobs.listAgentThreads(agent.agentId).filter(item => item.backendKind === "codex-sdk")) {
+      threads.set(`${sdkThread.backendKind}\0${sdkThread.threadId}`, sdkThread);
+    }
   }
   const candidates = [...threads.values()];
   if (candidates.length === 0) {
@@ -11180,8 +11216,12 @@ async function inspectBridgeBackgroundProcessImpact(
   const inspect = (
     thread: Pick<BridgeAgentThread, "threadId" | "backendKind">,
     timeoutMs: number
-  ): Promise<InspectionResult> =>
-    new Promise((resolve) => {
+  ): Promise<InspectionResult> => {
+    if (!backendSupports(thread.backendKind, "supportsBackgroundTerminals")) {
+      return Promise.resolve(upstream.canResumeThread?.(thread.threadId, thread.backendKind as CodexBackendKind) === true
+        ? { state: "unknown" } : { state: "unloaded" });
+    }
+    return new Promise((resolve) => {
       let settled = false;
       const finish = (value: InspectionResult): void => {
         if (settled) return;
@@ -11202,6 +11242,7 @@ async function inspectBridgeBackgroundProcessImpact(
         () => finish({ state: "unknown" })
       );
     });
+  };
   const worker = async (): Promise<void> => {
     while (nextIndex < candidates.length) {
       const remainingMs = deadline - Date.now();
@@ -11626,7 +11667,7 @@ async function buildDashboardView(
     const appServerAgents = allAgents.flatMap((agent) => {
       if (agent.lifecycle === "archived") return [];
       const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
-      return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
+      return thread && backendSupports(thread.backendKind, "supportsThreadInspection") ? [{ agent, thread }] : [];
     });
     const rankedCandidates = appServerAgents
       .map(({ agent, thread }) => {
@@ -11741,10 +11782,10 @@ async function buildDashboardView(
     const target = thread || trackedSessions.find(
       (session): session is TrackedCodexSession => Boolean(session)
     );
-    if (!target || target.backendKind !== "app-server") return undefined;
+    if (!target || !backendSupports(target.backendKind, "supportsThreadInspection")) return undefined;
     const visibilitySession = trackedSessions.find(
       (session) =>
-        session?.backendKind === "app-server" &&
+        session && backendSupports(session.backendKind, "supportsThreadInspection") &&
         session.threadId.toLowerCase() === target.threadId.toLowerCase()
     );
     if (!visibilitySession) return undefined;
@@ -11797,7 +11838,7 @@ async function buildDashboardView(
     .filter((agent) => agent.lifecycle !== "archived")
     .flatMap((agent) => {
       const thread = currentThreadFor(agent.agentId);
-      return thread?.backendKind === "app-server" ? [{ agent, thread }] : [];
+      return thread && backendSupports(thread.backendKind, "supportsThreadInspection") ? [{ agent, thread }] : [];
     });
   const runtimeCacheCandidates = appServerAgents
     .map(({ agent, thread }) => {
@@ -11926,6 +11967,9 @@ async function buildDashboardView(
       ? runtimeByAgent.get(job.agentId || "")?.backgroundProcessCount || 0
       : 0;
     const latestTurn = turnForJob(job);
+    const observed = [...job.publicEvents].reverse().find(event => event.type === "usage")?.details?.total;
+    const tokenUsage = isRecord(observed) && ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"].every(key => typeof observed[key] === "number" && Number.isSafeInteger(observed[key]) && observed[key] >= 0)
+      ? { inputTokens: observed.inputTokens as number, cachedInputTokens: observed.cachedInputTokens as number, outputTokens: observed.outputTokens as number, totalTokens: observed.totalTokens as number } : undefined;
     const history = historyForAgent(job.agentId, job.jobId);
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
     const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
@@ -11942,6 +11986,7 @@ async function buildDashboardView(
       bucket,
       ...project,
       agentName: dashboardAgentName(agent?.agentName),
+      ...(tokenUsage ? { tokenUsage } : {}),
       activityTitle: latestTurn.activityTitle,
       ...(latestTurn.execution ? { execution: latestTurn.execution } : {}),
       status: latestTurn.status,
@@ -12447,7 +12492,7 @@ async function buildLegacyActivityView(
     .flatMap((row) => {
       const thread = currentThreads.get(row.agentId);
       const agent = agentById.get(row.agentId);
-      if (!thread || thread.backendKind !== "app-server" || !agent) return [];
+      if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection") || !agent) return [];
       return [{
         agentId: row.agentId,
         thread,
@@ -12680,7 +12725,7 @@ function dashboardExecutionForSelection(
   reroutedModel?: string
 ): ActivityCardExecution {
   const catalog = modelCatalog.getCachedCatalog?.({
-    backendKind: backendKind === "app-server" ? "app-server" : "mcp-server"
+    backendKind: isCodexBackendKind(backendKind) ? backendKind : "mcp-server"
   });
   const displayNameFor = (modelId: string): string =>
     catalog?.models.find((entry) => entry.id === modelId)?.displayName || modelId;
@@ -13440,7 +13485,7 @@ function activityViewResult(
 }
 
 function appServerTurnId(job: CodexJob): string | undefined {
-  return job.backendKind === "app-server" ? job.upstreamRequestId : undefined;
+  return backendSupports(job.backendKind, "supportsPreciseCancellation") ? job.upstreamRequestId : undefined;
 }
 
 function cancellationTargetForJob(
@@ -14868,7 +14913,7 @@ function backendCapabilities(
   upstream: CodexUpstream,
   backendKind: CodexBackendKind
 ): BackendCapabilities {
-  return upstream.capabilities?.(backendKind) || (backendKind === "app-server"
+  return upstream.capabilities?.(backendKind) || (backendSupports(backendKind, "supportsTurnSelection")
     ? {
         selectionScope: "turn",
         supportsModelOverrideOnContinue: true,
@@ -14897,7 +14942,7 @@ function applyModelSelection(
       ? { service_tier: selection.serviceTier }
       : {})
   };
-  if (backendKind === "app-server" && selection.serviceTier) {
+  if (backendSupports(backendKind, "supportsTurnSelection") && selection.serviceTier) {
     payload.serviceTier = selection.serviceTier;
   }
 }
@@ -15406,6 +15451,7 @@ function readPersistedJob(
     executionMode,
     backendKind,
     trackingState,
+    runtime: safeRuntimeMetadata(value.runtime),
     bridgeInstanceId: value.bridgeInstanceId,
     workerId: value.workerId,
     workerGeneration: value.workerGeneration,
@@ -15479,8 +15525,8 @@ function readSessionDecision(value: unknown): SessionDecision | undefined {
 function readBackendHandoffAudit(value: unknown): BackendHandoffAudit | undefined {
   if (!isRecord(value)) return undefined;
   if (
-    (value.sourceBackend !== "mcp-server" && value.sourceBackend !== "app-server") ||
-    (value.targetBackend !== "mcp-server" && value.targetBackend !== "app-server") ||
+    (value.sourceBackend !== "mcp-server" && value.sourceBackend !== "app-server" && value.sourceBackend !== "codex-sdk") ||
+    (value.targetBackend !== "mcp-server" && value.targetBackend !== "app-server" && value.targetBackend !== "codex-sdk") ||
     value.sourceBackend === value.targetBackend ||
     typeof value.sourceThreadId !== "string" ||
     !value.sourceThreadId ||
@@ -15514,7 +15560,7 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
     (catalogValidation !== "valid" &&
       catalogValidation !== "temporarily-unverified-with-last-known-good" &&
       catalogValidation !== "invalid") ||
-    (backendKind !== "mcp-server" && backendKind !== "app-server") ||
+    (backendKind !== "mcp-server" && backendKind !== "app-server" && backendKind !== "codex-sdk") ||
     (source !== "fixed" &&
       source !== "preferred" &&
       source !== "configured-fallback" &&
@@ -15616,7 +15662,15 @@ function toolResultErrorMessage(result: ToolResult): string {
 function extractResultBackendKind(result: ToolResult): CodexBackendKind | undefined {
   if (!isRecord(result.structuredContent)) return undefined;
   const value = result.structuredContent.backendKind;
-  return value === "mcp-server" || value === "app-server" ? value : undefined;
+  return value === "mcp-server" || value === "app-server" || value === "codex-sdk" ? value : undefined;
+}
+
+function safeRuntimeMetadata(value: unknown): UpstreamWorkerAssignment["runtime"] | undefined {
+  const parsed = z.object({ codex: z.string().regex(/^\d+\.\d+\.\d+$/),
+    sdk: z.string().regex(/^\d+\.\d+\.\d+$/).optional(), python: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+    channel: z.literal("stable").optional(), requestedAuthMode: z.enum(["chatgpt", "api-key"]).optional(), resolvedAuthMode: z.enum(["chatgpt", "api-key"]).optional()
+  }).safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function extractResultThreadLineage(
@@ -16113,6 +16167,7 @@ function compactStatusProjection(
   }
   return codexStatusOutputSchema.parse({
     kind,
+    ...(Array.isArray(value.runtimes) ? { runtimes: stringArray(value.runtimes).slice(0, 2) } : {}),
     scope,
     counts,
     ...(page ? { page } : {}),
@@ -16204,6 +16259,7 @@ function statusItemProjection(
     ...(typeof input.replay === "boolean" ? { replay: input.replay } : {}),
     ...(versions ? { versions } : {}),
     ...(execution ? { execution } : {}),
+    ...(safeRuntimeMetadata(input.runtime) ? { runtime: Object.entries(safeRuntimeMetadata(input.runtime)!).map(([name, version]) => `${name}=${version}`).join("; ") } : {}),
     ...(parsedResult.success
       ? { result: modelResultAvailabilityProjection(parsedResult.data) }
       : inferredResult

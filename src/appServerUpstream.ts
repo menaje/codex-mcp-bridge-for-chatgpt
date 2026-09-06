@@ -1,3 +1,4 @@
+import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
@@ -67,6 +68,16 @@ export type CodexAppServerLateResponse = JsonRpcLateResponse & {
 };
 
 export type CodexAppServerProtocolOptions = {
+  environment?: NodeJS.ProcessEnv;
+  /** Internal SDK transport: all protocol messages go through the pinned SDK public client. */
+  transport?: {
+    backendKind: "codex-sdk";
+    workerPrefix?: string;
+    args: string[];
+    env: NodeJS.ProcessEnv;
+    verify: () => Promise<string>;
+    runtime: NonNullable<UpstreamWorkerAssignment["runtime"]>;
+  };
   /** Deadline for checking the configured executable before each worker admission. */
   versionCheckTimeoutMs?: number;
   /** Deadline for bounded control requests; completed turns remain timer-free. */
@@ -83,6 +94,8 @@ export type CodexAppServerProtocolOptions = {
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
+  environment?: NodeJS.ProcessEnv;
+  transport?: CodexAppServerProtocolOptions["transport"];
   versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
   initializeTimeoutMs: number;
@@ -250,7 +263,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         { name: "turn/steer", description: "Steer an active Codex App Server turn." },
         { name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }
       ],
-      backendKind: "app-server",
+      backendKind: this.protocolOptions.transport?.backendKind || "app-server",
+      ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
       experimental: true,
       workerHealth: {
         configured: this.workers.length,
@@ -296,7 +310,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   capabilities(): BackendCapabilities {
-    return APP_SERVER_CAPABILITIES;
+    return this.protocolOptions.transport ? { ...APP_SERVER_CAPABILITIES, supportsBackgroundTerminals: false, supportsEphemeralThreads: false } : APP_SERVER_CAPABILITIES;
   }
 
   startThread(
@@ -416,6 +430,18 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
   }
 
+  async readAccountSnapshot(): Promise<CodexAccountSnapshot | null> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const account = await connection.readAccount();
+      const limits = projectCodexAccount(account, null).authMode === "chatgpt"
+        ? await connection.readAccountRateLimits().catch(() => null) : null;
+      return projectCodexAccount(account, limits);
+    } finally { worker.activeCalls -= 1; }
+  }
+
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
     const now = Date.now();
     if (this.accountRateLimitsCache && now < this.accountRateLimitsCache.expiresAt) {
@@ -517,7 +543,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     graceMs?: number
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
-    const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
+    const worker = this.workers.find((candidate) => `${this.protocolOptions.transport?.workerPrefix || (this.protocolOptions.transport ? "sdk" : "app")}-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
@@ -642,7 +668,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         worker.spawnCount += 1;
         const connection = AppServerConnection.spawn(
           this.codexCommand,
-          `app-${worker.index}`,
+          `${this.protocolOptions.transport?.workerPrefix || (this.protocolOptions.transport ? "sdk" : "app")}-${worker.index}`,
           generation,
           {
             ...this.protocolOptions,
@@ -684,7 +710,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private ensureCompatibleExecutable(): Promise<string> {
     if (this.compatibilityCheck) return this.compatibilityCheck;
     const controller = new AbortController();
-    const check = verifySupportedCodexCli(
+    const check = this.protocolOptions.transport ? this.protocolOptions.transport.verify() : verifySupportedCodexCli(
       this.codexCommand,
       this.protocolOptions.versionCheckTimeoutMs,
       this.versionProbe,
@@ -754,7 +780,8 @@ class AppServerConnection {
   ) {
     this.rpc = new JsonRpcProcess({
       command,
-      args: ["app-server", "--stdio"],
+      args: protocolOptions.transport?.args || ["app-server", "--stdio"],
+      ...(protocolOptions.transport ? { env: protocolOptions.transport.env } : protocolOptions.environment ? { env: protocolOptions.environment } : {}),
       debugLabel: `codex-app:${workerId}:g${generation}`,
       omitJsonRpcHeader: true,
       onNotification: (method, params) => this.onNotification(method, params),
@@ -1105,6 +1132,8 @@ class AppServerConnection {
     return { data, nextCursor: null };
   }
 
+  async readAccount() { return this.rpc.request("account/read", { refreshToken: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs }); }
+
   async readAccountRateLimits(): Promise<Record<string, unknown>> {
     return this.rpc.request<Record<string, unknown>>(
       "account/rateLimits/read",
@@ -1378,7 +1407,8 @@ class AppServerConnection {
     const identity = this.rpc.identity;
     const lineage = this.threadLineage.get(threadId);
     return {
-      backendKind: "app-server",
+      backendKind: this.protocolOptions.transport?.backendKind || "app-server",
+      ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
       workerId: this.workerId,
       workerGeneration: this.generation,
       ...(identity ? { workerPid: identity.pid } : {}),
@@ -1671,7 +1701,8 @@ class AppServerConnection {
         threadId: context.threadId,
         turnId: context.turnId,
         turnStatus: status,
-        backendKind: "app-server",
+        backendKind: this.protocolOptions.transport?.backendKind || "app-server",
+        ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
         ...context.lineage,
         ...(failure ? { error: failure } : {})
       }
@@ -1712,7 +1743,9 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsModelOverrideOnContinue: true,
   supportsEffortOverrideOnContinue: true,
   supportsServiceTierOverrideOnContinue: true,
-  supportsFork: true
+  supportsFork: true,
+  supportsSteering: true, supportsPreciseCancellation: true, supportsEphemeralThreads: true,
+  supportsThreadInspection: true, supportsBackgroundTerminals: true
 };
 
 function metricAggregate(values: number[]): {
@@ -1824,6 +1857,8 @@ function resolveProtocolOptions(
     "requestTimeoutMs"
   );
   return {
+    ...(options.environment ? { environment: options.environment } : {}),
+    ...(options.transport ? { transport: options.transport } : {}),
     versionCheckTimeoutMs: positiveTimeout(
       options.versionCheckTimeoutMs ?? DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
       "versionCheckTimeoutMs"

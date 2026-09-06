@@ -1,3 +1,4 @@
+import { normalizeProtocolSchema } from "../src/runtimeCompatibility.js";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -116,13 +117,17 @@ export function assertAppServerSchemaMatches(
 
 export async function generateAppServerSchemaLock(
   codexCommand = process.env.CODEX_MCP_BRIDGE_CODEX || "codex",
-  repoRoot = DEFAULT_REPO_ROOT
+  repoRoot = DEFAULT_REPO_ROOT,
+  inspectJson?: (directory: string) => void
 ): Promise<AppServerSchemaLock> {
   const supportedVersion = readManifestCodexCliVersion(repoRoot);
   if (supportedVersion !== SUPPORTED_CODEX_CLI_VERSION) {
     throw new Error("Runtime and release-manifest Codex CLI compatibility contracts disagree.");
   }
-  await verifySupportedCodexCli(codexCommand);
+  const observedVersion = await verifySupportedCodexCli(codexCommand);
+  if (observedVersion !== SUPPORTED_CODEX_CLI_VERSION) {
+    throw new Error(`Schema generation requires the CI pin ${SUPPORTED_CODEX_CLI_VERSION}; user-supported ${observedVersion} is not the reproducibility baseline.`);
+  }
 
   const temporary = mkdtempSync(path.join(tmpdir(), "codex-app-server-schema-"));
   const jsonDirectory = path.join(temporary, "json-schema");
@@ -140,6 +145,7 @@ export async function generateAppServerSchemaLock(
     };
     generateSchema(codexCommand, "generate-json-schema", jsonDirectory, repoRoot, env);
     generateSchema(codexCommand, "generate-ts", typescriptDirectory, repoRoot, env);
+    inspectJson?.(jsonDirectory);
     return {
       lockVersion: 1,
       supportedCodexCliVersion: supportedVersion,
@@ -150,6 +156,12 @@ export async function generateAppServerSchemaLock(
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+function managedCliContract(directory: string) {
+  const files = Object.fromEntries(walkFiles(directory).sort().map(file => [path.relative(directory, file).split(path.sep).join("/"),
+    createHash("sha256").update(JSON.stringify(normalizeProtocolSchema(JSON.parse(readFileSync(file, "utf8"))))).digest("hex")]));
+  return { schemaVersion: 1, baseline: SUPPORTED_CODEX_CLI_VERSION, files };
 }
 
 function readManifestCodexCliVersion(repoRoot: string): string {
@@ -172,7 +184,12 @@ export async function checkAppServerSchema(
   repoRoot = DEFAULT_REPO_ROOT
 ): Promise<AppServerSchemaLock> {
   const expected = loadAppServerSchemaLock(repoRoot);
-  const actual = await generateAppServerSchemaLock(codexCommand, repoRoot);
+  const actual = await generateAppServerSchemaLock(codexCommand, repoRoot, directory => {
+    const expectedContract = JSON.parse(readFileSync(path.join(repoRoot, "sdk", "cli-contract.json"), "utf8"));
+    if (stableJson(expectedContract) !== stableJson(managedCliContract(directory))) {
+      throw new Error("Managed installation contract drifted. Review the protocol and run app-server:compat:update.");
+    }
+  });
   assertAppServerSchemaMatches(expected, actual);
   return actual;
 }
@@ -181,11 +198,16 @@ export async function updateAppServerSchemaLock(
   codexCommand = process.env.CODEX_MCP_BRIDGE_CODEX || "codex",
   repoRoot = DEFAULT_REPO_ROOT
 ): Promise<AppServerSchemaLock> {
-  const lock = await generateAppServerSchemaLock(codexCommand, repoRoot);
+  let contract: ReturnType<typeof managedCliContract> | undefined;
+  const lock = await generateAppServerSchemaLock(codexCommand, repoRoot, directory => { contract = managedCliContract(directory); });
   const file = path.join(repoRoot, LOCK_FILENAME);
   const temporary = `${file}.tmp-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
   renameSync(temporary, file);
+  const contractFile = path.join(repoRoot, "sdk", "cli-contract.json");
+  mkdirSync(path.dirname(contractFile), { recursive: true });
+  writeFileSync(`${contractFile}.tmp`, JSON.stringify(contract, null, 2) + "\n", "utf8");
+  renameSync(`${contractFile}.tmp`, contractFile);
   return lock;
 }
 

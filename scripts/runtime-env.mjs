@@ -130,6 +130,7 @@ export function inspectRuntimeEnvFile(
         assertRuntimeEnvDirectory(directory, { platform, uid });
       }
     } catch (error) {
+      const issue = safeRuntimeEnvIssue(error);
       return {
         path: resolvedPath,
         exists: false,
@@ -138,7 +139,8 @@ export function inspectRuntimeEnvFile(
         hasTunnelId: false,
         tunnelId: null,
         operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
-        issue: safeRuntimeEnvIssue(error)
+        issue,
+        issueProblem: runtimeEnvIssueProblem(issue)
       };
     }
     return {
@@ -149,7 +151,8 @@ export function inspectRuntimeEnvFile(
       hasTunnelId: false,
       tunnelId: null,
       operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
-      issue: "Runtime environment file is not configured."
+      issue: "Runtime environment file is not configured.",
+      issueProblem: runtimeEnvIssueProblem("Runtime environment file is not configured.")
     };
   }
   try {
@@ -165,9 +168,11 @@ export function inspectRuntimeEnvFile(
       hasTunnelId: Boolean(values.CONTROL_PLANE_TUNNEL_ID),
       tunnelId: values.CONTROL_PLANE_TUNNEL_ID || null,
       operatorConfiguration: runtimeOperatorConfiguration(values),
-      issue: null
+      issue: null,
+      issueProblem: null
     };
   } catch (error) {
+    const issue = safeRuntimeEnvIssue(error);
     return {
       path: resolvedPath,
       exists: true,
@@ -176,7 +181,8 @@ export function inspectRuntimeEnvFile(
       hasTunnelId: false,
       tunnelId: null,
       operatorConfiguration: DEFAULT_OPERATOR_CONFIGURATION,
-      issue: safeRuntimeEnvIssue(error)
+      issue,
+      issueProblem: runtimeEnvIssueProblem(issue)
     };
   }
 }
@@ -357,7 +363,7 @@ export function updateRuntimeEnvFile(
 function runtimeOperatorUpdates({ defaultBackend, maximumAccess }) {
   const updates = {};
   if (defaultBackend !== undefined) {
-    if (defaultBackend !== "app-server" && defaultBackend !== "mcp-server") {
+    if (defaultBackend !== "app-server" && defaultBackend !== "mcp-server" && defaultBackend !== "codex-sdk") {
       throw new Error(`Invalid Codex execution backend: ${String(defaultBackend)}`);
     }
     updates.CODEX_MCP_BRIDGE_DEFAULT_BACKEND = defaultBackend;
@@ -376,9 +382,8 @@ function runtimeOperatorConfiguration(values) {
   const dangerFullAccess = runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS);
   const workspaceWrite = dangerFullAccess || runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_WRITE);
   return {
-    defaultBackend: values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND === "app-server"
-      ? "app-server"
-      : "mcp-server",
+    defaultBackend: ["app-server", "mcp-server", "codex-sdk"].includes(values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND)
+      ? values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND : "mcp-server",
     maximumAccess: dangerFullAccess
       ? "full-access"
       : workspaceWrite
@@ -617,6 +622,28 @@ function safeRuntimeEnvIssue(error) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 1_000) || "Runtime environment is invalid.";
+}
+
+function runtimeEnvIssueProblem(message) {
+  let code = "runtime-env-invalid";
+  if (message.includes("not configured")) {
+    code = "runtime-env-not-configured";
+  } else if (message.includes("permissions are too broad")) {
+    code = "runtime-env-permissions-too-broad";
+  } else if (message.includes("regular, non-symlink") || message.includes("regular directory")) {
+    code = "runtime-env-not-regular";
+  } else if (message.includes("owned by the current user")) {
+    code = "runtime-env-owner-mismatch";
+  } else if (message.includes("CONTROL_PLANE_API_KEY")) {
+    code = "runtime-api-key-invalid";
+  } else if (message.includes("CONTROL_PLANE_TUNNEL_ID")) {
+    code = "tunnel-id-invalid";
+  } else if (message.includes("RUNTIME_ENV_PROJECT_CONFLICT")) {
+    code = "runtime-env-project-conflict";
+  } else if (message.includes("invalid NUL byte") || message.includes("duplicate")) {
+    code = "runtime-env-invalid-content";
+  }
+  return { code, arguments: {} };
 }
 
 function syncDirectory(directory) {

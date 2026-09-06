@@ -47,7 +47,7 @@ jobs:
     needs:
       - policy-context
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - id: metadata
@@ -64,13 +64,30 @@ jobs:
       - name: Check App Server protocol schemas
         run: npm run app-server:compat:check
       - run: npm run check
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify pinned Python SDK and timer-free long execution
+        env:
+          CODEX_MCP_BRIDGE_SDK_LONG_TEST: "1"
+        run: npm run sdk:check
       - run: npm audit --omit=dev
 
   macos-check:
-    name: Check native macOS app
+    name: Check native macOS app (${{ matrix.architecture }})
     needs:
       - policy-context
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            machine: arm64
+            runner: macos-15
+          - architecture: x64
+            machine: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -78,7 +95,16 @@ jobs:
         name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - name: Verify release runner architecture
-        run: test "$(uname -m)" = "${{ steps.metadata.outputs.macos_architecture }}"
+        env:
+          MACOS_ARCHITECTURES: ${{ steps.metadata.outputs.macos_architectures }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_MACHINE: ${{ matrix.machine }}
+        run: |
+          test "$(uname -m)" = "$MACOS_MACHINE"
+          case ",$MACOS_ARCHITECTURES," in
+            *",$MACOS_TARGET_ARCHITECTURE,"*) ;;
+            *) echo "Manifest does not declare $MACOS_TARGET_ARCHITECTURE." >&2; exit 1 ;;
+          esac
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.metadata.outputs.node_version }}
@@ -87,7 +113,7 @@ jobs:
       - run: npm ci
       - name: Build and test native app bundle
         env:
-          MACOS_EXPECTED_ARCHITECTURE: ${{ steps.metadata.outputs.macos_architecture }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
         run: npm run macos:bundle
       - name: Verify development app bundle signature
         run: codesign --verify --deep --strict "macos/build/Codex MCP Bridge for ChatGPT.app"
@@ -187,12 +213,22 @@ jobs:
           retention-days: 7
 
   macos-release-package:
-    name: Package unnotarized macOS arm64 app
+    name: Package unnotarized macOS app (${{ matrix.architecture }})
     needs:
       - policy-context
       - check
       - macos-check
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            machine: arm64
+            runner: macos-15
+          - architecture: x64
+            machine: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -200,28 +236,62 @@ jobs:
         name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - name: Verify release runner architecture
-        run: test "$(uname -m)" = "${{ steps.metadata.outputs.macos_architecture }}"
+        env:
+          MACOS_ARCHITECTURES: ${{ steps.metadata.outputs.macos_architectures }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_MACHINE: ${{ matrix.machine }}
+        run: |
+          test "$(uname -m)" = "$MACOS_MACHINE"
+          case ",$MACOS_ARCHITECTURES," in
+            *",$MACOS_TARGET_ARCHITECTURE,"*) ;;
+            *) echo "Manifest does not declare $MACOS_TARGET_ARCHITECTURE." >&2; exit 1 ;;
+          esac
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.metadata.outputs.node_version }}
           cache: npm
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
+      - id: macos-metadata
+        name: Select architecture-specific filenames
+        env:
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_ARM64_FILE: ${{ steps.metadata.outputs.macos_arm64_archive_filename }}
+          MACOS_X64_FILE: ${{ steps.metadata.outputs.macos_x64_archive_filename }}
+          SOURCE_MACOS_ARM64_FILE: ${{ steps.metadata.outputs.source_candidate_macos_arm64_archive_filename }}
+          SOURCE_MACOS_X64_FILE: ${{ steps.metadata.outputs.source_candidate_macos_x64_archive_filename }}
+        run: |
+          case "$MACOS_TARGET_ARCHITECTURE" in
+            arm64)
+              echo "file=$MACOS_ARM64_FILE" >> "$GITHUB_OUTPUT"
+              echo "source_file=$SOURCE_MACOS_ARM64_FILE" >> "$GITHUB_OUTPUT"
+              ;;
+            x64)
+              echo "file=$MACOS_X64_FILE" >> "$GITHUB_OUTPUT"
+              echo "source_file=$SOURCE_MACOS_X64_FILE" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported macOS target: $MACOS_TARGET_ARCHITECTURE" >&2
+              exit 1
+              ;;
+          esac
       - name: Build and ad-hoc sign unnotarized release DMG
         env:
           MACOS_BUNDLE_VERSION: ${{ github.run_number }}
-          MACOS_EXPECTED_ARCHITECTURE: ${{ steps.metadata.outputs.macos_architecture }}
-          MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
         run: |
           mkdir -p release-assets
-          npm run macos:package -- --output "release-assets/$MACOS_FILE"
+          npm run macos:package -- \
+            --architecture "$MACOS_TARGET_ARCHITECTURE" \
+            --output "release-assets/$MACOS_FILE"
       - if: steps.metadata.outputs.stage == 'stable'
         name: Compare stable macOS payload with the source RC
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
-          SOURCE_MACOS_FILE: ${{ steps.metadata.outputs.source_candidate_macos_archive_filename }}
-          STABLE_MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
+          SOURCE_MACOS_FILE: ${{ steps.macos-metadata.outputs.source_file }}
+          STABLE_MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
         run: |
           mkdir -p candidate-assets
           gh release download "$SOURCE_CANDIDATE_TAG" \
@@ -234,8 +304,8 @@ jobs:
             --stable "release-assets/$STABLE_MACOS_FILE"
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-release-asset
-          path: release-assets/${{ steps.metadata.outputs.macos_archive_filename }}
+          name: macos-release-asset-${{ matrix.architecture }}
+          path: release-assets/${{ steps.macos-metadata.outputs.file }}
           if-no-files-found: error
           retention-days: 7
 
@@ -430,8 +500,9 @@ jobs:
       - if: steps.release-state.outputs.exists != 'true'
         uses: actions/download-artifact@v8
         with:
-          name: macos-release-asset
+          pattern: macos-release-asset-*
           path: release-assets
+          merge-multiple: true
       - if: steps.release-state.outputs.exists != 'true'
         uses: actions/download-artifact@v8
         with:
@@ -452,18 +523,20 @@ jobs:
           GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
           CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
-          MACOS_FILE: ${{ steps.metadata.outputs.macos_archive_filename }}
+          MACOS_ARM64_FILE: ${{ steps.metadata.outputs.macos_arm64_archive_filename }}
+          MACOS_X64_FILE: ${{ steps.metadata.outputs.macos_x64_archive_filename }}
           RELEASE_CHECKSUMS_FILE: ${{ steps.metadata.outputs.release_checksums_filename }}
           TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
         run: |
           release_args=(
             "$RELEASE_TAG"
-            "release-assets/$MACOS_FILE#macOS arm64 app (ad-hoc signed, not notarized DMG)"
+            "release-assets/$MACOS_ARM64_FILE#macOS Apple Silicon app (ad-hoc signed, not notarized DMG)"
+            "release-assets/$MACOS_X64_FILE#macOS Intel app (ad-hoc signed, not notarized DMG)"
             "release-assets/$PACKAGE_FILE#generic npm server package"
             "release-assets/$CHECKSUM_FILE#npm package SHA-256"
             "release-assets/$RELEASE_CHECKSUMS_FILE#all release SHA-256 checksums"
             --title "$RELEASE_TITLE"
-            --notes "The macOS arm64 app is ad-hoc signed and not Apple-notarized. Approve only this app in System Settings > Privacy & Security if first launch is blocked; do not disable Gatekeeper globally. The npm archive remains available for users who choose to run the existing server directly in their own Node.js environment."
+            --notes "The macOS Apple Silicon and Intel apps are ad-hoc signed and not Apple-notarized. Choose the DMG matching your Mac architecture. Approve only this app in System Settings > Privacy & Security if first launch is blocked; do not disable Gatekeeper globally. The npm archive remains available for users who choose to run the existing server directly in their own Node.js environment."
           )
           if [[ "$GENERATE_NOTES" == "true" ]]; then
             release_args+=(--generate-notes)

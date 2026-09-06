@@ -19,7 +19,9 @@ export function expectedReleaseAssetNames(repoRoot = DEFAULT_REPO_ROOT) {
   return [
     metadata.packageFilename,
     metadata.checksumFilename,
-    metadata.macosArchiveFilename,
+    ...metadata.macosArchitectures.map(
+      (architecture) => metadata.macosArchiveFilenames[architecture]
+    ),
     metadata.releaseChecksumsFilename
   ];
 }
@@ -96,7 +98,9 @@ function inspectReleaseAssets({ repoRoot, directory, requireChecksums }) {
     throw new Error(`${metadata.checksumFilename} does not match ${metadata.packageFilename}.`);
   }
 
-  verifyDmg(path.join(resolvedDirectory, metadata.macosArchiveFilename));
+  for (const architecture of metadata.macosArchitectures) {
+    verifyDmg(path.join(resolvedDirectory, metadata.macosArchiveFilenames[architecture]));
+  }
   return { directory: resolvedDirectory, metadata, assetFiles };
 }
 

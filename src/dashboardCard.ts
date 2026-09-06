@@ -160,7 +160,7 @@ export function dispatchDashboardExternalUrl(
 export const DASHBOARD_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Codex Overview`,
   description:
-    "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, Codex links for non-ephemeral App Server sessions, setting-independent GPT orchestration links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
+    "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, setting-independent GPT conversation links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
   mimeType: DASHBOARD_CARD_MIME_TYPE
 } as const;
 export const DASHBOARD_CARD_CONTENT_METADATA = {
@@ -175,7 +175,7 @@ export const DASHBOARD_CARD_CONTENT_METADATA = {
   "openai/widgetCSP": {
     connect_domains: [] as string[],
     resource_domains: [] as string[],
-    redirect_domains: ["https://chatgpt.com", "codex://threads"]
+    redirect_domains: ["https://chatgpt.com"]
   },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
   "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
@@ -400,10 +400,9 @@ export const DASHBOARD_CARD_HTML = String.raw`<!doctype html>
     function latestTurn(row){if(Object.prototype.hasOwnProperty.call(row,"latestTurn"))return row.latestTurn&&typeof row.latestTurn==="object"?row.latestTurn:null;const terminal=["completed","failed","interrupted","cancelled"].includes(row.status),started=Date.parse(row.createdAt),ended=Date.parse(row.updatedAt),duration=terminal&&Number.isFinite(started)&&Number.isFinite(ended)?Math.max(0,ended-started):Math.max(0,Number(row.elapsedMs)||0);return{activityKey:row.activityKey,activityTitle:row.activityTitle||null,execution:row.execution,status:row.status,startedAt:row.createdAt,updatedAt:row.updatedAt,endedAt:terminal?row.updatedAt:null,durationMs:duration}}
     function timeMeta(turn,rowStatus){if(!turn)return"";const active=!turn.endedAt&&["running","input-required","approval-required","terminating","termination-failed","liveness-unknown","orphaned"].includes(rowStatus);if(active)return turn.durationMs==null?t["dashboard.time.durationUnknown"]:t["dashboard.time.active"].replace("{duration}",formatDuration(turn.durationMs));const duration=turn.durationMs==null?t["dashboard.time.durationUnknown"]:t["dashboard.time.duration"].replace("{duration}",formatDuration(turn.durationMs)),ended=t["dashboard.time.terminal"].replace("{status}",statusLabel(turn.status)).replace("{relative}",relativeTime(turn.endedAt||turn.updatedAt));return[duration,ended].filter(Boolean).join(" · ")}
     function safeConversationUrl(value){if(typeof value!=="string"||!/^https:\/\/chatgpt\.com\/c\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))return null;return value}
-    function safeCodexThreadUrl(value){if(typeof value!=="string"||!/^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value))return null;return value}
     function openConversationFallback(url){window.open(url,"_blank","noopener,noreferrer")}
     function openConversation(event,url){dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)}
-    function appendRowContext(parent,row,mode="row"){const context=node("div","row-context"),codexUrl=safeCodexThreadUrl(row.codexThreadUrl),conversationUrl=safeConversationUrl(row.conversationUrl);if(mode!=="agent")context.appendChild(node("span","project-label",row.projectName||t["dashboard.unknownProject"]));if(mode!=="activity"&&codexUrl){const link=node("a","conversation-link codex-session-link",t["dashboard.openCodexSession"]+" ↗");link.href=codexUrl;link.target="_blank";link.rel="noopener noreferrer";link.addEventListener("click",(event)=>openConversation(event,codexUrl));context.appendChild(link)}if(mode!=="agent"&&conversationUrl){const link=node("a","conversation-link",t["dashboard.openConversation"]+" ↗");link.href=conversationUrl;link.target="_blank";link.rel="noopener noreferrer";link.addEventListener("click",(event)=>openConversation(event,conversationUrl));context.appendChild(link)}if(context.childElementCount)parent.appendChild(context)}
+    function appendRowContext(parent,row,mode="row"){const context=node("div","row-context"),conversationUrl=safeConversationUrl(row.conversationUrl);if(mode!=="agent")context.appendChild(node("span","project-label",row.projectName||t["dashboard.unknownProject"]));if(mode!=="agent"&&conversationUrl){const link=node("a","conversation-link",t["dashboard.openConversation"]+" ↗");link.href=conversationUrl;link.target="_blank";link.rel="noopener noreferrer";link.addEventListener("click",(event)=>openConversation(event,conversationUrl));context.appendChild(link)}if(context.childElementCount)parent.appendChild(context)}
     function rowMeta(row){const values=[];if(Number(row.backgroundProcessCount)>0)values.push(t["dashboard.backgroundProcessCount"].replace("{count}",formatNumber(row.backgroundProcessCount)));return values.join(" · ")}
     function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,model=rerouted?selected+" → "+rerouted:selected;return model+" · "+execution.reasoningEffort}
     function appendExecution(parent,execution,next=false,required=false){if(!execution&&!required)return;const value=execution?executionText(execution):t["dashboard.execution.unavailable"],text=next?t["dashboard.execution.next"].replace("{execution}",value):value,badge=node("div","execution",text);badge.title=text;parent.appendChild(badge)}

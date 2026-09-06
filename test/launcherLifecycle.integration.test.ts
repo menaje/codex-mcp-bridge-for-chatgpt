@@ -27,6 +27,7 @@ describe("managed launcher lifecycle", () => {
     const runtimeStatusFile = path.join(configDirectory, "run", "launcher-status.json");
     const healthURLFile = path.join(configDirectory, "run", "tunnel-health.url");
     const tunnelPIDFile = path.join(configDirectory, "run", "tunnel.pid");
+    const controlPlaneReadyFile = path.join(configDirectory, "run", "control-plane.ready");
     const runtimeLockDirectory = path.join(root, "canonical", "run", "launcher.lock");
     const initializationLog = path.join(root, "initializations.log");
     const shutdownLog = path.join(root, "shutdown.log");
@@ -55,7 +56,9 @@ process.exit(2);
     writeExecutable(fakeTunnel, fakeTunnelSource({
       profileFile,
       initializationLog,
-      shutdownLog
+      shutdownLog,
+      controlPlaneReadyFile,
+      codexEnvironmentLog
     }));
 
     const first = await runLauncher({
@@ -125,6 +128,8 @@ function fakeTunnelSource(paths: {
   profileFile: string;
   initializationLog: string;
   shutdownLog: string;
+  controlPlaneReadyFile: string;
+  codexEnvironmentLog: string;
 }): string {
   return `
 import {
@@ -133,14 +138,21 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
+writeFileSync(${JSON.stringify(paths.codexEnvironmentLog)}, JSON.stringify({
+  openAIAPIKey: process.env.OPENAI_API_KEY ?? null,
+  codexAPIKey: process.env.CODEX_API_KEY ?? null,
+  unrelatedSecret: process.env.AWS_SECRET_ACCESS_KEY ?? null
+}));
 const profileFile = ${JSON.stringify(paths.profileFile)};
 const initializationLog = ${JSON.stringify(paths.initializationLog)};
 const shutdownLog = ${JSON.stringify(paths.shutdownLog)};
+const controlPlaneReadyFile = ${JSON.stringify(paths.controlPlaneReadyFile)};
 const option = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -171,6 +183,7 @@ if (args[0] === "init") {
 if (args[0] === "doctor") process.exit(0);
 if (args[0] === "health") {
   try {
+    if (!existsSync(controlPlaneReadyFile)) process.exit(1);
     const url = readFileSync(option("--url-file"), "utf8").trim();
     const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
     process.kill(pid, 0);
@@ -184,6 +197,12 @@ if (args[0] === "run") {
   const pidFile = option("--pid.file");
   writeFileSync(healthFile, "http://127.0.0.1:43123\\n", { mode: 0o600 });
   writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o600 });
+  try { unlinkSync(controlPlaneReadyFile); } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  setTimeout(() => {
+    writeFileSync(controlPlaneReadyFile, "ready\\n", { mode: 0o600 });
+  }, 700);
   let stopping = false;
   const stop = (signal) => {
     if (stopping) return;
@@ -262,6 +281,7 @@ async function runLauncher(paths: {
 
 async function waitForConnectedStatus(filePath: string, child: ChildProcess): Promise<void> {
   const deadline = Date.now() + 10_000;
+  let observedPending = false;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("Launcher exited before publishing connected tunnel status.");
@@ -269,7 +289,19 @@ async function waitForConnectedStatus(filePath: string, child: ChildProcess): Pr
     if (existsSync(filePath)) {
       try {
         const status = readStatus(filePath);
-        if (status.phase === "running" && status.tunnel?.connected === true) return;
+        if (
+          status.tunnel?.phase === "starting" &&
+          status.tunnel?.processRunning === true &&
+          status.tunnel?.connected === false
+        ) {
+          expect(status.tunnel.lastError).toBeNull();
+          expect(status.tunnel.lastProblem).toBeNull();
+          observedPending = true;
+        }
+        if (status.phase === "running" && status.tunnel?.connected === true) {
+          expect(observedPending).toBe(true);
+          return;
+        }
       } catch {
         // Atomic status replacement may be between observations.
       }

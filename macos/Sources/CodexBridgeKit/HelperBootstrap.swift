@@ -488,6 +488,7 @@ public actor HelperBootstrap {
             hello.runtime.buildId == runtimeBuildID &&
             hello.capabilities.contains("setup.dotenv.atomic-apply") &&
             hello.capabilities.contains("setup.dotenv.repair-permissions") &&
+            hello.capabilities.contains("setup.discovery.import") &&
             hello.capabilities.contains("runtime.configure") &&
             hello.capabilities.contains("helper.prepare-shutdown")
     }

@@ -1,6 +1,7 @@
 import type { CodexBackendKind } from "./config.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
+import { backendSupports } from "./modelPolicy.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
 import type {
   CodexThreadContinueRequest,
@@ -26,29 +27,35 @@ const INTERNAL_BACKEND_ARGUMENT = "_bridgeBackendKind";
  * Codex.
  */
 export class CodexBackendRouter implements CodexUpstream {
+  accountRevision?: () => string;
   private readonly threadBackends = new Map<string, CodexBackendKind>();
+  private readonly workerBackends = new Map<string, CodexBackendKind>();
+  private readonly backends: ReadonlyMap<CodexBackendKind, CodexUpstream>;
 
   constructor(
     private readonly defaultBackend: CodexBackendKind,
-    private readonly mcpBackend: CodexUpstream,
-    private readonly appBackend: CodexUpstream
-  ) {}
+    mcpOrRegistry: CodexUpstream | ReadonlyMap<CodexBackendKind, CodexUpstream>,
+    appBackend?: CodexUpstream,
+    sdkBackend?: CodexUpstream
+  ) {
+    this.backends = "callTool" in mcpOrRegistry
+      ? new Map<CodexBackendKind, CodexUpstream>([["mcp-server", mcpOrRegistry],
+          ...(appBackend ? [["app-server", appBackend] as const] : []),
+          ...(sdkBackend ? [["codex-sdk", sdkBackend] as const] : [])])
+      : new Map(mcpOrRegistry);
+    if (!this.backends.has(defaultBackend)) throw new Error(`Codex backend ${defaultBackend} is not installed or enabled.`);
+  }
 
   bindThread(threadId: string, backendKind: CodexBackendKind): void {
     this.threadBackends.set(threadId, backendKind);
   }
 
   async listTools(): Promise<unknown> {
-    const [mcp, app] = await Promise.allSettled([
-      this.mcpBackend.listTools(),
-      this.appBackend.listTools()
-    ]);
+    const entries = [...this.backends];
+    const results = await Promise.allSettled(entries.map(([, backend]) => backend.listTools()));
     return {
       defaultBackend: this.defaultBackend,
-      backends: {
-        "mcp-server": settledValue(mcp),
-        "app-server": settledValue(app)
-      }
+      backends: Object.fromEntries(entries.map(([kind], index) => [kind, settledValue(results[index])]))
     };
   }
 
@@ -64,10 +71,15 @@ export class CodexBackendRouter implements CodexUpstream {
     return backend.listModels(backendKind);
   }
 
+  async readAccountSnapshot() {
+    return this.backend(this.defaultBackend === "mcp-server" ? "app-server" : this.defaultBackend).readAccountSnapshot?.() ?? null;
+  }
+
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
     // Account usage is exposed only by App Server and is independent of the
     // protocol selected for task execution.
-    return this.appBackend.readAccountRateLimits?.() ?? null;
+    const backend = this.backend(this.defaultBackend === "mcp-server" ? "app-server" : this.defaultBackend);
+    return backend.readAccountRateLimits?.() ?? null;
   }
 
   startThread(
@@ -79,10 +91,11 @@ export class CodexBackendRouter implements CodexUpstream {
       "codex",
       {
         prompt: input.prompt,
+        ...(input.backendKind === "codex-sdk" && input.contextId ? { _bridgeCodexContext: input.contextId } : {}),
         cwd: input.cwd,
         sandbox: input.sandbox,
         "approval-policy": input.approvalPolicy,
-        ...(input.backendKind === "app-server"
+        ...(backendSupports(input.backendKind, "supportsEphemeralThreads")
           ? { ephemeral: input.ephemeral === true }
           : {}),
         ...selectionArguments(input.selection, input.backendKind),
@@ -127,6 +140,7 @@ export class CodexBackendRouter implements CodexUpstream {
       { ...input, backendKind: kind },
       onProgress,
       (assignment) => {
+        this.workerBackends.set(assignment.workerId, kind);
         if (assignment.threadId) this.threadBackends.set(assignment.threadId, kind);
         onAssigned?.(assignment);
       }
@@ -157,7 +171,7 @@ export class CodexBackendRouter implements CodexUpstream {
     backendKind?: CodexBackendKind
   ): Promise<CodexBackgroundTerminal[]> {
     const kind = backendKind || this.threadBackends.get(threadId);
-    if (!kind || kind !== "app-server") return [];
+    if (!kind || !this.supports(kind, "supportsBackgroundTerminals")) return [];
     const backend = this.backend(kind);
     return backend.listBackgroundTerminals
       ? backend.listBackgroundTerminals(threadId, kind)
@@ -169,7 +183,7 @@ export class CodexBackendRouter implements CodexUpstream {
     backendKind?: CodexBackendKind
   ): Promise<CodexBackgroundTerminal[] | null> {
     const kind = backendKind || this.threadBackends.get(threadId);
-    if (!kind || kind !== "app-server") return null;
+    if (!kind || !this.supports(kind, "supportsBackgroundTerminals")) return null;
     const backend = this.backend(kind);
     return backend.listLoadedBackgroundTerminals
       ? backend.listLoadedBackgroundTerminals(threadId, kind)
@@ -182,7 +196,7 @@ export class CodexBackendRouter implements CodexUpstream {
     backendKind?: CodexBackendKind
   ): Promise<{ terminated: boolean }> {
     const kind = backendKind || this.threadBackends.get(threadId);
-    if (kind !== "app-server") {
+    if (!kind || !this.supports(kind, "supportsBackgroundTerminals")) {
       throw new Error("Background terminal control is available only for Codex App Server threads.");
     }
     const backend = this.backend(kind);
@@ -242,6 +256,7 @@ export class CodexBackendRouter implements CodexUpstream {
       forwarded,
       onProgress,
       (assignment) => {
+        this.workerBackends.set(assignment.workerId, kind);
         if (assignment.threadId) this.threadBackends.set(assignment.threadId, assignment.backendKind);
         onAssigned?.(assignment);
       }
@@ -267,30 +282,41 @@ export class CodexBackendRouter implements CodexUpstream {
     interactionId: string,
     response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
   ): Promise<void> {
-    if (!this.appBackend.respondToInteraction) throw new Error("App Server interaction handling is unavailable.");
-    await this.appBackend.respondToInteraction(interactionId, response);
+    const workerId = interactionId.split(":")[0];
+    const kind = this.workerBackends.get(workerId);
+    if (!kind) throw new Error("The interaction's exact worker is no longer available.");
+    const backend = this.backend(kind);
+    if (!backend.respondToInteraction) throw new Error("Interaction handling is unavailable for this backend.");
+    await backend.respondToInteraction(interactionId, response);
   }
 
   async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
     const kind = this.threadBackends.get(threadId);
-    if (kind !== "app-server" || !this.appBackend.steerThread) {
+    if (!kind || !this.supports(kind, "supportsSteering") || !this.backend(kind).steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
-    return this.appBackend.steerThread(threadId, prompt);
+    return this.backend(kind).steerThread!(threadId, prompt);
   }
 
   canSteerThread(threadId: string): boolean {
-    return this.threadBackends.get(threadId) === "app-server" &&
-      this.appBackend.canSteerThread?.(threadId) === true;
+    const kind = this.threadBackends.get(threadId);
+    return !!kind && this.supports(kind, "supportsSteering") && this.backend(kind).canSteerThread?.(threadId) === true;
   }
 
   async close(): Promise<void> {
     this.threadBackends.clear();
-    await Promise.allSettled([this.mcpBackend.close(), this.appBackend.close()]);
+    this.workerBackends.clear();
+    await Promise.allSettled([...this.backends.values()].map(backend => backend.close()));
   }
 
   private backend(kind: CodexBackendKind): CodexUpstream {
-    return kind === "app-server" ? this.appBackend : this.mcpBackend;
+    const backend = this.backends.get(kind);
+    if (!backend) throw new Error(`Codex backend ${kind} is not installed or enabled. The thread was not moved to another backend.`);
+    return backend;
+  }
+
+  private supports(kind: CodexBackendKind, feature: Parameters<typeof backendSupports>[1]): boolean {
+    return this.capabilities(kind)[feature] ?? backendSupports(kind, feature);
   }
 }
 
@@ -299,7 +325,7 @@ export function backendRoutingArgument(backendKind: CodexBackendKind): Record<st
 }
 
 function readBackendKind(value: unknown): CodexBackendKind | undefined {
-  return value === "mcp-server" || value === "app-server" ? value : undefined;
+  return value === "mcp-server" || value === "app-server" || value === "codex-sdk" ? value : undefined;
 }
 
 function resultThreadId(result: ToolResult): string | undefined {
@@ -326,14 +352,14 @@ function selectionArguments(
         ? { service_tier: selection.serviceTier }
         : {})
     },
-    ...(backendKind === "app-server" && selection.serviceTier
+    ...(backendKind !== "mcp-server" && selection.serviceTier
       ? { serviceTier: selection.serviceTier }
       : {})
   };
 }
 
 function defaultCapabilities(kind: CodexBackendKind): BackendCapabilities {
-  return kind === "app-server"
+  return kind !== "mcp-server"
     ? {
         selectionScope: "turn",
         supportsModelOverrideOnContinue: true,

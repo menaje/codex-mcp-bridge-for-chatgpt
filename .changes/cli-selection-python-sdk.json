@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Add user-owned CLI selection and bridge-managed runtime lifecycle with an optional pinned Python SDK backend.",
+  "breaking": false,
+  "migration": null
+}

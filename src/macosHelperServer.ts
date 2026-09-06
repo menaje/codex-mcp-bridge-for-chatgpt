@@ -1,4 +1,6 @@
+import { CodexService } from "./codexService.js";
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import {
   existsSync,
   lstatSync,
@@ -37,7 +39,16 @@ import {
   type BridgeCompanionServer
 } from "./companionServer.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { atomicRuntimeJson, CodexRuntimeManager, withRuntimeLock, type CliRuntimeSnapshot } from "./codexRuntime.js";
+import { configureSdkAuth, readSdkAuthPolicy, readSdkAuthStatus, sdkEnvironment,
+  sdkLoginCommand, sdkRoot, readInstalledSdkLock, type SdkAuthStatus } from "./sdkRuntime.js";
 import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
+import {
+  discoverTunnelSetup,
+  resolveTunnelSetupCandidate,
+  type TunnelSetupDiscovery,
+  type TunnelSetupDiscoveryOptions
+} from "./tunnelSetupDiscovery.js";
 
 export const MACOS_HELPER_PROTOCOL_NAME = "codex-mcp-bridge-macos-helper";
 export const MACOS_HELPER_PROTOCOL_VERSION = 2;
@@ -79,6 +90,8 @@ const helperRequestSchema = z.strictObject({
     "helper.hello",
     "helper.status",
     "helper.prepare-shutdown",
+    "setup.discover",
+    "setup.import",
     "setup.apply",
     "setup.repair-permissions",
     "auth.status",
@@ -87,6 +100,8 @@ const helperRequestSchema = z.strictObject({
     "runtime.stop",
     "runtime.restart",
     "runtime.configure",
+    "codex.runtime",
+    "codex.sdk-auth",
     "runtime.repair",
     "runtime.logs"
   ]),
@@ -100,6 +115,12 @@ const setupApplyParamsSchema = z.strictObject({
   timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
     .default(DEFAULT_DRAIN_TIMEOUT_MS)
 });
+const setupImportParamsSchema = z.strictObject({
+  candidateId: z.string().regex(/^setup_[a-f0-9]{24}$/),
+  mode: z.enum(["drain", "force"]).default("drain"),
+  timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
+    .default(DEFAULT_DRAIN_TIMEOUT_MS)
+});
 const stopParamsSchema = z.strictObject({
   mode: z.enum(["drain", "force"]).default("drain"),
   timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
@@ -107,7 +128,7 @@ const stopParamsSchema = z.strictObject({
 });
 const restartParamsSchema = stopParamsSchema;
 const runtimeConfigureParamsSchema = z.strictObject({
-  defaultBackend: z.enum(["app-server", "mcp-server"]),
+  defaultBackend: z.enum(["app-server", "mcp-server", "codex-sdk"]),
   maximumAccess: z.enum(["read-only", "workspace-write", "full-access"]),
   mode: z.enum(["drain", "force"]).default("drain"),
   timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
@@ -116,6 +137,22 @@ const runtimeConfigureParamsSchema = z.strictObject({
 const logsParamsSchema = z.strictObject({
   limit: z.number().int().min(1).max(HELPER_LOG_LIMIT).default(100)
 });
+const codexRuntimeParamsSchema = z.strictObject({
+  kind: z.enum(["cli", "sdk"]).optional(),
+  includeAccount: z.boolean().optional(),
+  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences", "restore-backend"]),
+  selectionId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
+  version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  billing: z.object({ adminKey: z.string().max(32768), organizationId: z.string().max(164), projectId: z.string().max(165).nullable() }).optional(),
+  preferences: z.strictObject({
+    pinnedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
+    skippedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
+    notifications: z.boolean().optional()
+  }).optional()
+});
+export type CodexRuntimeAction = z.infer<typeof codexRuntimeParamsSchema>;
+const sdkAuthParamsSchema = z.strictObject({ authMode: z.enum(["chatgpt", "api-key"]),
+  confirmApiBilling: z.boolean().optional(), apiKey: z.string().max(32768).optional() });
 const companionHelloSchema = z.object({
   protocol: z.object({
     name: z.string(),
@@ -141,6 +178,11 @@ export type MacOSHelperLogEntry = {
   message: string;
 };
 
+export type StatusProblem = {
+  code: string;
+  arguments: Record<string, string>;
+};
+
 export type MacOSHelperStatus = {
   kind: "helper-status";
   generatedAt: string;
@@ -149,8 +191,10 @@ export type MacOSHelperStatus = {
   startedAt: string | null;
   lastExit: { at: string; code: number | null; signal: string | null } | null;
   lastError: string | null;
+  lastProblem: StatusProblem | null;
   restartAttempt: number;
   configuration: RuntimeEnvStatus;
+  codexRuntime?: CliRuntimeSnapshot;
   bridge: {
     socketPath: string;
     connected: boolean;
@@ -171,6 +215,7 @@ export type MacOSHelperStatus = {
     connected: boolean;
     lastCheckedAt: string | null;
     lastError: string | null;
+    lastProblem: StatusProblem | null;
   };
 };
 
@@ -178,14 +223,29 @@ export type CodexLoginStatus = {
   installed: boolean;
   authenticated: boolean;
   summary: string;
+  requestedAuthMode?: "chatgpt" | "api-key";
+  resolvedAuthMode?: "chatgpt" | "api-key" | null;
 };
 
 export type MacOSHelperController = {
+  configureSdkAuth?(request: z.infer<typeof sdkAuthParamsSchema>): Promise<SdkAuthStatus>;
+  codexRuntime?(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot>;
   snapshot(): Promise<MacOSHelperStatus>;
+  discoverSetup(): Promise<TunnelSetupDiscovery>;
+  importSetup(values: {
+    candidateId: string;
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<{
+    configuration: RuntimeEnvStatus;
+    status: MacOSHelperStatus;
+    restarted: boolean;
+    rolledBack: false;
+  }>;
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
-    defaultBackend?: "app-server" | "mcp-server";
+    defaultBackend?: "app-server" | "mcp-server" | "codex-sdk";
     maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
@@ -217,9 +277,15 @@ export type MacOSBridgeSupervisorOptions = {
   registeredProjectRoots?: () => string[] | Promise<string[]>;
   autoRestart?: boolean;
   startTimeoutMs?: number;
+  setupDiscoveryEnvironment?: NodeJS.ProcessEnv;
+  setupDiscoveryProfileDirectory?: string;
+  setupDiscoveryHomeDirectory?: string;
+  codexRuntimeManager?: CodexRuntimeManager;
 };
 
 export class MacOSBridgeSupervisor implements MacOSHelperController {
+  private codexService?: CodexService;
+  private sdkAuthentication?: { command: string; mode: string; at: number; status: SdkAuthStatus };
   private readonly bridgeRoot: string;
   private readonly envFile: string;
   private readonly bridgeSocketPath: string;
@@ -232,6 +298,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private readonly permissionRepairProjectRoots: () => string[] | Promise<string[]>;
   private readonly autoRestart: boolean;
   private readonly startTimeoutMs: number;
+  private readonly setupDiscoveryEnvironment: NodeJS.ProcessEnv;
+  private readonly setupDiscoveryProfileDirectory: string | undefined;
+  private readonly setupDiscoveryHomeDirectory: string | undefined;
   private child: ChildProcess | undefined;
   private managedPid: number | undefined;
   private phase: MacOSRuntimePhase = "stopped";
@@ -247,10 +316,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: MacOSHelperLogEntry[] = [];
   private operation: Promise<unknown> = Promise.resolve();
+  private cliManager?: CodexRuntimeManager;
+  private sdkManager?: CodexRuntimeManager;
+  private cliInstallation?: Promise<unknown>;
+  private cliUpdateCheck?: Promise<unknown>;
 
   constructor(options: MacOSBridgeSupervisorOptions) {
     this.bridgeRoot = path.resolve(options.bridgeRoot);
     this.envFile = path.resolve(options.envFile || defaultRuntimeEnvFile());
+    this.cliManager = options.codexRuntimeManager;
     this.bridgeSocketPath = path.resolve(options.bridgeSocketPath);
     this.launcherPath = path.resolve(
       options.launcherPath || path.join(this.bridgeRoot, "scripts", "start-codex-mcp-bridge.mjs")
@@ -278,6 +352,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     );
     this.autoRestart = options.autoRestart !== false;
     this.startTimeoutMs = options.startTimeoutMs || DEFAULT_START_TIMEOUT_MS;
+    this.setupDiscoveryEnvironment = options.setupDiscoveryEnvironment || process.env;
+    this.setupDiscoveryProfileDirectory = options.setupDiscoveryProfileDirectory;
+    this.setupDiscoveryHomeDirectory = options.setupDiscoveryHomeDirectory;
   }
 
   async snapshot(): Promise<MacOSHelperStatus> {
@@ -298,8 +375,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       startedAt: this.startedAt,
       lastExit: this.lastExit,
       lastError: this.lastError,
+      lastProblem: helperStatusProblem(this.lastError),
       restartAttempt: this.restartAttempt,
       configuration,
+      ...(this.cliManager ? { codexRuntime: await this.cliManager.snapshot() } : {}),
       bridge: {
         socketPath: this.bridgeSocketPath,
         connected: bridgeAdmission !== null,
@@ -315,10 +394,44 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     };
   }
 
+  async discoverSetup(): Promise<TunnelSetupDiscovery> {
+    return discoverTunnelSetup(this.setupDiscoveryOptions());
+  }
+
+  async importSetup(values: {
+    candidateId: string;
+    mode: "drain" | "force";
+    timeoutMs: number;
+  }): Promise<{
+    configuration: RuntimeEnvStatus;
+    status: MacOSHelperStatus;
+    restarted: boolean;
+    rolledBack: false;
+  }> {
+    const candidate = resolveTunnelSetupCandidate(
+      values.candidateId,
+      this.setupDiscoveryOptions()
+    );
+    if (!candidate) {
+      throw new Error("SETUP_CANDIDATE_UNAVAILABLE: Refresh the discovered settings and try again.");
+    }
+    if (!candidate.apiKey && !this.currentRuntimeApiKeyAvailable()) {
+      throw new Error(
+        "SETUP_API_KEY_UNAVAILABLE: The selected Tunnel ID was found, but its Runtime API key is unavailable."
+      );
+    }
+    return this.applyConfiguration({
+      ...(candidate.apiKey ? { apiKey: candidate.apiKey } : {}),
+      tunnelId: candidate.tunnelId,
+      mode: values.mode,
+      timeoutMs: values.timeoutMs
+    });
+  }
+
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
-    defaultBackend?: "app-server" | "mcp-server";
+    defaultBackend?: "app-server" | "mcp-server" | "codex-sdk";
     maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
@@ -335,6 +448,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         await this.adoptExistingRuntime();
       }
       const prepared = prepareRuntimeEnvUpdate(this.envFile, values);
+      if (values.defaultBackend === "codex-sdk") {
+        const previous = (await this.configurationStatus()).operatorConfiguration.defaultBackend;
+        if (previous !== "codex-sdk") await atomicRuntimeJson(path.join(sdkRoot(commandEnvironment(this.envFile)), "previous-backend.json"), { backend: previous });
+      }
       const wasRunning = this.isManagedRuntimeRunning();
       if (!prepared.changed) {
         const status = wasRunning
@@ -349,7 +466,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
 
       if (wasRunning) {
-        await this.stopUnlocked({ mode: values.mode, timeoutMs: values.timeoutMs });
+        if (values.defaultBackend) await this.assertRuntimeChangeSafe();
+        await this.stopUnlocked({ mode: values.mode, timeoutMs: values.timeoutMs, protectMemory: !!values.defaultBackend });
       }
       let committed = false;
       try {
@@ -388,11 +506,44 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       await this.assertEnvironmentLocation();
       return status;
     } catch (error) {
+      const issue = safeErrorMessage(error);
       return {
         ...status,
         valid: false,
-        issue: safeErrorMessage(error)
+        issue,
+        issueProblem: runtimeConfigurationProblem(issue)
       };
+    }
+  }
+
+  private setupDiscoveryOptions(): TunnelSetupDiscoveryOptions {
+    let runtimeValues: Record<string, string> = {};
+    try {
+      runtimeValues = readRuntimeEnvSubset(this.envFile, [
+        "CONTROL_PLANE_API_KEY",
+        "CONTROL_PLANE_TUNNEL_ID"
+      ]);
+    } catch {
+      // Permission repair remains explicit. Discovery never weakens the dotenv boundary.
+    }
+    return {
+      environment: this.setupDiscoveryEnvironment,
+      runtimeValues,
+      ...(this.setupDiscoveryProfileDirectory
+        ? { profileDirectory: this.setupDiscoveryProfileDirectory }
+        : {}),
+      ...(this.setupDiscoveryHomeDirectory
+        ? { homeDirectory: this.setupDiscoveryHomeDirectory }
+        : {})
+    };
+  }
+
+  private currentRuntimeApiKeyAvailable(): boolean {
+    try {
+      const values = readRuntimeEnvSubset(this.envFile, ["CONTROL_PLANE_API_KEY"]);
+      return /^sk-(?!admin-)\S{16,}$/i.test(values.CONTROL_PLANE_API_KEY || "");
+    } catch {
+      return false;
     }
   }
 
@@ -447,31 +598,95 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     });
   }
 
-  async authStatus(): Promise<CodexLoginStatus> {
-    const environment = commandEnvironment(this.envFile);
-    const result = await runCommandStatus(
-      resolveCommand("codex", environment),
-      ["login", "status"],
-      environment,
-      15_000
-    );
-    if (!result.installed) {
-      return {
-        installed: false,
-        authenticated: false,
-        summary: "Codex CLI is not installed or is not available in PATH."
-      };
-    }
-    return {
-      installed: true,
-      authenticated: result.exitCode === 0,
-      summary: result.exitCode === 0
-        ? "Codex login is available."
-        : "Codex login is required."
-    };
+  private selectedCliManager(): CodexRuntimeManager {
+    return this.cliManager ||= new CodexRuntimeManager({ environment: commandEnvironment(this.envFile) });
   }
 
-  startLogin(): Promise<{ started: true }> {
+  private selectedCodexService(): CodexService {
+    return this.codexService ||= new CodexService(commandEnvironment(this.envFile), this.selectedCliManager());
+  }
+
+  async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
+    const manager = request.kind === "sdk" ? this.sdkManager ||= this.selectedCodexService().sdk : this.selectedCliManager();
+    switch (request.action) {
+      case "status": {
+        const base = await manager.snapshot();
+        const service = this.selectedCodexService(), kind = request.kind === "sdk" ? "codex-sdk" : "app-server";
+        const snapshot = { ...base, billing: await service.billing.configuration(), account: base.selection?.available
+          ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null };
+        if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
+            (!snapshot.checkedAt || Date.now() - Date.parse(snapshot.checkedAt) > 24 * 60 * 60_000)) {
+          this.cliUpdateCheck = manager.checkUpdates().catch(() => undefined).finally(() => { this.cliUpdateCheck = undefined; });
+        }
+        const bundle = request.kind === "sdk" && snapshot.selection ? await readInstalledSdkLock(snapshot.selection.command).catch(() => null) : null;
+        const sdkAuth = request.kind === "sdk" && snapshot.selection?.available
+          ? request.includeAccount !== false ? await this.selectedSdkAuth()
+            : this.sdkAuthentication?.command === snapshot.selection.command && this.sdkAuthentication.mode === service.cacheRevision() ? this.sdkAuthentication.status : undefined
+          : undefined;
+        return request.kind === "sdk" ? { ...snapshot, ...(bundle ? { bundle: { python: bundle.python, sdk: bundle.sdk, codex: bundle.codexRuntime, channel: bundle.channel } } : {}),
+          requestedAuthMode: (await readSdkAuthPolicy(commandEnvironment(this.envFile))).requestedAuthMode,
+          ...(sdkAuth ? { auth: sdkAuth } : {}),
+          sessionStorage: await this.selectedCodexService().sdkContext().then(context => ({ visibleInCodexApp: context.visibleInCodexApp, persistent: context.persistent })),
+          previousBackend: await this.previousSdkBackend() } : snapshot;
+      }
+      case "configure-billing": {
+        if (!request.billing) throw new Error("CODEX_BILLING_SETTINGS_REQUIRED");
+        const billing = this.selectedCodexService().billing;
+        assertRuntimeEnvOutsideProjectRoots(billing.file, await this.registeredProjectRoots());
+        await billing.configure(request.billing);
+        return { ...await manager.snapshot(), billing: await billing.snapshot() };
+      }
+      case "remove-billing": {
+        await this.selectedCodexService().billing.remove();
+        return { ...await manager.snapshot(), billing: await this.selectedCodexService().billing.snapshot() };
+      }
+      case "login": await this.startLogin(request.kind); return manager.snapshot();
+      case "select":
+        if (!request.selectionId) throw new Error("CODEX_SELECTION_REQUIRED: Choose an installation.");
+        return manager.select(request.selectionId);
+      case "install": case "update": case "reinstall": case "retry": {
+        if (this.cliInstallation) throw new Error("CODEX_OPERATION_BUSY: Installation is already in progress.");
+        if (!(await manager.snapshot()).actions[request.action]) throw new Error("CODEX_ACTION_UNAVAILABLE: This action is not currently applicable.");
+        this.cliInstallation = (request.action === "retry" ? manager.retry() : manager.install(request.action, request.version))
+          .catch(() => { this.appendLog("helper", "Codex installation failed. The previous installation was preserved."); })
+          .finally(() => { this.cliInstallation = undefined; });
+        // Installation continues independently of this local UI request; status survives re-entry.
+        return manager.snapshot();
+      }
+      case "check-updates": return manager.checkUpdates();
+      case "preferences": return manager.setPreferences(request.preferences || {});
+      case "rollback": return manager.rollback();
+      case "cleanup": return manager.cleanup();
+      case "remove": return manager.remove();
+      case "apply-pending": await manager.applyPending(); return manager.snapshot();
+      case "restore-backend": {
+        const previous = await this.previousSdkBackend();
+        if (!previous) throw new Error("CODEX_PREVIOUS_BACKEND_UNKNOWN: Choose the execution backend in server settings.");
+        const configuration = await this.configurationStatus();
+        await this.applyConfiguration({ defaultBackend: previous, maximumAccess: configuration.operatorConfiguration.maximumAccess,
+          mode: "drain", timeoutMs: DEFAULT_DRAIN_TIMEOUT_MS });
+        return manager.snapshot();
+      }
+    }
+  }
+
+  async authStatus(): Promise<CodexLoginStatus> {
+    const environment = commandEnvironment(this.envFile);
+    if ((await this.configurationStatus()).operatorConfiguration.defaultBackend === "codex-sdk") {
+      const selected = await (this.sdkManager ||= this.selectedCodexService().sdk).resolve().catch(() => null);
+      if (!selected) return { installed: false, authenticated: false, summary: "Install the Codex SDK environment in bridge settings." };
+      const status = await this.selectedSdkAuth();
+      return { installed: true, ...status, summary: status.authenticated ? "The selected SDK authentication is available." : "The selected SDK authentication requires local setup." };
+    }
+    const selected = await this.selectedCliManager().resolve(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX).catch(() => null);
+    if (!selected) return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
+    const account = await this.selectedCodexService().readAccount("app-server");
+    return { installed: true, authenticated: account?.authenticated === true,
+      resolvedAuthMode: account && account.authMode !== "unknown" ? account.authMode : null,
+      summary: account?.authenticated ? "Codex login is available." : "Codex login is required." };
+  }
+
+  startLogin(kind?: "cli" | "sdk"): Promise<{ started: true }> {
     return this.exclusive(async () => {
       if (isChildRunning(this.loginProcess)) {
         this.appendLog("helper", "The existing Codex browser login is still in progress.");
@@ -479,13 +694,23 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
 
       const environment = commandEnvironment(this.envFile);
-      const child = spawn(resolveCommand("codex", environment), ["login"], {
+      const useSdk = kind ? kind === "sdk" : (await this.configurationStatus()).operatorConfiguration.defaultBackend === "codex-sdk";
+      if (useSdk && (await readSdkAuthPolicy(environment)).requestedAuthMode !== "chatgpt") throw new Error("SDK_API_LOGIN_LOCAL_ONLY: Set the API key in local SDK settings.");
+      const manager = useSdk ? this.sdkManager ||= this.selectedCodexService().sdk : this.selectedCliManager();
+      const { selection: selected, release } = await manager.acquire(useSdk ? undefined : environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
+      let command: string;
+      try { command = useSdk ? await sdkLoginCommand(selected.command, environment) : selected.command; }
+      catch (error) { await release(); throw error; }
+      const sdkContext = useSdk ? await this.selectedCodexService().sdkContext() : null;
+      if (sdkContext && !sdkContext.visibleInCodexApp) assertRuntimeEnvOutsideProjectRoots(path.join(sdkContext.home, "auth.json"), await this.registeredProjectRoots());
+      const child = spawn(command, ["login"], {
         detached: true,
-        env: environment,
+        env: sdkContext ? { ...sdkEnvironment(environment), CODEX_HOME: sdkContext.home } : environment,
         stdio: "ignore"
       });
       this.loginProcess = child;
       child.once("exit", () => {
+        void release();
         if (this.loginProcess === child) this.loginProcess = undefined;
       });
       try {
@@ -497,6 +722,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           child.once("error", reject);
         });
       } catch (error) {
+        await release();
         if (this.loginProcess === child) this.loginProcess = undefined;
         this.lastError = safeErrorMessage(error);
         this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
@@ -507,8 +733,42 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     });
   }
 
+  private async selectedSdkAuth(): Promise<SdkAuthStatus> {
+    const environment = commandEnvironment(this.envFile);
+    return withRuntimeLock(sdkRoot(environment), "auth", async () => {
+      const manager = this.sdkManager ||= this.selectedCodexService().sdk;
+      const { selection, release } = await manager.acquire();
+      try {
+        const context = await this.selectedCodexService().sdkContext();
+        const mode = this.selectedCodexService().cacheRevision();
+        const cached = this.sdkAuthentication;
+        if (cached?.command === selection.command && cached.mode === mode && Date.now() - cached.at < 30_000) return cached.status;
+        const status = await readSdkAuthStatus(selection.command, environment, context.home, context.authMode);
+        this.sdkAuthentication = { command: selection.command, mode, at: Date.now(), status };
+        return status;
+      } finally { await release(); }
+    });
+  }
+
   start(): Promise<MacOSHelperStatus> {
     return this.exclusive(() => this.startUnlocked(true));
+  }
+
+  configureSdkAuth(request: z.infer<typeof sdkAuthParamsSchema>): Promise<SdkAuthStatus> {
+    return this.exclusive(async () => {
+      const environment = commandEnvironment(this.envFile);
+      assertRuntimeEnvOutsideProjectRoots(path.join(sdkRoot(environment), "profiles", "api-key", "auth.json"), await this.registeredProjectRoots());
+      await configureSdkAuth(request, environment);
+      this.sdkAuthentication = undefined;
+      return this.selectedSdkAuth();
+    });
+  }
+
+  private async previousSdkBackend(): Promise<"app-server" | "mcp-server" | null> {
+    try {
+      const value = JSON.parse(await readFile(path.join(sdkRoot(commandEnvironment(this.envFile)), "previous-backend.json"), "utf8"));
+      return value.backend === "app-server" || value.backend === "mcp-server" ? value.backend : null;
+    } catch { return null; }
   }
 
   prepareShutdown(options: {
@@ -524,9 +784,23 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   restart(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
-      await this.stopUnlocked(options);
+      const cli = await this.selectedCliManager().snapshot();
+      const sdk = await (this.sdkManager ||= this.selectedCodexService().sdk).snapshot();
+      const protectMemory = !!(cli.operation?.phase === "pending" || cli.pendingSelection || sdk.operation?.phase === "pending");
+      if (protectMemory) {
+        await this.assertRuntimeChangeSafe();
+      }
+      await this.stopUnlocked({ ...options, protectMemory });
       return this.startUnlocked(true);
     });
+  }
+
+  private async assertRuntimeChangeSafe(): Promise<void> {
+    if (!this.isManagedRuntimeRunning()) return;
+    const impact = await readBridgeAdmission(this.bridgeSocketPath);
+    if (!impact) throw new Error("CODEX_APPLY_PENDING: The running bridge could not be inspected. Its environment was preserved.");
+    if ((impact.memoryOnlyThreads || 0) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Archive memory-only agents before applying a runtime change. The current environment was preserved.");
+    if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
   }
 
   repair(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
@@ -615,6 +889,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       this.restartAttempt = 0;
     }
     if (await this.adoptExistingRuntime()) return this.snapshot();
+
+    await this.selectedCliManager().applyPending();
+    await (this.sdkManager ||= this.selectedCodexService().sdk).applyPending();
 
     await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
@@ -711,6 +988,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private async stopUnlocked(options: {
     mode: "drain" | "force";
     timeoutMs: number;
+    protectMemory?: boolean;
   }): Promise<MacOSHelperStatus> {
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
@@ -770,6 +1048,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           { inspectBackgroundProcesses: true },
           15_000
         );
+        if (options.protectMemory && ((impact.memoryOnlyThreads || 0) > 0 || (impact.pendingInteractions || 0) > 0)) {
+          throw new Error("CODEX_APPLY_PENDING: Memory-only agents or pending interactions still require the running environment. Archive or resolve them before applying this change.");
+        }
         if (
           impact.backgroundProcessState !== "confirmed" ||
           impact.backgroundProcessUnknownAgents > 0
@@ -783,9 +1064,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             `BACKGROUND_PROCESSES_ACTIVE: ${impact.backgroundProcesses} background process(es) across ${impact.backgroundProcessAgents} agent(s) would be interrupted. Use force only after reviewing the global status card.`
           );
         }
+      } else if (options.protectMemory) {
+        await this.assertRuntimeChangeSafe();
       }
     } catch (error) {
-      if (options.mode === "drain") {
+      if (options.mode === "drain" || options.protectMemory) {
         const failureMessage = safeErrorMessage(error);
         this.lastError = failureMessage;
         this.appendLog("helper", `Graceful runtime stop was blocked: ${failureMessage}`);
@@ -1141,6 +1424,7 @@ async function dispatchHelperLine(
             "runtime.repair-profile",
             "runtime.logs.redacted",
             "helper.prepare-shutdown",
+            "setup.discovery.import",
             "setup.dotenv.atomic-apply",
             "setup.dotenv.repair-permissions",
             "auth.codex-browser-login"
@@ -1154,6 +1438,13 @@ async function dispatchHelperLine(
         break;
       case "helper.prepare-shutdown":
         result = await controller.prepareShutdown(stopParamsSchema.parse(request.params || {}));
+        break;
+      case "setup.discover":
+        emptyParamsSchema.parse(request.params || {});
+        result = await controller.discoverSetup();
+        break;
+      case "setup.import":
+        result = await controller.importSetup(setupImportParamsSchema.parse(request.params || {}));
         break;
       case "setup.apply":
         result = await controller.applyConfiguration(setupApplyParamsSchema.parse(request.params || {}));
@@ -1185,6 +1476,14 @@ async function dispatchHelperLine(
           runtimeConfigureParamsSchema.parse(request.params || {})
         );
         break;
+      case "codex.runtime":
+        if (!controller.codexRuntime) throw new Error("Codex runtime management is unavailable in this helper.");
+        result = await controller.codexRuntime(codexRuntimeParamsSchema.parse(request.params || {}));
+        break;
+      case "codex.sdk-auth":
+        if (!controller.configureSdkAuth) throw new Error("SDK authentication management is unavailable in this helper.");
+        result = await controller.configureSdkAuth(sdkAuthParamsSchema.parse(request.params || {}));
+        break;
       case "runtime.repair":
         result = await controller.repair(restartParamsSchema.parse(request.params || {}));
         break;
@@ -1204,6 +1503,8 @@ type RuntimeAdmissionSnapshot = {
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
+  pendingInteractions?: number;
+  memoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;
@@ -1225,9 +1526,8 @@ function normalizeTunnelStatus(
     processRunning: false,
     connected: false,
     lastCheckedAt: null,
-    lastError: childPid === null
-      ? null
-      : "Managed tunnel status is not available yet."
+    lastError: null,
+    lastProblem: null
   };
   if (!runtime) return unavailable;
   const belongsToChild = childPid !== null && runtime.launcherPid === childPid;
@@ -1254,8 +1554,86 @@ function normalizeTunnelStatus(
             ? "Tunnel status belongs to a different runtime build."
             : !identityMatches
               ? "Tunnel status belongs to a different managed profile or transport."
-              : "Tunnel status is stale."
+              : "Tunnel status is stale.",
+    lastProblem: current
+      ? tunnel.lastProblem ?? tunnelStatusProblem(tunnel.lastError)
+      : childPid === null
+        ? null
+        : !belongsToChild
+          ? statusProblem("tunnel-status-previous-launcher")
+          : !buildMatches
+            ? statusProblem("tunnel-status-different-build")
+            : !identityMatches
+              ? statusProblem("tunnel-status-different-profile")
+              : statusProblem("tunnel-status-stale")
   };
+}
+
+function statusProblem(
+  code: string,
+  arguments_: Record<string, string> = {}
+): StatusProblem {
+  return { code, arguments: arguments_ };
+}
+
+function normalizedProblemCode(value: string): string {
+  return value.trim().toLowerCase().replaceAll("_", "-");
+}
+
+function stableProblemCode(message: string): string | undefined {
+  const prefixed = message.match(/^([A-Z][A-Z0-9_]{2,79})(?::|$)/)?.[1];
+  return prefixed ? normalizedProblemCode(prefixed) : undefined;
+}
+
+function helperStatusProblem(message: string | null): StatusProblem | null {
+  if (!message) return null;
+  const stableCode = stableProblemCode(message);
+  if (stableCode) return statusProblem(stableCode);
+  const exitedPid = message.match(/^Managed runtime pid (\d+) exited unexpectedly\./)?.[1];
+  if (exitedPid) return statusProblem("managed-runtime-exited", { pid: exitedPid });
+  if (message.startsWith("Managed runtime exited unexpectedly")) {
+    return statusProblem("managed-runtime-exited");
+  }
+  if (message.includes("before the bridge and tunnel became ready")) {
+    return statusProblem("runtime-readiness-exited");
+  }
+  if (message.includes("Timed out waiting for the bridge companion")) {
+    return statusProblem("runtime-readiness-timeout");
+  }
+  return statusProblem("helper-operation-failed");
+}
+
+function tunnelStatusProblem(message: string | null | undefined): StatusProblem | null {
+  if (!message) return null;
+  if (message === "Waiting for a successful control-plane poll.") {
+    return statusProblem("tunnel-connection-pending");
+  }
+  if (message === "The tunnel-client process exited unexpectedly.") {
+    return statusProblem("tunnel-process-exited");
+  }
+  if (message === "The tunnel-client process is not running.") {
+    return statusProblem("tunnel-process-not-running");
+  }
+  if (message.startsWith("The tunnel readiness probe is failing")) {
+    return statusProblem("tunnel-readiness-probe-failed");
+  }
+  return statusProblem("tunnel-health-probe-failed");
+}
+
+function runtimeConfigurationProblem(message: string): StatusProblem {
+  if (message.includes("RUNTIME_ENV_PROJECT_CONFLICT")) {
+    return statusProblem("runtime-env-project-conflict");
+  }
+  if (message.includes("permissions are too broad")) {
+    return statusProblem("runtime-env-permissions-too-broad");
+  }
+  if (message.includes("regular, non-symlink") || message.includes("regular directory")) {
+    return statusProblem("runtime-env-not-regular");
+  }
+  if (message.includes("owned by the current user")) {
+    return statusProblem("runtime-env-owner-mismatch");
+  }
+  return statusProblem("runtime-env-invalid");
 }
 
 function helperError(
@@ -1662,6 +2040,7 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
     "CODEX_HOME",
+    "CODEX_MCP_BRIDGE_RUNTIME_HOME",
     "CODEX_MCP_BRIDGE_CODEX",
     "CODEX_GPT_BRIDGE_CODEX"
   ];

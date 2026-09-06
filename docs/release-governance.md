@@ -16,10 +16,10 @@ product. They never receive independent product versions.
 | Candidate provenance | `release.sourceVersion` | Suffix-free development version from which the target bump was calculated |
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
-| Manifest schema | `manifestVersion` (currently 3) | Release metadata schema compatibility |
+| Manifest schema | `manifestVersion` (currently 4) | Release metadata schema compatibility |
 | UI compatibility | UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer |
 | State compatibility | SQLite schema version (currently 12) | Local data migration axis |
-| Tool/runtime compatibility | Task input contract 2, helper protocol 2, companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
+| Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 
 `npm run release:check` checks the version mirrors, generated plugin and UI
@@ -114,7 +114,7 @@ None of these local metadata commands publishes a tag or GitHub release.
 | Fast | `npm run validate:fast` | manifest/mirror/UI drift, fragments, App Server schema lock |
 | Affected | `npm run validate:affected` | fast checks plus Node and/or Swift checks selected from changed paths |
 | Full integration | `npm run validate:full` | full Node build/tests, exact App Server schema, full Swift tests |
-| Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all four assets, npm archive, app/DMG structure, architecture, ad-hoc signatures, checksums |
+| Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all five assets, npm archive, both app/DMG structures, architectures, ad-hoc signatures, checksums |
 | Stable promotion | `npm run validate:stable`, the required Stable promotion gate, the main release workflow, and physical-Mac evidence | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
 
 A successful result applies only to the exact commit and inputs that produced
@@ -123,8 +123,8 @@ physical-Mac check, or ambiguous evidence leaves the release on `HOLD`.
 
 ## RC-to-stable payload boundary
 
-Stable publication downloads the two actual source-RC artifacts and compares
-them with the newly built stable artifacts. The npm archives and DMGs are
+Stable publication downloads the three actual source-RC payload artifacts and
+compares them with the newly built stable artifacts. The npm archive and both DMGs are
 unpacked. Version strings, release stage/channel/provenance, build identity,
 `CFBundleVersion`, `CFBundleShortVersionString`, ad-hoc signatures, and DMG
 container details are the enumerated normalization boundary.
@@ -132,9 +132,9 @@ container details are the enumerated normalization boundary.
 Everything else participates in a sorted SHA-256 tree digest, including file
 paths, modes, symlinks, JavaScript, the native executable, UI resources, public
 contracts, runtime scripts, and production dependencies. Any unclassified
-difference stops stable publication and requires another RC. The final four
-files still receive their own new checksums; payload evidence is workflow
-evidence and does not add a fifth public asset.
+difference stops stable publication and requires another RC. The four payload
+files receive entries in the aggregate checksum; payload evidence is workflow
+evidence and does not add a sixth public asset.
 
 ## GitHub Actions authority
 
@@ -164,6 +164,7 @@ The public asset set remains exactly:
 
 ```text
 Codex-MCP-Bridge-for-ChatGPT-<version>-macOS-arm64-unnotarized.dmg
+Codex-MCP-Bridge-for-ChatGPT-<version>-macOS-x64-unnotarized.dmg
 codex-mcp-bridge-for-chatgpt-<version>.tgz
 codex-mcp-bridge-for-chatgpt-<version>.tgz.sha256
 SHA256SUMS.txt

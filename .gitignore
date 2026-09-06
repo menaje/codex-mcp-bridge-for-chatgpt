@@ -2,7 +2,10 @@ node_modules/
 dist/
 coverage/
 output/
+release-assets/
 .playwright-cli/
+.playwright-mcp/
+.vscode/
 .env
 .env.*
 !.env.example
@@ -10,3 +13,6 @@ output/
 *.log
 macos/.build/
 macos/build/
+
+__pycache__/
+*.pyc

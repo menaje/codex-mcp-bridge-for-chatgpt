@@ -154,7 +154,7 @@ describe("CodexAppServerUpstreamPool", () => {
     try {
       await expect(pool.listModels()).rejects.toThrow(
         `Configured Codex executable ${JSON.stringify(FIXTURE)} reported version 0.144.0; ` +
-        `this bridge supports exactly Codex CLI ${SUPPORTED_CODEX_CLI_VERSION}`
+        `this bridge supports Codex CLI ${SUPPORTED_CODEX_CLI_VERSION}`
       );
     } finally {
       await pool.close();

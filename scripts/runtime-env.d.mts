@@ -7,10 +7,16 @@ export type RuntimeEnvStatus = {
   tunnelId: string | null;
   operatorConfiguration: RuntimeOperatorConfiguration;
   issue: string | null;
+  issueProblem: StatusProblem | null;
+};
+
+export type StatusProblem = {
+  code: string;
+  arguments: Record<string, string>;
 };
 
 export type RuntimeOperatorConfiguration = {
-  defaultBackend: "app-server" | "mcp-server";
+  defaultBackend: "app-server" | "mcp-server" | "codex-sdk";
   maximumAccess: "read-only" | "workspace-write" | "full-access";
 };
 

@@ -585,7 +585,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("function renderProjectGroups");
     expect(DASHBOARD_CARD_HTML).not.toContain('node("section","conversation-group")');
     expect(DASHBOARD_CARD_HTML).toContain('node("a","conversation-link"');
-    expect(DASHBOARD_CARD_HTML).toContain(
+    expect(DASHBOARD_CARD_HTML).not.toContain(
       'node("a","conversation-link codex-session-link"'
     );
     expect(DASHBOARD_CARD_HTML).toContain('link.rel="noopener noreferrer"');
@@ -594,7 +594,8 @@ describe("human-facing UI localization", () => {
       "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
     );
     expect(DASHBOARD_CARD_HTML).toContain("safeConversationUrl(row.conversationUrl)");
-    expect(DASHBOARD_CARD_HTML).toContain("safeCodexThreadUrl(row.codexThreadUrl)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("safeCodexThreadUrl");
+    expect(DASHBOARD_CARD_HTML).not.toContain("row.codexThreadUrl");
     expect(DASHBOARD_CARD_HTML).not.toContain("const values=[row.sessionAlias,row.projectName]");
     expect(DASHBOARD_CARD_HTML).toContain("turn.durationMs");
     expect(DASHBOARD_CARD_HTML).toContain("lastRenderedAt");
@@ -618,7 +619,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("setInterval(");
     expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
     expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
-      .toEqual(["https://chatgpt.com", "codex://threads"]);
+      .toEqual(["https://chatgpt.com"]);
     expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.active"'))
       .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'));
     expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'))
@@ -1027,8 +1028,8 @@ describe("human-facing UI localization", () => {
       .toBe("이전 Activity");
   });
 
-  it("dispatches Dashboard deep links through the host and falls back on host failure", async () => {
-    const url = "codex://threads/41414141-4141-4141-8141-414141414141";
+  it("dispatches Dashboard conversation links through the host and falls back on host failure", async () => {
+    const url = "https://chatgpt.com/c/41414141-4141-4141-8141-414141414141";
     const preventDefault = vi.fn();
     const fallback = vi.fn();
     const openExternal = vi.fn().mockResolvedValue(undefined);

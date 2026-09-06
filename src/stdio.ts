@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
+import { createExecutionRuntime } from "./executionRuntime.js";
 import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { loadConfig } from "./config.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import path from "node:path";
 import {
   startBridgeCompanionServer,
   type BridgeCompanionServer
 } from "./companionServer.js";
+import { RemoteCompanionManager } from "./remoteCompanionServer.js";
 import { createStdioBridgeRuntime } from "./stdioServer.js";
 import { BridgeStateStore } from "./stateStore.js";
-import { CodexUpstreamPool } from "./upstream.js";
-import { CodexBackendRouter } from "./upstreamRouter.js";
 
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Server";
@@ -27,15 +27,12 @@ const config = loadConfig({
 });
 const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
 const appServerLateResponses = new AppServerLateResponseJournal(stateStore);
-const upstream = new CodexBackendRouter(
-  config.defaultBackend,
-  new CodexUpstreamPool(config.codexCommand, config.upstreamPoolSize),
-  new CodexAppServerUpstreamPool(config.codexCommand, config.upstreamPoolSize, {
-    onLateResponse: (response) => appServerLateResponses.observe(response)
-  })
-);
+const upstream = createExecutionRuntime(config, {
+  onLateResponse: (response) => appServerLateResponses.observe(response)
+});
 const runtime = createStdioBridgeRuntime(config, upstream, { stateStore });
 let companionServer: BridgeCompanionServer | undefined;
+let remoteCompanion: RemoteCompanionManager | undefined;
 let shuttingDown = false;
 
 for (const warning of config.startupWarnings) console.error(`warning: ${warning}`);
@@ -49,9 +46,29 @@ async function main(): Promise<void> {
   await runtime.start();
   const companionSocketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET?.trim();
   if (companionSocketPath) {
+    const remoteStateFile = process.env.CODEX_MCP_BRIDGE_REMOTE_STATE_FILE?.trim() ||
+      path.join(path.dirname(config.stateDatabaseFile), "remote-management.json");
+    try {
+      remoteCompanion = new RemoteCompanionManager({
+        stateFile: remoteStateFile,
+        applicationService: runtime.applicationService
+      });
+      const remoteStatus = await remoteCompanion.start();
+      if (remoteStatus.enabled) {
+        console.error(
+          remoteStatus.listening
+            ? `remote companion ready at ${remoteStatus.endpoint}`
+            : `remote companion unavailable: ${remoteStatus.lastError || "unknown error"}`
+        );
+      }
+    } catch (error) {
+      remoteCompanion = undefined;
+      console.error(`remote companion unavailable: ${errorMessage(error)}`);
+    }
     companionServer = await startBridgeCompanionServer({
       socketPath: companionSocketPath,
-      applicationService: runtime.applicationService
+      applicationService: runtime.applicationService,
+      remoteManagement: remoteCompanion
     });
     console.error(`native companion ready at ${companionServer.socketPath}`);
   }
@@ -71,6 +88,12 @@ async function shutdown(reason: string, code = 0): Promise<void> {
   } catch (error) {
     exitCode = 1;
     console.error(`native companion shutdown failed: ${errorMessage(error)}`);
+  }
+  try {
+    await remoteCompanion?.close();
+  } catch (error) {
+    exitCode = 1;
+    console.error(`remote companion shutdown failed: ${errorMessage(error)}`);
   }
   try {
     await runtime.close();

@@ -17,7 +17,14 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).not.toContain("pull_request_target:");
     expect(WORKFLOW).not.toMatch(/branches:\n(?:\s+- [^\n]+\n)*\s+- dev/);
     expect(WORKFLOW).toContain("macos-check:");
-    expect(WORKFLOW).toContain("runs-on: macos-15");
+    expect(WORKFLOW).toContain("runner: macos-15\n");
+    expect(WORKFLOW).toContain("runner: macos-15-intel");
+    expect(WORKFLOW).toContain("runs-on: ${{ matrix.runner }}");
+    expect(WORKFLOW).toContain("MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}");
+    expect(WORKFLOW).toContain("--architecture \"$MACOS_TARGET_ARCHITECTURE\"");
+    expect(WORKFLOW).toContain("name: macos-release-asset-${{ matrix.architecture }}");
+    expect(WORKFLOW).toContain("pattern: macos-release-asset-*");
+    expect(WORKFLOW).toContain("merge-multiple: true");
     expect(WORKFLOW).toContain("node scripts/release-policy.mjs github-context");
     expect(WORKFLOW).toContain("RELEASE_PR_HEAD_REPOSITORY");
     expect(WORKFLOW).toContain("publish: ${{ steps.policy.outputs.publish }}");
@@ -49,6 +56,9 @@ describe("macOS and generic npm release workflow", () => {
     expect(MACOS_PACKAGER).toContain('CODE_SIGN_IDENTITY="-"');
     expect(MACOS_PACKAGER.match(/\^Signature=adhoc\$/g)).toHaveLength(2);
     expect(MACOS_BUILDER).toContain("supports ad-hoc macOS signing only");
+    expect(MACOS_BUILDER).toContain('require("better-sqlite3")');
+    expect(MACOS_BUILDER).toContain('new Database(":memory:")');
+    expect(MACOS_BUILDER).toContain("--disable-swift-testing");
     expect(MACOS_BUILDER).not.toContain("--options runtime");
     expect(MACOS_PACKAGER).not.toContain("notarytool");
     expect(WORKFLOW).not.toContain("MACOS_DEVELOPER_ID");
@@ -72,11 +82,13 @@ describe("macOS and generic npm release workflow", () => {
     for (const output of [
       "package_filename",
       "checksum_filename",
-      "macos_archive_filename",
+      "macos_arm64_archive_filename",
+      "macos_x64_archive_filename",
       "release_checksums_filename"
     ]) {
       expect(WORKFLOW).toContain(`steps.metadata.outputs.${output}`);
     }
-    expect(metadata.macosArchiveFilename).toContain("macOS-arm64-unnotarized.dmg");
+    expect(metadata.macosArm64ArchiveFilename).toContain("macOS-arm64-unnotarized.dmg");
+    expect(metadata.macosX64ArchiveFilename).toContain("macOS-x64-unnotarized.dmg");
   });
 });

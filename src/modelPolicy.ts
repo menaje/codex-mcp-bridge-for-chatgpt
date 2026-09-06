@@ -46,7 +46,23 @@ export type BackendCapabilities = {
   supportsEffortOverrideOnContinue: boolean;
   supportsServiceTierOverrideOnContinue: boolean;
   supportsFork: boolean;
+  supportsSteering?: boolean;
+  supportsPreciseCancellation?: boolean;
+  supportsEphemeralThreads?: boolean;
+  supportsThreadInspection?: boolean;
+  supportsBackgroundTerminals?: boolean;
+  supportsTurnSelection?: boolean;
 };
+
+export type BackendFeature = "supportsSteering" | "supportsPreciseCancellation" |
+  "supportsEphemeralThreads" | "supportsThreadInspection" | "supportsBackgroundTerminals" | "supportsTurnSelection";
+
+/** Baseline features of the pinned adapters; caller-provided capabilities may narrow them. */
+export function backendSupports(kind: string | undefined, feature: BackendFeature): boolean {
+  if (kind === "app-server") return true;
+  if (kind === "codex-sdk") return feature !== "supportsBackgroundTerminals" && feature !== "supportsEphemeralThreads";
+  return false;
+}
 
 export type CatalogValidationState =
   | "valid"

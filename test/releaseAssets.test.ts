@@ -38,7 +38,7 @@ describe("macOS and npm release asset assembly", () => {
         repoRoot: REPO_ROOT,
         directory
       }).checksums).toEqual(result.checksums);
-      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(3);
+      expect(readFileSync(result.checksumFile, "utf8").trim().split("\n")).toHaveLength(4);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -49,7 +49,7 @@ describe("macOS and npm release asset assembly", () => {
     try {
       writeReleaseChecksums({ repoRoot: REPO_ROOT, directory });
       const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
-      appendFileSync(path.join(directory, metadata.macosArchiveFilename), "tampered");
+      appendFileSync(path.join(directory, metadata.macosArm64ArchiveFilename), "tampered");
       expect(() => checkReleaseAssets({
         repoRoot: REPO_ROOT,
         directory
@@ -85,8 +85,10 @@ function createFixtureAssets(): string {
     path.join(directory, metadata.checksumFilename),
     `${packageDigest}  ${metadata.packageFilename}\n`
   );
-  const fakeDmg = Buffer.alloc(1024);
-  fakeDmg.write("koly", fakeDmg.length - 512, "ascii");
-  writeFileSync(path.join(directory, metadata.macosArchiveFilename), fakeDmg);
+  for (const architecture of metadata.macosArchitectures) {
+    const fakeDmg = Buffer.alloc(1024);
+    fakeDmg.write("koly", fakeDmg.length - 512, "ascii");
+    writeFileSync(path.join(directory, metadata.macosArchiveFilenames[architecture]), fakeDmg);
+  }
   return directory;
 }

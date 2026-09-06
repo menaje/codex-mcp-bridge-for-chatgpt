@@ -11,7 +11,55 @@ runtime_directory="$resources_directory/Runtime"
 app_icon_source="$script_directory/Resources/AppIcon/app-icon-1024.png"
 app_iconset_directory="$output_directory/AppIcon.iconset"
 bundle_version="${MACOS_BUNDLE_VERSION:-1}"
-expected_architecture="${MACOS_EXPECTED_ARCHITECTURE:-}"
+target_architecture="${MACOS_TARGET_ARCHITECTURE:-}"
+
+if [[ -z "$target_architecture" && -n "${MACOS_EXPECTED_ARCHITECTURE:-}" ]]; then
+  case "$MACOS_EXPECTED_ARCHITECTURE" in
+    arm64) target_architecture="arm64" ;;
+    x64|x86_64) target_architecture="x64" ;;
+    *)
+      echo "Unsupported MACOS_EXPECTED_ARCHITECTURE: $MACOS_EXPECTED_ARCHITECTURE" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ -z "$target_architecture" ]]; then
+  case "$(uname -m)" in
+    arm64) target_architecture="arm64" ;;
+    x86_64) target_architecture="x64" ;;
+    *)
+      echo "Unsupported macOS host architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+case "$target_architecture" in
+  arm64)
+    swift_architecture="arm64"
+    node_architecture="arm64"
+    ;;
+  x64)
+    swift_architecture="x86_64"
+    node_architecture="x64"
+    ;;
+  *)
+    echo "MACOS_TARGET_ARCHITECTURE must be arm64 or x64." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$(uname -m)" != "$swift_architecture" ]]; then
+  echo "macOS release apps must be built natively: requested $target_architecture, host $(uname -m)." >&2
+  exit 1
+fi
+
+actual_node_architecture="$(node -p 'process.arch')"
+if [[ "$actual_node_architecture" != "$node_architecture" ]]; then
+  echo "Node.js architecture $actual_node_architecture does not match requested macOS target $target_architecture." >&2
+  exit 1
+fi
 
 if [[ "${CODE_SIGN_IDENTITY:--}" != "-" ]]; then
   echo "This project supports ad-hoc macOS signing only." >&2
@@ -25,10 +73,15 @@ fi
 
 cd "$repository_root"
 npm run build
-npm run macos:check
-swift build --package-path "$script_directory" -c release --product CodexBridgeMenuBar \
+npm run macos:localizations:check
+swift test --package-path "$script_directory" --arch "$swift_architecture" \
+  --disable-swift-testing \
   -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
-swift_binary_directory="$(swift build --package-path "$script_directory" -c release --show-bin-path)"
+swift build --package-path "$script_directory" -c release --arch "$swift_architecture" \
+  --product CodexBridgeMenuBar \
+  -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+swift_binary_directory="$(swift build --package-path "$script_directory" -c release \
+  --arch "$swift_architecture" --show-bin-path)"
 
 rm -rf "$app_bundle"
 rm -rf "$app_iconset_directory"
@@ -59,6 +112,8 @@ cp "$app_icon_source" "$app_iconset_directory/icon_512x512@2x.png"
 rm -rf "$app_iconset_directory"
 
 cp -R "$repository_root/dist" "$runtime_directory/dist"
+mkdir -p "$runtime_directory/sdk"
+cp "$repository_root/sdk/worker.py" "$repository_root/sdk/runtime-lock.json" "$repository_root/sdk/requirements.lock" "$repository_root/sdk/cli-contract.json" "$repository_root/sdk/sdk-contract.json" "$runtime_directory/sdk/"
 cp "$repository_root/package.json" "$repository_root/package-lock.json" "$runtime_directory/"
 cp "$repository_root/release-manifest.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"
@@ -82,13 +137,35 @@ package_version="$(node -p "require('./package.json').version")"
   npm ci --omit=dev --no-audit --no-fund
 )
 
-if [[ -n "$expected_architecture" ]]; then
-  built_architectures="$(lipo -archs "$contents_directory/MacOS/CodexBridgeMenuBar")"
-  if [[ " $built_architectures " != *" $expected_architecture "* ]] || [[ "$built_architectures" == *" "* ]]; then
-    echo "Expected one $expected_architecture app binary; built: $built_architectures" >&2
-    exit 1
-  fi
+app_architectures="$(lipo -archs "$contents_directory/MacOS/CodexBridgeMenuBar")"
+if [[ "$app_architectures" != "$swift_architecture" ]]; then
+  echo "Expected one $swift_architecture app binary; built: $app_architectures" >&2
+  exit 1
 fi
+
+sqlite_prebuild="$runtime_directory/node_modules/better-sqlite3/prebuilds/darwin-$node_architecture.node"
+if [[ ! -f "$sqlite_prebuild" ]]; then
+  echo "Missing better-sqlite3 prebuild for macOS $target_architecture: $sqlite_prebuild" >&2
+  exit 1
+fi
+sqlite_architectures="$(lipo -archs "$sqlite_prebuild")"
+if [[ "$sqlite_architectures" != "$swift_architecture" ]]; then
+  echo "Expected better-sqlite3 $swift_architecture prebuild; found: $sqlite_architectures" >&2
+  exit 1
+fi
+(
+  cd "$runtime_directory"
+  node --input-type=commonjs -e '
+    const Database = require("better-sqlite3");
+    const database = new Database(":memory:");
+    try {
+      const result = database.prepare("SELECT 1 AS loaded").get();
+      if (result.loaded !== 1) throw new Error("unexpected SQLite result");
+    } finally {
+      database.close();
+    }
+  '
+)
 
 codesign --force --deep --sign - "$app_bundle"
 codesign --verify --deep --strict "$app_bundle"

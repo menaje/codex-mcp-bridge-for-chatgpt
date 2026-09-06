@@ -22,6 +22,7 @@ import { ACTIVITY_VIEW_METADATA_KEY } from "../src/activityCard.js";
 import { validateActivityViewPrivateMetadata } from "../src/tools.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { SdkToolDescriptorCoordinator } from "../src/modelPolicyTransport.js";
+import { UserSettingsStore } from "../src/userSettings.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -978,12 +979,14 @@ describe("http server", () => {
     await eventually(() => coordinator.status.bindingCount === 0);
   });
 
-  it("keeps a foreground job running to completion after its HTTP response detaches", async () => {
+  it.each(["mcp-server", "app-server", "codex-sdk"] as const)("keeps a %s foreground job running to completion after its HTTP response detaches", async backend => {
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-detach-state-"));
     const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });
+    const preferences = new UserSettingsStore(loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" }), { stateStore });
+    preferences.update({ showBridgeThreadsInCodexApp: true }, preferences.current.revision);
     const upstream = new DeferredUpstream();
     const baseUrl = await start(
-      { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+      { CODEX_GPT_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_DEFAULT_BACKEND: backend },
       upstream,
       stateDirectory,
       { stateStore }
@@ -1016,7 +1019,7 @@ describe("http server", () => {
       );
       await eventually(() => upstream.pendingCount === 1 && stateStore.listJobs().length === 1);
       const running = stateStore.listJobs()[0] as Record<string, any>;
-      expect(running).toMatchObject({ status: "running", executionMode: "foreground" });
+      expect(running).toMatchObject({ status: "running", executionMode: "foreground", backendKind: backend });
       controller.abort();
       await expect(foreground).rejects.toThrow();
       await eventually(() => stateStore.listTransportObservations().some((entry) =>
@@ -1050,6 +1053,7 @@ describe("http server", () => {
       expect(stateStore.listCancellationIntents({ jobId: running.jobId })).toHaveLength(0);
       expect(stateStore.listCancellationOperations(SCOPE_A)).toHaveLength(0);
     } finally {
+      while (upstream.pendingCount) upstream.resolveNext();
       await client.close().catch(() => undefined);
       await stopLastServer();
       stateStore.close();

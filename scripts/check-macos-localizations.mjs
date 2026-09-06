@@ -30,6 +30,10 @@ function quotedStrings(source) {
   );
 }
 
+function simpleQuotedStrings(source) {
+  return [...source.matchAll(/"([^"\\\r\n]*)"/g)].map((match) => match[1]);
+}
+
 function arrayAfter(source, marker, terminator) {
   const start = source.indexOf(marker);
   if (start < 0) return [];
@@ -124,6 +128,12 @@ for (const [key, entry] of Object.entries(catalog.strings ?? {})) {
 }
 
 const helperPattern = /BridgeAppLocalization\.(?:string|format)\(\s*"((?:\\.|[^"\\])*)"/gs;
+const allowedUncataloguedKoreanLiterals = new Set([
+  " 이전 helper 복구에도 실패했습니다: ",
+  "[가-힣]",
+  "백엔드 라우팅:",
+  "한국어"
+]);
 for (const swiftFile of walkSwiftFiles(swiftSourcesPath)) {
   const source = fs.readFileSync(swiftFile, "utf8");
   for (const match of source.matchAll(helperPattern)) {
@@ -137,6 +147,18 @@ for (const swiftFile of walkSwiftFiles(swiftSourcesPath)) {
     if (!catalog.strings[key]) {
       errors.push(
         `${path.relative(repositoryRoot, swiftFile)} references a missing localization key: ${JSON.stringify(key)}.`
+      );
+    }
+  }
+  for (const key of new Set(simpleQuotedStrings(source))) {
+    if (
+      /[가-힣]/.test(key) &&
+      !catalog.strings[key] &&
+      !allowedUncataloguedKoreanLiterals.has(key)
+    ) {
+      errors.push(
+        `${path.relative(repositoryRoot, swiftFile)} contains an uncatalogued Korean UI string: ` +
+          `${JSON.stringify(key)}.`
       );
     }
   }

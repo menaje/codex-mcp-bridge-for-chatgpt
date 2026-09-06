@@ -1,6 +1,6 @@
 {
   "$schema": "./release-manifest.schema.json",
-  "manifestVersion": 3,
+  "manifestVersion": 4,
   "product": {
     "displayName": "Codex MCP Bridge for ChatGPT",
     "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
@@ -30,7 +30,8 @@
       ".codex-plugin",
       ".app.json",
       "release-manifest.json",
-      "release-manifest.schema.json"
+      "release-manifest.schema.json",
+      "sdk"
     ],
     "keywords": [
       "codex",
@@ -43,7 +44,7 @@
   "toolchain": {
     "node": "22",
     "npm": "10.9.3",
-    "codexCli": "0.145.0"
+    "codexCli": "0.153.3"
   },
   "repository": {
     "provider": "github",
@@ -99,7 +100,10 @@
     "generateNotes": true,
     "targets": {
       "macos": {
-        "architecture": "arm64",
+        "architectures": [
+          "arm64",
+          "x64"
+        ],
         "format": "dmg",
         "minimumVersion": "13.0",
         "signing": "ad-hoc",
@@ -109,7 +113,8 @@
     "assets": [
       "npm-tarball",
       "npm-sha256",
-      "macos-app",
+      "macos-arm64-app",
+      "macos-x64-app",
       "release-checksums"
     ]
   }

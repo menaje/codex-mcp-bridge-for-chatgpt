@@ -39,21 +39,22 @@ describe("release manifest", () => {
 
     expect(output).toContain("node_version=22\n");
     expect(output).toContain("npm_version=10.9.3\n");
-    expect(output).toContain("codex_cli_version=0.145.0\n");
+    expect(output).toContain("codex_cli_version=0.153.3\n");
   });
 
-  it("requires the macOS and generic npm manifestVersion 3 release asset contract", () => {
+  it("requires the dual-architecture macOS and generic npm manifestVersion 4 release asset contract", () => {
     const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
     expect(validateReleaseManifest(manifest)).toBe(manifest);
     expect(manifest.release.assets).toEqual([
       "npm-tarball",
       "npm-sha256",
-      "macos-app",
+      "macos-arm64-app",
+      "macos-x64-app",
       "release-checksums"
     ]);
     expect(manifest.release.targets).toEqual({
       macos: {
-        architecture: "arm64",
+        architectures: ["arm64", "x64"],
         format: "dmg",
         minimumVersion: "13.0",
         signing: "ad-hoc",
@@ -69,8 +70,22 @@ describe("release manifest", () => {
       sourceCandidate: null
     });
 
-    manifest.manifestVersion = 2;
-    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 3");
+    manifest.manifestVersion = 3;
+    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 4");
+  });
+
+  it("rejects incomplete or reordered macOS architecture targets", () => {
+    const missingIntel = structuredClone(loadReleaseManifest(REPO_ROOT));
+    missingIntel.release.targets.macos.architectures = ["arm64"];
+    expect(() => validateReleaseManifest(missingIntel)).toThrow(
+      "release.targets.macos.architectures must be arm64, x64 in that order"
+    );
+
+    const reordered = structuredClone(loadReleaseManifest(REPO_ROOT));
+    reordered.release.targets.macos.architectures = ["x64", "arm64"];
+    expect(() => validateReleaseManifest(reordered)).toThrow(
+      "release.targets.macos.architectures must be arm64, x64 in that order"
+    );
   });
 
   it("derives release metadata from the synchronized package version and manifest policy", () => {
@@ -85,16 +100,21 @@ describe("release manifest", () => {
       binaryName: "codex-mcp-bridge",
       nodeVersion: "22",
       npmVersion: "10.9.3",
-      codexCliVersion: "0.145.0",
+      codexCliVersion: "0.153.3",
       repositorySlug: "menaje/codex-mcp-bridge-for-chatgpt",
       pluginName: "codex-mcp-bridge",
       pluginDisplayName: "Codex MCP Bridge for ChatGPT",
       pluginDeveloperName: "menaje",
       pluginCategory: "Developer Tools",
       pluginAppId: "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0",
-      macosArchitecture: "arm64",
+      macosArchitectures: ["arm64", "x64"],
       macosMinimumVersion: "13.0",
-      macosArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
+      macosArchiveFilenames: {
+        arm64: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
+        x64: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg"
+      },
+      macosArm64ArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
+      macosX64ArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg",
       releaseChecksumsFilename: "SHA256SUMS.txt",
       releaseUnitId: "codex-mcp-bridge",
       stage: "development",
@@ -370,7 +390,7 @@ describe("release manifest", () => {
     writeJson(path.join(root, "app-server-schema.lock.json"), lock);
 
     expect(() => checkReleaseMetadata(root)).toThrow(
-      /schema lock targets Codex CLI 0\.144\.0.*supports 0\.145\.0/
+      /schema lock targets Codex CLI 0\.144\.0.*supports 0\.153\.3/
     );
   });
 });

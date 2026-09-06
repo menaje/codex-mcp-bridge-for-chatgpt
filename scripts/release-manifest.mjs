@@ -28,10 +28,12 @@ const PLUGIN_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PLUGIN_APP_ID_PATTERN = /^plugin_asdk_app_[A-Za-z0-9]+$/;
 const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+$/;
+const MACOS_ARCHITECTURES = ["arm64", "x64"];
 const RELEASE_ASSET_NAMES = [
   "npm-tarball",
   "npm-sha256",
-  "macos-app",
+  "macos-arm64-app",
+  "macos-x64-app",
   "release-checksums"
 ];
 
@@ -55,7 +57,7 @@ export function validateReleaseManifest(value) {
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
-  if (root.manifestVersion !== 3) fail("manifestVersion must be 3");
+  if (root.manifestVersion !== 4) fail("manifestVersion must be 4");
 
   const product = requiredRecord(root.product, "product");
   assertKeys(product, ["displayName", "description", "runtimeName"], "product");
@@ -253,10 +255,18 @@ export function validateReleaseManifest(value) {
   const macosTarget = requiredRecord(targets.macos, "release.targets.macos");
   assertKeys(
     macosTarget,
-    ["architecture", "format", "minimumVersion", "signing", "notarization"],
+    ["architectures", "format", "minimumVersion", "signing", "notarization"],
     "release.targets.macos"
   );
-  if (macosTarget.architecture !== "arm64") fail("release.targets.macos.architecture must be arm64");
+  if (
+    !Array.isArray(macosTarget.architectures) ||
+    macosTarget.architectures.length !== MACOS_ARCHITECTURES.length ||
+    macosTarget.architectures.some(
+      (architecture, index) => architecture !== MACOS_ARCHITECTURES[index]
+    )
+  ) {
+    fail(`release.targets.macos.architectures must be ${MACOS_ARCHITECTURES.join(", ")} in that order`);
+  }
   if (macosTarget.format !== "dmg") fail("release.targets.macos.format must be dmg");
   if (macosTarget.minimumVersion !== "13.0") fail("release.targets.macos.minimumVersion must be 13.0");
   if (macosTarget.signing !== "ad-hoc") fail("release.targets.macos.signing must be ad-hoc");
@@ -282,6 +292,20 @@ export function deriveReleaseMetadata(manifest) {
   const packageFilename = `${manifest.package.name}-${version}.tgz`;
   const macosTarget = manifest.release.targets.macos;
   const sourceCandidate = manifest.release.sourceCandidate;
+  const macosArchiveFilenames = Object.fromEntries(
+    macosTarget.architectures.map((architecture) => [
+      architecture,
+      macosArchiveFilename(version, architecture, macosTarget.format)
+    ])
+  );
+  const sourceCandidateMacosArchiveFilenames = Object.fromEntries(
+    macosTarget.architectures.map((architecture) => [
+      architecture,
+      sourceCandidate
+        ? macosArchiveFilename(sourceCandidate, architecture, macosTarget.format)
+        : ""
+    ])
+  );
   return {
     manifestVersion: manifest.manifestVersion,
     releaseUnitId: manifest.release.releaseUnitId,
@@ -303,9 +327,9 @@ export function deriveReleaseMetadata(manifest) {
     sourceCandidatePackageFilename: sourceCandidate
       ? `${manifest.package.name}-${sourceCandidate}.tgz`
       : "",
-    sourceCandidateMacosArchiveFilename: sourceCandidate
-      ? `Codex-MCP-Bridge-for-ChatGPT-${sourceCandidate}-macOS-${macosTarget.architecture}-unnotarized.${macosTarget.format}`
-      : "",
+    sourceCandidateMacosArchiveFilenames,
+    sourceCandidateMacosArm64ArchiveFilename: sourceCandidateMacosArchiveFilenames.arm64,
+    sourceCandidateMacosX64ArchiveFilename: sourceCandidateMacosArchiveFilenames.x64,
     tag,
     releaseTitle: `${manifest.product.displayName} ${tag}`,
     channel: manifest.release.channel,
@@ -313,11 +337,12 @@ export function deriveReleaseMetadata(manifest) {
     generateNotes: manifest.release.generateNotes,
     packageFilename,
     checksumFilename: `${packageFilename}.sha256`,
-    macosArchitecture: macosTarget.architecture,
+    macosArchitectures: [...macosTarget.architectures],
     macosFormat: macosTarget.format,
     macosMinimumVersion: macosTarget.minimumVersion,
-    macosArchiveFilename:
-      `Codex-MCP-Bridge-for-ChatGPT-${version}-macOS-${macosTarget.architecture}-unnotarized.${macosTarget.format}`,
+    macosArchiveFilenames,
+    macosArm64ArchiveFilename: macosArchiveFilenames.arm64,
+    macosX64ArchiveFilename: macosArchiveFilenames.x64,
     releaseChecksumsFilename: "SHA256SUMS.txt",
     repositorySlug,
     repositoryUrl,
@@ -327,6 +352,10 @@ export function deriveReleaseMetadata(manifest) {
     pluginCategory: manifest.plugin.category,
     pluginAppId: manifest.plugin.app.id
   };
+}
+
+function macosArchiveFilename(version, architecture, format) {
+  return `Codex-MCP-Bridge-for-ChatGPT-${version}-macOS-${architecture}-unnotarized.${format}`;
 }
 
 export function derivePluginManifests(manifest) {
@@ -914,7 +943,8 @@ function printGithubOutput(metadata) {
     source_candidate: metadata.sourceCandidate ?? "",
     source_candidate_tag: metadata.sourceCandidateTag,
     source_candidate_package_filename: metadata.sourceCandidatePackageFilename,
-    source_candidate_macos_archive_filename: metadata.sourceCandidateMacosArchiveFilename,
+    source_candidate_macos_arm64_archive_filename: metadata.sourceCandidateMacosArm64ArchiveFilename,
+    source_candidate_macos_x64_archive_filename: metadata.sourceCandidateMacosX64ArchiveFilename,
     tag: metadata.tag,
     release_title: metadata.releaseTitle,
     channel: metadata.channel,
@@ -922,9 +952,10 @@ function printGithubOutput(metadata) {
     generate_notes: metadata.generateNotes,
     package_filename: metadata.packageFilename,
     checksum_filename: metadata.checksumFilename,
-    macos_architecture: metadata.macosArchitecture,
+    macos_architectures: metadata.macosArchitectures.join(","),
     macos_minimum_version: metadata.macosMinimumVersion,
-    macos_archive_filename: metadata.macosArchiveFilename,
+    macos_arm64_archive_filename: metadata.macosArm64ArchiveFilename,
+    macos_x64_archive_filename: metadata.macosX64ArchiveFilename,
     release_checksums_filename: metadata.releaseChecksumsFilename,
     repository: metadata.repositorySlug,
     repository_url: metadata.repositoryUrl

@@ -7,6 +7,12 @@ export type ManagedTunnelStatus = {
   connected: boolean;
   lastCheckedAt: string | null;
   lastError: string | null;
+  lastProblem: StatusProblem | null;
+};
+
+export type StatusProblem = {
+  code: string;
+  arguments: Record<string, string>;
 };
 
 export type ManagedRuntimeStatus = {

@@ -1,3 +1,4 @@
+import { hasManagedCliVerification } from "./runtimeCompatibility.js";
 import { execFile } from "node:child_process";
 import manifest from "../release-manifest.json" with { type: "json" };
 import { MAX_JSON_RPC_TIMEOUT_MS } from "./jsonRpcProcess.js";
@@ -7,6 +8,8 @@ const CODEX_SEMVER_PATTERN = new RegExp(`^${CODEX_SEMVER_SOURCE}$`);
 const CODEX_VERSION_PATTERN = new RegExp(`^codex-cli\\s+(${CODEX_SEMVER_SOURCE})$`);
 
 export const SUPPORTED_CODEX_CLI_VERSION = manifest.toolchain.codexCli;
+/** Reproducible CI pin above; user installations are a separately validated allowlist. */
+export const SUPPORTED_CODEX_CLI_VERSIONS = [SUPPORTED_CODEX_CLI_VERSION, "0.153.1"] as const;
 export const DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS = 5_000;
 
 export type CodexCliVersionProbe = (
@@ -63,11 +66,11 @@ export function assertSupportedCodexCliVersion(command: string, observedVersion:
   if (!CODEX_SEMVER_PATTERN.test(observedVersion)) {
     throw new Error("Configured Codex executable returned an unrecognized --version response.");
   }
-  if (observedVersion === SUPPORTED_CODEX_CLI_VERSION) return;
+  if (SUPPORTED_CODEX_CLI_VERSIONS.includes(observedVersion)) return;
   throw new Error(
     `Configured Codex executable ${JSON.stringify(command)} reported version ${observedVersion}; ` +
-    `this bridge supports exactly Codex CLI ${SUPPORTED_CODEX_CLI_VERSION} for App Server. ` +
-    `Install @openai/codex@${SUPPORTED_CODEX_CLI_VERSION} or point CODEX_MCP_BRIDGE_CODEX to that executable.`
+    `this bridge supports Codex CLI ${SUPPORTED_CODEX_CLI_VERSIONS.join(", ")} for App Server. ` +
+    "Your selection was preserved. Choose a validated installation or keep using your current setup until it is supported."
   );
 }
 
@@ -83,10 +86,11 @@ export async function verifySupportedCodexCli(
   } catch {
     throw new Error(
       `Configured Codex executable ${JSON.stringify(command)} could not be verified with --version ` +
-      `within ${timeoutMs}ms; App Server requires exactly Codex CLI ${SUPPORTED_CODEX_CLI_VERSION}. ` +
-      `Install @openai/codex@${SUPPORTED_CODEX_CLI_VERSION} or update CODEX_MCP_BRIDGE_CODEX.`
+      `within ${timeoutMs}ms; validated App Server versions: ${SUPPORTED_CODEX_CLI_VERSIONS.join(", ")}. ` +
+      "Restore the chosen installation or explicitly select another one."
     );
   }
+  if (await hasManagedCliVerification(command, observedVersion)) return observedVersion;
   assertSupportedCodexCliVersion(command, observedVersion);
   return observedVersion;
 }

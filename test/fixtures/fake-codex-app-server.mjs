@@ -25,8 +25,11 @@ let threadSequence = 0;
 let turnSequence = 0;
 let rateLimitsReadCount = 0;
 
-const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
-const sendBatch = (messages) => process.stdout.write(`${messages.map(JSON.stringify).join("\n")}\n`);
+const requestMethods = new Map();
+const sdkContract = process.argv.includes("--sdk-contract");
+const send = (message) => process.stdout.write(`${JSON.stringify(sdkContract ? sdkMessage(message) : message)}\n`);
+const sdkCompletedTurns = new Map();
+const sendBatch = (messages) => process.stdout.write(`${messages.map(message => JSON.stringify(sdkContract ? sdkMessage(message) : message)).join("\n")}\n`);
 const response = (id, result) => send({ id, result });
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
@@ -36,6 +39,7 @@ const serverRequest = (id, method, params, accept) => {
 
 lines.on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.id !== undefined && message.method) requestMethods.set(message.id, message.method);
   if (message.jsonrpc !== undefined) process.exit(71);
 
   if (message.method === "initialize") {
@@ -75,6 +79,15 @@ lines.on("line", (line) => {
   }
   if (!initialized) {
     send({ id: message.id, error: { code: -32000, message: "Not initialized" } });
+    return;
+  }
+
+  if (message.method === "account/read") {
+    response(message.id, {
+      account: process.argv.includes("--api-account") ? { type: "apiKey" }
+        : { type: "chatgpt", email: "private-fixture@example.com", planType: "pro" },
+      requiresOpenaiAuth: true
+    });
     return;
   }
 
@@ -194,7 +207,10 @@ lines.on("line", (line) => {
         id: threadId,
         ...threadLineages.get(threadId),
         status,
-        turns: []
+        turns: sdkContract ? (active ? [...activeTurns.values()].filter(turn => turn.threadId === threadId).map(turn => ({
+          id: turn.turnId, status: "interrupted", items: [], itemsView: "full", error: null,
+          startedAt: 1, completedAt: null, durationMs: null
+        })) : (sdkCompletedTurns.get(threadId) || [])) : []
       }
     });
     return;
@@ -287,7 +303,7 @@ lines.on("line", (line) => {
     };
     if (prompt.includes("batched completion")) {
       activeTurns.delete(turnId);
-      sendBatch([
+      const messages = [
         { id: message.id, result: startResult },
         { method: "turn/started", params: { threadId: context.threadId, turn: { id: turnId } } },
         {
@@ -326,11 +342,14 @@ lines.on("line", (line) => {
             }
           }
         }
-      ]);
+      ];
+      sdkCompletedTurns.set(context.threadId, [messages.at(-1).params.turn]);
+      sendBatch(messages);
       return;
     }
     response(message.id, startResult);
-    queueMicrotask(() => beginTurn(context));
+    if (sdkContract) setTimeout(() => beginTurn(context), 25);
+    else queueMicrotask(() => beginTurn(context));
     return;
   }
   if (message.method === "turn/steer") {
@@ -369,6 +388,28 @@ lines.on("line", (line) => {
     }
   }
 });
+
+// The normal fixture deliberately uses minimal App Server responses. SDK tests
+// exercise the published Pydantic response models with complete protocol records.
+function sdkMessage(message) {
+  const turn = value => ({ status: "inProgress", items: [], error: null, ...value });
+  if (message.params?.turn) message = { ...message, params: { ...message.params, turn: turn(message.params.turn) } };
+  if (!message.result) return message;
+  const result = { ...message.result };
+  if (result.data && requestMethods.get(message.id) === "model/list") result.data = result.data.map(model => ({
+    ...model, supportedReasoningEfforts: model.supportedReasoningEfforts.map(effort => ({ description: "Fixture reasoning", ...effort })),
+    serviceTiers: (model.serviceTiers || []).map(tier => ({ description: "Fixture tier", ...tier }))
+  }));
+  if (result.turn) result.turn = turn(result.turn);
+  if (result.thread) {
+    result.thread = { cliVersion: "0.147.0", createdAt: 1, updatedAt: 1, cwd: "/tmp", ephemeral: false,
+      modelProvider: "openai", preview: "SDK fixture", source: "cli", sessionId: threadLineages.get(result.thread.id)?.sessionId || "fake-session", status: { type: "idle" }, turns: [], ...result.thread };
+    if (["thread/start", "thread/resume", "thread/fork"].includes(requestMethods.get(message.id))) Object.assign(result, {
+      approvalPolicy: "never", approvalsReviewer: "user", cwd: "/tmp", model: "gpt-5.4-mini", modelProvider: "openai", sandbox: { type: "readOnly" }
+    });
+  }
+  return { ...message, result };
+}
 
 function beginTurn(context) {
   const { threadId, turnId, prompt } = context;
@@ -562,6 +603,10 @@ function beginTurn(context) {
     }]);
   }
   if (prompt.includes("hold")) return;
+  if (prompt.includes("sdk long completion")) {
+    setTimeout(() => finishTurn(context, "completed", "SDK LONG COMPLETE"), 610_000);
+    return;
+  }
   if (prompt.includes("report interrupt count")) {
     finishTurn(context, "completed", `INTERRUPTS:${interruptedTurnCounts.get(threadId) || 0}`);
     return;

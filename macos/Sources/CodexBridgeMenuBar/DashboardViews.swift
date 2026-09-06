@@ -30,11 +30,13 @@ struct DashboardPopoverView: View {
             header
             Divider()
             Group {
-                if model.helperStatus == nil {
-                    loadingView
+                if !model.hasConnectionTarget {
+                    runtimeUnavailableView
                 } else if model.needsSetup {
                     ConnectionRepairView()
-                } else if model.helperStatus?.bridge.connected != true {
+                } else if !model.bridgeConnected, model.isBridgeConnectionChecking {
+                    connectionCheckingView
+                } else if !model.bridgeConnected {
                     runtimeUnavailableView
                 } else if let dashboard = model.dashboard {
                     dashboardContent(dashboard)
@@ -48,7 +50,9 @@ struct DashboardPopoverView: View {
         .frame(width: 460, height: 660)
         .environment(\.locale, model.interfaceLocale)
         .task {
-            if model.helperStatus == nil {
+            if model.isRemoteClient {
+                await model.refreshAll()
+            } else if model.helperStatus == nil {
                 await model.start()
             } else {
                 await model.refreshStatus()
@@ -109,7 +113,7 @@ struct DashboardPopoverView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Codex MCP Bridge for ChatGPT")
                     .font(.headline)
-                Text(model.health.accessibilityLabel(locale: model.interfaceLocale))
+                Text("\(model.connectionTargetName) · \(model.health.accessibilityLabel(locale: model.interfaceLocale))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -138,14 +142,21 @@ struct DashboardPopoverView: View {
             ProgressView()
             Text("현황을 불러오는 중…")
                 .foregroundStyle(.secondary)
-            if let error = model.startupErrorMessage ?? model.statusErrorMessage ?? model.dashboardErrorMessage {
+            if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
+                model.statusErrorMessage ?? model.dashboardErrorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
-                Button("helper 다시 연결") {
-                    Task { await model.start() }
+                Button(BridgeAppLocalization.string(
+                    model.isRemoteClient ? "서버 다시 연결" : "helper 다시 연결",
+                    locale: model.interfaceLocale
+                )) {
+                    Task {
+                        if model.isRemoteClient { await model.refreshAll() }
+                        else { await model.start() }
+                    }
                 }
                 .disabled(model.isBusy)
             }
@@ -154,29 +165,55 @@ struct DashboardPopoverView: View {
         .padding()
     }
 
+    private var connectionCheckingView: some View {
+        VStack(spacing: 12) {
+            BridgeBrandStatusIcon(health: .checking, size: 48)
+            ProgressView()
+            Text("브리지 연결을 확인하고 있습니다…")
+                .font(.headline)
+            Text("연결되는 대로 현황을 표시합니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(28)
+    }
+
     private var runtimeUnavailableView: some View {
         VStack(spacing: 14) {
             BridgeBrandStatusIcon(health: .unavailable, size: 48)
             Text("브리지 서버에 연결할 수 없습니다")
                 .font(.headline)
-            Text(model.helperStatus?.lastError ?? model.runtimeErrorMessage ??
-                 model.statusErrorMessage ?? BridgeAppLocalization.string(
-                    "서버가 중지되었거나 시작 중입니다.",
+            Text(model.connectionErrorMessage ?? model.helperStatusErrorMessage ??
+                 model.runtimeErrorMessage ?? model.statusErrorMessage ??
+                 BridgeAppLocalization.string(
+                    model.isRemoteClient
+                        ? "연결 탭에서 서버를 선택하거나 페어링해 주세요."
+                        : "브리지 서버가 중지되었습니다.",
                     locale: model.interfaceLocale
                  ))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
-            HStack {
-                Button("시작") { Task { await model.startRuntime() } }
-                    .buttonStyle(.borderedProminent)
-                Button("재시작") { Task { await model.restartRuntime(force: false) } }
-            }
-            .disabled(model.isBusy)
-            Button("Tunnel 프로필 복구…") { showRepairConfirmation = true }
+            if model.isRemoteClient {
+                HStack {
+                    Button("다시 연결") { Task { await model.refreshAll() } }
+                        .buttonStyle(.borderedProminent)
+                    Button("연결 설정") { presentSettingsWindow() }
+                }
                 .disabled(model.isBusy)
-            if model.helperStatus?.phase == "safe-mode" {
+            } else {
+                HStack {
+                    Button("시작") { Task { await model.startRuntime() } }
+                        .buttonStyle(.borderedProminent)
+                    Button("재시작") { Task { await model.restartRuntime(force: false) } }
+                }
+                .disabled(model.isBusy)
+                Button("Tunnel 프로필 복구…") { showRepairConfirmation = true }
+                    .disabled(model.isBusy)
+            }
+            if !model.isRemoteClient, model.helperStatus?.phase == "safe-mode" {
                 Label("반복 충돌로 자동 재시작이 중지되었습니다.", systemImage: "exclamationmark.octagon")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -199,7 +236,7 @@ struct DashboardPopoverView: View {
                             systemImage: "arrow.up.forward.app"
                         )
                         .font(.caption.weight(.semibold))
-                        Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent에 'Codex에서 열기' 버튼을 표시합니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
+                        Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Button("새 작업부터 켜기") {
@@ -212,7 +249,7 @@ struct DashboardPopoverView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                 }
-                if model.authStatus?.authenticated != true {
+                if model.shouldShowCodexAuthenticationNotice {
                     Button {
                         presentConnectionRepairWindow()
                     } label: {
@@ -240,19 +277,24 @@ struct DashboardPopoverView: View {
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                if model.helperStatus?.tunnel.connected != true {
-                    Label(
-                        model.helperStatus?.tunnel.lastError ?? BridgeAppLocalization.string(
+                if !model.isRemoteClient, model.helperStatus?.tunnel.connected != true {
+                    if model.isTunnelConnectionChecking {
+                        Label(
                             "Secure MCP Tunnel 연결을 확인하고 있습니다.",
-                            locale: model.interfaceLocale
-                        ),
-                        systemImage: "network.slash"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                    } else if let error = model.tunnelStatusErrorMessage {
+                        Label(error, systemImage: "network.slash")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
                 }
-                if let usage = dashboard.weeklyUsage {
+                if let account = dashboard.codexAccount {
+                    CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
+                } else if let usage = dashboard.weeklyUsage, model.shouldShowCodexWeeklyUsage {
                     WeeklyUsageView(usage: usage)
                 }
                 CountsGrid(counts: dashboard.counts)
@@ -310,7 +352,8 @@ struct DashboardPopoverView: View {
 
     private var shouldOfferCodexThreadPersistence: Bool {
         guard let settings = model.settings else { return false }
-        return settings.capabilities.defaultBackend == "app-server" &&
+        return !model.isRemoteClient &&
+            settings.capabilities.defaultBackend == "app-server" &&
             !settings.settings.showBridgeThreadsInCodexApp
     }
 
@@ -323,54 +366,94 @@ struct DashboardPopoverView: View {
             }
             .keyboardShortcut(",")
 
-            Menu {
-                Button("작업을 마치고 재시작") {
-                    Task { await model.restartRuntime(force: false) }
+            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true,
+               model.helperStatus?.configuration.operatorConfiguration.defaultBackend != "codex-sdk" {
+                Button("코덱스 업데이트") {
+                    Task { await model.manageCodex(.init(action: "update")) }
                 }
-                Button("강제 재시작…", role: .destructive) {
-                    Task {
-                        await model.refreshRuntimeImpact()
-                        showForceRestartConfirmation = true
-                    }
-                }
-                Divider()
-                Button("연결 정보 및 로그인…") {
-                    presentConnectionRepairWindow()
-                }
-                Button("Tunnel 프로필 복구…") {
-                    showRepairConfirmation = true
-                }
-                Divider()
-                Button("작업을 마치고 중지") {
-                    Task { await model.stopRuntime(force: false) }
-                }
-                Button("강제 중지…", role: .destructive) {
-                    Task {
-                        await model.refreshRuntimeImpact()
-                        showForceStopConfirmation = true
-                    }
-                }
-            } label: {
-                Label("서버", systemImage: "server.rack")
             }
-            .disabled(model.needsSetup || model.isBusy)
+
+            if model.isRemoteClient {
+                Menu {
+                    ForEach(model.connectionPreferences.profiles) { profile in
+                        Button {
+                            Task { await model.activateRemoteServer(profile.serverId) }
+                        } label: {
+                            if profile.serverId == model.connectionPreferences.activeServerId {
+                                Label(profile.name, systemImage: "checkmark")
+                            } else {
+                                Text(profile.name)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("서버 연결 관리") { presentSettingsWindow() }
+                } label: {
+                    Label(model.connectionTargetName, systemImage: "network")
+                }
+                .disabled(model.isBusy)
+            } else {
+                Menu {
+                    Button("작업 완료 후 서버 재시작") {
+                        Task { await model.restartRuntime(force: false) }
+                    }
+                    Button("작업 중단 후 서버 강제 재시작", role: .destructive) {
+                        Task {
+                            await model.refreshRuntimeImpact()
+                            showForceRestartConfirmation = true
+                        }
+                    }
+                    Divider()
+                    Button("연결 정보 및 Codex 로그인") {
+                        presentConnectionRepairWindow()
+                    }
+                    Button("Secure MCP Tunnel 프로필 복구") {
+                        showRepairConfirmation = true
+                    }
+                    Divider()
+                    Button("작업 완료 후 서버 중지") {
+                        Task { await model.stopRuntime(force: false) }
+                    }
+                    Button("작업 중단 후 서버 강제 중지", role: .destructive) {
+                        Task {
+                            await model.refreshRuntimeImpact()
+                            showForceStopConfirmation = true
+                        }
+                    }
+                } label: {
+                    Label("서버", systemImage: "server.rack")
+                }
+                .disabled(model.needsSetup || model.isBusy)
+            }
 
             Spacer()
-            Button("앱 종료…") {
-                Task {
-                    await model.refreshRuntimeImpact()
-                    if ApplicationQuitConfirmationPolicy.requiresConfirmation(
-                        for: model.runtimeImpact,
-                        refreshFailed: model.runtimeImpactErrorMessage != nil
-                    ) {
-                        showApplicationQuitConfirmation = true
-                    } else {
-                        shutdownAndQuit(force: false)
+            Button(BridgeAppLocalization.string(
+                model.isRemoteClient ? "앱 종료" : "앱 종료…",
+                locale: model.interfaceLocale
+            )) {
+                if model.isRemoteClient {
+                    shutdownAndQuit(force: false)
+                } else {
+                    Task {
+                        await model.refreshRuntimeImpact()
+                        if ApplicationQuitConfirmationPolicy.requiresConfirmation(
+                            for: model.runtimeImpact,
+                            refreshFailed: model.runtimeImpactErrorMessage != nil
+                        ) {
+                            showApplicationQuitConfirmation = true
+                        } else {
+                            shutdownAndQuit(force: false)
+                        }
                     }
                 }
             }
             .disabled(model.isBusy)
-            .help("메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.")
+            .help(BridgeAppLocalization.string(
+                model.isRemoteClient
+                    ? "이 클라이언트 앱만 종료하며 원격 서버는 변경하지 않습니다."
+                    : "메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.",
+                locale: model.interfaceLocale
+            ))
         }
         .padding(12)
     }
@@ -512,6 +595,7 @@ struct DashboardPopoverView: View {
 private struct WeeklyUsageView: View {
     @Environment(\.locale) private var locale
     let usage: WeeklyUsage
+    var account: CodexAccountUsage? = nil
 
     private var remainingPercent: Double {
         min(100, max(0, usage.remainingPercent))
@@ -531,10 +615,77 @@ private struct WeeklyUsageView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let account { CodexMenuPlanDetails(account: account) }
         }
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct CodexMenuAccountView: View {
+    let account: CodexAccountUsage
+    let fallbackWeekly: WeeklyUsage?
+
+    var body: some View {
+        if account.authMode == "chatgpt", let weekly = account.weeklyUsage ?? fallbackWeekly {
+            WeeklyUsageView(usage: weekly, account: account)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if account.authMode == "api-key" {
+                    Text("API 사용 중").font(.subheadline.weight(.semibold))
+                    if let costs = account.billing?.actualCosts, costs.configured {
+                        if costs.status == "available", let usd = costs.usd {
+                            LabeledContent(costs.projectId == nil ? "이번 달 조직 비용 (UTC)" : "이번 달 프로젝트 비용 (UTC)",
+                                value: usd.formatted(.currency(code: "USD")))
+                        } else { Text("비용 정보를 확인할 수 없습니다.") }
+                    }
+                } else if account.authMode == "chatgpt" {
+                    Text("사용량 정보를 확인할 수 없습니다.")
+                    CodexMenuPlanDetails(account: account)
+                } else { Text("로그인이 필요합니다") }
+            }
+            .font(.caption)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+private struct CodexMenuPlanDetails: View {
+    let account: CodexAccountUsage
+    var body: some View {
+        if !account.menuSparkWindows.isEmpty {
+            Divider().padding(.vertical, 3)
+            Text(verbatim: "GPT-5.3-Codex-Spark").font(.caption.weight(.semibold))
+            ForEach(account.menuSparkWindows) { window in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        if window.windowDurationMins == 10080 { Text("주간 사용량") }
+                        else { Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated))) }
+                        Spacer()
+                        Text(min(99.9, floor(max(0, window.remainingPercent) * 10) / 10) / 100,
+                            format: .percent.precision(.fractionLength(0...1))).monospacedDigit()
+                        Text("남음")
+                    }.font(.caption)
+                    ProgressView(value: max(0, min(100, window.remainingPercent)), total: 100)
+                }
+            }
+        }
+        if let balance = account.menuCreditBalance {
+            HStack {
+                Text("추가 크레딧")
+                Text("잔액")
+                Spacer()
+                Text(verbatim: balance).monospacedDigit()
+            }.font(.caption)
+        }
+        if (account.weeklyUsage?.remainingPercent ?? 0) > 0,
+           account.windows.contains(where: { $0.limitId == "codex" && $0.windowDurationMins != 10080 && $0.remainingPercent <= 0 }) {
+            Label("단기 사용 한도에 도달했습니다.", systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.orange)
+        }
     }
 }
 
@@ -788,9 +939,10 @@ private enum DashboardRowPresentation {
 private struct CancellationDisclosure: View {
     @Environment(\.locale) private var locale
     let cancellation: CancellationDisplay
+    @State private var isExpanded = false
 
     var body: some View {
-        DisclosureGroup("취소 사유") {
+        FullRowDisclosure("취소 사유", isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(cancellation.reason).textSelection(.enabled)
                 Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
@@ -852,6 +1004,13 @@ private struct DashboardRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            if let tokens = row.tokenUsage {
+                DisclosureGroup("세션 누적 토큰") {
+                    LabeledContent("입력 토큰", value: tokens.inputTokens.formatted())
+                    LabeledContent("캐시 토큰", value: tokens.cachedInputTokens.formatted())
+                    LabeledContent("출력 토큰", value: tokens.outputTokens.formatted())
+                }
+            }
             if let next = nextExecution {
                 Text(BridgeAppLocalization.format(
                     "다음 실행 설정: %@",
@@ -875,14 +1034,15 @@ private struct DashboardRowView: View {
                             Link("대화", destination: url)
                         }
                     }
-                    if let url = DashboardLink.availableCodexThread(row.codexThreadUrl) {
+                    if !model.isRemoteClient,
+                       let url = DashboardLink.availableCodexThread(row.codexThreadUrl) {
                         Button {
                             NSWorkspace.shared.open(url)
                         } label: {
-                            Label("Codex에서 열기", systemImage: "arrow.up.forward.app")
+                            Label("Codex 대화 열기", systemImage: "arrow.up.forward.app")
                         }
                         .buttonStyle(.link)
-                        .help("Codex 앱에서 이 Agent 작업을 엽니다.")
+                        .help("Codex 앱에서 이 Agent의 대화를 엽니다.")
                     }
                 }
             }
@@ -1057,6 +1217,9 @@ struct ConnectionRepairView: View {
     @EnvironmentObject private var model: AppModel
     @State private var apiKey = ""
     @State private var tunnelId = ""
+    @State private var pasteMessage: String?
+    @State private var discoveredSettingsExpanded = false
+    @State private var diagnosticLogsExpanded = false
 
     var body: some View {
         ScrollView {
@@ -1094,7 +1257,14 @@ struct ConnectionRepairView: View {
                         if let profile = model.helperStatus?.tunnel.profile {
                             LabeledContent("프로필", value: profile)
                         }
-                        if let error = model.helperStatus?.tunnel.lastError {
+                        if model.isTunnelConnectionChecking {
+                            Label(
+                                "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                                systemImage: "arrow.triangle.2.circlepath"
+                            )
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        } else if let error = model.tunnelStatusErrorMessage {
                             Label(error, systemImage: "exclamationmark.triangle")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
@@ -1106,6 +1276,78 @@ struct ConnectionRepairView: View {
 
                 GroupBox("Secure MCP Tunnel") {
                     VStack(alignment: .leading, spacing: 10) {
+                        Text("Runtime API 키와 Tunnel을 OpenAI Platform에서 만든 뒤 연결합니다.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 12) {
+                                Link(
+                                    "Runtime API 키 만들기",
+                                    destination: URL(
+                                        string: "https://platform.openai.com/settings/organization/api-keys"
+                                    )!
+                                )
+                                Link(
+                                    "Tunnel 만들기",
+                                    destination: URL(
+                                        string: "https://platform.openai.com/settings/organization/tunnels"
+                                    )!
+                                )
+                                Spacer()
+                            }
+                            Button("기존 설정 다시 찾기") {
+                                Task { await model.refreshSetupDiscovery() }
+                            }
+                            .disabled(model.isBusy)
+                        }
+
+                        if let candidates = model.setupDiscovery?.candidates,
+                           !candidates.isEmpty {
+                            FullRowDisclosure(
+                                "기존 설정 가져오기",
+                                isExpanded: $discoveredSettingsExpanded
+                            ) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(candidates) { candidate in
+                                        HStack(alignment: .center, spacing: 10) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(candidateSourceLabel(candidate))
+                                                    .font(.caption.weight(.semibold))
+                                                Text(candidate.tunnelId)
+                                                    .font(.caption2.monospaced())
+                                                    .textSelection(.enabled)
+                                                Text(
+                                                    candidate.hasApiKey
+                                                        ? "Runtime API 키 사용 가능"
+                                                        : "Tunnel ID만 발견"
+                                                )
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Button(
+                                                candidateCanConnect(candidate)
+                                                    ? "가져와 연결"
+                                                    : "Tunnel ID 사용"
+                                            ) {
+                                                useDiscoveredCandidate(candidate)
+                                            }
+                                            .disabled(model.isBusy)
+                                        }
+                                        .padding(8)
+                                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                                    }
+                                }
+                                .padding(.top, 6)
+                            }
+                        }
+                        if let discoveryError = model.setupDiscoveryErrorMessage {
+                            Text(discoveryError)
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .textSelection(.enabled)
+                        }
+
                         if let currentTunnelID = model.helperStatus?.configuration.tunnelId {
                             LabeledContent("현재 Tunnel ID") {
                                 HStack(spacing: 8) {
@@ -1134,6 +1376,15 @@ struct ConnectionRepairView: View {
                             text: $apiKey
                         )
                         TextField("tunnel_…", text: $tunnelId)
+                        Button("클립보드에서 두 값 가져오기") {
+                            importSetupFromPasteboard()
+                        }
+                        .disabled(model.isBusy)
+                        if let pasteMessage {
+                            Text(pasteMessage)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         Text("Tunnel ID는 tunnel_ 다음에 영문 소문자 또는 숫자 32자로 입력합니다.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -1141,14 +1392,18 @@ struct ConnectionRepairView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        if let issue = model.helperStatus?.configuration.issue {
+                        if let issue = model.runtimeConfigurationIssueMessage {
                             Label(
-                                runtimeConfigurationIssue(issue, locale: model.interfaceLocale),
+                                issue,
                                 systemImage: "exclamationmark.triangle"
                             )
                                 .font(.caption)
                                 .foregroundStyle(.orange)
-                            if issue.contains("permissions are too broad") {
+                            if model.helperStatus?.configuration.issueProblem?.code ==
+                                "runtime-env-permissions-too-broad" ||
+                                model.helperStatus?.configuration.issue?.contains(
+                                    "permissions are too broad"
+                                ) == true {
                                 Button("앱 전용 권한으로 복구") {
                                     Task { await model.repairConfigurationPermissions() }
                                 }
@@ -1176,15 +1431,7 @@ struct ConnectionRepairView: View {
                 GroupBox("Codex 로그인") {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
-                            model.loginInProgress
-                                ? BridgeAppLocalization.string(
-                                    "브라우저 로그인을 기다리고 있습니다.",
-                                    locale: model.interfaceLocale
-                                )
-                                : model.authStatus?.summary ?? BridgeAppLocalization.string(
-                                    "로그인 상태를 확인하고 있습니다.",
-                                    locale: model.interfaceLocale
-                                ),
+                            codexLoginStatusText,
                             systemImage: model.authStatus?.authenticated == true
                                 ? "checkmark.circle.fill"
                                 : "person.crop.circle.badge.exclamationmark"
@@ -1197,7 +1444,8 @@ struct ConnectionRepairView: View {
                             .disabled(
                                 model.isBusy ||
                                 model.loginInProgress ||
-                                model.authStatus?.authenticated == true
+                                model.authStatus?.authenticated == true ||
+                                (model.authStatus == nil && model.authErrorMessage == nil)
                             )
                             Button("상태 새로고침") {
                                 Task { await model.refreshAuthStatus() }
@@ -1224,7 +1472,10 @@ struct ConnectionRepairView: View {
                     .padding(.top, 3)
                 }
 
-                DisclosureGroup("진단 로그 (민감정보 가림)") {
+                FullRowDisclosure(
+                    "진단 로그 (민감정보 가림)",
+                    isExpanded: $diagnosticLogsExpanded
+                ) {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Button("로그 새로고침") { Task { await model.refreshLogs() } }
@@ -1257,6 +1508,92 @@ struct ConnectionRepairView: View {
             .padding(18)
         }
         .environment(\.locale, model.interfaceLocale)
+        .task {
+            await model.refreshAuthStatus()
+            await model.refreshSetupDiscovery()
+        }
+    }
+
+    private var codexLoginStatusText: String {
+        let key: String
+        if model.loginInProgress {
+            key = "브라우저 로그인을 기다리고 있습니다."
+        } else if model.authErrorMessage != nil {
+            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+        } else if let status = model.authStatus {
+            if !status.installed {
+                key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+            } else if status.authenticated {
+                key = "Codex에 로그인되어 있습니다."
+            } else {
+                key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+            }
+        } else {
+            key = "로그인 상태를 확인하고 있습니다."
+        }
+        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
+    }
+
+    private func candidateCanConnect(_ candidate: TunnelSetupCandidate) -> Bool {
+        candidate.hasApiKey || (model.helperStatus?.configuration.hasApiKey ?? false)
+    }
+
+    private func candidateSourceLabel(_ candidate: TunnelSetupCandidate) -> String {
+        switch candidate.source {
+        case "runtime-config":
+            return BridgeAppLocalization.string(
+                "기존 Bridge 연결 파일",
+                locale: model.interfaceLocale
+            )
+        case "environment":
+            return BridgeAppLocalization.string(
+                "환경 변수",
+                locale: model.interfaceLocale
+            )
+        default:
+            return BridgeAppLocalization.format(
+                "tunnel-client 프로필 · %@",
+                locale: model.interfaceLocale,
+                candidate.profileName ?? "tunnel-client"
+            )
+        }
+    }
+
+    private func useDiscoveredCandidate(_ candidate: TunnelSetupCandidate) {
+        guard candidateCanConnect(candidate) else {
+            tunnelId = candidate.tunnelId
+            pasteMessage = BridgeAppLocalization.string(
+                "Tunnel ID를 입력했습니다. Runtime API 키를 추가해 주세요.",
+                locale: model.interfaceLocale
+            )
+            return
+        }
+        Task {
+            if await model.importDiscoveredSetup(candidateId: candidate.id) {
+                apiKey = ""
+                tunnelId = ""
+                pasteMessage = nil
+            }
+        }
+    }
+
+    private func importSetupFromPasteboard() {
+        guard let contents = NSPasteboard.general.string(forType: .string) else {
+            pasteMessage = BridgeAppLocalization.string(
+                "클립보드에서 연결 정보를 찾지 못했습니다.",
+                locale: model.interfaceLocale
+            )
+            return
+        }
+        let parsed = TunnelSetupInputParser.parse(contents)
+        if let discoveredAPIKey = parsed.apiKey { apiKey = discoveredAPIKey }
+        if let discoveredTunnelID = parsed.tunnelId { tunnelId = discoveredTunnelID }
+        pasteMessage = BridgeAppLocalization.string(
+            parsed.isEmpty
+                ? "클립보드에서 연결 정보를 찾지 못했습니다."
+                : "찾은 연결 정보를 입력했습니다.",
+            locale: model.interfaceLocale
+        )
     }
 
     private var tunnelIDInputIsValid: Bool {
@@ -1513,24 +1850,6 @@ private func cancellationStatusLabel(_ value: String, locale: Locale) -> String 
     case "succeeded": key = "처리됨"
     case "failed": key = "실패"
     default: return value
-    }
-    return BridgeAppLocalization.string(key, locale: locale)
-}
-
-private func runtimeConfigurationIssue(_ value: String, locale: Locale) -> String {
-    let key: String
-    if value.contains("not configured") {
-        key = "런타임 연결 정보가 아직 저장되지 않았습니다."
-    } else if value.contains("permissions are too broad") {
-        key = "연결 정보 파일 또는 폴더의 접근 권한이 너무 넓습니다. 앱 전용 권한으로 제한해 주세요."
-    } else if value.contains("regular, non-symlink") {
-        key = "연결 정보는 심볼릭 링크가 아닌 일반 파일이어야 합니다."
-    } else if value.contains("CONTROL_PLANE_API_KEY") {
-        key = "Tunnel runtime API key가 없거나 형식이 올바르지 않습니다."
-    } else if value.contains("CONTROL_PLANE_TUNNEL_ID") {
-        key = "Tunnel ID가 없거나 형식이 올바르지 않습니다."
-    } else {
-        return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
 }

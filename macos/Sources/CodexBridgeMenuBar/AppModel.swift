@@ -5,6 +5,7 @@ import SwiftUI
 
 enum MenuBarHealth: Equatable {
     case healthy
+    case checking
     case attention
     case unavailable
 
@@ -12,6 +13,7 @@ enum MenuBarHealth: Equatable {
         let key: String
         switch self {
         case .healthy: key = "Codex 브리지 정상"
+        case .checking: key = "Codex 브리지 상태 확인 중"
         case .attention: key = "Codex 브리지 확인 필요"
         case .unavailable: key = "Codex 브리지 연결 불가"
         }
@@ -236,16 +238,29 @@ struct SettingsDraftSyncState: Equatable {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var helperStatus: HelperStatus?
+    @Published var codexRuntime: CodexRuntimeSnapshot?
+    @Published var codexRuntimeError: String?
+    @Published var sdkRuntime: CodexRuntimeSnapshot?
+    @Published var sdkRuntimeError: String?
+    @Published var checkingCodexUpdates = Set<String>()
+    var codexSettingsVisible = false
+    private var codexRuntimeReads: [String: Int] = [:]
+    private var codexRuntimeReadRevision: [String: Int] = [:]
+    private var lastCodexRuntimeRefresh: Date?
+    @Published var sdkAuthStatus: CodexSdkAuthStatus?
     @Published var dashboard: DashboardSnapshot?
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus?
     @Published var logs: [HelperLogEntry] = []
+    @Published private(set) var setupDiscovery: TunnelSetupDiscovery?
+    @Published var setupDiscoveryErrorMessage: String?
     @Published var startupErrorMessage: String?
     @Published var statusErrorMessage: String?
     @Published var dashboardErrorMessage: String?
     @Published var settingsLoadErrorMessage: String?
     @Published var settingsErrorMessage: String?
     @Published var runtimeErrorMessage: String?
+    @Published private(set) var runtimeFailureCanRetryWithForce = false
     @Published var authErrorMessage: String?
     @Published var logsErrorMessage: String?
     @Published var settingsConflictMessage: String?
@@ -263,31 +278,82 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastAutosavedDraft: SettingsDraft?
     @Published private(set) var applicationShutdownCompleted = false
     @Published private(set) var applicationShutdownInProgress = false
+    @Published private(set) var connectionPreferences: BridgeConnectionPreferences
+    @Published private(set) var remoteHello: RemoteCompanionHello?
+    @Published private(set) var remoteManagementStatus: RemoteManagementStatus?
+    @Published var connectionErrorMessage: String?
+    @Published var remoteManagementErrorMessage: String?
+    @Published var remotePairingInvitation: RemotePairingInvitation?
+    @Published private(set) var connectionContextID = UUID()
 
     private let bootstrapper = HelperBootstrap()
     private let loginItemController: any LoginItemControlling
+    private let connectionStore: (any BridgeConnectionPreferencesStoring)?
+    private let credentialStore: any RemoteCredentialStoring
+    private let remoteClientFactory: @Sendable (
+        RemoteServerProfile,
+        String
+    ) throws -> any RemoteBridgeApplicationClient
+    private let remotePairingFactory: @Sendable (
+        String,
+        String,
+        String?
+    ) async throws -> RemotePairingResult
     private let pageLimit = 12
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "app-model")
     private var pollingTask: Task<Void, Never>?
+    private var bridgeReadinessTask: Task<Void, Never>?
+    private var bridgeReadinessTaskGeneration = 0
     private var settingsPollingTask: Task<Void, Never>?
     private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
     private var dashboardEnrichmentTask: Task<Void, Never>?
     private var settingsAutosaveDebounceTask: Task<Void, Never>?
+    private var remotePairingExpirationTask: Task<Void, Never>?
     private var pendingSettingsDraft: SettingsDraft?
     private var settingsAutosaveInProgress = false
     private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
+    private var connectionGeneration = 0
+    private var cachedRemoteClient: (
+        profile: RemoteServerProfile,
+        client: any RemoteBridgeApplicationClient
+    )?
+    private let profileHeartbeatInterval: TimeInterval = 60
     private var paths: RuntimePaths?
     private var pathResolutionTask: Task<RuntimePaths, Never>?
 
     init(
         paths: RuntimePaths? = nil,
-        loginItemController: (any LoginItemControlling)? = nil
+        loginItemController: (any LoginItemControlling)? = nil,
+        connectionStore: (any BridgeConnectionPreferencesStoring)? = nil,
+        credentialStore: any RemoteCredentialStoring = KeychainRemoteCredentialStore(),
+        remoteClientFactory: @escaping @Sendable (
+            RemoteServerProfile,
+            String
+        ) throws -> any RemoteBridgeApplicationClient = { profile, credential in
+            try RemoteCompanionClient(profile: profile, credential: credential)
+        },
+        remotePairingFactory: @escaping @Sendable (
+            String,
+            String,
+            String?
+        ) async throws -> RemotePairingResult = { invitation, deviceName, profileName in
+            try await RemoteCompanionClient.pair(
+                invitation: invitation,
+                deviceName: deviceName,
+                profileName: profileName
+            )
+        }
     ) {
         self.paths = paths
         self.loginItemController = loginItemController ?? ServiceManagementLoginItemController()
+        self.connectionStore = connectionStore
+        self.credentialStore = credentialStore
+        self.remoteClientFactory = remoteClientFactory
+        self.remotePairingFactory = remotePairingFactory
+        self.connectionPreferences = connectionStore?.load() ?? BridgeConnectionPreferences()
         menuBarLoginItemStatus = self.loginItemController.status
     }
 
@@ -307,12 +373,164 @@ final class AppModel: ObservableObject {
         return MacOSHelperClient(socketPath: paths.helperSocket.path)
     }
 
-    private func bridgeClient() async -> BridgeCompanionClient {
+    private func localBridgeClient() async -> BridgeCompanionClient {
         let paths = await resolvedPaths()
         return BridgeCompanionClient(socketPath: paths.bridgeSocket.path)
     }
 
+    private func bridgeClient() async throws -> any BridgeApplicationClient {
+        if let remote = try remoteClientIfSelected() { return remote }
+        return await localBridgeClient()
+    }
+
+    private func remoteClientIfSelected() throws -> (any RemoteBridgeApplicationClient)? {
+        guard isRemoteClient else { return nil }
+        guard let profile = activeRemoteProfile else {
+            throw RemoteCompanionError.invalidEndpoint
+        }
+        if let cached = cachedRemoteClient,
+           cached.profile.serverId == profile.serverId,
+           cached.profile.endpoint == profile.endpoint,
+           cached.profile.certificateSha256 == profile.certificateSha256 {
+            return cached.client
+        }
+        invalidateRemoteClient()
+        guard let credential = try credentialStore.credential(for: profile.serverId) else {
+            throw RemoteCompanionError.credentialMissing
+        }
+        let client = try remoteClientFactory(profile, credential)
+        cachedRemoteClient = (profile, client)
+        return client
+    }
+
+    private func invalidateRemoteClient() {
+        cachedRemoteClient?.client.close()
+        cachedRemoteClient = nil
+    }
+
+    var isRemoteClient: Bool {
+        connectionPreferences.mode == .remoteClient
+    }
+
+    var activeRemoteProfile: RemoteServerProfile? {
+        connectionPreferences.activeProfile
+    }
+
+    var connectionTargetName: String {
+        if isRemoteClient {
+            return activeRemoteProfile?.name ?? BridgeAppLocalization.string(
+                "선택된 원격 서버 없음",
+                locale: interfaceLocale
+            )
+        }
+        return BridgeAppLocalization.string("이 Mac", locale: interfaceLocale)
+    }
+
+    var bridgeConnected: Bool {
+        isRemoteClient ? remoteHello != nil : helperStatus?.bridge.connected == true
+    }
+
+    var hasConnectionTarget: Bool {
+        !isRemoteClient || activeRemoteProfile != nil
+    }
+
+    var helperStatusErrorMessage: String? {
+        BridgeAppLocalization.statusProblemDescription(
+            problem: helperStatus?.lastProblem,
+            diagnosticMessage: helperStatus?.lastError,
+            context: .helper,
+            locale: interfaceLocale
+        )
+    }
+
+    var tunnelStatusErrorMessage: String? {
+        BridgeAppLocalization.statusProblemDescription(
+            problem: helperStatus?.tunnel.lastProblem,
+            diagnosticMessage: helperStatus?.tunnel.lastError,
+            context: .tunnel,
+            locale: interfaceLocale
+        )
+    }
+
+    var runtimeConfigurationIssueMessage: String? {
+        BridgeAppLocalization.statusProblemDescription(
+            problem: helperStatus?.configuration.issueProblem,
+            diagnosticMessage: helperStatus?.configuration.issue,
+            context: .runtimeConfiguration,
+            locale: interfaceLocale
+        )
+    }
+
+    var remoteManagementStatusErrorMessage: String? {
+        BridgeAppLocalization.statusProblemDescription(
+            problem: remoteManagementStatus?.lastProblem,
+            diagnosticMessage: remoteManagementStatus?.lastError,
+            context: .remoteManagement,
+            locale: interfaceLocale
+        )
+    }
+
+    var isTunnelConnectionChecking: Bool {
+        guard !isRemoteClient,
+              let helperStatus,
+              helperStatus.phase == "starting" || helperStatus.phase == "running",
+              !helperStatus.tunnel.connected else { return false }
+        let tunnel = helperStatus.tunnel
+        if tunnel.phase == "starting" { return true }
+        if BridgeAppLocalization.isTunnelConnectionPending(
+            problem: tunnel.lastProblem,
+            diagnosticMessage: tunnel.lastError
+        ) {
+            return true
+        }
+        return tunnel.processRunning && tunnel.lastProblem == nil && tunnel.lastError == nil
+    }
+
+    var isBridgeConnectionChecking: Bool {
+        if isRemoteClient {
+            guard activeRemoteProfile != nil, remoteHello == nil else { return false }
+            return connectionErrorMessage == nil && statusErrorMessage == nil
+        }
+        if helperStatus?.phase == "starting" || isTunnelConnectionChecking { return true }
+        guard helperStatus == nil else { return false }
+        return startupErrorMessage == nil && statusErrorMessage == nil
+    }
+
+    var shouldShowCodexAuthenticationNotice: Bool {
+        guard !isRemoteClient else { return false }
+        if authErrorMessage != nil { return true }
+        guard let authStatus else { return false }
+        return !authStatus.installed || !authStatus.authenticated
+    }
+
+    var shouldShowCodexWeeklyUsage: Bool {
+        isRemoteClient || authStatus?.authenticated != false
+    }
+
+    var usesSdkForNewAgents: Bool {
+        helperStatus?.configuration.operatorConfiguration.defaultBackend == "codex-sdk"
+    }
+
+    var selectedCodexAccount: CodexAccountUsage? {
+        usesSdkForNewAgents ? sdkRuntime?.account : codexRuntime?.account
+    }
+
+    var otherCodexAccount: CodexAccountUsage? {
+        guard let other = usesSdkForNewAgents ? codexRuntime?.account : sdkRuntime?.account,
+              other.authenticated, selectedCodexAccount?.sharesKnownAccount(with: other) != true else { return nil }
+        return other
+    }
+
     var health: MenuBarHealth {
+        if isBridgeConnectionChecking { return .checking }
+        if isRemoteClient {
+            guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
+            guard connectionErrorMessage == nil, dashboardErrorMessage == nil else {
+                return .attention
+            }
+            guard let counts = dashboard?.counts else { return .checking }
+            return counts.needsAttention > 0 ? .attention : .healthy
+        }
         guard let helperStatus,
               helperStatus.configuration.valid,
               helperStatus.bridge.connected,
@@ -320,16 +538,18 @@ final class AppModel: ObservableObject {
               helperStatus.phase == "running" else {
             return .unavailable
         }
-        guard let authStatus else { return .attention }
+        guard let authStatus else {
+            return authErrorMessage == nil ? .checking : .attention
+        }
         guard authStatus.installed else { return .unavailable }
         guard authStatus.authenticated else { return .attention }
-        guard dashboardErrorMessage == nil, let counts = dashboard?.counts else {
-            return .attention
-        }
+        guard dashboardErrorMessage == nil else { return .attention }
+        guard let counts = dashboard?.counts else { return .checking }
         return counts.needsAttention > 0 ? .attention : .healthy
     }
 
     var needsSetup: Bool {
+        if isRemoteClient { return false }
         guard let helperStatus else { return false }
         return !helperStatus.configuration.valid
     }
@@ -340,6 +560,350 @@ final class AppModel: ObservableObject {
 
     var interfaceLocaleIdentifier: String {
         BridgeAppLocalization.languageCode(for: interfaceLocalePreference)
+    }
+
+    func setConnectionMode(_ mode: BridgeAppMode, force: Bool = false) async -> Bool {
+        guard mode != connectionPreferences.mode else { return true }
+        guard await flushSettingsAutosave() else {
+            connectionErrorMessage = BridgeAppLocalization.string(
+                "저장 중인 서버 설정을 완료하지 못해 연결 모드를 바꾸지 않았습니다.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+        connectionErrorMessage = nil
+
+        if mode == .remoteClient {
+            do {
+                try await stopLocalOwnershipForModeSwitch(force: force)
+            } catch {
+                connectionErrorMessage = localizedApplicationShutdownError(error)
+                return false
+            }
+        }
+
+        let previous = connectionPreferences
+        connectionPreferences.mode = mode
+        do {
+            try connectionStore?.save(connectionPreferences)
+        } catch {
+            let persistenceError = error
+            connectionPreferences = previous
+            if mode == .remoteClient {
+                do {
+                    let paths = await resolvedPaths()
+                    try await bootstrapper.ensureRunning(paths: paths)
+                    startupErrorMessage = nil
+                } catch {
+                    startupErrorMessage = localizedErrorDescription(error)
+                }
+            }
+            connectionErrorMessage = localizedErrorDescription(persistenceError)
+            return false
+        }
+        resetConnectionContext()
+
+        if mode == .localHost {
+            do {
+                let paths = await resolvedPaths()
+                try await bootstrapper.ensureRunning(paths: paths)
+                startupErrorMessage = nil
+            } catch {
+                startupErrorMessage = localizedErrorDescription(error)
+                return false
+            }
+        }
+        await refreshAll()
+        beginPolling()
+        return true
+    }
+
+    func pairRemoteServer(
+        invitation: String,
+        profileName: String,
+        deviceName: String
+    ) async -> Bool {
+        let trimmedDeviceName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDeviceName.isEmpty else {
+            connectionErrorMessage = BridgeAppLocalization.string(
+                "이 기기를 구분할 이름을 입력해 주세요.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        guard await flushSettingsAutosave() else {
+            connectionErrorMessage = BridgeAppLocalization.string(
+                "저장 중인 서버 설정을 완료하지 못해 새 서버를 페어링하지 않았습니다.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        isBusy = true
+        defer { isBusy = false }
+        connectionErrorMessage = nil
+        let wasRemoteClient = isRemoteClient
+        do {
+            let result = try await remotePairingFactory(
+                invitation,
+                trimmedDeviceName,
+                profileName
+            )
+            let previousCredential = try credentialStore.credential(
+                for: result.profile.serverId
+            )
+            try credentialStore.saveCredential(
+                result.credential,
+                for: result.profile.serverId
+            )
+            let previous = connectionPreferences
+            var profiles = connectionPreferences.profiles.filter {
+                $0.serverId != result.profile.serverId
+            }
+            profiles.append(result.profile)
+            connectionPreferences.profiles = profiles
+            connectionPreferences.activeServerId = result.profile.serverId
+            do {
+                try connectionStore?.save(connectionPreferences)
+            } catch {
+                connectionPreferences = previous
+                if let previousCredential {
+                    try? credentialStore.saveCredential(
+                        previousCredential,
+                        for: result.profile.serverId
+                    )
+                } else {
+                    try? credentialStore.deleteCredential(for: result.profile.serverId)
+                }
+                throw error
+            }
+            if wasRemoteClient, isRemoteClient {
+                resetConnectionContext()
+                await refreshAll()
+            }
+            return true
+        } catch {
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func prepareRemoteServerForModeSwitch(_ serverId: String) -> Bool {
+        guard !isRemoteClient,
+              connectionPreferences.profiles.contains(where: {
+                  $0.serverId == serverId
+              }) else {
+            return false
+        }
+        do {
+            guard try credentialStore.credential(for: serverId) != nil else {
+                throw RemoteCompanionError.credentialMissing
+            }
+            let previous = connectionPreferences
+            connectionPreferences.activeServerId = serverId
+            do {
+                try connectionStore?.save(connectionPreferences)
+            } catch {
+                connectionPreferences = previous
+                throw error
+            }
+            connectionErrorMessage = nil
+            return true
+        } catch {
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func activateRemoteServer(_ serverId: String) async -> Bool {
+        guard isRemoteClient,
+              serverId != connectionPreferences.activeServerId,
+              connectionPreferences.profiles.contains(where: { $0.serverId == serverId }) else {
+            return serverId == connectionPreferences.activeServerId
+        }
+        guard await flushSettingsAutosave() else {
+            connectionErrorMessage = BridgeAppLocalization.string(
+                "저장 중인 서버 설정을 완료하지 못해 서버를 전환하지 않았습니다.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        let previous = connectionPreferences
+        connectionPreferences.activeServerId = serverId
+        do {
+            try connectionStore?.save(connectionPreferences)
+        } catch {
+            connectionPreferences = previous
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+        resetConnectionContext()
+        await refreshAll()
+        return remoteHello != nil
+    }
+
+    func renameRemoteServer(_ serverId: String, name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= 120,
+              let index = connectionPreferences.profiles.firstIndex(where: {
+                  $0.serverId == serverId
+              }) else {
+            return false
+        }
+        let previous = connectionPreferences
+        connectionPreferences.profiles[index].name = trimmed
+        do {
+            try connectionStore?.save(connectionPreferences)
+            return true
+        } catch {
+            connectionPreferences = previous
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func removeRemoteServer(_ serverId: String) async -> Bool {
+        guard connectionPreferences.profiles.contains(where: { $0.serverId == serverId }) else {
+            return false
+        }
+        let wasActive = connectionPreferences.activeServerId == serverId
+        if isRemoteClient, wasActive, !(await flushSettingsAutosave()) {
+            connectionErrorMessage = BridgeAppLocalization.string(
+                "저장 중인 서버 설정을 완료하지 못해 서버를 삭제하지 않았습니다.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        let previousCredential: String?
+        do {
+            previousCredential = try credentialStore.credential(for: serverId)
+        } catch {
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+        let previous = connectionPreferences
+        connectionPreferences.profiles.removeAll { $0.serverId == serverId }
+        if connectionPreferences.activeServerId == serverId {
+            connectionPreferences.activeServerId = connectionPreferences.profiles.first?.serverId
+        }
+        do {
+            try connectionStore?.save(connectionPreferences)
+            try credentialStore.deleteCredential(for: serverId)
+        } catch {
+            connectionPreferences = previous
+            try? connectionStore?.save(previous)
+            if let previousCredential {
+                try? credentialStore.saveCredential(previousCredential, for: serverId)
+            }
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+        if isRemoteClient, wasActive {
+            resetConnectionContext()
+            await refreshAll()
+        }
+        return true
+    }
+
+    func refreshRemoteManagementStatus() async {
+        guard !isRemoteClient, bridgeConnected else {
+            remoteManagementStatus = nil
+            return
+        }
+        let generation = connectionGeneration
+        do {
+            let client = await localBridgeClient()
+            let next = try await client.remoteManagementStatus()
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            remoteManagementStatus = next
+            remoteManagementErrorMessage = nil
+        } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            remoteManagementStatus = nil
+            remoteManagementErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func configureRemoteManagement(
+        enabled: Bool,
+        endpoint: String,
+        displayName: String
+    ) async -> Bool {
+        guard !isRemoteClient, bridgeConnected else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        let generation = connectionGeneration
+        remoteManagementErrorMessage = nil
+        setRemotePairingInvitation(nil)
+        do {
+            let client = await localBridgeClient()
+            let status = try await client.configureRemoteManagement(
+                enabled: enabled,
+                endpoint: endpoint,
+                displayName: displayName
+            )
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            remoteManagementStatus = status
+            if enabled, !status.listening {
+                remoteManagementErrorMessage = BridgeAppLocalization.statusProblemDescription(
+                    problem: status.lastProblem,
+                    diagnosticMessage: status.lastError,
+                    context: .remoteManagement,
+                    locale: interfaceLocale
+                ) ??
+                    BridgeAppLocalization.string(
+                        "원격 관리 서버가 지정한 주소에서 시작되지 않았습니다.",
+                        locale: interfaceLocale
+                    )
+                return false
+            }
+            return true
+        } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            remoteManagementErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func beginRemotePairing() async -> Bool {
+        guard !isRemoteClient, remoteManagementStatus?.listening == true else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        let generation = connectionGeneration
+        do {
+            let client = await localBridgeClient()
+            let next = try await client.beginRemotePairing()
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            setRemotePairingInvitation(next)
+            remoteManagementErrorMessage = nil
+            return true
+        } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            setRemotePairingInvitation(nil)
+            remoteManagementErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func revokeRemoteDevice(_ deviceId: String) async -> Bool {
+        guard !isRemoteClient else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        let generation = connectionGeneration
+        do {
+            let client = await localBridgeClient()
+            let next = try await client.revokeRemoteDevice(deviceId)
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            remoteManagementStatus = next
+            remoteManagementErrorMessage = nil
+            return true
+        } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            remoteManagementErrorMessage = localizedErrorDescription(error)
+            return false
+        }
     }
 
     func previewInterfaceLocale(_ preference: String) {
@@ -376,6 +940,15 @@ final class AppModel: ObservableObject {
     }
 
     private func startOnce() async {
+        if isRemoteClient {
+            logger.info("starting in remote client mode without local helper bootstrap")
+            isBusy = true
+            defer { isBusy = false }
+            startupErrorMessage = nil
+            await refreshAll()
+            beginPolling()
+            return
+        }
         logger.info("starting helper bootstrap")
         isBusy = true
         defer { isBusy = false }
@@ -394,17 +967,65 @@ final class AppModel: ObservableObject {
 
     func refreshAll(refreshModels: Bool = false) async {
         await refreshStatus()
+        if !isRemoteClient { await refreshAuthStatus() }
+        if !isRemoteClient, needsSetup {
+            await refreshSetupDiscovery()
+        } else {
+            setupDiscovery = nil
+            setupDiscoveryErrorMessage = nil
+        }
+        await refreshBridgeContent(refreshModels: refreshModels)
+        beginBridgeReadinessPollingIfNeeded()
+    }
+
+    private func refreshBridgeContent(refreshModels: Bool = false) async {
         await refreshDashboard()
         await refreshSettings(refreshModels: refreshModels)
-        await refreshAuthStatus()
     }
 
     func refreshStatus() async {
+        let generation = connectionGeneration
+        if isRemoteClient {
+            helperStatus = nil
+            codexRuntime = nil
+            sdkRuntime = nil
+            authStatus = nil
+            guard activeRemoteProfile != nil else {
+                remoteHello = nil
+                statusErrorMessage = nil
+                connectionErrorMessage = nil
+                return
+            }
+            do {
+                guard let client = try remoteClientIfSelected() else { return }
+                let hello = try await client.hello()
+                guard generation == connectionGeneration, isRemoteClient else { return }
+                remoteHello = hello
+                statusErrorMessage = nil
+                connectionErrorMessage = nil
+                updateActiveProfile(from: hello)
+            } catch {
+                guard generation == connectionGeneration, isRemoteClient else { return }
+                remoteHello = nil
+                let message = localizedErrorDescription(error)
+                statusErrorMessage = message
+                connectionErrorMessage = message
+            }
+            return
+        }
+        remoteHello = nil
+        connectionErrorMessage = nil
         do {
             let client = await helperClient()
-            helperStatus = try await client.status()
+            let next = try await client.status()
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            helperStatus = next
             statusErrorMessage = nil
+            if !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
+                await loadCodexRuntime(kind: "cli")
+            }
         } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return }
             helperStatus = nil
             statusErrorMessage = localizedErrorDescription(error)
         }
@@ -414,19 +1035,21 @@ final class AppModel: ObservableObject {
         dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
-        guard helperStatus?.bridge.connected == true else {
+        guard bridgeConnected else {
             dashboard = nil
             dashboardErrorMessage = nil
             return
         }
+        let connection = connectionGeneration
         do {
-            let client = await bridgeClient()
+            let client = try await bridgeClient()
             let next = try await client.dashboard(
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0,
                 enrich: false
             )
+            guard connection == connectionGeneration else { return }
             dashboard = next
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
@@ -439,6 +1062,7 @@ final class AppModel: ObservableObject {
                 idleOffset: 0
             )
         } catch {
+            guard connection == connectionGeneration else { return }
             dashboardErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -453,14 +1077,17 @@ final class AppModel: ObservableObject {
         dashboardEnrichmentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let client = await self.bridgeClient()
+                let connection = self.connectionGeneration
+                let client = try await self.bridgeClient()
                 let enriched = try await client.dashboard(
                     limit: self.pageLimit,
                     terminalOffset: terminalOffset,
                     idleOffset: idleOffset,
                     enrich: true
                 )
-                guard !Task.isCancelled, generation == self.dashboardRequestGeneration else {
+                guard !Task.isCancelled,
+                      generation == self.dashboardRequestGeneration,
+                      connection == self.connectionGeneration else {
                     return
                 }
                 if let bucket, let current = self.dashboard {
@@ -481,23 +1108,26 @@ final class AppModel: ObservableObject {
     }
 
     func refreshSettings(refreshModels: Bool = false) async {
-        guard helperStatus?.bridge.connected == true else {
+        guard bridgeConnected else {
             settings = nil
             settingsLoadErrorMessage = nil
             return
         }
+        let generation = connectionGeneration
         do {
-            let client = await bridgeClient()
+            let client = try await bridgeClient()
             let next = try await client.settings(
                 refreshModels: refreshModels,
                 locale: interfaceLocaleIdentifier
             )
+            guard generation == connectionGeneration else { return }
             settings = next
             if !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.settings.uiLocalePreference
             }
             settingsLoadErrorMessage = nil
         } catch {
+            guard generation == connectionGeneration else { return }
             settingsLoadErrorMessage = localizedErrorDescription(error)
         }
     }
@@ -507,11 +1137,15 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         runtimeImpact = nil
         runtimeImpactErrorMessage = nil
+        let generation = connectionGeneration
         do {
-            let client = await bridgeClient()
-            runtimeImpact = try await client.runtimeStatus(inspectBackgroundProcesses: true)
+            let client = try await bridgeClient()
+            let next = try await client.runtimeStatus(inspectBackgroundProcesses: true)
+            guard generation == connectionGeneration else { return }
+            runtimeImpact = next
             runtimeImpactErrorMessage = nil
         } catch {
+            guard generation == connectionGeneration else { return }
             runtimeImpact = nil
             runtimeImpactErrorMessage = localizedErrorDescription(error)
         }
@@ -695,13 +1329,21 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshAuthStatusOnce() async {
+        let generation = connectionGeneration
+        guard !isRemoteClient else {
+            authStatus = nil
+            authErrorMessage = nil
+            return
+        }
         guard helperStatus != nil else {
             authStatus = nil
             return
         }
         do {
             let client = await helperClient()
-            authStatus = try await client.authStatus()
+            let next = try await client.authStatus()
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            authStatus = next
             authErrorMessage = nil
             if authStatus?.authenticated == true {
                 loginInProgress = false
@@ -709,13 +1351,15 @@ final class AppModel: ObservableObject {
                 loginPollingTask = nil
             }
         } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return }
             authStatus = nil
             authErrorMessage = localizedErrorDescription(error)
         }
     }
 
     func saveSetup(apiKey: String, tunnelId: String) async -> Bool {
-        await performRuntime {
+        guard !isRemoteClient else { return false }
+        return await performRuntime {
             let client = await self.helperClient()
             let result = try await client.applySetup(
                 apiKey: apiKey.isEmpty ? nil : apiKey,
@@ -728,12 +1372,114 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func refreshSetupDiscovery() async {
+        let generation = connectionGeneration
+        guard !isRemoteClient, helperStatus != nil else {
+            setupDiscovery = nil
+            setupDiscoveryErrorMessage = nil
+            return
+        }
+        do {
+            let client = await helperClient()
+            let discovery = try await client.discoverSetup()
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            setupDiscovery = discovery
+            setupDiscoveryErrorMessage = nil
+        } catch {
+            guard generation == connectionGeneration, !isRemoteClient else { return }
+            setupDiscovery = nil
+            setupDiscoveryErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func importDiscoveredSetup(candidateId: String) async -> Bool {
+        guard !isRemoteClient else { return false }
+        let succeeded = await performRuntime {
+            let client = await self.helperClient()
+            let result = try await client.importSetup(
+                candidateId: candidateId,
+                force: false,
+                timeoutMilliseconds: 60_000
+            )
+            self.helperStatus = result.status
+            self.setupDiscovery = nil
+            self.setupDiscoveryErrorMessage = nil
+            await self.refreshAll()
+        }
+        if !succeeded { await refreshSetupDiscovery() }
+        return succeeded
+    }
+
+    func manageCodex(_ request: CodexRuntimeRequest) async {
+        guard !isRemoteClient else { return }
+        let kind = request.kind ?? "cli"
+        if request.action == "status" {
+            await loadCodexRuntime(kind: kind, includeAccount: request.includeAccount ?? true)
+            return
+        }
+        if request.action == "check-updates" {
+            guard !checkingCodexUpdates.contains(kind) else { return }
+            checkingCodexUpdates.insert(kind)
+        }
+        defer { checkingCodexUpdates.remove(kind) }
+        do {
+            let client = await helperClient()
+            _ = try await client.codexRuntime(request)
+            // Actions return installation state only. Publish a complete status so
+            // account/authentication sections do not disappear between requests.
+            await loadCodexRuntime(kind: kind, force: true)
+        } catch {
+            await loadCodexRuntime(kind: kind, force: true)
+            setCodexRuntimeError(localizedErrorDescription(error), kind: kind)
+        }
+    }
+
+    private func loadCodexRuntime(kind: String, includeAccount: Bool = true, force: Bool = false) async {
+        guard !isRemoteClient, force || codexRuntimeReads[kind, default: 0] == 0 else { return }
+        codexRuntimeReads[kind, default: 0] += 1
+        defer { codexRuntimeReads[kind, default: 1] -= 1 }
+        codexRuntimeReadRevision[kind, default: 0] += 1
+        let revision = codexRuntimeReadRevision[kind], connection = connectionGeneration
+        do {
+            let client = await helperClient()
+            let next = try await client.codexRuntime(.init(action: "status", kind: kind, includeAccount: includeAccount))
+            guard connection == connectionGeneration, !isRemoteClient, revision == codexRuntimeReadRevision[kind] else { return }
+            if kind == "sdk" {
+                if sdkRuntime != next { sdkRuntime = next }
+            } else {
+                if codexRuntime != next { codexRuntime = next }
+                lastCodexRuntimeRefresh = Date()
+            }
+            setCodexRuntimeError(nil, kind: kind)
+        } catch {
+            guard connection == connectionGeneration, revision == codexRuntimeReadRevision[kind] else { return }
+            setCodexRuntimeError(localizedErrorDescription(error), kind: kind)
+        }
+    }
+
+    private func setCodexRuntimeError(_ message: String?, kind: String) {
+        if kind == "sdk" {
+            if sdkRuntimeError != message { sdkRuntimeError = message }
+        } else if codexRuntimeError != message { codexRuntimeError = message }
+    }
+
+    func configureSdkAuthentication(_ request: CodexSdkAuthRequest) async {
+        guard !isRemoteClient else { return }
+        do {
+            let client = await helperClient()
+            sdkAuthStatus = try await client.configureSdkAuth(request)
+            setCodexRuntimeError(nil, kind: "sdk")
+            await manageCodex(.init(action: "status", kind: "sdk"))
+        } catch { setCodexRuntimeError(localizedErrorDescription(error), kind: "sdk") }
+    }
+
     func configureRuntime(
         defaultBackend: String,
         maximumAccess: String,
         force: Bool = false
     ) async -> Bool {
-        await performRuntime {
+        guard !isRemoteClient else { return false }
+        return await performRuntime {
             let client = await self.helperClient()
             let result = try await client.configureRuntime(
                 defaultBackend: defaultBackend,
@@ -747,7 +1493,8 @@ final class AppModel: ObservableObject {
     }
 
     func repairConfigurationPermissions() async -> Bool {
-        await performRuntime {
+        guard !isRemoteClient else { return false }
+        return await performRuntime {
             let client = await self.helperClient()
             _ = try await client.repairConfigurationPermissions()
             await self.refreshStatus()
@@ -759,12 +1506,25 @@ final class AppModel: ObservableObject {
     }
 
     func launchCodexLogin() async -> Bool {
+        guard !isRemoteClient else { return false }
         isBusy = true
         defer { isBusy = false }
         authErrorMessage = nil
+        let generation = connectionGeneration
         do {
             let client = await helperClient()
+            let current = try await client.authStatus()
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
+            authStatus = current
+            if current.authenticated {
+                loginInProgress = false
+                loginPollingTask?.cancel()
+                loginPollingTask = nil
+                return true
+            }
+            guard current.installed else { return false }
             _ = try await client.startLogin()
+            guard generation == connectionGeneration, !isRemoteClient else { return false }
             loginInProgress = true
             beginLoginPolling()
             return true
@@ -775,7 +1535,8 @@ final class AppModel: ObservableObject {
     }
 
     func startRuntime() async -> Bool {
-        await performRuntime {
+        guard !isRemoteClient else { return false }
+        return await performRuntime {
             let client = await self.helperClient()
             self.helperStatus = try await client.startRuntime()
             await self.refreshAll()
@@ -783,6 +1544,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopRuntime(force: Bool) async -> Bool {
+        guard !isRemoteClient else { return false }
         let succeeded = await performRuntime {
             let client = await self.helperClient()
             self.helperStatus = try await client.stopRuntime(
@@ -805,6 +1567,7 @@ final class AppModel: ObservableObject {
         applicationShutdownInProgress = true
         isBusy = true
         runtimeErrorMessage = nil
+        runtimeFailureCanRetryWithForce = false
         defer {
             applicationShutdownInProgress = false
             isBusy = false
@@ -816,6 +1579,20 @@ final class AppModel: ObservableObject {
                 locale: interfaceLocale
             )
             return false
+        }
+        if isRemoteClient {
+            applicationShutdownCompleted = true
+            cancelAllPolling()
+            setRemotePairingInvitation(nil)
+            connectionGeneration += 1
+            invalidateRemoteClient()
+            dashboardRequestGeneration += 1
+            connectionContextID = UUID()
+            remoteHello = nil
+            dashboard = nil
+            settings = nil
+            authStatus = nil
+            return true
         }
         let paths = await resolvedPaths()
         let client = await helperClient()
@@ -851,16 +1628,8 @@ final class AppModel: ObservableObject {
 
             try await bootstrapper.shutdown(paths: paths)
             applicationShutdownCompleted = true
-            pollingTask?.cancel()
-            pollingTask = nil
-            settingsPollingTask?.cancel()
-            settingsPollingTask = nil
-            loginPollingTask?.cancel()
-            loginPollingTask = nil
-            authRefreshTask?.cancel()
-            authRefreshTask = nil
-            dashboardEnrichmentTask?.cancel()
-            dashboardEnrichmentTask = nil
+            cancelAllPolling()
+            setRemotePairingInvitation(nil)
             helperStatus = nil
             dashboard = nil
             settings = nil
@@ -877,6 +1646,7 @@ final class AppModel: ObservableObject {
     }
 
     func restartRuntime(force: Bool) async -> Bool {
+        guard !isRemoteClient else { return false }
         let succeeded = await performRuntime {
             let client = await self.helperClient()
             self.helperStatus = try await client.restartRuntime(
@@ -893,6 +1663,7 @@ final class AppModel: ObservableObject {
     }
 
     func repairTunnelProfile(force: Bool = false) async -> Bool {
+        guard !isRemoteClient else { return false }
         let succeeded = await performRuntime {
             let client = await self.helperClient()
             self.helperStatus = try await client.repairRuntime(
@@ -1020,14 +1791,16 @@ final class AppModel: ObservableObject {
         dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
+        let connection = connectionGeneration
         _ = await performDashboard {
-            let client = await self.bridgeClient()
+            let client = try await self.bridgeClient()
             let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 idleOffset: 0,
                 enrich: false
             )
+            guard connection == self.connectionGeneration else { return }
             self.dashboard = current.mergingPage(
                 page,
                 bucket: .terminal,
@@ -1050,14 +1823,16 @@ final class AppModel: ObservableObject {
         dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
+        let connection = connectionGeneration
         _ = await performDashboard {
-            let client = await self.bridgeClient()
+            let client = try await self.bridgeClient()
             let page = try await client.dashboard(
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset,
                 enrich: false
             )
+            guard connection == self.connectionGeneration else { return }
             self.dashboard = current.mergingPage(
                 page,
                 bucket: .idle,
@@ -1075,6 +1850,11 @@ final class AppModel: ObservableObject {
     }
 
     func refreshLogs() async {
+        guard !isRemoteClient else {
+            logs = []
+            logsErrorMessage = nil
+            return
+        }
         do {
             let client = await helperClient()
             logs = try await client.logs(limit: 100).entries
@@ -1094,9 +1874,11 @@ final class AppModel: ObservableObject {
             if tracksGlobalBusyState { isBusy = false }
         }
         settingsErrorMessage = nil
+        let generation = connectionGeneration
         do {
-            let client = await bridgeClient()
+            let client = try await bridgeClient()
             let updated = try await client.updateSettings(mutation)
+            guard generation == connectionGeneration else { return false }
             if let autosavedDraft {
                 lastAutosavedSettingsRevision = updated.settings.settingsRevision
                 lastAutosavedDraft = autosavedDraft
@@ -1105,6 +1887,7 @@ final class AppModel: ObservableObject {
             settingsConflictMessage = nil
             return true
         } catch {
+            guard generation == connectionGeneration else { return false }
             let message = error.localizedDescription
             if message.contains("REVISION_CONFLICT") {
                 if autosavedDraft == nil {
@@ -1125,10 +1908,14 @@ final class AppModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         runtimeErrorMessage = nil
+        runtimeFailureCanRetryWithForce = false
         do {
             try await operation()
             return true
         } catch {
+            let diagnosticMessage = error.localizedDescription
+            runtimeFailureCanRetryWithForce = diagnosticMessage.contains("DRAIN_TIMEOUT") ||
+                diagnosticMessage.contains("BACKGROUND_PROCESS")
             runtimeErrorMessage = localizedErrorDescription(error)
             return false
         }
@@ -1165,6 +1952,228 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func stopLocalOwnershipForModeSwitch(force: Bool) async throws {
+        let paths = await resolvedPaths()
+        let client = await helperClient()
+        do {
+            let stopped = try await client.prepareApplicationShutdown(
+                force: force,
+                timeoutMilliseconds: 60_000
+            )
+            guard stopped.phase == "stopped", stopped.pid == nil else {
+                throw NSError(
+                    domain: "CodexBridgeModeSwitch",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "RUNTIME_STOP_INCOMPLETE: The managed runtime still reports phase \(stopped.phase)."
+                    ]
+                )
+            }
+        } catch {
+            let runtimeLockExists = FileManager.default.fileExists(
+                atPath: paths.runtimeLockDirectory.path
+            )
+            let helperSocketExists = FileManager.default.fileExists(
+                atPath: paths.helperSocket.path
+            )
+            guard !runtimeLockExists && !helperSocketExists else { throw error }
+        }
+        try await bootstrapper.shutdown(paths: paths)
+        helperStatus = nil
+        authStatus = nil
+        setupDiscovery = nil
+    }
+
+    private func resetConnectionContext() {
+        cancelBridgeReadinessPolling()
+        connectionGeneration += 1
+        invalidateRemoteClient()
+        connectionContextID = UUID()
+        dashboardRequestGeneration += 1
+        dashboardEnrichmentTask?.cancel()
+        dashboardEnrichmentTask = nil
+        settingsAutosaveDebounceTask?.cancel()
+        settingsAutosaveDebounceTask = nil
+        pendingSettingsDraft = nil
+        settingsAutosaveInProgress = false
+        generalSettingsSaveState = .idle
+        dashboard = nil
+        settings = nil
+        authStatus = nil
+        setupDiscovery = nil
+        remoteHello = nil
+        runtimeImpact = nil
+        setRemotePairingInvitation(nil)
+        dashboardErrorMessage = nil
+        settingsLoadErrorMessage = nil
+        settingsErrorMessage = nil
+        settingsConflictMessage = nil
+        runtimeImpactErrorMessage = nil
+        statusErrorMessage = nil
+        authErrorMessage = nil
+        setupDiscoveryErrorMessage = nil
+        if isRemoteClient {
+            helperStatus = nil
+            logs = []
+        } else {
+            remoteManagementStatus = nil
+        }
+    }
+
+    private func updateActiveProfile(from hello: RemoteCompanionHello) {
+        guard let serverId = connectionPreferences.activeServerId,
+              let index = connectionPreferences.profiles.firstIndex(where: {
+                  $0.serverId == serverId
+              }) else {
+            return
+        }
+        var profile = connectionPreferences.profiles[index]
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        let lastConnectedAt = profile.lastConnectedAt.flatMap(formatter.date(from:))
+        let metadataChanged = profile.serverDisplayName != hello.server.displayName ||
+            profile.bridgeVersion != hello.bridge.version ||
+            profile.bridgeBuildId != hello.bridge.buildId ||
+            profile.capabilities != hello.capabilities
+        let heartbeatDue = lastConnectedAt.map {
+            now.timeIntervalSince($0) >= profileHeartbeatInterval
+        } ?? true
+        guard metadataChanged || heartbeatDue else { return }
+        profile.serverDisplayName = hello.server.displayName
+        profile.bridgeVersion = hello.bridge.version
+        profile.bridgeBuildId = hello.bridge.buildId
+        profile.capabilities = hello.capabilities
+        profile.lastConnectedAt = formatter.string(from: now)
+        connectionPreferences.profiles[index] = profile
+        do {
+            try connectionStore?.save(connectionPreferences)
+        } catch {
+            connectionErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    private func setRemotePairingInvitation(_ invitation: RemotePairingInvitation?) {
+        remotePairingExpirationTask?.cancel()
+        remotePairingExpirationTask = nil
+        remotePairingInvitation = invitation
+        guard let invitation,
+              let expiration = remotePairingExpirationDate(invitation.expiresAt) else {
+            return
+        }
+        let delay = expiration.timeIntervalSinceNow
+        guard delay > 0 else {
+            remotePairingInvitation = nil
+            return
+        }
+        let expectedInvitation = invitation.invitation
+        let nanoseconds = UInt64(min(delay, 900) * 1_000_000_000)
+        remotePairingExpirationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.remotePairingInvitation?.invitation == expectedInvitation else {
+                return
+            }
+            self.remotePairingInvitation = nil
+            self.remotePairingExpirationTask = nil
+        }
+    }
+
+    private func remotePairingExpirationDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) { return date }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    private func cancelAllPolling() {
+        pollingTask?.cancel()
+        pollingTask = nil
+        cancelBridgeReadinessPolling()
+        settingsPollingTask?.cancel()
+        settingsPollingTask = nil
+        loginPollingTask?.cancel()
+        loginPollingTask = nil
+        authRefreshTask?.cancel()
+        authRefreshTask = nil
+        dashboardEnrichmentTask?.cancel()
+        dashboardEnrichmentTask = nil
+    }
+
+    private var shouldPollForBridgeReadiness: Bool {
+        guard !isRemoteClient, !bridgeConnected, !needsSetup else { return false }
+        return helperStatus == nil || helperStatus?.phase == "starting"
+    }
+
+    private func cancelBridgeReadinessPolling() {
+        bridgeReadinessTaskGeneration += 1
+        bridgeReadinessTask?.cancel()
+        bridgeReadinessTask = nil
+    }
+
+    private func beginBridgeReadinessPollingIfNeeded() {
+        cancelBridgeReadinessPolling()
+        guard shouldPollForBridgeReadiness else { return }
+
+        let taskGeneration = bridgeReadinessTaskGeneration
+        let expectedConnectionGeneration = connectionGeneration
+        bridgeReadinessTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.bridgeReadinessTaskGeneration == taskGeneration {
+                    self.bridgeReadinessTask = nil
+                }
+            }
+
+            for _ in 0..<60 {
+                do {
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      expectedConnectionGeneration == self.connectionGeneration,
+                      self.shouldPollForBridgeReadiness else {
+                    return
+                }
+
+                let hadHelperStatus = self.helperStatus != nil
+                let wasBridgeConnected = self.bridgeConnected
+                await self.refreshStatus()
+                guard !Task.isCancelled,
+                      expectedConnectionGeneration == self.connectionGeneration else {
+                    return
+                }
+
+                if !hadHelperStatus,
+                   self.helperStatus != nil,
+                   self.authStatus == nil,
+                   self.authErrorMessage == nil {
+                    await self.refreshAuthStatus()
+                    guard !Task.isCancelled,
+                          expectedConnectionGeneration == self.connectionGeneration else {
+                        return
+                    }
+                }
+                if self.needsSetup {
+                    await self.refreshSetupDiscovery()
+                    return
+                }
+                if !wasBridgeConnected, self.bridgeConnected {
+                    self.logger.info("bridge became ready; refreshing startup content immediately")
+                    await self.refreshBridgeContent()
+                    return
+                }
+                guard self.shouldPollForBridgeReadiness else { return }
+            }
+        }
+    }
+
     private func performDashboard(_ operation: () async throws -> Void) async -> Bool {
         isBusy = true
         defer { isBusy = false }
@@ -1195,18 +2204,23 @@ final class AppModel: ObservableObject {
 
     private func beginPolling() {
         guard pollingTask == nil else { return }
-        pollingTask = Task { [weak self] in
+        pollingTask = Task { @MainActor [weak self] in
             var ticks = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard let self, !Task.isCancelled else { return }
+                let wasBridgeConnected = self.bridgeConnected
                 await self.refreshStatus()
                 ticks += 1
-                if ticks.isMultiple(of: 6) {
-                    await self.refreshAuthStatus()
-                }
-                if ticks.isMultiple(of: 3) {
+                let becameBridgeConnected = !wasBridgeConnected && self.bridgeConnected
+                if becameBridgeConnected {
+                    self.cancelBridgeReadinessPolling()
+                    await self.refreshBridgeContent()
+                } else if ticks.isMultiple(of: 3) {
                     await self.refreshDashboard()
+                }
+                if !self.isRemoteClient, ticks.isMultiple(of: 6) {
+                    await self.refreshAuthStatus()
                 }
             }
         }

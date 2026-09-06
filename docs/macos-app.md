@@ -25,6 +25,22 @@ native Settings window both use the same revisioned service, including separate
 changes remain explicit add, rename, relocate, archive, restore, and delete
 operations. The Dashboard remains read-only.
 
+The same binary can instead run as a remote-only client:
+
+```text
+Remote menu-bar app
+  -> certificate-pinned HTTPS companion
+     -> selected server Mac's running Bridge
+        -> shared Dashboard/Settings application service
+```
+
+That role does not bootstrap a helper, Bridge, Tunnel, Codex runtime, or browser
+login on the client Mac. Saved server profiles are available for quick switching,
+but one and only one profile is active. Late responses are generation-bound so
+a response from the previously selected server cannot replace the new server's
+Dashboard or Settings. See [Remote client mode](remote-client.md) for pairing,
+settings semantics, and the network/security boundary.
+
 The native Dashboard uses the same progressive application-service contract as
 the ChatGPT card. It publishes an `enrich: false` structural snapshot first,
 then replaces or merges that page with a bounded `enrich: true` result in a
@@ -110,6 +126,24 @@ the native connection sheet accepts:
 
 - the Secure MCP Tunnel runtime API key; and
 - the Tunnel identifier (`tunnel_` followed by 32 lowercase letters or digits).
+
+Before requiring manual entry, the connection sheet performs an explicit,
+read-only discovery pass. It can find a partial private bridge dotenv, a valid
+`CONTROL_PLANE_TUNNEL_ID` paired with `CONTROL_PLANE_API_KEY` or the
+`tunnel-client`-supported `OPENAI_API_KEY` fallback, and current-user-private
+`tunnel-client` YAML profiles. Profile `api_key` references are accepted only
+from an available environment variable or an absolute, current-user-private
+regular file. Inline keys, symlinks, over-readable files, administrator keys,
+and Codex login credentials are never imported.
+
+Discovery returns only an opaque candidate identifier, source label, non-secret
+Tunnel ID, and whether a usable key exists. Selecting a complete candidate
+causes the helper to rediscover it and apply the key internally; the key is not
+returned to Swift. An ID-only candidate fills the non-secret Tunnel field so the
+operator can add the missing key. The sheet also links directly to the official
+Runtime API key and Tunnel settings pages and can parse both values from one
+operator-initiated clipboard paste. It does not create credentials, retain the
+clipboard contents, or place an API key on the clipboard.
 
 The only canonical default is:
 
@@ -264,8 +298,10 @@ does not depend on the menu-bar process remaining open.
 `macos/build-app.sh` produces an ad-hoc-signed development bundle by default;
 Swift tests and release compilation run with strict concurrency and
 warnings-as-errors. `macos/package-release.sh` is the publication boundary. It
-verifies the manifest version/minimum OS/arm64 architecture, ad-hoc signs the
-app and DMG, and requires the exact `unnotarized` filename. No Apple developer
+requires an explicit `arm64` or `x64` target, verifies the manifest version,
+minimum OS and exact native Mach-O architecture, checks the matching bundled
+`better-sqlite3` prebuild, ad-hoc signs the app and DMG, and requires the exact
+`unnotarized` filename. No Apple developer
 account or signing/notarization secret is required. Since macOS cannot establish
 an Apple trust chain for this artifact, a quarantined download may require
 one-time approval for this app in **System Settings > Privacy & Security**; the
@@ -277,9 +313,9 @@ stopped before copying a new bundle into place, then launch the replacement.
 This keeps the helper's in-memory build identity aligned with the bundled
 runtime it supervises.
 
-The initial release manifest supports macOS 13+ on Apple Silicon only. Node.js,
-Codex CLI, and `tunnel-client` remain explicit external prerequisites. Intel or
-universal support and an automatic updater are outside the initial release
-scope. Manual app replacement/rollback and the physical accessibility,
-appearance, sleep/wake, network-recovery, and helper-crash matrix remain gates
-listed in [releasing.md](releasing.md).
+The release manifest supports macOS 13+ with separate Apple Silicon (`arm64`)
+and Intel (`x64`) DMGs. Node.js, Codex CLI, and `tunnel-client` remain explicit
+native-architecture external prerequisites. A Universal DMG and an automatic
+updater remain outside the release scope. Manual app replacement/rollback and
+the physical accessibility, appearance, sleep/wake, network-recovery, and
+helper-crash matrix remain gates listed in [releasing.md](releasing.md).

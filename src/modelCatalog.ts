@@ -46,7 +46,7 @@ export type CodexModelDescriptor = {
 };
 
 export type CodexModelCatalogSnapshot = {
-  source: "app-server" | "codex-cli";
+  source: "app-server" | "codex-cli" | "codex-sdk";
   fetchedAt: string;
   validatedAt: string;
   fingerprint: string;
@@ -166,14 +166,14 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   private readonly listeners = new Set<ModelCatalogListener>();
 
   constructor(
-    private readonly codexCommand: string,
+    private readonly codexCommand: string | (() => Promise<string>),
     private readonly cacheTtlMs = 10 * 60 * 1000,
     private readonly timeoutMs = 30 * 1000,
     private readonly runCatalogCommand: CatalogCommand = runCodexCatalogCommand,
     private readonly now: () => number = Date.now,
     private readonly stateFile?: string
   ) {
-    this.loadPersistedCache();
+    if (typeof this.codexCommand === "string") this.loadPersistedCache();
   }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
@@ -240,7 +240,8 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   }
 
   private async fetchCatalog(): Promise<CatalogData> {
-    const stdout = await this.runCatalogCommand(this.codexCommand, ["debug", "models"], this.timeoutMs);
+    const command = typeof this.codexCommand === "string" ? this.codexCommand : await this.codexCommand();
+    const stdout = await this.runCatalogCommand(command, ["debug", "models"], this.timeoutMs);
     const models = parseCodexModelCatalog(stdout);
     const fetchedAtMs = this.now();
     const data: CatalogData = {
@@ -415,7 +416,8 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
     private readonly cliCatalog: CodexModelCatalogProvider,
     private readonly loadAppServerCatalog: AppServerCatalogLoader,
     private readonly cacheTtlMs = 10 * 60 * 1000,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly sdkCatalog?: CodexModelCatalogProvider
   ) {
     const cliCached = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
     if (cliCached) {
@@ -424,10 +426,15 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
     this.cliCatalog.subscribe?.((event) => {
       this.noteLastKnownGood(event.backendKind, event.snapshot);
     });
+    this.sdkCatalog?.subscribe?.(event => { this.noteLastKnownGood("codex-sdk", event.snapshot); });
   }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
     const backendKind = options.backendKind || this.defaultBackend;
+    if (backendKind === "codex-sdk") {
+      if (!this.sdkCatalog) throw new Error("The Codex SDK model catalog is unavailable. No other backend was queried.");
+      return this.sdkCatalog.getCatalog(options);
+    }
     if (backendKind !== "app-server") {
       const snapshot = await this.cliCatalog.getCatalog(options);
       this.noteLastKnownGood(backendKind, snapshot);
@@ -487,6 +494,7 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
 
   getCachedCatalog(options: Pick<ModelCatalogOptions, "backendKind"> = {}): CodexModelCatalogSnapshot | undefined {
     const backendKind = options.backendKind || this.defaultBackend;
+    if (backendKind === "codex-sdk") return this.sdkCatalog?.getCachedCatalog?.(options);
     if (backendKind !== "app-server") {
       const snapshot = this.cliCatalog.getCachedCatalog?.(options);
       if (snapshot) this.rememberLastKnownGood(backendKind, snapshot);

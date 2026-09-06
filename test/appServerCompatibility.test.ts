@@ -27,17 +27,23 @@ const FAKE_CODEX = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs",
 
 describe("App Server compatibility contract", () => {
   it("parses the official CLI version shape and uses the manifest pin", async () => {
-    expect(SUPPORTED_CODEX_CLI_VERSION).toBe("0.145.0");
-    expect(parseCodexCliVersion("codex-cli 0.145.0\n")).toBe("0.145.0");
+    expect(SUPPORTED_CODEX_CLI_VERSION).toBe("0.153.3");
+    expect(parseCodexCliVersion("codex-cli 0.153.3\n")).toBe("0.153.3");
     await expect(probeCodexCliVersion(FAKE_CODEX, 2_000)).resolves.toBe(SUPPORTED_CODEX_CLI_VERSION);
   });
 
   it("reports configured, expected, and observed versions on mismatch", async () => {
     await expect(
-      verifySupportedCodexCli("/configured/codex", 500, async () => "0.144.0")
+      verifySupportedCodexCli("/configured/codex", 500, async () => "0.153.2")
     ).rejects.toThrow(
-      'Configured Codex executable "/configured/codex" reported version 0.144.0; this bridge supports exactly Codex CLI 0.145.0'
+      'Configured Codex executable "/configured/codex" reported version 0.153.2; this bridge supports Codex CLI 0.153.3, 0.153.1'
     );
+  });
+
+  it("accepts a validated app-bundled version independently of the unchanged CI pin", async () => {
+    expect(SUPPORTED_CODEX_CLI_VERSION).toBe("0.153.3");
+    await expect(verifySupportedCodexCli("app-codex", 500, async () => "0.153.1")).resolves.toBe("0.153.1");
+    await expect(verifySupportedCodexCli("newer-codex", 500, async () => "0.154.0")).rejects.toThrow("Your selection was preserved");
   });
 
   it("does not copy command output or child-process details into admission errors", async () => {
@@ -84,8 +90,8 @@ describe("App Server compatibility contract", () => {
     expect(expected).toMatchObject({
       supportedCodexCliVersion: SUPPORTED_CODEX_CLI_VERSION,
       includeExperimental: true,
-      jsonSchema: { fileCount: 347 },
-      typescript: { fileCount: 697 }
+      jsonSchema: { fileCount: 416 },
+      typescript: { fileCount: 827 }
     });
     const actual: AppServerSchemaLock = {
       ...expected,

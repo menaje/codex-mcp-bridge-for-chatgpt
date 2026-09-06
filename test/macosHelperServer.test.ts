@@ -63,6 +63,39 @@ describe("macOS runtime helper RPC", () => {
     servers.push(server);
 
     const secret = "sk-native-test-1234567890123456";
+    const discovery = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "setup-discovery",
+      method: "setup.discover",
+      params: {}
+    });
+    expect(discovery).toMatchObject({
+      result: {
+        kind: "setup-discovery",
+        candidates: [{
+          id: "setup_aaaaaaaaaaaaaaaaaaaaaaaa",
+          tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          hasApiKey: true
+        }]
+      }
+    });
+
+    await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "setup-import",
+      method: "setup.import",
+      params: {
+        candidateId: "setup_aaaaaaaaaaaaaaaaaaaaaaaa",
+        mode: "drain",
+        timeoutMs: 60_000
+      }
+    });
+    expect(controller.importSetup).toHaveBeenCalledWith({
+      candidateId: "setup_aaaaaaaaaaaaaaaaaaaaaaaa",
+      mode: "drain",
+      timeoutMs: 60_000
+    });
+
     const setup = await request(socketPath, {
       jsonrpc: "2.0",
       id: "setup",
@@ -198,6 +231,11 @@ describe("macOS runtime helper RPC", () => {
         timeoutMs: 5_000
       });
       expect(applied.status.phase).toBe("running");
+      expect(applied.status).toMatchObject({
+        lastProblem: null,
+        configuration: { issueProblem: null },
+        tunnel: { lastProblem: null }
+      });
       expect(applied.configuration).toMatchObject({
         exists: true,
         valid: true,
@@ -206,6 +244,111 @@ describe("macOS runtime helper RPC", () => {
       });
       expect(lstatSync(configDirectory).mode & 0o777).toBe(0o700);
       expect(lstatSync(configFile).mode & 0o777).toBe(0o600);
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("imports a discovered tunnel-client profile without returning its secret", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configDirectory = path.join(root, "config");
+    const configFile = path.join(configDirectory, ".env");
+    const bridgeSocket = path.join(configDirectory, "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
+    const profileDirectory = path.join(root, "tunnel-profiles");
+    const secret = "sk-discovered-1234567890123456";
+    const tunnelId = "tunnel_dddddddddddddddddddddddddddddddd";
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    mkdirSync(profileDirectory, { mode: 0o700 });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(profileDirectory, "existing.yaml"), [
+      "control_plane:",
+      `  tunnel_id: \"${tunnelId}\"`,
+      "  api_key: \"env:OPENAI_API_KEY\"",
+      ""
+    ].join("\n"), { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile);
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      autoRestart: false,
+      startTimeoutMs: 5_000,
+      registeredProjectRoots: () => [path.join(root, "safe-project")],
+      setupDiscoveryEnvironment: { OPENAI_API_KEY: secret },
+      setupDiscoveryProfileDirectory: profileDirectory
+    });
+
+    try {
+      const discovery = await supervisor.discoverSetup();
+      expect(discovery.candidates).toEqual([
+        expect.objectContaining({
+          source: "tunnel-client-profile",
+          profileName: "existing",
+          tunnelId,
+          hasApiKey: true,
+          apiKeySource: "profile-environment"
+        })
+      ]);
+      expect(JSON.stringify(discovery)).not.toContain(secret);
+
+      const imported = await supervisor.importSetup({
+        candidateId: discovery.candidates[0].id,
+        mode: "drain",
+        timeoutMs: 5_000
+      });
+      expect(imported.status.phase).toBe("running");
+      expect(imported.configuration).toMatchObject({ valid: true, tunnelId });
+      expect(JSON.stringify(imported)).not.toContain(secret);
+      expect(readFileSync(configFile, "utf8")).toContain("CONTROL_PLANE_API_KEY=");
+      expect(lstatSync(configFile).mode & 0o777).toBe(0o600);
+    } finally {
+      await supervisor.close();
+    }
+  });
+
+  it("does not reuse an administrator key already present in the runtime dotenv", async () => {
+    const root = temporaryDirectory();
+    const configDirectory = path.join(root, "config");
+    const configFile = path.join(configDirectory, ".env");
+    const profileDirectory = path.join(root, "tunnel-profiles");
+    const tunnelId = "tunnel_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    mkdirSync(configDirectory, { mode: 0o700 });
+    mkdirSync(profileDirectory, { mode: 0o700 });
+    writeFileSync(configFile, [
+      "CONTROL_PLANE_API_KEY=sk-admin-12345678901234567890",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ""
+    ].join("\n"), { mode: 0o600 });
+    writeFileSync(path.join(profileDirectory, "id-only.yaml"), [
+      "control_plane:",
+      `  tunnel_id: "${tunnelId}"`,
+      ""
+    ].join("\n"), { mode: 0o600 });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot: path.join(root, "runtime"),
+      envFile: configFile,
+      bridgeSocketPath: path.join(configDirectory, "run", "bridge.sock"),
+      launcherPath: path.join(root, "unused-launcher.mjs"),
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      autoRestart: false,
+      setupDiscoveryEnvironment: {},
+      setupDiscoveryProfileDirectory: profileDirectory
+    });
+
+    try {
+      const discovery = await supervisor.discoverSetup();
+      const candidate = discovery.candidates.find((entry) => entry.tunnelId === tunnelId);
+      expect(candidate).toMatchObject({ hasApiKey: false, apiKeySource: "none" });
+      await expect(supervisor.importSetup({
+        candidateId: candidate!.id,
+        mode: "drain",
+        timeoutMs: 5_000
+      })).rejects.toThrow(/SETUP_API_KEY_UNAVAILABLE/);
     } finally {
       await supervisor.close();
     }
@@ -544,6 +687,26 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it("rechecks memory-only sessions after closing admission and preserves the running backend", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime"), configFile = path.join(root, "c", ".env");
+    const bridgeSocket = path.join(root, "c", "run", "bridge.sock"), launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "");
+    writeFakeLauncher(launcher, path.join(root, "args.json"), { memoryOnlyAfterDrain: 1 });
+    updateRuntimeEnvFile(configFile, { apiKey: "sk-supervisor-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo", defaultBackend: "app-server" });
+    const original = readFileSync(configFile, "utf8");
+    const supervisor = new MacOSBridgeSupervisor({ bridgeRoot, envFile: configFile, bridgeSocketPath: bridgeSocket,
+      launcherPath: launcher, runtimeLockDirectory: path.join(root, "launcher.lock"), autoRestart: false, startTimeoutMs: 5000 });
+    try {
+      const started = await supervisor.start();
+      await expect(supervisor.applyConfiguration({ defaultBackend: "mcp-server", mode: "drain", timeoutMs: 5000 })).rejects.toThrow("CODEX_APPLY_PENDING");
+      expect(readFileSync(configFile, "utf8")).toBe(original);
+      expect((await supervisor.snapshot()).pid).toBe(started.pid);
+      expect(await request(bridgeSocket, { jsonrpc: "2.0", id: "check", method: "runtime.snapshot", params: {} })).toMatchObject({ result: { acceptingNewJobs: true } });
+    } finally { await supervisor.close(); }
+  });
+
   it("rolls back the dotenv and restores the old runtime when new startup fails", async () => {
     const root = temporaryDirectory();
     const bridgeRoot = path.join(root, "runtime");
@@ -840,17 +1003,24 @@ describe("macOS runtime helper RPC", () => {
     mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
     writeFileSync(fakeCodex, `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
 writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({
   args: process.argv.slice(2),
   codexHome: process.env.CODEX_HOME
 }));
-console.log("user@example.com sk-raw-output-1234567890123456");
+import {createInterface} from "node:readline";
+createInterface({input:process.stdin}).on("line", line => {
+ const request=JSON.parse(line); if(request.id===undefined)return;
+ const result=request.method==="account/read" ? {account:{type:"chatgpt",email:"user@example.com",planType:"plus"}} : {};
+ process.stdout.write(JSON.stringify({id:request.id,result})+"\\n");
+});
 `, { mode: 0o700 });
     writeFileSync(configFile, [
       "CONTROL_PLANE_API_KEY=sk-supervisor-1234567890123456",
       "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
       `CODEX_MCP_BRIDGE_CODEX=${fakeCodex}`,
       `CODEX_HOME=${codexHome}`,
+      `CODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "managed-codex")}`,
       ""
     ].join("\n"), { mode: 0o600 });
     const supervisor = new MacOSBridgeSupervisor({
@@ -865,13 +1035,18 @@ console.log("user@example.com sk-raw-output-1234567890123456");
     expect(status).toEqual({
       installed: true,
       authenticated: true,
+      resolvedAuthMode: "chatgpt",
       summary: "Codex login is available."
     });
     expect(JSON.stringify(status)).not.toContain("user@example.com");
     expect(JSON.parse(readFileSync(invocationFile, "utf8"))).toEqual({
-      args: ["login", "status"],
+      args: ["app-server"],
       codexHome
     });
+    unlinkSync(invocationFile);
+    const progress = await supervisor.codexRuntime({ action: "status", includeAccount: false });
+    expect(progress.account).toMatchObject({ authMode: "chatgpt", authenticated: true });
+    expect(() => readFileSync(invocationFile)).toThrow();
   });
 
   it.runIf(process.platform !== "win32")(
@@ -888,6 +1063,7 @@ console.log("user@example.com sk-raw-output-1234567890123456");
       writeFileSync(fakeCodex, `#!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
 const descendant = spawn(process.execPath, ["-e", "process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
   detached: true,
   stdio: "ignore"
@@ -946,6 +1122,23 @@ setInterval(() => {}, 1_000);
 function fakeController(): MacOSHelperController {
   return {
     snapshot: vi.fn(async () => helperStatus()),
+    discoverSetup: vi.fn(async () => ({
+      kind: "setup-discovery" as const,
+      candidates: [{
+        id: "setup_aaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "environment" as const,
+        profileName: null,
+        tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        hasApiKey: true,
+        apiKeySource: "control-plane-environment" as const
+      }]
+    })),
+    importSetup: vi.fn(async () => ({
+      configuration: helperStatus().configuration,
+      status: helperStatus(),
+      restarted: true,
+      rolledBack: false as const
+    })),
     applyConfiguration: vi.fn(async () => ({
       configuration: helperStatus().configuration,
       status: helperStatus(),
@@ -977,6 +1170,7 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
     startedAt: phase === "stopped" ? null : "2026-09-02T00:00:00.000Z",
     lastExit: null,
     lastError: null,
+    lastProblem: null,
     restartAttempt: 0,
     configuration: {
       path: "/private/config/.env",
@@ -989,7 +1183,8 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
         defaultBackend: "mcp-server",
         maximumAccess: "read-only"
       },
-      issue: null
+      issue: null,
+      issueProblem: null
     },
     bridge: {
       socketPath: "/private/config/run/bridge.sock",
@@ -1010,7 +1205,8 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
       processRunning: true,
       connected: true,
       lastCheckedAt: "2026-09-02T00:00:00.000Z",
-      lastError: null
+      lastError: null,
+      lastProblem: null
     }
   };
 }
@@ -1033,6 +1229,7 @@ function writeFakeLauncher(
     failTunnelId?: string;
     mutateEnvOnDrain?: string;
     failSnapshotAfterDrain?: boolean;
+    memoryOnlyAfterDrain?: number;
     splitRuntimeSecret?: boolean;
     writeRuntimeLock?: boolean;
     runtimeProfile?: string;
@@ -1104,7 +1301,8 @@ if (runtimeStatusFile) {
       processRunning: true,
       connected: true,
       lastCheckedAt: new Date().toISOString(),
-      lastError: null
+      lastError: null,
+      lastProblem: null
     }
   }), { mode: 0o600 });
 }
@@ -1134,12 +1332,14 @@ const server = createServer((socket) => {
       return;
     }
     const result = request.method === "companion.hello" ? {
-      protocol: { name: "codex-mcp-bridge-companion", version: 1 },
+      protocol: { name: "codex-mcp-bridge-companion", version: 2 },
       bridge: { buildId: "development" }
     } : {
       acceptingNewJobs,
       activeJobs: ${options.activeJobs || 0},
       pendingAdmissions: 0,
+      memoryOnlyThreads: acceptingNewJobs ? 0 : ${options.memoryOnlyAfterDrain || 0},
+      pendingInteractions: 0,
       backgroundProcessState: ${options.backgroundProcessUnknownAgents || 0} > 0 ? "unknown" : "confirmed",
       backgroundProcesses: ${options.backgroundProcesses || 0},
       backgroundProcessAgents: ${options.backgroundProcesses || 0} > 0 ? 1 : 0,

@@ -168,6 +168,7 @@ final class BridgeModelsTests: XCTestCase {
             capabilities: [
                 "setup.dotenv.atomic-apply",
                 "setup.dotenv.repair-permissions",
+                "setup.discovery.import",
                 "runtime.configure",
                 "helper.prepare-shutdown"
             ]
@@ -177,11 +178,26 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertFalse(HelperBootstrap.isCompatible(
             try hello(
                 name: HelperHello.expectedProtocolName,
+                version: HelperHello.expectedProtocolVersion,
+                buildID: "build-current",
+                capabilities: [
+                    "setup.dotenv.atomic-apply",
+                    "setup.dotenv.repair-permissions",
+                    "runtime.configure",
+                    "helper.prepare-shutdown"
+                ]
+            ),
+            runtimeBuildID: "build-current"
+        ))
+        XCTAssertFalse(HelperBootstrap.isCompatible(
+            try hello(
+                name: HelperHello.expectedProtocolName,
                 version: 1,
                 buildID: "build-current",
                 capabilities: [
                     "setup.dotenv.atomic-apply",
                     "setup.dotenv.repair-permissions",
+                    "setup.discovery.import",
                     "runtime.configure",
                     "helper.prepare-shutdown"
                 ]
@@ -254,6 +270,48 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(merged.activeRows.map(\.rowKey), ["moved"])
         XCTAssertEqual(merged.terminalRows.map(\.rowKey), ["recent-2"])
     }
+
+    func testTunnelSetupInputParserExtractsBothValuesFromOnePaste() {
+        let secret = "sk-pasted-1234567890123456"
+        let tunnelID = "tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let parsed = TunnelSetupInputParser.parse("""
+        CONTROL_PLANE_API_KEY=\(secret)
+        CONTROL_PLANE_TUNNEL_ID=\(tunnelID)
+        """)
+
+        XCTAssertEqual(parsed.apiKey, secret)
+        XCTAssertEqual(parsed.tunnelId, tunnelID)
+        XCTAssertFalse(parsed.isEmpty)
+        XCTAssertTrue(TunnelSetupInputParser.parse("unrelated text").isEmpty)
+        XCTAssertNil(TunnelSetupInputParser.parse("prefix\(tunnelID)x").tunnelId)
+        XCTAssertNil(TunnelSetupInputParser.parse("\(tunnelID)_extra").tunnelId)
+        XCTAssertNil(
+            TunnelSetupInputParser.parse("sk-admin-12345678901234567890").apiKey
+        )
+    }
+
+    func testTunnelSetupDiscoveryDecodesOnlyRedactedCandidateMetadata() throws {
+        let data = #"""
+        {
+          "kind":"setup-discovery",
+          "candidates":[{
+            "id":"setup_aaaaaaaaaaaaaaaaaaaaaaaa",
+            "source":"tunnel-client-profile",
+            "profileName":"local",
+            "tunnelId":"tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "hasApiKey":true,
+            "apiKeySource":"profile-file"
+          }]
+        }
+        """#.data(using: .utf8)!
+
+        let discovery = try JSONDecoder().decode(TunnelSetupDiscovery.self, from: data)
+
+        XCTAssertEqual(discovery.kind, "setup-discovery")
+        XCTAssertEqual(discovery.candidates.first?.profileName, "local")
+        XCTAssertEqual(discovery.candidates.first?.apiKeySource, "profile-file")
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("sk-"))
+    }
 }
 
 private func dashboardSnapshot(
@@ -270,6 +328,7 @@ private func dashboardSnapshot(
         statusSource: "codex-runtime-only",
         coverage: "bridge-known-retained",
         enrichment: nil,
+        codexAccount: nil,
         weeklyUsage: nil,
         counts: DashboardCounts(
             trackedProjects: 1,
@@ -340,6 +399,7 @@ private func dashboardRow(_ key: String, bucket: String) -> DashboardRow {
         projectName: "Project",
         agentName: "Agent",
         activityTitle: "Activity",
+        tokenUsage: nil,
         execution: nil,
         status: bucket == "active" ? "running" : bucket == "idle" ? "idle" : "completed",
         createdAt: "2026-09-02T00:00:00.000Z",

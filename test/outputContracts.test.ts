@@ -263,9 +263,9 @@ describe("model-visible output contracts", () => {
       "utf8"
     );
     expect(steeringBytes).toBe(1_360);
-    expect(bytes - steeringBytes).toBe(12_285);
+    expect(bytes - steeringBytes).toBe(12_391);
     expect(bytes - steeringBytes).toBeLessThanOrEqual(12_505);
-    expect(bytes).toBe(13_645);
+    expect(bytes).toBe(13_751);
     expect(bytes).toBeLessThanOrEqual(13_865);
   });
 

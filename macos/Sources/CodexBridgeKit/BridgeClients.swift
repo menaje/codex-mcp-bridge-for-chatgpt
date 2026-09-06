@@ -1,7 +1,7 @@
 import Foundation
 
 public struct BridgeCompanionClient: Sendable {
-    private let rpc: UnixSocketRPCClient
+    let rpc: UnixSocketRPCClient
 
     public init(socketPath: String) {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
@@ -86,6 +86,26 @@ public struct MacOSHelperClient: Sendable {
         try await rpc.call("helper.status", params: EmptyParameters(), timeout: 15)
     }
 
+    public func discoverSetup() async throws -> TunnelSetupDiscovery {
+        try await rpc.call("setup.discover", params: EmptyParameters(), timeout: 15)
+    }
+
+    public func importSetup(
+        candidateId: String,
+        force: Bool = false,
+        timeoutMilliseconds: Int = 60_000
+    ) async throws -> SetupApplyResponse {
+        try await rpc.call(
+            "setup.import",
+            params: SetupImportParameters(
+                candidateId: candidateId,
+                force: force,
+                timeoutMilliseconds: timeoutMilliseconds
+            ),
+            timeout: Self.configurationApplyTimeout(timeoutMilliseconds)
+        )
+    }
+
     public func applySetup(
         apiKey: String?,
         tunnelId: String?,
@@ -124,6 +144,14 @@ public struct MacOSHelperClient: Sendable {
 
     public func authStatus() async throws -> CodexLoginStatus {
         try await rpc.call("auth.status", params: EmptyParameters(), timeout: 20)
+    }
+
+    public func codexRuntime(_ request: CodexRuntimeRequest = .init(action: "status")) async throws -> CodexRuntimeSnapshot {
+        try await rpc.call("codex.runtime", params: request, timeout: 30)
+    }
+
+    public func configureSdkAuth(_ request: CodexSdkAuthRequest) async throws -> CodexSdkAuthStatus {
+        try await rpc.call("codex.sdk-auth", params: request, timeout: 60)
     }
 
     public func repairConfigurationPermissions() async throws -> RuntimeConfigurationStatus {

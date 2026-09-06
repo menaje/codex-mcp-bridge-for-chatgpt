@@ -7,7 +7,10 @@ import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
-export type CodexBackendKind = "mcp-server" | "app-server";
+export type CodexBackendKind = "mcp-server" | "app-server" | "codex-sdk";
+export function isCodexBackendKind(value: unknown): value is CodexBackendKind {
+  return value === "mcp-server" || value === "app-server" || value === "codex-sdk";
+}
 export type McpTransportMode = "stateless" | "stateful";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
@@ -23,6 +26,9 @@ export type BridgeConfig = {
   mcpSessionIdleTtlMs: number;
   maxMcpSessions: number;
   codexCommand: string;
+  codexService?: import("./codexService.js").CodexService;
+  codexCommandResolver?: () => Promise<string>;
+  runtimeStatusResolver?: () => Promise<string[]>;
   defaultBackend: CodexBackendKind;
   allowedRoots: string[];
   defaultSandbox: SandboxMode;
@@ -459,7 +465,7 @@ function parseAccessStrategy(raw: string): AccessStrategy {
 }
 
 function parseBackendKind(raw: string): CodexBackendKind {
-  if (raw === "mcp-server" || raw === "app-server") return raw;
+  if (raw === "mcp-server" || raw === "app-server" || raw === "codex-sdk") return raw;
   throw new Error(`Invalid default Codex backend: ${raw}`);
 }
 

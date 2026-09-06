@@ -27,7 +27,8 @@
     ".codex-plugin",
     ".app.json",
     "release-manifest.json",
-    "release-manifest.schema.json"
+    "release-manifest.schema.json",
+    "sdk"
   ],
   "scripts": {
     "app-server:compat:check": "tsx scripts/app-server-schema.ts check",
@@ -43,7 +44,7 @@
     "release:payload": "node scripts/release-payload.mjs",
     "validate:fast": "npm run release:check && npm run app-server:compat:check",
     "validate:affected": "node scripts/release-validation.mjs affected",
-    "validate:full": "npm run check && npm run app-server:compat:check && npm run macos:check",
+    "validate:full": "npm run check && npm run app-server:compat:check && npm run sdk:check && npm run macos:check",
     "validate:candidate": "node scripts/release-policy.mjs assert-stage candidate && npm run validate:full",
     "validate:stable": "node scripts/release-policy.mjs assert-stage stable && npm run validate:full",
     "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
@@ -65,7 +66,8 @@
     "test": "vitest run --maxWorkers=4",
     "test:activity-browser": "tsx scripts/activity-card-browser-regression.ts",
     "test:progressive-browser": "tsx scripts/progressive-card-browser-regression.ts",
-    "check": "npm run build && npm run test"
+    "check": "npm run build && npm run test",
+    "sdk:check": "node scripts/check-sdk.mjs"
   },
   "keywords": [
     "codex",
@@ -82,6 +84,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^13.0.3",
+    "tar": "7.5.22",
     "zod": "^4.2.0"
   },
   "devDependencies": {

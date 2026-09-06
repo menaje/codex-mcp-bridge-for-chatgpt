@@ -2,6 +2,14 @@ import CodexBridgeKit
 import Foundation
 
 enum BridgeAppLocalization {
+    enum StatusProblemContext {
+        case helper
+        case tunnel
+        case runtimeConfiguration
+        case remoteManagement
+        case operation
+    }
+
     static let supportedLanguageCodes = [
         "en",
         "ko",
@@ -75,6 +83,10 @@ enum BridgeAppLocalization {
 
     static func errorDescription(_ error: Error, locale: Locale) -> String {
         switch error {
+        case let error as RemoteConnectionStorageError:
+            return remoteConnectionStorageErrorDescription(error, locale: locale)
+        case let error as RemoteCompanionError:
+            return remoteCompanionErrorDescription(error, locale: locale)
         case let error as HelperBootstrapError:
             return helperBootstrapErrorDescription(error, locale: locale)
         case let error as LocalRPCError:
@@ -82,6 +94,100 @@ enum BridgeAppLocalization {
         default:
             return localizedErrorDetail(error.localizedDescription, locale: locale)
         }
+    }
+
+    static func isTunnelConnectionPending(
+        problem: BridgeStatusProblem?,
+        diagnosticMessage: String?
+    ) -> Bool {
+        statusProblemCode(
+            problem: problem,
+            diagnosticMessage: diagnosticMessage,
+            context: .tunnel
+        ) == "tunnel-connection-pending"
+    }
+
+    /// Converts machine-readable helper state into user-facing copy. The raw
+    /// diagnostic message is used only to recognize older helper versions; it
+    /// is never returned to the general UI.
+    static func statusProblemDescription(
+        problem: BridgeStatusProblem?,
+        diagnosticMessage: String?,
+        context: StatusProblemContext,
+        locale: Locale
+    ) -> String? {
+        guard let code = statusProblemCode(
+            problem: problem,
+            diagnosticMessage: diagnosticMessage,
+            context: context
+        ) else {
+            return diagnosticMessage == nil
+                ? nil
+                : string(
+                    "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.",
+                    locale: locale
+                )
+        }
+
+        let key: String
+        switch code {
+        case "tunnel-connection-pending":
+            return nil
+        case "tunnel-process-exited", "tunnel-process-not-running":
+            key = "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다."
+        case "tunnel-readiness-probe-failed", "tunnel-health-probe-failed":
+            key = "Secure MCP Tunnel 연결을 확인할 수 없습니다. 다시 연결하는 중일 수 있습니다."
+        case "tunnel-status-previous-launcher", "tunnel-status-different-build",
+             "tunnel-status-different-profile", "tunnel-status-stale":
+            key = "Secure MCP Tunnel 상태가 현재 서버 실행과 일치하지 않습니다. 서버를 다시 시작해 주세요."
+        case "runtime-env-not-configured":
+            key = "런타임 연결 정보가 아직 저장되지 않았습니다."
+        case "runtime-env-permissions-too-broad":
+            key = "연결 정보 파일 또는 폴더의 접근 권한이 너무 넓습니다. 앱 전용 권한으로 제한해 주세요."
+        case "runtime-env-not-regular":
+            key = "연결 정보는 심볼릭 링크가 아닌 일반 파일이어야 합니다."
+        case "runtime-env-owner-mismatch":
+            key = "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다."
+        case "runtime-api-key-invalid":
+            key = "Tunnel runtime API key가 없거나 형식이 올바르지 않습니다."
+        case "tunnel-id-invalid":
+            key = "Tunnel ID가 없거나 형식이 올바르지 않습니다."
+        case "runtime-env-project-conflict":
+            key = "연결 정보 파일을 등록된 프로젝트 폴더 밖으로 이동해 주세요."
+        case "runtime-env-invalid-content", "runtime-env-invalid":
+            key = "연결 정보 파일의 내용이 올바르지 않습니다."
+        case "remote-endpoint-not-configured":
+            key = "원격 관리 서버 주소가 설정되지 않았습니다."
+        case "remote-address-in-use":
+            key = "지정한 주소 또는 포트를 다른 프로그램이 사용 중입니다."
+        case "remote-listener-permission-denied":
+            key = "원격 관리 서버를 시작할 권한이 없습니다. 주소와 포트를 확인해 주세요."
+        case "remote-tls-identity-failed":
+            key = "원격 관리용 보안 인증서를 준비하지 못했습니다."
+        case "remote-listener-failed", "remote-management-not-listening":
+            key = "원격 관리 서버가 지정한 주소에서 시작되지 않았습니다."
+        case "bridge-runtime-missing":
+            key = "설치된 브리지 helper를 찾을 수 없습니다. 앱을 다시 설치해 주세요."
+        case "runtime-readiness-timeout":
+            key = "브리지 helper가 제한 시간 안에 준비되지 않았습니다."
+        case "runtime-stop-failed", "runtime-stop-incomplete":
+            key = "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."
+        case "settings-revision-conflict", "project-registry-revision-conflict":
+            key = "다른 화면에서 설정이 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요."
+        case "pairing-expired":
+            key = "페어링 초대가 만료되었습니다. 서버에서 새 초대를 만들어 주세요."
+        case "pairing-code-invalid":
+            key = "페어링 초대가 올바르지 않습니다. 서버에서 새 초대를 만들어 주세요."
+        case "drain-timeout":
+            key = "진행 중인 작업이 제한 시간 안에 끝나지 않아 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요."
+        case "background-process-state-unknown":
+            key = "일부 Agent의 백그라운드 프로세스 상태를 확인할 수 없어 안전 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요."
+        case "background-processes-active":
+            key = "백그라운드 프로세스가 실행 중이어서 안전 종료하지 않았습니다. 강제 종료하면 해당 프로세스도 중단됩니다."
+        default:
+            key = "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요."
+        }
+        return string(key, locale: locale)
     }
 
     static func languageCode(for locale: Locale) -> String {
@@ -108,6 +214,78 @@ enum BridgeAppLocalization {
             return "en"
         }
         return languageCode(for: Locale(identifier: language))
+    }
+
+    private static func remoteConnectionStorageErrorDescription(
+        _ error: RemoteConnectionStorageError,
+        locale: Locale
+    ) -> String {
+        switch error {
+        case .invalidProfiles:
+            return string("저장된 서버 프로필 목록이 올바르지 않습니다.", locale: locale)
+        case .invalidServerIdentity:
+            return string("서버 고유 ID가 올바르지 않습니다.", locale: locale)
+        case .invalidCredential:
+            return string("서버 기기 자격 증명이 올바르지 않습니다.", locale: locale)
+        case .keychain(let status):
+            return format("보호된 자격 증명 저장소 오류(%d)", locale: locale, Int(status))
+        }
+    }
+
+    private static func remoteCompanionErrorDescription(
+        _ error: RemoteCompanionError,
+        locale: Locale
+    ) -> String {
+        switch error {
+        case .invalidInvitation:
+            return string("페어링 초대가 올바르지 않습니다. 서버에서 새 초대를 만들어 주세요.", locale: locale)
+        case .expiredInvitation:
+            return string("페어링 초대가 만료되었습니다. 서버에서 새 초대를 만들어 주세요.", locale: locale)
+        case .invalidEndpoint:
+            return string("서버 주소는 경로가 없는 HTTPS 주소여야 합니다.", locale: locale)
+        case .invalidCertificatePin:
+            return string("서버 인증서 확인 값이 올바르지 않습니다.", locale: locale)
+        case .certificateMismatch:
+            return string(
+                "서버 인증서가 페어링할 때 확인한 인증서와 다릅니다. 연결을 거부했습니다.",
+                locale: locale
+            )
+        case .serverIdentityMismatch:
+            return string(
+                "응답한 서버의 고유 ID가 저장된 서버와 다릅니다. 연결을 거부했습니다.",
+                locale: locale
+            )
+        case .incompatibleProtocol:
+            return string(
+                "이 앱과 서버의 원격 관리 프로토콜 버전이 호환되지 않습니다.",
+                locale: locale
+            )
+        case .credentialMissing:
+            return string(
+                "이 서버의 기기 자격 증명을 찾을 수 없어 다시 페어링해야 합니다.",
+                locale: locale
+            )
+        case .unauthorized:
+            return string(
+                "서버가 이 기기의 자격 증명을 거부했습니다. 서버에서 기기 등록을 확인해 주세요.",
+                locale: locale
+            )
+        case .forbidden:
+            return string(
+                "이 기기에는 요청한 서버 기능을 사용할 권한이 없습니다.",
+                locale: locale
+            )
+        case .responseTooLarge:
+            return string("원격 서버 응답이 허용 크기를 초과했습니다.", locale: locale)
+        case .invalidResponse(let message):
+            return format(
+                "원격 서버 응답을 읽을 수 없습니다: %@",
+                locale: locale,
+                localizedErrorDetail(message, locale: locale)
+            )
+        case .server(_, let message):
+            return localizedErrorDetail(message, locale: locale)
+        }
     }
 
     private static func helperBootstrapErrorDescription(
@@ -198,6 +376,13 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("SETUP_CANDIDATE_UNAVAILABLE") {
+            return string("찾은 연결 설정이 더 이상 유효하지 않습니다. 다시 찾아 주세요.", locale: locale)
+        }
+        if message.contains("SETUP_API_KEY_UNAVAILABLE") {
+            return string("선택한 Tunnel ID의 Runtime API 키를 읽을 수 없습니다.", locale: locale)
+        }
+
         let recoveryMarker = " 이전 helper 복구에도 실패했습니다: "
         if let markerRange = message.range(of: recoveryMarker) {
             let initialFailure = String(message[..<markerRange.lowerBound])
@@ -237,6 +422,113 @@ enum BridgeAppLocalization {
                 )
             )
         }
-        return message
+        if languageCode(for: locale) == "ko",
+           message.range(of: #"[가-힣]"#, options: .regularExpression) != nil {
+            return message
+        }
+        return statusProblemDescription(
+            problem: nil,
+            diagnosticMessage: message,
+            context: .operation,
+            locale: locale
+        ) ?? string(
+            "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.",
+            locale: locale
+        )
+    }
+
+    private static func statusProblemCode(
+        problem: BridgeStatusProblem?,
+        diagnosticMessage: String?,
+        context: StatusProblemContext
+    ) -> String? {
+        if let code = problem?.code, !code.isEmpty {
+            return normalizedProblemCode(code)
+        }
+        guard let message = diagnosticMessage, !message.isEmpty else { return nil }
+
+        if let prefix = message.range(
+            of: #"^[A-Z][A-Z0-9_]{2,79}(?=:|$)"#,
+            options: .regularExpression
+        ) {
+            return normalizedProblemCode(String(message[prefix]))
+        }
+
+        switch context {
+        case .tunnel:
+            if message == "Waiting for a successful control-plane poll." {
+                return "tunnel-connection-pending"
+            }
+            if message.contains("tunnel-client process exited") {
+                return "tunnel-process-exited"
+            }
+            if message.contains("tunnel-client process is not running") {
+                return "tunnel-process-not-running"
+            }
+            if message.contains("tunnel readiness probe") {
+                return "tunnel-readiness-probe-failed"
+            }
+            if message.contains("previous launcher process") {
+                return "tunnel-status-previous-launcher"
+            }
+            if message.contains("different runtime build") {
+                return "tunnel-status-different-build"
+            }
+            if message.contains("different managed profile or transport") {
+                return "tunnel-status-different-profile"
+            }
+            if message.contains("Tunnel status is stale") {
+                return "tunnel-status-stale"
+            }
+            return "tunnel-health-probe-failed"
+        case .runtimeConfiguration:
+            if message.contains("not configured") { return "runtime-env-not-configured" }
+            if message.contains("permissions are too broad") {
+                return "runtime-env-permissions-too-broad"
+            }
+            if message.contains("regular, non-symlink") || message.contains("regular directory") {
+                return "runtime-env-not-regular"
+            }
+            if message.contains("owned by the current user") {
+                return "runtime-env-owner-mismatch"
+            }
+            if message.contains("CONTROL_PLANE_API_KEY") { return "runtime-api-key-invalid" }
+            if message.contains("CONTROL_PLANE_TUNNEL_ID") { return "tunnel-id-invalid" }
+            return "runtime-env-invalid"
+        case .remoteManagement:
+            if message == "Remote endpoint is not configured." {
+                return "remote-endpoint-not-configured"
+            }
+            if message.contains("EADDRINUSE") { return "remote-address-in-use" }
+            if message.contains("EACCES") || message.contains("EPERM") {
+                return "remote-listener-permission-denied"
+            }
+            if message.localizedCaseInsensitiveContains("certificate") ||
+                message.localizedCaseInsensitiveContains("private key") ||
+                message.localizedCaseInsensitiveContains("TLS identity") ||
+                message.localizedCaseInsensitiveContains("openssl") {
+                return "remote-tls-identity-failed"
+            }
+            return "remote-listener-failed"
+        case .helper:
+            if message.contains("Managed runtime") && message.contains("exited unexpectedly") {
+                return "managed-runtime-exited"
+            }
+            if message.contains("before the bridge and tunnel became ready") {
+                return "runtime-readiness-exited"
+            }
+            if message.contains("Timed out waiting for the bridge companion") {
+                return "runtime-readiness-timeout"
+            }
+            return "helper-operation-failed"
+        case .operation:
+            return nil
+        }
+    }
+
+    private static func normalizedProblemCode(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
     }
 }

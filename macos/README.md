@@ -4,9 +4,17 @@ This directory contains the SwiftUI/AppKit companion for issue #44. It does not
 embed the existing cards in a WebView. The Dashboard popover and Settings window
 decode the same application-service snapshots used by the retained MCP cards.
 
+The app can either own the server on this Mac or act only as a client of one
+selected saved server. Client mode does not start a local helper, Bridge, Tunnel,
+Codex runtime, or login flow. Its Dashboard, General settings, and Projects
+settings use the active server; switching a saved profile atomically changes
+that target. The menu-bar login-item preference remains local to this Mac.
+Pairing and the security model are documented in
+[Remote client mode](../docs/remote-client.md).
+
 ## Development
 
-Requirements:
+Requirements for local-server development:
 
 - macOS 13 or later
 - Swift 5.9 or later
@@ -94,14 +102,18 @@ follow changes from the retained Settings card; autosave preserves newer local
 edits while one save is in flight, and a genuine external revision conflict
 pauses autosave until an explicitly confirmed reload. The selected native UI
 locale changes optimistically and is also sent to the Settings snapshot service.
-
 One shared preference supports Automatic, English, Korean, Japanese, Simplified
 and Traditional Chinese, Spanish, French, German, and Portuguese. An explicit
 language applies to both the native app and retained cards. Automatic follows
 the language of the host displaying each surface, so the macOS app and a ChatGPT
 card can differ only while Automatic is selected.
-
 Runtime discovery runs away from the menu-bar UI thread.
+
+Remote-client mode needs only the matching macOS app on the client. The server
+Mac must be running this app's managed Bridge with remote management explicitly
+enabled. Its one-time invitation carries the HTTPS origin, immutable server ID,
+and TLS certificate fingerprint; the resulting per-device credential is stored
+only in the client Keychain. Profiles in UserDefaults contain no credential.
 
 ## Build an app bundle
 
@@ -122,18 +134,26 @@ manifest-derived DMG filename:
 
 ```bash
 npm run macos:package -- \
+  --architecture arm64 \
   --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg
+
+# Run this on a native Intel host (including the macos-15-intel CI runner).
+npm run macos:package -- \
+  --architecture x64 \
+  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg
 ```
 
 Public packaging intentionally uses ad-hoc signing and does not submit to Apple
 notarization. It needs no Apple developer account, signing certificate, or
 notarization secret. The packager validates the manifest version, minimum OS,
-arm64 architecture, app signature, and DMG signature. The filename and release
+selected native architecture, matching `better-sqlite3` prebuild, app signature,
+and DMG signature. The filename and release
 notes state `unnotarized`; after downloading, a user may need to approve this
 specific app in **System Settings > Privacy & Security**. Do not disable
 Gatekeeper globally.
 
-The initial manifest explicitly supports macOS 13+ on Apple Silicon. Intel and
-universal packaging remain unsupported until a separate architecture/native
-dependency matrix is implemented. Updater policy and the physical
-accessibility, sleep/wake, and network-recovery checks remain release gates.
+The manifest explicitly supports macOS 13+ through separate Apple Silicon
+(`arm64`) and Intel (`x64`) packages. Each release package must be built and
+tested on a matching native runner; cross-compilation is rejected. A Universal
+package remains unsupported. Updater policy and the physical accessibility,
+sleep/wake, and network-recovery checks remain release gates for both targets.
