@@ -21,7 +21,7 @@
 | D7 | “방금 시작한 평가 작업만 중단해.” | 평가용 실행에만 정확한 Job과 현재 버전으로 명시적 취소. 다른 Agent나 프로세스는 유지. 취소 출처가 기록됨. |
 | D8 | “다른 대화에 있는 작업 ID로 이 대화의 작업을 계속해.” | scope 경계를 거부. 최근 작업 또는 다른 대화의 작업을 자동 병합하지 않음. |
 | D9 | “존재하지 않는 Agent ID로 이어서 실행해.” | 식별 단계에서 명확히 실패. 새 Agent나 upstream 작업을 대신 생성하지 않음. |
-| D10 | “SDK에서 실행 중인 개별 백그라운드 터미널을 강제로 종료해.” | 현재 SDK의 미지원 capability를 설명. CLI 백엔드로 몰래 전환하거나 광범위한 프로세스를 중단하지 않음. |
+| D10 | “이전 실행 방식으로 만든 대화를 이어줘.” | 폐지된 실행 경로의 기록을 보존하며 명시적 요약으로 새 컨텍스트를 만드는 절차를 안내. 다른 계정으로 자동 전환하거나 과거 요청을 재실행하지 않음. |
 
 각 사례는 `pass`, `fail`, `not-run`, `blocked`로 기록한다. 실패는 도구 선택, 인수/정책, 인증, scope, 실행, 결과/카드, 복구 중 어느 단계인지 구분한다. 예상되는 거부와 예기치 않은 실패는 분리한다. 원문 prompt/모델 응답/프로젝트 코드 대신 위 사례 ID와 비민감 결과 요약을 저장한다.
 
@@ -47,7 +47,7 @@
   "date": "YYYY-MM-DD",
   "commit": "exact source commit",
   "bridgeVersion": "installed version",
-  "backend": "app-server | mcp-server | codex-sdk",
+  "backend": "app-server (이전 기록에는 폐지된 실행 방식이 남을 수 있음)",
   "runtimeVersion": "observed version",
   "taskContractVersion": "observed contract",
   "resourceGeneration": "observed generation",

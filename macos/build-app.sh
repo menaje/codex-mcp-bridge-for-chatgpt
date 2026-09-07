@@ -112,8 +112,6 @@ cp "$app_icon_source" "$app_iconset_directory/icon_512x512@2x.png"
 rm -rf "$app_iconset_directory"
 
 cp -R "$repository_root/dist" "$runtime_directory/dist"
-mkdir -p "$runtime_directory/sdk"
-cp "$repository_root/sdk/worker.py" "$repository_root/sdk/runtime-lock.json" "$repository_root/sdk/requirements.lock" "$repository_root/sdk/cli-contract.json" "$repository_root/sdk/sdk-contract.json" "$runtime_directory/sdk/"
 cp "$repository_root/package.json" "$repository_root/package-lock.json" "$runtime_directory/"
 cp "$repository_root/release-manifest.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"

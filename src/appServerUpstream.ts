@@ -1,3 +1,4 @@
+import { validateInitializeResponse } from "./runtimeCompatibility.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -7,7 +8,7 @@ import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import {
   DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
   probeCodexCliVersion,
-  verifySupportedCodexCli,
+  verifyCodexCli,
   type CodexCliVersionProbe
 } from "./appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
@@ -69,15 +70,6 @@ export type CodexAppServerLateResponse = JsonRpcLateResponse & {
 
 export type CodexAppServerProtocolOptions = {
   environment?: NodeJS.ProcessEnv;
-  /** Internal SDK transport: all protocol messages go through the pinned SDK public client. */
-  transport?: {
-    backendKind: "codex-sdk";
-    workerPrefix?: string;
-    args: string[];
-    env: NodeJS.ProcessEnv;
-    verify: () => Promise<string>;
-    runtime: NonNullable<UpstreamWorkerAssignment["runtime"]>;
-  };
   /** Deadline for checking the configured executable before each worker admission. */
   versionCheckTimeoutMs?: number;
   /** Deadline for bounded control requests; completed turns remain timer-free. */
@@ -95,7 +87,6 @@ export type CodexAppServerProtocolOptions = {
 
 type ResolvedCodexAppServerProtocolOptions = {
   environment?: NodeJS.ProcessEnv;
-  transport?: CodexAppServerProtocolOptions["transport"];
   versionCheckTimeoutMs: number;
   requestTimeoutMs: number;
   initializeTimeoutMs: number;
@@ -263,8 +254,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         { name: "turn/steer", description: "Steer an active Codex App Server turn." },
         { name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }
       ],
-      backendKind: this.protocolOptions.transport?.backendKind || "app-server",
-      ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
+      backendKind: "app-server",
       experimental: true,
       workerHealth: {
         configured: this.workers.length,
@@ -310,7 +300,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   capabilities(): BackendCapabilities {
-    return this.protocolOptions.transport ? { ...APP_SERVER_CAPABILITIES, supportsBackgroundTerminals: false, supportsEphemeralThreads: false } : APP_SERVER_CAPABILITIES;
+    return APP_SERVER_CAPABILITIES;
   }
 
   startThread(
@@ -543,7 +533,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     graceMs?: number
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
-    const worker = this.workers.find((candidate) => `${this.protocolOptions.transport?.workerPrefix || (this.protocolOptions.transport ? "sdk" : "app")}-${candidate.index}` === assignment.workerId);
+    const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
@@ -668,7 +658,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         worker.spawnCount += 1;
         const connection = AppServerConnection.spawn(
           this.codexCommand,
-          `${this.protocolOptions.transport?.workerPrefix || (this.protocolOptions.transport ? "sdk" : "app")}-${worker.index}`,
+          `app-${worker.index}`,
           generation,
           {
             ...this.protocolOptions,
@@ -710,7 +700,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private ensureCompatibleExecutable(): Promise<string> {
     if (this.compatibilityCheck) return this.compatibilityCheck;
     const controller = new AbortController();
-    const check = this.protocolOptions.transport ? this.protocolOptions.transport.verify() : verifySupportedCodexCli(
+    const check = verifyCodexCli(
       this.codexCommand,
       this.protocolOptions.versionCheckTimeoutMs,
       this.versionProbe,
@@ -780,8 +770,8 @@ class AppServerConnection {
   ) {
     this.rpc = new JsonRpcProcess({
       command,
-      args: protocolOptions.transport?.args || ["app-server", "--stdio"],
-      ...(protocolOptions.transport ? { env: protocolOptions.transport.env } : protocolOptions.environment ? { env: protocolOptions.environment } : {}),
+      args: ["app-server", "--listen", "stdio://"],
+      ...(protocolOptions.environment ? { env: protocolOptions.environment } : {}),
       debugLabel: `codex-app:${workerId}:g${generation}`,
       omitJsonRpcHeader: true,
       onNotification: (method, params) => this.onNotification(method, params),
@@ -1407,8 +1397,7 @@ class AppServerConnection {
     const identity = this.rpc.identity;
     const lineage = this.threadLineage.get(threadId);
     return {
-      backendKind: this.protocolOptions.transport?.backendKind || "app-server",
-      ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
+      backendKind: "app-server",
       workerId: this.workerId,
       workerGeneration: this.generation,
       ...(identity ? { workerPid: identity.pid } : {}),
@@ -1701,9 +1690,8 @@ class AppServerConnection {
         threadId: context.threadId,
         turnId: context.turnId,
         turnStatus: status,
-        backendKind: this.protocolOptions.transport?.backendKind || "app-server",
-        ...(this.protocolOptions.transport ? { runtime: this.protocolOptions.transport.runtime } : {}),
-        ...context.lineage,
+        backendKind: "app-server",
+          ...context.lineage,
         ...(failure ? { error: failure } : {})
       }
     });
@@ -1858,7 +1846,6 @@ function resolveProtocolOptions(
   );
   return {
     ...(options.environment ? { environment: options.environment } : {}),
-    ...(options.transport ? { transport: options.transport } : {}),
     versionCheckTimeoutMs: positiveTimeout(
       options.versionCheckTimeoutMs ?? DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
       "versionCheckTimeoutMs"
@@ -1883,25 +1870,6 @@ function positiveTimeout(value: number, label: string): number {
     );
   }
   return value;
-}
-
-function validateInitializeResponse(value: unknown): void {
-  // Initialize currently advertises platform/user-agent metadata, but no
-  // protocol-version field. Validate the documented shape without parsing an
-  // undocumented compatibility range out of userAgent.
-  if (!isRecord(value)) {
-    throw new Error(
-      "Codex App Server returned an incompatible initialize response; expected an object. Check the installed Codex CLI version."
-    );
-  }
-  const invalidFields = ["userAgent", "platformFamily", "platformOs"].filter(
-    (field) => typeof value[field] !== "string"
-  );
-  if (invalidFields.length > 0) {
-    throw new Error(
-      `Codex App Server returned an incompatible initialize response; missing string field(s): ${invalidFields.join(", ")}. Check the installed Codex CLI version.`
-    );
-  }
 }
 
 function appServerInitializationError(

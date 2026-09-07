@@ -46,7 +46,7 @@ export type CodexModelDescriptor = {
 };
 
 export type CodexModelCatalogSnapshot = {
-  source: "app-server" | "codex-cli" | "codex-sdk";
+  source: "app-server" | "codex-cli";
   fetchedAt: string;
   validatedAt: string;
   fingerprint: string;
@@ -259,7 +259,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
     this.persistCache({ version: 1, fetchedAt: data.fetchedAt, raw: stdout });
     if (previousFingerprint !== data.fingerprint) {
       emitCatalogChanged(this.listeners, {
-        backendKind: "mcp-server",
+        backendKind: "app-server",
         ...(previousFingerprint ? { previousFingerprint } : {}),
         snapshot: {
           ...data,
@@ -416,30 +416,14 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
     private readonly cliCatalog: CodexModelCatalogProvider,
     private readonly loadAppServerCatalog: AppServerCatalogLoader,
     private readonly cacheTtlMs = 10 * 60 * 1000,
-    private readonly now: () => number = Date.now,
-    private readonly sdkCatalog?: CodexModelCatalogProvider
+    private readonly now: () => number = Date.now
   ) {
-    const cliCached = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
-    if (cliCached) {
-      this.lastKnownGoodFingerprints.set("mcp-server", cliCached.fingerprint);
-    }
-    this.cliCatalog.subscribe?.((event) => {
-      this.noteLastKnownGood(event.backendKind, event.snapshot);
-    });
-    this.sdkCatalog?.subscribe?.(event => { this.noteLastKnownGood("codex-sdk", event.snapshot); });
+
   }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
     const backendKind = options.backendKind || this.defaultBackend;
-    if (backendKind === "codex-sdk") {
-      if (!this.sdkCatalog) throw new Error("The Codex SDK model catalog is unavailable. No other backend was queried.");
-      return this.sdkCatalog.getCatalog(options);
-    }
-    if (backendKind !== "app-server") {
-      const snapshot = await this.cliCatalog.getCatalog(options);
-      this.noteLastKnownGood(backendKind, snapshot);
-      return snapshot;
-    }
+    if (backendKind !== "app-server") throw new Error("CODEX_BACKEND_RETIRED: New work uses Codex App Server.");
     const now = this.now();
     if (!options.refresh && this.appCached && this.appCached.expiresAt > now) {
       const stale = Boolean(this.appFallbackWarning);
@@ -480,7 +464,7 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
           warning: this.appFallbackWarning
         };
       }
-      const fallback = await this.cliCatalog.getCatalog({ ...options, backendKind: "mcp-server" });
+      const fallback = await this.cliCatalog.getCatalog({ ...options, backendKind: "app-server" });
       this.appFallbackWarning =
         `Could not load the App Server model catalog; the Codex CLI fallback is unverified for policy activation. ${errorMessage(error)}`;
       return {
@@ -494,7 +478,6 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
 
   getCachedCatalog(options: Pick<ModelCatalogOptions, "backendKind"> = {}): CodexModelCatalogSnapshot | undefined {
     const backendKind = options.backendKind || this.defaultBackend;
-    if (backendKind === "codex-sdk") return this.sdkCatalog?.getCachedCatalog?.(options);
     if (backendKind !== "app-server") {
       const snapshot = this.cliCatalog.getCachedCatalog?.(options);
       if (snapshot) this.rememberLastKnownGood(backendKind, snapshot);
@@ -517,7 +500,7 @@ export class BackendAwareModelCatalog implements CodexModelCatalogProvider {
       this.rememberLastKnownGood("app-server", snapshot);
       return snapshot;
     }
-    const fallback = this.cliCatalog.getCachedCatalog?.({ backendKind: "mcp-server" });
+    const fallback = this.cliCatalog.getCachedCatalog?.({ backendKind: "app-server" });
     if (!fallback) return undefined;
     return {
       ...fallback,

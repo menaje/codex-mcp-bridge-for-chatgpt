@@ -6,21 +6,15 @@ struct CodexRuntimeSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let isSelected: Bool
     @State private var showInstallation = false
-    @State private var showOtherAccount = false
     @State private var showSelection = false
     @State private var showVersions = false
     @State private var showDeleteConfirmation = false
 
     var body: some View {
         Form {
-            executionSection
             accountSection
             if let runtime = model.codexRuntime {
                 Section("CLI 설치본") {
-                    if model.usesSdkForNewAgents {
-                        Text("CLI 선택은 CLI 방식으로 돌아갈 때 사용합니다.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
                     if let selected = runtime.selection {
                         HStack {
                             Text(sourceName(selected.source))
@@ -31,9 +25,6 @@ struct CodexRuntimeSettingsPane: View {
                             Label("선택한 Codex를 찾을 수 없습니다. 복구하거나 다른 설치본을 선택해 주세요.", systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
                             if runtime.actions.reinstall { Button("같은 버전 다시 설치") { action("reinstall") } }
-                        } else if selected.compatible == false {
-                            Text("이 버전은 아직 호환성을 확인하지 않았습니다. 선택한 버전은 유지됩니다.")
-                                .font(.caption).foregroundStyle(.orange)
                         }
                         if selected.source != "bridge" {
                             Text("업데이트와 삭제는 해당 앱 또는 터미널에서 직접 관리합니다.")
@@ -139,7 +130,7 @@ struct CodexRuntimeSettingsPane: View {
                         if runtime.actions.install {
                             ForEach(runtime.knownVersions ?? [], id: \.self) { version in
                                 HStack {
-                                    Button("확인된 버전 설치") { Task { await model.manageCodex(.init(action: "install", version: version)) } }
+                                    Button("이 버전 설치") { Task { await model.manageCodex(.init(action: "install", version: version)) } }
                                     Text(verbatim: version)
                                 }
                             }
@@ -154,7 +145,6 @@ struct CodexRuntimeSettingsPane: View {
             if let error = model.codexRuntimeError {
                 Section("확인할 사항") { Text(error).font(.caption).foregroundStyle(.orange) }
             }
-            CodexSdkSettingsSection()
         }
         .formStyle(.grouped)
         .onAppear { model.codexSettingsVisible = isSelected }
@@ -164,7 +154,6 @@ struct CodexRuntimeSettingsPane: View {
             while !Task.isCancelled, let interval = CodexSettingsRefreshPolicy.interval(isVisible: isSelected, installationInProgress: installing) {
                 await model.manageCodex(.init(action: "status", includeAccount: !installing))
                 guard !Task.isCancelled else { return }
-                await model.manageCodex(.init(action: "status", kind: "sdk", includeAccount: !installing))
                 do { try await Task.sleep(for: .seconds(interval)) } catch { return }
             }
         }
@@ -176,47 +165,19 @@ struct CodexRuntimeSettingsPane: View {
         }
     }
 
-    private var installing: Bool { model.codexRuntime?.isInstalling == true || model.sdkRuntime?.isInstalling == true }
-
-    private var executionSection: some View {
-        Section("새 작업 실행 방식") {
-            HStack {
-                Button {
-                    Task { _ = await model.configureRuntime(defaultBackend: model.sdkRuntime?.previousBackend ?? "app-server",
-                        maximumAccess: model.helperStatus?.configuration.operatorConfiguration.maximumAccess ?? "read-only") }
-                } label: {
-                    HStack { Text(verbatim: "CLI"); if !model.usesSdkForNewAgents { Image(systemName: "checkmark") } }
-                }.disabled(model.isBusy || !model.usesSdkForNewAgents)
-                Button {
-                    Task { _ = await model.configureRuntime(defaultBackend: "codex-sdk",
-                        maximumAccess: model.helperStatus?.configuration.operatorConfiguration.maximumAccess ?? "read-only") }
-                } label: {
-                    HStack { Text(verbatim: "SDK"); if model.usesSdkForNewAgents { Image(systemName: "checkmark") } }
-                }.disabled(model.isBusy || model.usesSdkForNewAgents || model.sdkRuntime?.selection?.available != true)
-            }
-            Text("새 작업부터 선택한 방식으로 실행합니다. 기존 작업은 원래 실행 방식을 유지합니다.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-    }
+    private var installing: Bool { model.codexRuntime?.isInstalling == true }
 
     @ViewBuilder private var accountSection: some View {
         Section("계정 사용량") {
             if let account = model.selectedCodexAccount {
-                CodexAccountUsageView(account: account, runtimeKind: model.usesSdkForNewAgents ? "sdk" : "cli")
+                CodexAccountUsageView(account: account, runtimeKind: "cli")
             } else {
                 Text("계정 정보를 확인할 수 없습니다.").font(.caption).foregroundStyle(.secondary)
             }
-            if let other = model.otherCodexAccount {
-                FullRowDisclosure("다른 실행환경의 계정", isExpanded: $showOtherAccount) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(verbatim: model.usesSdkForNewAgents ? "CLI" : "SDK").font(.caption.weight(.semibold))
-                        CodexAccountUsageView(account: other, runtimeKind: model.usesSdkForNewAgents ? "cli" : "sdk")
-                    }
-                }
-            }
+
         }
-        if let billing = model.codexRuntime?.billing ?? model.sdkRuntime?.billing, billing.configured,
-           model.selectedCodexAccount?.authMode != "api-key", model.otherCodexAccount?.authMode != "api-key" {
+        if let billing = model.codexRuntime?.billing, billing.configured,
+           model.selectedCodexAccount?.authMode != "api-key" {
             Section("API 비용 연결") {
                 if let organization = billing.organizationId { Text(verbatim: organization) }
                 if let project = billing.projectId { Text(verbatim: project) }

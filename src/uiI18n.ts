@@ -122,7 +122,7 @@ const ENGLISH = {
   "settings.concurrency": "Maximum concurrent jobs",
   "settings.codexAppThreads": "Show bridge threads in the Codex app",
   "settings.codexAppThreadsHint": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged.",
-  "settings.codexAppThreadsMcpHint": "Saved for App Server use. The current MCP Server backend cannot hide its threads; switch the bridge backend to App Server and restart to apply this to new and forked threads.",
+
   "settings.cardVisibility": "Activity card",
   "settings.cardVisibility.always": "Automatically show for all Codex work",
   "settings.cardVisibility.background": "Automatically show only for background Codex work",
@@ -145,7 +145,7 @@ const ENGLISH = {
   "settings.resetDone": "General defaults restored. Projects were kept.",
   "settings.invalidResponse": "The settings tool returned an invalid response.",
   "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed here.",
-  "settings.appServerExperimental": "MCP Server is the stable default backend. App Server is experimental and unsupported for production. If App Server is enabled, use it only for personal or development work, monitor failures, and roll back to MCP Server by restoring the backend setting and restarting the bridge.",
+
   "settings.warning.backendRouting": "Backend routing: {backend} applies only to new or deliberately fresh Agent threads. Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
   "settings.warning.catalogStale": "The model catalog could not be refreshed. The last successfully verified catalog is shown temporarily.",
   "settings.warning.catalogUnavailable": "The model catalog is unavailable. Restore backend access and retry model lookup.",
@@ -365,7 +365,7 @@ const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationB
     "settings.language": "인터페이스 언어", "settings.language.auto": "자동", "settings.languageHint": "자동은 호스트 앱의 언어를 따릅니다.",
     "common.loading": "불러오는 중…", "common.refresh": "새로고침", "common.cancel": "취소", "common.confirm": "확인", "common.error": "요청에 실패했습니다.",
     "settings.title": "Codex Bridge 설정", "settings.scope": "이 브리지 연결을 사용하는 모든 대화에 공유됩니다.", "settings.access": "접근 전략", "settings.access.readOnly": "항상 읽기 전용", "settings.access.adaptive": "GPT가 작업별 판단", "settings.access.full": "항상 전체 접근", "settings.access.readOnlyHint": "모든 새 작업을 읽기 전용으로 고정합니다.", "settings.access.adaptiveHint": "GPT가 허용된 범위 안에서 읽기 전용·작업공간 쓰기·전체 접근을 판단합니다.", "settings.access.fullHint": "모든 새 작업을 danger-full-access로 고정합니다.", "settings.fullWarning": "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 허용 루트는 시작 폴더만 제한하며 OS 격리가 아닙니다.",
-    "settings.modelPolicy": "실행 모델 정책", "settings.modelPolicy.fixed": "고정", "settings.modelPolicy.automatic": "자동 선택", "settings.allowDelegation": "Ultra 추론과 하위 에이전트 위임 허용", "settings.model": "모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "활성 백엔드 카탈로그의 정확한 식별자입니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "추론 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.serviceTier": "서비스 티어", "settings.serviceTier.default": "백엔드 기본 티어", "settings.fixedNotice": "저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.", "settings.allowedScope": "허용 범위", "settings.allowedScope.catalog": "카탈로그에 보이는 전체 selection", "settings.allowedScope.explicit": "명시적 exact selection", "settings.allowedExactSelections": "허용할 정확한 모델 / 추론 에포트 / 서비스 티어 조합", "settings.preferredSelection": "선호 selection", "settings.preferred.none": "검증된 백엔드 기본값", "settings.automaticNotice": "GPT는 허용 범위의 정확한 model과 reasoningEffort 조합만 전달할 수 있습니다. 표시 이름을 별칭으로 저장하지 않으며, 카탈로그 전체 모드는 새 selection을 자동 반영합니다.", "settings.selectionRequired": "정확한 모델과 추론 에포트를 선택하세요.", "settings.explicitRequired": "허용할 exact selection을 하나 이상 선택하세요.", "settings.concurrency": "최대 동시 작업 수", "settings.cardVisibility": "Activity 카드", "settings.cardVisibility.always": "항상 표시", "settings.cardVisibility.background": "백그라운드 작업만 표시", "settings.cardVisibility.never": "자동으로 표시하지 않음", "settings.handoff": "완료 인계", "settings.handoff.off": "사용 안 함", "settings.handoff.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.handoffRequiresCard": "GPT 자동 인계에는 표시되는 Activity 카드가 필요합니다.", "settings.conflict": "다른 곳에서 설정이 변경되었습니다. 최신 값을 불러왔으니 확인한 뒤 다시 저장하세요.", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "기본 설정으로 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "기본 설정으로 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 브리지 보안 정책은 여기서 변경할 수 없습니다.", "settings.appServerExperimental": "MCP Server 백엔드가 안정 기본값입니다. App Server는 experimental이며 production 지원 대상이 아닙니다. App Server를 활성화했다면 개인·개발 환경에서만 사용하고, 장애를 모니터링하며 문제가 생기면 백엔드 설정을 MCP Server로 되돌린 뒤 브리지를 재시작하세요.",
+    "settings.modelPolicy": "실행 모델 정책", "settings.modelPolicy.fixed": "고정", "settings.modelPolicy.automatic": "자동 선택", "settings.allowDelegation": "Ultra 추론과 하위 에이전트 위임 허용", "settings.model": "모델", "settings.modelDefault": "Codex 기본 모델", "settings.modelHint": "활성 백엔드 카탈로그의 정확한 식별자입니다.", "settings.savedModel": "현재 저장됨", "settings.effort": "추론 에포트", "settings.effortDefault": "모델 기본 에포트", "settings.effortHint": "선택한 모델이 지원하는 값만 표시합니다.", "settings.serviceTier": "서비스 티어", "settings.serviceTier.default": "백엔드 기본 티어", "settings.fixedNotice": "저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.", "settings.allowedScope": "허용 범위", "settings.allowedScope.catalog": "카탈로그에 보이는 전체 selection", "settings.allowedScope.explicit": "명시적 exact selection", "settings.allowedExactSelections": "허용할 정확한 모델 / 추론 에포트 / 서비스 티어 조합", "settings.preferredSelection": "선호 selection", "settings.preferred.none": "검증된 백엔드 기본값", "settings.automaticNotice": "GPT는 허용 범위의 정확한 model과 reasoningEffort 조합만 전달할 수 있습니다. 표시 이름을 별칭으로 저장하지 않으며, 카탈로그 전체 모드는 새 selection을 자동 반영합니다.", "settings.selectionRequired": "정확한 모델과 추론 에포트를 선택하세요.", "settings.explicitRequired": "허용할 exact selection을 하나 이상 선택하세요.", "settings.concurrency": "최대 동시 작업 수", "settings.cardVisibility": "Activity 카드", "settings.cardVisibility.always": "항상 표시", "settings.cardVisibility.background": "백그라운드 작업만 표시", "settings.cardVisibility.never": "자동으로 표시하지 않음", "settings.handoff": "완료 인계", "settings.handoff.off": "사용 안 함", "settings.handoff.auto": "카드가 열려 있을 때 GPT 자동 인계", "settings.handoffRequiresCard": "GPT 자동 인계에는 표시되는 Activity 카드가 필요합니다.", "settings.conflict": "다른 곳에서 설정이 변경되었습니다. 최신 값을 불러왔으니 확인한 뒤 다시 저장하세요.", "settings.save": "설정 저장", "settings.refreshModels": "모델 목록 새로고침", "settings.reset": "기본 설정으로 복원", "settings.saving": "저장 중…", "settings.saved": "저장했습니다.", "settings.refreshing": "새로고침 중…", "settings.refreshed": "모델 목록을 새로고침했습니다.", "settings.resetting": "복원 중…", "settings.resetDone": "기본 설정으로 복원했습니다.", "settings.invalidResponse": "설정 도구가 올바른 응답을 반환하지 않았습니다.", "settings.sharedNotice": "이 설정은 ChatGPT 계정별 값이 아니라 이 브리지 인스턴스를 사용하는 모든 대화에 공유됩니다. 브리지 보안 정책은 여기서 변경할 수 없습니다.",
     "activity.title": "Codex 활동", "activity.running": "진행 중", "activity.attention": "확인 필요", "activity.verification": "검증 대기", "activity.failed": "실패", "activity.empty": "이 대화에는 아직 Activity가 없습니다.", "activity.forceStop": "강제 종료…", "activity.forceConfirmTitle": "Codex를 강제 종료할까요?", "activity.forceConfirm": "추적 중인 정확한 worker process group에 TERM을 보내고 필요하면 KILL로 자동 승격합니다. 같은 worker의 작업이 함께 중단될 수 있고 파일 변경은 되돌리지 않습니다.", "activity.forceStopping": "강제 종료 중…", "activity.forceStopped": "worker 종료를 확인했습니다.", "activity.viewDetails": "상세 보기", "activity.hideDetails": "상세 닫기", "activity.updated": "업데이트", "activity.noSignal": "최근 진행 신호가 없습니다. 프로세스 생존 여부는 알 수 없습니다.", "activity.terminating": "worker 프로세스 종료를 확인 중…", "activity.terminationFailed": "worker 종료를 확인하지 못했습니다.", "activity.unread": "읽지 않은 완료", "activity.manualRefresh": "실시간 갱신을 멈췄습니다. 직접 새로고침하세요.", "activity.partialChanges": "강제 종료는 디스크에 이미 기록된 변경을 되돌리지 않습니다.", "activity.jobs": "작업", "activity.threads": "스레드", "activity.events": "최근 활동", "activity.noEvents": "아직 공개된 진행 이벤트가 없습니다.", "activity.approval": "Codex가 승인을 요청했습니다", "activity.approve": "승인", "activity.approveSession": "세션 동안 승인", "activity.decline": "거부", "activity.answer": "답변 보내기", "activity.steer": "진행 중인 turn에 지시 추가", "activity.steerPlaceholder": "이 Codex turn에 추가할 지시…", "activity.orphaned": "브리지가 재시작되어 기존 실행을 더 이상 추적할 수 없습니다.", "activity.workerLost": "추적하던 worker 프로세스가 종료되었습니다.", "activity.inputRequired": "입력 필요"
   },
   ja: {
@@ -464,7 +464,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "既定の設定を復元しました。",
     "settings.invalidResponse": "設定ツールから無効な応答が返されました。",
     "settings.sharedNotice": "この設定は ChatGPT アカウント別ではなく、このブリッジインスタンスを使用するすべての会話で共有されます。ブリッジのセキュリティポリシーはここでは変更できません。",
-    "settings.appServerExperimental": "安定版の既定は MCP Server バックエンドです。App Server は experimental で、本番環境はサポート対象外です。有効にする場合は個人・開発用途に限定し、障害を監視し、問題発生時はバックエンドを MCP Server に戻してブリッジを再起動してください。",
+
     "activity.forceStopped": "worker の終了を確認しました。",
     "activity.updated": "更新日時",
     "activity.noSignal": "最近の進行シグナルがありません。プロセスが動作中かどうかは不明です。",
@@ -520,7 +520,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "已恢复默认设置。",
     "settings.invalidResponse": "设置工具返回了无效响应。",
     "settings.sharedNotice": "这些设置不会按 ChatGPT 账户保存，而是由使用此桥接实例的所有对话共享。桥接安全策略无法在此更改。",
-    "settings.appServerExperimental": "稳定默认后端是 MCP Server。App Server 仍属实验性功能且不支持生产环境。启用后请仅用于个人或开发环境，监控故障，并在出现问题时将后端恢复为 MCP Server 后重启桥接。",
+
     "activity.forceStopped": "已确认 worker 终止。",
     "activity.updated": "更新时间",
     "activity.noSignal": "最近没有进度信号；无法确定进程是否仍在运行。",
@@ -576,7 +576,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "已還原預設設定。",
     "settings.invalidResponse": "設定工具傳回無效回應。",
     "settings.sharedNotice": "這些設定不是依 ChatGPT 帳戶儲存，而是由使用此橋接執行個體的所有對話共用。橋接安全政策無法在此變更。",
-    "settings.appServerExperimental": "穩定預設後端是 MCP Server。App Server 仍屬實驗性功能且不支援正式環境。啟用後請僅用於個人或開發環境，監控故障，發生問題時將後端改回 MCP Server 並重新啟動橋接。",
+
     "activity.forceStopped": "已確認 worker 終止。",
     "activity.updated": "更新時間",
     "activity.noSignal": "最近沒有進度訊號；無法確定程序是否仍在執行。",
@@ -632,7 +632,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "Configuración predeterminada restaurada.",
     "settings.invalidResponse": "La herramienta de configuración devolvió una respuesta no válida.",
     "settings.sharedNotice": "Esta configuración se comparte entre todas las conversaciones que usan esta instancia del puente; no se guarda por cuenta de ChatGPT. La política de seguridad del puente no puede cambiarse aquí.",
-    "settings.appServerExperimental": "El backend estable predeterminado es MCP Server. App Server es experimental y no está admitido para producción. Si se habilita, úselo solo en entornos personales o de desarrollo, supervise los fallos y, ante un problema, vuelva a MCP Server y reinicie el puente.",
+
     "activity.forceConfirm": "Envía TERM al grupo de procesos worker exacto y escala automáticamente a KILL si es necesario. Pueden interrumpirse tareas que compartan worker y los cambios de archivos no se revierten.",
     "activity.forceStopped": "Se confirmó la finalización del worker.",
     "activity.updated": "Actualizado",
@@ -689,7 +689,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "Paramètres par défaut rétablis.",
     "settings.invalidResponse": "L’outil de paramètres a renvoyé une réponse non valide.",
     "settings.sharedNotice": "Ces paramètres sont partagés par toutes les conversations utilisant cette instance du pont ; ils ne sont pas enregistrés par compte ChatGPT. La politique de sécurité du pont ne peut pas être modifiée ici.",
-    "settings.appServerExperimental": "Le backend stable par défaut est MCP Server. App Server est expérimental et n’est pas pris en charge en production. S’il est activé, utilisez-le uniquement pour un usage personnel ou de développement, surveillez les défaillances et, en cas de problème, revenez à MCP Server puis redémarrez le pont.",
+
     "activity.forceConfirm": "Envoie TERM au groupe de processus worker suivi avec précision et passe automatiquement à KILL si nécessaire. Les tâches partageant ce worker peuvent être interrompues et les modifications de fichiers ne sont pas annulées.",
     "activity.forceStopped": "L’arrêt du worker a été confirmé.",
     "activity.updated": "Mis à jour",
@@ -746,7 +746,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "Standardeinstellungen wiederhergestellt.",
     "settings.invalidResponse": "Das Einstellungswerkzeug hat eine ungültige Antwort zurückgegeben.",
     "settings.sharedNotice": "Diese Einstellungen werden von allen Unterhaltungen gemeinsam genutzt, die diese Bridge-Instanz verwenden; sie werden nicht pro ChatGPT-Konto gespeichert. Die Sicherheitsrichtlinie der Bridge kann hier nicht geändert werden.",
-    "settings.appServerExperimental": "Das stabile Standard-Backend ist MCP Server. App Server ist experimentell und wird für Produktion nicht unterstützt. Wenn es aktiviert ist, verwenden Sie es nur privat oder zur Entwicklung, überwachen Sie Fehler und wechseln Sie bei Problemen zurück zu MCP Server und starten Sie die Bridge neu.",
+
     "activity.forceConfirm": "Sendet TERM an die exakt erfasste worker-Prozessgruppe und eskaliert bei Bedarf automatisch zu KILL. Jobs auf demselben worker können unterbrochen werden; Dateiänderungen werden nicht zurückgesetzt.",
     "activity.forceStopped": "Die Beendigung des workers wurde bestätigt.",
     "activity.updated": "Aktualisiert",
@@ -803,7 +803,7 @@ const REMAINDER: Record<Exclude<SupportedUiLocale, "en" | "ko">, Partial<UiTrans
     "settings.resetDone": "Configurações padrão restauradas.",
     "settings.invalidResponse": "A ferramenta de configurações retornou uma resposta inválida.",
     "settings.sharedNotice": "Estas configurações são compartilhadas por todas as conversas que usam esta instância da ponte; não são salvas por conta do ChatGPT. A política de segurança da ponte não pode ser alterada aqui.",
-    "settings.appServerExperimental": "O backend estável padrão é o MCP Server. O App Server é experimental e não tem suporte para produção. Se estiver habilitado, use-o apenas em ambientes pessoais ou de desenvolvimento, monitore falhas e, se houver problemas, volte para o MCP Server e reinicie a ponte.",
+
     "activity.forceConfirm": "Envia TERM ao grupo de processos worker rastreado com exatidão e escala automaticamente para KILL quando necessário. Tarefas que compartilham o worker podem ser interrompidas e as alterações em arquivos não são revertidas.",
     "activity.forceStopped": "A finalização do worker foi confirmada.",
     "activity.updated": "Atualizado",
@@ -1840,49 +1840,49 @@ const CODEX_APP_THREAD_OVERRIDES: Record<
   ko: {
     "settings.codexAppThreads": "브리지 스레드를 Codex 앱에 표시",
     "settings.codexAppThreadsHint": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다.",
-    "settings.codexAppThreadsMcpHint": "App Server용으로 저장됩니다. 현재 MCP Server 백엔드는 스레드를 숨길 수 없습니다. 새 스레드에 적용하려면 브리지 백엔드를 App Server로 변경하고 재시작하세요.",
+
     "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
   },
   ja: {
     "settings.codexAppThreads": "ブリッジのスレッドを Codex アプリに表示",
     "settings.codexAppThreadsHint": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。",
-    "settings.codexAppThreadsMcpHint": "App Server 用に保存されます。現在の MCP Server バックエンドではスレッドを非表示にできません。新しいスレッドに適用するには、ブリッジのバックエンドを App Server に変更して再起動してください。",
+
     "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数、Activity の設定だけを戻します。プロジェクトと順序は保持されます。"
   },
   "zh-Hans": {
     "settings.codexAppThreads": "在 Codex 应用中显示桥接线程",
     "settings.codexAppThreadsHint": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。",
-    "settings.codexAppThreadsMcpHint": "此设置会保存供 App Server 使用。当前 MCP Server 后端无法隐藏线程；若要对新线程生效，请将桥接后端改为 App Server 并重启。",
+
     "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、界面、并发数和 Activity 设置。项目和顺序会保留。"
   },
   "zh-Hant": {
     "settings.codexAppThreads": "在 Codex 應用程式中顯示橋接執行緒",
     "settings.codexAppThreadsHint": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。",
-    "settings.codexAppThreadsMcpHint": "此設定會儲存供 App Server 使用。目前的 MCP Server 後端無法隱藏執行緒；若要套用到新執行緒，請將橋接後端改為 App Server 並重新啟動。",
+
     "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、介面、並行數與 Activity 設定。專案與順序會保留。"
   },
   es: {
     "settings.codexAppThreads": "Mostrar los hilos del puente en la app Codex",
     "settings.codexAppThreadsHint": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian.",
-    "settings.codexAppThreadsMcpHint": "Se guarda para usarlo con App Server. El backend MCP Server actual no puede ocultar sus hilos; cambia el backend del puente a App Server y reinícialo para aplicarlo a hilos nuevos.",
+
     "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, interfaz, concurrencia y Activity. Se conservan los proyectos y su orden."
   },
   fr: {
     "settings.codexAppThreads": "Afficher les fils du pont dans l’app Codex",
     "settings.codexAppThreadsHint": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas.",
-    "settings.codexAppThreadsMcpHint": "Ce réglage est enregistré pour App Server. Le backend MCP Server actuel ne peut pas masquer ses fils ; passez le backend du pont à App Server et redémarrez-le pour l’appliquer aux nouveaux fils.",
+
     "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’interface, la simultanéité et Activity. Les projets et leur ordre sont conservés."
   },
   de: {
     "settings.codexAppThreads": "Bridge-Threads in der Codex-App anzeigen",
     "settings.codexAppThreadsHint": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert.",
-    "settings.codexAppThreadsMcpHint": "Die Einstellung wird für App Server gespeichert. Das aktuelle MCP-Server-Backend kann seine Threads nicht ausblenden; wechseln Sie das Bridge-Backend zu App Server und starten Sie neu, damit sie für neue Threads gilt.",
+
     "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Oberfläche, Parallelität und Activity zurück. Projekte und Reihenfolge bleiben erhalten."
   },
   pt: {
     "settings.codexAppThreads": "Mostrar threads da ponte no app Codex",
     "settings.codexAppThreadsHint": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam.",
-    "settings.codexAppThreadsMcpHint": "A configuração é salva para uso com o App Server. O backend MCP Server atual não consegue ocultar seus threads; altere o backend da ponte para App Server e reinicie para aplicá-la a novos threads.",
+
     "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, interface, concorrência e Activity. Projetos e ordem são mantidos."
   }
 };

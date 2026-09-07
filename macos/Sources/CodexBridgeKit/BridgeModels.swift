@@ -600,7 +600,7 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
             RuntimeOperatorConfiguration.self,
             forKey: .operatorConfiguration
         ) ?? RuntimeOperatorConfiguration(
-            defaultBackend: "mcp-server",
+            defaultBackend: "app-server",
             maximumAccess: "read-only"
         )
         issue = try container.decodeIfPresent(String.self, forKey: .issue)

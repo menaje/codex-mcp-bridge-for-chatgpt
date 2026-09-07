@@ -700,7 +700,7 @@ describe("macOS runtime helper RPC", () => {
       launcherPath: launcher, runtimeLockDirectory: path.join(root, "launcher.lock"), autoRestart: false, startTimeoutMs: 5000 });
     try {
       const started = await supervisor.start();
-      await expect(supervisor.applyConfiguration({ defaultBackend: "mcp-server", mode: "drain", timeoutMs: 5000 })).rejects.toThrow("CODEX_APPLY_PENDING");
+      await expect(supervisor.applyConfiguration({ defaultBackend: "app-server", maximumAccess: "workspace-write", mode: "drain", timeoutMs: 5000 })).rejects.toThrow("CODEX_APPLY_PENDING");
       expect(readFileSync(configFile, "utf8")).toBe(original);
       expect((await supervisor.snapshot()).pid).toBe(started.pid);
       expect(await request(bridgeSocket, { jsonrpc: "2.0", id: "check", method: "runtime.snapshot", params: {} })).toMatchObject({ result: { acceptingNewJobs: true } });
@@ -1180,7 +1180,7 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
       hasTunnelId: true,
       tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
       operatorConfiguration: {
-        defaultBackend: "mcp-server",
+        defaultBackend: "app-server",
         maximumAccess: "read-only"
       },
       issue: null,

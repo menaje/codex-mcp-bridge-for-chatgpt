@@ -14,7 +14,7 @@ struct CodexAccountUsageView: View {
         VStack(alignment: .leading, spacing: 8) {
             LabeledContent("인증 방식", value: account.authMode == "api-key" ? "OpenAI API Key" : account.authMode == "chatgpt" ? "ChatGPT" : "—")
             if account.authMode == "chatgpt" {
-                Text("같은 계정의 Codex 사용량은 앱·CLI·SDK에서 공유됩니다.")
+                Text("같은 계정의 Codex 사용량은 앱과 CLI에서 공유됩니다.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(sortedWindows) { window in
                     VStack(alignment: .leading, spacing: 3) {

@@ -57,10 +57,9 @@ export type BackendCapabilities = {
 export type BackendFeature = "supportsSteering" | "supportsPreciseCancellation" |
   "supportsEphemeralThreads" | "supportsThreadInspection" | "supportsBackgroundTerminals" | "supportsTurnSelection";
 
-/** Baseline features of the pinned adapters; caller-provided capabilities may narrow them. */
+/** Retired history never advertises executable capabilities. */
 export function backendSupports(kind: string | undefined, feature: BackendFeature): boolean {
   if (kind === "app-server") return true;
-  if (kind === "codex-sdk") return feature !== "supportsBackgroundTerminals" && feature !== "supportsEphemeralThreads";
   return false;
 }
 

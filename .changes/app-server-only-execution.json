@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Remove internal MCP and Codex SDK backends and use the selected CLI through App Server without a version allowlist.",
+  "breaking": true,
+  "migration": "New work uses App Server; preserve older records and use a fresh context with an explicit handoffSummary for retired-backend conversations."
+}

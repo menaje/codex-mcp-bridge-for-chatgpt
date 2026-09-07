@@ -251,14 +251,11 @@ final class AppModel: ObservableObject {
     @Published var helperStatus: HelperStatus?
     @Published var codexRuntime: CodexRuntimeSnapshot?
     @Published var codexRuntimeError: String?
-    @Published var sdkRuntime: CodexRuntimeSnapshot?
-    @Published var sdkRuntimeError: String?
     @Published var checkingCodexUpdates = Set<String>()
     var codexSettingsVisible = false
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
     private var lastCodexRuntimeRefresh: Date?
-    @Published var sdkAuthStatus: CodexSdkAuthStatus?
     @Published var dashboard: DashboardSnapshot?
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus?
@@ -391,14 +388,6 @@ final class AppModel: ObservableObject {
         if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if !status.tunnel.connected { return .problem(.tunnel) }
-        if usesSdkForNewAgents {
-            if let sdkRuntime, sdkRuntime.installedVersion == nil { return .problem(.installation) }
-            if let auth = sdkRuntime?.auth { return auth.authenticated ? .healthy : .problem(.authentication) }
-            if let account = sdkRuntime?.account {
-                return account.authenticated ? .healthy : .problem(.authentication)
-            }
-            return .unknown
-        }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authentication) }
         if !auth.installed { return .problem(.installation) }
         return auth.authenticated ? .healthy : .problem(.authentication)
@@ -585,19 +574,7 @@ final class AppModel: ObservableObject {
         isRemoteClient || authStatus?.authenticated != false
     }
 
-    var usesSdkForNewAgents: Bool {
-        helperStatus?.configuration.operatorConfiguration.defaultBackend == "codex-sdk"
-    }
-
-    var selectedCodexAccount: CodexAccountUsage? {
-        usesSdkForNewAgents ? sdkRuntime?.account : codexRuntime?.account
-    }
-
-    var otherCodexAccount: CodexAccountUsage? {
-        guard let other = usesSdkForNewAgents ? codexRuntime?.account : sdkRuntime?.account,
-              other.authenticated, selectedCodexAccount?.sharesKnownAccount(with: other) != true else { return nil }
-        return other
-    }
+    var selectedCodexAccount: CodexAccountUsage? { codexRuntime?.account }
 
     var health: MenuBarHealth {
         if operationalActionRequiredProblem != nil { return .attention }
@@ -1068,7 +1045,6 @@ final class AppModel: ObservableObject {
         if isRemoteClient {
             helperStatus = nil
             codexRuntime = nil
-            sdkRuntime = nil
             authStatus = nil
             guard activeRemoteProfile != nil else {
                 remoteHello = nil
@@ -1105,7 +1081,6 @@ final class AppModel: ObservableObject {
             statusErrorMessage = nil
             if !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
                 await loadCodexRuntime(kind: "cli")
-                if usesSdkForNewAgents { await loadCodexRuntime(kind: "sdk") }
             }
         } catch {
             guard generation == connectionGeneration, !isRemoteClient else { return }
@@ -1527,12 +1502,8 @@ final class AppModel: ObservableObject {
             let client = await helperClient()
             let next = try await client.codexRuntime(.init(action: "status", kind: kind, includeAccount: includeAccount))
             guard connection == connectionGeneration, !isRemoteClient, revision == codexRuntimeReadRevision[kind] else { return }
-            if kind == "sdk" {
-                if sdkRuntime != next { sdkRuntime = next }
-            } else {
-                if codexRuntime != next { codexRuntime = next }
-                lastCodexRuntimeRefresh = Date()
-            }
+            if codexRuntime != next { codexRuntime = next }
+            lastCodexRuntimeRefresh = Date()
             setCodexRuntimeError(nil, kind: kind)
         } catch {
             guard connection == connectionGeneration, revision == codexRuntimeReadRevision[kind] else { return }
@@ -1541,19 +1512,7 @@ final class AppModel: ObservableObject {
     }
 
     private func setCodexRuntimeError(_ message: String?, kind: String) {
-        if kind == "sdk" {
-            if sdkRuntimeError != message { sdkRuntimeError = message }
-        } else if codexRuntimeError != message { codexRuntimeError = message }
-    }
-
-    func configureSdkAuthentication(_ request: CodexSdkAuthRequest) async {
-        guard !isRemoteClient else { return }
-        do {
-            let client = await helperClient()
-            sdkAuthStatus = try await client.configureSdkAuth(request)
-            setCodexRuntimeError(nil, kind: "sdk")
-            await manageCodex(.init(action: "status", kind: "sdk"))
-        } catch { setCodexRuntimeError(localizedErrorDescription(error), kind: "sdk") }
+        if codexRuntimeError != message { codexRuntimeError = message }
     }
 
     func configureRuntime(
