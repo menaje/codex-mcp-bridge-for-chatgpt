@@ -121,6 +121,12 @@ A successful result applies only to the exact commit and inputs that produced
 it. An unexplained difference, absent source candidate, missing asset, failed
 physical-Mac check, or ambiguous evidence leaves the release on `HOLD`.
 
+Affected validation compares committed changes with `origin/dev` and also checks
+staged, unstaged, and untracked paths. Deletions and both sides of renames count;
+moving source into documentation still requires the source checks. If the base
+is unavailable, fetch it or pass `npm run validate:affected -- --base <git-ref>`.
+An unresolved base is an error, not evidence that committed code is unchanged.
+
 ## RC-to-stable payload boundary
 
 Stable publication downloads the three actual source-RC payload artifacts and

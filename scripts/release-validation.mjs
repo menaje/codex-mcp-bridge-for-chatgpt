@@ -43,12 +43,16 @@ export function classifyChangedPaths(paths) {
 
 export function collectChangedPaths(repoRoot = DEFAULT_REPO_ROOT, baseRef = process.env.RELEASE_BASE_REF ?? "origin/dev") {
   const paths = new Set();
-  if (gitSucceeds(repoRoot, ["rev-parse", "--verify", `${baseRef}^{commit}`])) {
-    addLines(paths, git(repoRoot, ["diff", "--name-only", "--diff-filter=ACMRTUXB", `${baseRef}...HEAD`]));
+  if (!gitSucceeds(repoRoot, ["rev-parse", "--verify", `${baseRef}^{commit}`])) {
+    throw new Error(`Could not resolve comparison base ${baseRef}. Fetch it or pass --base <git-ref>.`);
   }
-  addLines(paths, git(repoRoot, ["diff", "--name-only", "--diff-filter=ACMRTUXB"]));
-  addLines(paths, git(repoRoot, ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"]));
-  addLines(paths, git(repoRoot, ["ls-files", "--others", "--exclude-standard"]));
+  // Deletions and both sides of a rename can remove executable code. NUL
+  // separators preserve Git paths containing quotes, tabs or newlines.
+  const diff = ["diff", "--name-only", "--no-renames", "-z"];
+  addPaths(paths, git(repoRoot, [...diff, `${baseRef}...HEAD`, "--"]));
+  addPaths(paths, git(repoRoot, [...diff, "--"]));
+  addPaths(paths, git(repoRoot, [...diff, "--cached", "--"]));
+  addPaths(paths, git(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]));
   return [...paths].sort();
 }
 
@@ -85,9 +89,9 @@ function gitSucceeds(repoRoot, args) {
   }
 }
 
-function addLines(target, value) {
-  for (const line of value.split(/\r?\n/)) {
-    if (line) target.add(line);
+function addPaths(target, value) {
+  for (const changedPath of value.split("\0")) {
+    if (changedPath) target.add(changedPath);
   }
 }
 

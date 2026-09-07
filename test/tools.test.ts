@@ -4602,6 +4602,66 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("opens an empty full-history card with a refreshable non-owning presentation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    try {
+      const opened = await rawCallTool({
+        name: "codex_activity",
+        arguments: { scopeId: SCOPE_A, mode: "full-history" }
+      });
+      expect(opened.isError).not.toBe(true);
+      expect(privateActivityView(opened)).toMatchObject({
+        mountedActivity: null,
+        mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+        feed: { mode: "full", activityTotal: 0 },
+        watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+      });
+      const envelope = validateActivityViewPrivateMetadata(
+        (opened as { _meta: Record<string, unknown> })._meta[ACTIVITY_VIEW_METADATA_KEY]
+      );
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope, source: "codex_activity_snapshot"
+      })).toThrow();
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope,
+        view: { ...envelope.view, watcherPolicy: { ...envelope.view.watcherPolicy, live: true } }
+      })).toThrow();
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope,
+        view: { ...envelope.view, feed: { ...envelope.view.feed, activityTotal: 1 } }
+      })).toThrow();
+      const refresh = () => rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: { scopeId: SCOPE_A, mode: "full-history", widgetInstanceId: "55555555-5555-4555-8555-555555555555" }
+      });
+      expect(parseToolJson(await refresh())).toMatchObject({
+        mountedActivity: null,
+        feed: { activityTotal: 0 },
+        watcherPolicy: { live: false, ownsCompletionHandoff: false }
+      });
+      expect(jobs.sizeForScope(SCOPE_A)).toBe(0);
+      expect(upstream.calls).toHaveLength(0);
+
+      const task = parseToolJson(await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first work after opening the empty history card" }
+      }));
+      const refreshed = parseToolJson(await refresh());
+      expect(refreshed).toMatchObject({
+        mountedActivity: { activityId: task.activityId },
+        mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+        feed: { activityTotal: 1 },
+        watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+      });
+      expect(jobs.sizeForScope(SCOPE_A)).toBe(1);
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
   it("rehydrates a cold full-history Activity result as a one-shot full view", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
