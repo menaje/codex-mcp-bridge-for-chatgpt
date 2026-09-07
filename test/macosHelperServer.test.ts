@@ -266,7 +266,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile);
     const supervisor = new MacOSBridgeSupervisor({
       bridgeRoot,
@@ -290,7 +290,7 @@ describe("macOS runtime helper RPC", () => {
       expect(applied.status).toMatchObject({
         lastProblem: null,
         configuration: { issueProblem: null },
-        tunnel: { lastProblem: null }
+        tunnel: { lastProblem: null, transport: "http", connected: true }
       });
       expect(applied.configuration).toMatchObject({
         exists: true,
@@ -298,6 +298,9 @@ describe("macOS runtime helper RPC", () => {
         hasApiKey: true,
         tunnelId: "tunnel_ffffffffffffffffffffffffffffffff"
       });
+      expect(JSON.parse(readFileSync(argumentsFile, "utf8"))).toEqual(
+        expect.arrayContaining(["--transport", "http"])
+      );
       expect(lstatSync(configDirectory).mode & 0o777).toBe(0o700);
       expect(lstatSync(configFile).mode & 0o777).toBe(0o600);
     } finally {
@@ -318,7 +321,7 @@ describe("macOS runtime helper RPC", () => {
     const tunnelId = "tunnel_dddddddddddddddddddddddddddddddd";
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
     mkdirSync(profileDirectory, { mode: 0o700 });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFileSync(path.join(profileDirectory, "existing.yaml"), [
       "control_plane:",
       `  tunnel_id: \"${tunnelId}\"`,
@@ -418,7 +421,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile);
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor.1234567890123456+suffix=secret",
@@ -459,7 +462,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { splitRuntimeSecret: true });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -488,7 +491,10 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
-  it("rejects launcher readiness from a different tunnel profile", async () => {
+  it.each([
+    { label: "a different tunnel profile", runtimeProfile: "codex-mcp-bridge" },
+    { label: "the legacy stdio transport", runtimeTransport: "stdio" }
+  ])("rejects launcher readiness from $label", async (runtimeIdentity) => {
     const root = temporaryDirectory();
     const bridgeRoot = path.join(root, "runtime");
     const configFile = path.join(root, "config", ".env");
@@ -496,10 +502,8 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
-    writeFakeLauncher(launcher, argumentsFile, {
-      runtimeProfile: "codex-mcp-bridge"
-    });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
+    writeFakeLauncher(launcher, argumentsFile, runtimeIdentity);
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
@@ -532,7 +536,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const delayFile = path.join(root, "snapshot-delay");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFileSync(delayFile, "0");
     writeFakeLauncher(launcher, path.join(root, "arguments.json"), { snapshotDelayFile: delayFile });
     updateRuntimeEnvFile(configFile, {
@@ -574,7 +578,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { activeJobs: 1 });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -613,7 +617,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { backgroundProcesses: 2 });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -656,7 +660,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { backgroundProcessUnknownAgents: 1 });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -705,7 +709,7 @@ describe("macOS runtime helper RPC", () => {
       const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
       const descendantPidFile = path.join(root, "detached-descendant.pid");
       mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-      writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+      writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
       writeFakeLauncher(launcher, argumentsFile, { detachedDescendantPidFile: descendantPidFile });
       updateRuntimeEnvFile(configFile, {
         apiKey: "sk-supervisor-1234567890123456",
@@ -750,7 +754,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, {
       activeJobs: 1,
       failSnapshotAfterDrain: true
@@ -790,7 +794,7 @@ describe("macOS runtime helper RPC", () => {
     const bridgeRoot = path.join(root, "runtime"), configFile = path.join(root, "c", ".env");
     const bridgeSocket = path.join(root, "c", "run", "bridge.sock"), launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "");
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "");
     writeFakeLauncher(launcher, path.join(root, "args.json"), { memoryOnlyAfterDrain: 1 });
     updateRuntimeEnvFile(configFile, { apiKey: "sk-supervisor-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo", defaultBackend: "app-server" });
     const original = readFileSync(configFile, "utf8");
@@ -813,7 +817,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, {
       failTunnelId: "tunnel_ssssssssssssssssssssssssssssssss"
     });
@@ -856,7 +860,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { mutateEnvOnDrain: "# concurrent edit" });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -900,7 +904,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { writeRuntimeLock: true });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -944,6 +948,7 @@ describe("macOS runtime helper RPC", () => {
       expect(adopted).toMatchObject({
         phase: "running",
         pid: original.pid,
+        tunnel: { transport: "http", connected: true },
         configuration: { exists: false, valid: false }
       });
       expect(replacement.logs(20).map((entry) => entry.message).join("\n"))
@@ -973,7 +978,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile, { writeRuntimeLock: true });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -1027,7 +1032,7 @@ describe("macOS runtime helper RPC", () => {
     const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
     const argumentsFile = path.join(bridgeRoot, "last-arguments.json");
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFakeLauncher(launcher, argumentsFile);
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
@@ -1061,7 +1066,7 @@ describe("macOS runtime helper RPC", () => {
     const bridgeSocket = path.join(root, "run", "bridge.sock");
     mkdirSync(path.dirname(configFile), { recursive: true, mode: 0o700 });
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
-    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
@@ -1100,6 +1105,7 @@ describe("macOS runtime helper RPC", () => {
     const fakeCodex = path.join(root, "fake-codex.mjs");
     mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
     writeFileSync(fakeCodex, `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href)};
 import { writeFileSync } from "node:fs";
 if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
 writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({
@@ -1160,6 +1166,7 @@ createInterface({input:process.stdin}).on("line", line => {
       mkdirSync(bridgeRoot, { recursive: true });
       mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
       writeFileSync(fakeCodex, `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href)};
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
@@ -1332,6 +1339,7 @@ function writeFakeLauncher(
     splitRuntimeSecret?: boolean;
     writeRuntimeLock?: boolean;
     runtimeProfile?: string;
+    runtimeTransport?: string;
     detachedDescendantPidFile?: string;
     snapshotDelayFile?: string;
   } = {}
@@ -1396,7 +1404,7 @@ if (runtimeStatusFile) {
     tunnel: {
       phase: "connected",
       profile: ${JSON.stringify(options.runtimeProfile || null)} || profile,
-      transport,
+      transport: ${JSON.stringify(options.runtimeTransport || null)} || transport,
       doctorPassed: true,
       processRunning: true,
       connected: true,

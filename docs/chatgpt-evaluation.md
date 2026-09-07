@@ -78,3 +78,12 @@ ChatGPT HTTP 500과 터널 내부 502 관측은 복구 성공으로 처리하지
 ```
 
 원본 식별자와 인증 정보는 기록하지 않는다. 실패했다고 접근 권한을 넓히거나 누락된 식별자를 추측하거나 API 과금으로 전환하지 않는다. 범위를 벗어난 기능은 제한으로 기록한다.
+
+## Issue #68: actual host acceptance
+
+- [ ] GPT reads an ordinary Codex question with codex_input and answers through the correct protocol.
+- [ ] GPT decides that user opinion is needed, writes a codex_ask_user card, and receives an actual user submission.
+- [ ] The real ChatGPT host resumes GPT, which reads codex_user_answer and applies its decision to the exact Codex Job.
+- [ ] Reopen, stale card, scope mismatch, denied follow-up and uncertain delivery are distinguished.
+
+Production MCP/SQLite tests, actual CLI tests and the local Chromium host harness are supporting evidence. They do not complete these real-host conditions. See [the contract](gpt-questions.md) and issue #68.

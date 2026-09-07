@@ -12,7 +12,7 @@ and cache contracts.
 MenuBarExtra and native Settings window
   -> versioned private helper socket
      -> per-user background helper
-        -> existing secure persistent-stdio launcher
+        -> existing secure loopback-HTTP launcher
            -> tunnel-client
               -> existing TypeScript MCP bridge
                  -> versioned private companion socket

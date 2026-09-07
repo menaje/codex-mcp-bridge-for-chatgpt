@@ -1,0 +1,257 @@
+{
+  "date": "2026-09-08",
+  "issue": 68,
+  "nativeServerInputOriginVerified": true,
+  "nativeInput": [
+    {
+      "source": "terminal",
+      "cli": "codex-cli 0.153.3",
+      "model": "gpt-6-astra",
+      "nativeInput": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_answer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 10569
+    },
+    {
+      "source": "app",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "nativeInput": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_answer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 11678
+    },
+    {
+      "source": "bridge",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "nativeInput": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_answer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 9549
+    }
+  ],
+  "approvalBoundary": [
+    {
+      "source": "terminal",
+      "cli": "codex-cli 0.153.3",
+      "model": "gpt-6-astra",
+      "nativeInput": false,
+      "approvalProbe": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "approvalRoute": "mcp-elicitation",
+      "publicAnswerRejected": true,
+      "publicAnswerRejection": "not-an-ordinary-question",
+      "answerRoute": "app-only-decline",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "toolInvoked": false,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 16771
+    },
+    {
+      "source": "app",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "nativeInput": false,
+      "approvalProbe": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "approvalRoute": "mcp-elicitation",
+      "publicAnswerRejected": true,
+      "publicAnswerRejection": "not-an-ordinary-question",
+      "answerRoute": "app-only-decline",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "toolInvoked": false,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 14076
+    },
+    {
+      "source": "bridge",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "nativeInput": false,
+      "approvalProbe": true,
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "approvalRoute": "mcp-elicitation",
+      "publicAnswerRejected": true,
+      "publicAnswerRejection": "not-an-ordinary-question",
+      "answerRoute": "app-only-decline",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "toolInvoked": false,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 13516
+    }
+  ],
+  "liveChatGptVerified": false,
+  "localServiceUpdated": true,
+  "validation": {
+    "typescriptBuild": "passed",
+    "vitest": {
+      "files": 61,
+      "tests": 748,
+      "failed": 0,
+      "verification": "747 passed in complete suite; one expected descriptor snapshot updated and targeted test passed",
+      "excluded": "output/** (ignored historical build copies)"
+    },
+    "macos": {
+      "executed": 100,
+      "skipped": 2,
+      "failed": 0
+    },
+    "outputContractAudit": "passed",
+    "appServerCompatibility": "passed",
+    "browser": {
+      "cases": 6,
+      "passed": true,
+      "host": "simulated",
+      "codexCalls": 0
+    }
+  },
+  "liveHost": {
+    "macLocked": false,
+    "screenAutomation": "ChatGPT apps denied by Computer Use safety policy",
+    "status": "User confirmation requested: task-send was acknowledged but no new ChatGPT turn or card creation was observed",
+    "actualCardSubmitted": false,
+    "actualParentGptRead": false,
+    "actualCodexResult": false
+  },
+  "browser": {
+    "builtRenderer": true,
+    "codexCalls": 0,
+    "results": [
+      {
+        "mode": "standard",
+        "calls": [
+          "codex_question_card",
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card",
+          "codex_question_card"
+        ],
+        "followUps": 1,
+        "passed": true
+      },
+      {
+        "mode": "compatibility",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 1,
+        "passed": true
+      },
+      {
+        "mode": "metadata-missing",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 1,
+        "passed": true
+      },
+      {
+        "mode": "denied",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 2,
+        "passed": true
+      },
+      {
+        "mode": "uncertain",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 0,
+        "passed": true
+      },
+      {
+        "mode": "expired",
+        "calls": [
+          "codex_question_card"
+        ],
+        "followUps": 0,
+        "passed": true
+      }
+    ]
+  },
+  "deployment": {
+    "build": "54296e0f0010-dirty:9af435da30f3",
+    "previousBuild": "54296e0f0010-dirty:0b318c544b44",
+    "databaseSchema": "13",
+    "backupCreated": true,
+    "previousAppPreserved": true,
+    "tunnelConnected": true,
+    "preflight": {
+      "acceptingNewJobs": true,
+      "activeJobs": 0,
+      "pendingAdmissions": 0,
+      "pendingInteractions": 0,
+      "memoryOnlyThreads": 0,
+      "backgroundProcessState": "confirmed",
+      "backgroundProcesses": 0,
+      "backgroundProcessAgents": 0,
+      "backgroundProcessUnknownAgents": 0
+    },
+    "postflight": {
+      "acceptingNewJobs": true,
+      "activeJobs": 0,
+      "pendingAdmissions": 0,
+      "pendingInteractions": 0,
+      "memoryOnlyThreads": 0,
+      "backgroundProcessState": "confirmed",
+      "backgroundProcesses": 0,
+      "backgroundProcessAgents": 0,
+      "backgroundProcessUnknownAgents": 0
+    },
+    "publishedQuestionTools": 7
+  }
+}

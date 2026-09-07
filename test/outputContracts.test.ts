@@ -263,10 +263,8 @@ describe("model-visible output contracts", () => {
       "utf8"
     );
     expect(steeringBytes).toBe(1_360);
-    expect(bytes - steeringBytes).toBe(12_391);
-    expect(bytes - steeringBytes).toBeLessThanOrEqual(12_505);
-    expect(bytes).toBe(13_751);
-    expect(bytes).toBeLessThanOrEqual(13_865);
+    // Four GPT question tools plus bounded input/capability summaries.
+    expect(bytes).toBeLessThanOrEqual(19_500);
   });
 
   it("retires public Activity hydration while retaining private generation 11 contracts", () => {

@@ -1,6 +1,8 @@
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { inspectClientRequestContract } from "../src/cliProtocol.js";
+import protocolContract from "./fixtures/app-server-request-contract.json";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexRuntimeManager, type RuntimeInstaller, type RuntimeManagerOptions } from "../src/codexRuntime.js";
 
@@ -14,7 +16,7 @@ async function fixture() {
   const installer: RuntimeInstaller = async ({ directory: target, version, onProgress }) => {
     await onProgress("verifying"); const command = path.join(target, "codex"); await writeFile(command, `version=${version}`, { mode: 0o700 }); return command;
   };
-  const options: RuntimeManagerOptions = { root, environment: { PATH: bin }, appPaths: [], probe, installer,
+  const options: RuntimeManagerOptions = { root, environment: { PATH: bin }, appPaths: [], probe, installer, protocolProbe: async () => inspectClientRequestContract(protocolContract),
     defaultVersion: "0.153.3", latestVersion: async () => "0.153.4" };
   const manager = new CodexRuntimeManager(options);
   const external = async (name = "codex", version = "0.153.3") => {
@@ -24,6 +26,14 @@ async function fixture() {
 }
 
 describe("Codex installation ownership and selection", () => {
+  it("marks a version-valid but permission-incompatible installation unavailable for execution", async () => {
+    const f = await fixture(); await f.external();
+    const support = inspectClientRequestContract(protocolContract);
+    const manager = new CodexRuntimeManager({ ...f.options, protocolProbe: async () => ({ ...support, compatible: false, missingCore: ["thread/resume.sandbox"] }) });
+    expect((await manager.snapshot()).selection).toMatchObject({ available: true, compatible: false });
+    await expect(manager.resolve()).rejects.toThrow("thread/resume.sandbox");
+  });
+
   it("persists a single installation and does not replace it when another appears or discovery order changes", async () => {
     const f = await fixture(); const command = await f.external();
     expect((await f.manager.snapshot()).selection?.command).toBe(command);

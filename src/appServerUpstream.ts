@@ -1,4 +1,11 @@
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
+import { elicitationResponse, readElicitationInput } from "./mcpElicitation.js";
+import { inspectCliProtocol, requireCliProtocol, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
+import {
+  executionAccessArguments, executionAccessEvidence, executionAccessRequest,
+  threadAccessParams, turnAccessParams, verifyExecutionAccess,
+  type ExecutionAccessRequest, type VerifiedExecutionAccess
+} from "./executionAccess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -21,6 +28,7 @@ import {
   type JsonRpcTerminationResult
 } from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { MCP_APPROVAL_ROUTING_FEATURE, questionOrigin } from "./questionRouting.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import {
   assertWorkerTerminationCorrelation,
@@ -33,6 +41,8 @@ import {
   type CodexThreadStartRequest,
   type CodexBackgroundTerminal,
   type CodexInteractionDecision,
+  type CodexInteractionResponse,
+  type CodexInteractionInput,
   type CodexPendingInteraction,
   type CodexProgress,
   type CodexPublicEvent,
@@ -96,6 +106,7 @@ type ResolvedCodexAppServerProtocolOptions = {
 
 export type CodexAppServerDependencies = {
   versionProbe?: CodexCliVersionProbe;
+  protocolProbe?: typeof inspectCliProtocol;
   workerMetricsProbe?: WorkerMetricsProbe;
 };
 
@@ -110,6 +121,7 @@ type TurnContext = {
   threadId: string;
   turnId: string;
   lineage: CodexThreadLineage;
+  executionAccess: VerifiedExecutionAccess;
   onProgress?: (progress: CodexProgress) => void;
   resolve: (result: ToolResult) => void;
   reject: (error: Error) => void;
@@ -118,12 +130,15 @@ type TurnContext = {
   finalMessage: string;
   commandOutputTails: Map<string, string>;
   lastAgentMessageEventAt: number;
+  inputOrigins: Map<string, "app-approval" | "unknown">;
+  inputRoutingVerified: boolean;
 };
 
 type PendingInteraction = CodexPendingInteraction & {
   requestId: number | string;
   method: string;
   requestParams: Record<string, unknown>;
+  privateInput?: CodexInteractionInput;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
   answered: boolean;
@@ -170,10 +185,14 @@ type AppWorker = {
 export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly workers: AppWorker[];
   private readonly threadWorkers = new Map<string, number>();
+  private readonly threadAccessRequests = new Map<string, ExecutionAccessRequest>();
   private readonly threadResumeEvidence = new Map<string, boolean>();
   private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
   private readonly versionProbe: CodexCliVersionProbe;
   private readonly workerMetricsProbe: WorkerMetricsProbe;
+  private protocolSupport?: CliProtocolSupport;
+  private protocolCheck?: Promise<CliProtocolSupport>;
+  private readonly protocolProbe: typeof inspectCliProtocol;
   private compatibilityCheck?: Promise<string>;
   private compatibilityAbort?: AbortController;
   private accountRateLimitsCache?: {
@@ -194,6 +213,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
     this.protocolOptions = resolveProtocolOptions(protocolOptions);
     this.versionProbe = dependencies.versionProbe || probeCodexCliVersion;
+    this.protocolProbe = dependencies.protocolProbe || inspectCliProtocol;
     this.workerMetricsProbe = dependencies.workerMetricsProbe || defaultWorkerMetricsProbe;
     this.workers = Array.from({ length: poolSize }, (_, index) => ({
       index,
@@ -248,14 +268,16 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       tools: [
         { name: "codex", description: "Start a Codex App Server thread and turn." },
         { name: "codex-reply", description: "Resume a Codex App Server thread and start a turn." },
-        { name: "thread/fork", description: "Fork a persisted Codex thread and start a turn." },
+        ...(this.capabilities().supportsFork ? [{ name: "thread/fork", description: "Fork a persisted Codex thread and start a turn." }] : []),
         { name: "thread/archive", description: "Archive a persisted Codex thread." },
         { name: "thread/unarchive", description: "Restore an archived Codex thread." },
-        { name: "turn/steer", description: "Steer an active Codex App Server turn." },
-        { name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }
+        ...(this.capabilities().supportsSteering ? [{ name: "turn/steer", description: "Steer an active Codex App Server turn." }] : []),
+        ...(this.capabilities().supportsPreciseCancellation ? [{ name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }] : [])
       ],
       backendKind: "app-server",
       experimental: true,
+      capabilities: this.capabilities(),
+      protocol: this.protocolSupport ? { verified: true, compatible: this.protocolSupport.compatible, unsupported: this.protocolSupport.unsupported } : { verified: false },
       workerHealth: {
         configured: this.workers.length,
         live: liveWorkers.length,
@@ -300,7 +322,18 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   capabilities(): BackendCapabilities {
-    return APP_SERVER_CAPABILITIES;
+    return this.protocolSupport?.capabilities || UNVERIFIED_APP_SERVER_CAPABILITIES;
+  }
+
+  async prepareExecution(input: { contextMode: "fresh" | "continue" | "fork" }): Promise<void> {
+    await this.connectionFor(this.leastBusyWorker());
+    requireCliProtocol(await this.inspectProtocol(), input.contextMode);
+  }
+
+  private inspectProtocol(): Promise<CliProtocolSupport> {
+    return this.protocolCheck ||= this.protocolProbe(this.codexCommand, this.protocolOptions.environment || process.env)
+      .then(support => { this.protocolSupport = support; return support; })
+      .catch(error => { this.protocolCheck = undefined; throw error; });
   }
 
   startThread(
@@ -328,7 +361,10 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   ): Promise<ToolResult> {
     return this.callTool(
       "codex-reply",
-      requestArguments(input.prompt, input.selection, { threadId: input.threadId }),
+      requestArguments(input.prompt, input.selection, {
+        threadId: input.threadId,
+        ...(input.cwd ? executionAccessArguments(input) : {})
+      }),
       onProgress,
       onAssigned
     );
@@ -344,9 +380,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     worker.activeCalls += 1;
     try {
       const connection = await this.connectionFor(worker);
+      requireCliProtocol(await this.inspectProtocol(), "fork");
       const result = await connection.forkThreadAndTurn(
         input.threadId,
         requestArguments(input.prompt, input.selection, {
+          ...executionAccessArguments(input.cwd ? input : this.requireThreadAccess(input.threadId)),
           ephemeral: input.ephemeral === true
         }),
         onProgress,
@@ -354,6 +392,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           if (assignment.threadId) {
             this.threadWorkers.set(assignment.threadId, worker.index);
             this.threadResumeEvidence.set(assignment.threadId, true);
+            this.threadAccessRequests.set(assignment.threadId, executionAccessRequest(executionAccessArguments(input.cwd ? input : this.requireThreadAccess(input.threadId))));
           }
           onAssigned?.(assignment);
         }
@@ -493,6 +532,9 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       throw new Error(`Unsupported App Server compatibility tool: ${name}.`);
     }
     const requestedThreadId = name === "codex-reply" ? requiredString(args.threadId, "threadId") : undefined;
+    const previousAccess = requestedThreadId ? this.threadAccessRequests.get(requestedThreadId) : undefined;
+    args = { ...(previousAccess ? executionAccessArguments(previousAccess) : {}), ...args };
+    const requestedAccess = executionAccessRequest(args);
     const preferred = requestedThreadId === undefined
       ? undefined
       : this.workers[this.threadWorkers.get(requestedThreadId) ?? -1];
@@ -500,10 +542,12 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     worker.activeCalls += 1;
     try {
       const connection = await this.connectionFor(worker);
+      requireCliProtocol(await this.inspectProtocol(), name === "codex" ? "fresh" : "continue");
       const assigned = (assignment: UpstreamWorkerAssignment) => {
         if (assignment.threadId) {
           this.threadWorkers.set(assignment.threadId, worker.index);
           this.threadResumeEvidence.set(assignment.threadId, true);
+          this.threadAccessRequests.set(assignment.threadId, requestedAccess);
         }
         onAssigned?.(assignment);
       };
@@ -527,6 +571,14 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     }
   }
 
+  interactionInput(interactionId: string): CodexInteractionInput | undefined {
+    for (const worker of this.workers) {
+      const input = worker.connection?.interactionInput(interactionId);
+      if (input) return input;
+    }
+    return undefined;
+  }
+
   async forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
@@ -545,9 +597,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return result;
   }
 
+  private requireThreadAccess(threadId: string): ExecutionAccessRequest {
+    const access = this.threadAccessRequests.get(threadId);
+    if (!access) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread has no known execution policy; supply cwd, sandbox, and approvalPolicy.");
+    return access;
+  }
+
   async respondToInteraction(
     interactionId: string,
-    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+    response: CodexInteractionResponse
   ): Promise<void> {
     for (const worker of this.workers) {
       if (worker.connection?.respondToInteraction(interactionId, response)) return;
@@ -556,6 +614,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
+    if (!this.capabilities().supportsSteering) throw new Error("CODEX_PROTOCOL_UNSUPPORTED: The selected CLI does not support turn/steer.");
     const workerIndex = this.threadWorkers.get(threadId);
     const worker = workerIndex === undefined ? undefined : this.workers[workerIndex];
     if (!worker?.connection) throw new Error("The requested Codex thread has no active App Server turn to steer.");
@@ -565,7 +624,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   canSteerThread(threadId: string): boolean {
     const workerIndex = this.threadWorkers.get(threadId);
     const worker = workerIndex === undefined ? undefined : this.workers[workerIndex];
-    return Boolean(worker?.connection?.hasActiveTurn(threadId));
+    return this.capabilities().supportsSteering === true && Boolean(worker?.connection?.hasActiveTurn(threadId));
   }
 
   async close(): Promise<void> {
@@ -705,7 +764,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       this.protocolOptions.versionCheckTimeoutMs,
       this.versionProbe,
       controller.signal
-    );
+    ).then(async version => {
+      // An external app/npm installation may change at the same path while an
+      // older worker is running. Every replacement worker gets fresh contract
+      // evidence, including replacements that reuse the same version string.
+      this.protocolSupport = undefined;
+      this.protocolCheck = undefined;
+      requireCliProtocol(await this.inspectProtocol(), "fresh");
+      return version;
+    });
     this.compatibilityCheck = check;
     this.compatibilityAbort = controller;
     const clear = () => {
@@ -751,6 +818,7 @@ class AppServerConnection {
   private readonly activeTurns = new Map<string, TurnContext>();
   private readonly threadTurns = new Map<string, string>();
   private readonly loadedThreads = new Set<string>();
+  private readonly threadAccess = new Map<string, VerifiedExecutionAccess>();
   private readonly threadLineage = new Map<string, CodexThreadLineage>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly terminalTurns = new Set<string>();
@@ -770,7 +838,7 @@ class AppServerConnection {
   ) {
     this.rpc = new JsonRpcProcess({
       command,
-      args: ["app-server", "--listen", "stdio://"],
+      args: ["app-server", "--listen", "stdio://", "-c", `features.${MCP_APPROVAL_ROUTING_FEATURE}=true`],
       ...(protocolOptions.environment ? { env: protocolOptions.environment } : {}),
       debugLabel: `codex-app:${workerId}:g${generation}`,
       omitJsonRpcHeader: true,
@@ -877,12 +945,11 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
+    const expectedAccess = executionAccessRequest(args);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/start",
       {
-        cwd: requiredString(args.cwd, "cwd"),
-        sandbox: requiredString(args.sandbox, "sandbox"),
-        approvalPolicy: requiredString(args["approval-policy"], "approval-policy"),
+        ...threadAccessParams(expectedAccess),
         model: optionalString(args.model) || null,
         serviceTier: optionalString(args.serviceTier) || null,
         config: isRecord(args.config) ? args.config : null,
@@ -893,6 +960,7 @@ class AppServerConnection {
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
+    this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/start"));
     const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
     this.threadLineage.set(threadId, lineage);
@@ -916,7 +984,7 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
-    const lineage = await this.ensureThreadLoaded(threadId);
+    const lineage = await this.ensureThreadLoaded(threadId, executionAccessRequest(args));
     return this.startTurn(
       threadId,
       requiredString(args.prompt, "prompt"),
@@ -933,9 +1001,10 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
+    const expectedAccess = executionAccessRequest(args);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/fork",
-      { threadId: sourceThreadId, ephemeral: args.ephemeral === true },
+      { threadId: sourceThreadId, ephemeral: args.ephemeral === true, ...threadAccessParams(expectedAccess) },
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
         lateResponseContext: { sourceThreadId }
@@ -943,6 +1012,7 @@ class AppServerConnection {
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/fork thread.id");
+    this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/fork"));
     const lineage = threadLineage(thread, sourceThreadId);
     this.loadedThreads.add(threadId);
     this.threadLineage.set(threadId, lineage);
@@ -1084,11 +1154,17 @@ class AppServerConnection {
     }
   }
 
-  private async ensureThreadLoaded(threadId: string): Promise<CodexThreadLineage> {
-    if (this.loadedThreads.has(threadId)) return this.threadLineage.get(threadId) || {};
+  private async ensureThreadLoaded(threadId: string, expectedAccess?: ExecutionAccessRequest): Promise<CodexThreadLineage> {
+    const verified = this.threadAccess.get(threadId);
+    if (this.loadedThreads.has(threadId) && (!expectedAccess || verified)) {
+      if (expectedAccess && verified) {
+        verifyExecutionAccess({ ...verified, sandbox: verified.sandboxPolicy }, expectedAccess, "loaded thread");
+      }
+      return this.threadLineage.get(threadId) || {};
+    }
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/resume",
-      { threadId },
+      { threadId, ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
         lateResponseContext: { threadId }
@@ -1098,6 +1174,7 @@ class AppServerConnection {
     if (!thread || thread.id !== threadId) {
       throw new Error("Codex App Server resumed a different thread than requested.");
     }
+    if (expectedAccess) this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/resume"));
     const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
     this.threadLineage.set(threadId, lineage);
@@ -1154,15 +1231,36 @@ class AppServerConnection {
     return this.threadTurns.has(threadId);
   }
 
+  interactionInput(interactionId: string): CodexInteractionInput | undefined {
+    const pending = this.pendingInteractions.get(interactionId);
+    return pending && !pending.answered ? structuredClone(pending.privateInput) : undefined;
+  }
+
   respondToInteraction(
     interactionId: string,
-    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+    response: CodexInteractionResponse
   ): boolean {
     const pending = this.pendingInteractions.get(interactionId);
     if (!pending) return false;
     if (pending.answered) throw new Error("This Codex interaction response was already submitted.");
-    if (pending.kind === "user-input") {
+    if (pending.kind === "mcp-elicitation") {
+      const result = elicitationResponse(pending.privateInput || {}, response);
+      pending.answered = true;
+      if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
+      pending.resolve(result);
+    } else if (pending.kind === "user-input") {
       if (!response.answers) throw new Error("User-input interaction requires answers.");
+      const questions = pending.questions || [];
+      if (JSON.stringify(Object.keys(response.answers).sort()) !== JSON.stringify(questions.map(q => q.id).sort())) {
+        throw new Error("Answers must match the exact pending question ids.");
+      }
+      for (const question of questions) {
+        const answers = response.answers[question.id];
+        if (!Array.isArray(answers) || answers.some(answer => typeof answer !== "string") ||
+            (question.options?.length && question.isOther === false && answers.some(answer => !question.options!.some(option => option.label === answer)))) {
+          throw new Error("Answer is not available for this Codex question.");
+        }
+      }
       pending.answered = true;
       if (pending.autoResolutionTimer) clearTimeout(pending.autoResolutionTimer);
       pending.resolve({
@@ -1306,10 +1404,14 @@ class AppServerConnection {
     lineage: CodexThreadLineage = this.threadLineage.get(threadId) || {}
   ): Promise<ToolResult> {
     if (this.threadTurns.has(threadId)) throw new Error("A Codex App Server turn is already active for this thread.");
+    const executionAccess = this.threadAccess.get(threadId);
+    if (!executionAccess) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread policy has not been verified.");
+    const inputRoutingVerified = await this.verifyInputRouting(threadId);
     const response = await this.rpc.request<Record<string, unknown>>(
       "turn/start",
       {
         threadId,
+        ...turnAccessParams(executionAccess),
         input: [{ type: "text", text: prompt, text_elements: [] }],
         model: optionalString(args.model) || null,
         effort: modelReasoningEffort(args.config) || null,
@@ -1332,6 +1434,7 @@ class AppServerConnection {
       threadId,
       turnId,
       lineage,
+      executionAccess,
       onProgress,
       resolve,
       reject,
@@ -1339,7 +1442,9 @@ class AppServerConnection {
       eventSequence: 0,
       finalMessage: "",
       commandOutputTails: new Map(),
-      lastAgentMessageEventAt: 0
+      lastAgentMessageEventAt: 0,
+      inputOrigins: new Map(),
+      inputRoutingVerified
     };
     this.activeTurns.set(turnId, context);
     this.threadTurns.set(threadId, turnId);
@@ -1379,6 +1484,8 @@ class AppServerConnection {
       details: {
         threadId,
         turnId,
+        executionAccess: executionAccessEvidence(executionAccess),
+        questionRouting: inputRoutingVerified ? "verified-mcp-elicitation" : "unverified",
         selection: {
           model: optionalString(args.model) || null,
           reasoningEffort: modelReasoningEffort(args.config) || null,
@@ -1388,6 +1495,24 @@ class AppServerConnection {
       }
     });
     return done;
+  }
+
+  private async verifyInputRouting(threadId: string): Promise<boolean> {
+    let cursor: string | null = null;
+    const seen = new Set<string>();
+    try {
+      for (let page = 0; page < 4; page++) {
+        const result: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>("experimentalFeature/list", { threadId, cursor, limit: 100 },
+          { timeoutMs: Math.min(this.protocolOptions.requestTimeoutMs, 1500) });
+        if (!Array.isArray(result.data)) return false;
+        const feature = result.data.find((item: unknown) => isRecord(item) && item.name === MCP_APPROVAL_ROUTING_FEATURE);
+        if (isRecord(feature)) return feature.enabled === true && feature.stage === "stable";
+        const nextCursor: unknown = result.nextCursor;
+        if (typeof nextCursor !== "string" || seen.has(nextCursor)) return false;
+        cursor = nextCursor; seen.add(nextCursor);
+      }
+    } catch { /* Older/unsupported peers keep the approval path closed to GPT. */ }
+    return false;
   }
 
   private workerAssignment(
@@ -1498,6 +1623,11 @@ class AppServerConnection {
     if (method === "item/started" || method === "item/completed") {
       const item = isRecord(params.item) ? params.item : undefined;
       if (!item || item.type === "reasoning") return;
+      if (typeof item.id === "string") {
+        // Client-provided dynamic tools never establish native question origin.
+        context.inputOrigins.set(item.id, item.type === "mcpToolCall" ? "app-approval" : "unknown");
+        if (context.inputOrigins.size > 200) context.inputOrigins.delete(context.inputOrigins.keys().next().value!);
+      }
       const publicEvent = publicItemEvent(item, method === "item/started" ? "started" : "completed", context);
       if (publicEvent) this.emit(context, publicEvent);
     }
@@ -1526,7 +1656,7 @@ class AppServerConnection {
     this.emit(
       context,
       event(
-        pending.kind === "user-input" ? "input-required" : "approval-required",
+        isInputInteraction(pending.kind) ? "input-required" : "approval-required",
         "completed",
         summary,
         { resolvedInteractionId: interactionId, resolution }
@@ -1544,13 +1674,25 @@ class AppServerConnection {
           ? "permission-approval"
           : method === "item/tool/requestUserInput"
             ? "user-input"
-            : undefined;
+            : method === "mcpServer/elicitation/request"
+              ? "mcp-elicitation"
+              : undefined;
     if (!kind) throw Object.assign(new Error(`Unsupported App Server request: ${method}.`), { code: -32601 });
     const threadId = requiredString(params.threadId, "interaction threadId");
-    const turnId = requiredString(params.turnId, "interaction turnId");
-    const itemId = requiredString(params.itemId, "interaction itemId");
+    const turnId = optionalString(params.turnId) || (kind === "mcp-elicitation" ? this.threadTurns.get(threadId) : undefined);
+    if (!turnId && kind === "mcp-elicitation") return Promise.resolve({ action: "cancel", content: null });
+    if (!turnId) throw new Error("App Server interaction is missing its turn id.");
+    const itemId = kind === "mcp-elicitation" ? String(requestId) : requiredString(params.itemId, "interaction itemId");
     const context = this.activeTurns.get(turnId);
-    if (!context) throw new Error("App Server requested input for an unknown turn.");
+    if (!context || context.threadId !== threadId) throw new Error("App Server requested input for an unknown turn.");
+    let privateInput: CodexInteractionInput | undefined;
+    if (kind === "mcp-elicitation") {
+      try { privateInput = readElicitationInput(params); }
+      catch {
+        this.emit(context, event("warning", "completed", "The MCP server requested an unsupported or invalid elicitation form. The request was cancelled without submitting data."));
+        return Promise.resolve({ action: "cancel", content: null });
+      }
+    }
     const interactionId = `${this.workerId}:${this.generation}:${String(requestId)}`;
     const questions = kind === "user-input" && Array.isArray(params.questions)
       ? params.questions.filter(isRecord).slice(0, MAX_CODEX_INTERACTION_QUESTIONS).map((question) => ({
@@ -1558,6 +1700,7 @@ class AppServerConnection {
           header: optionalString(question.header)?.slice(0, 80) || "Input",
           question: optionalString(question.question)?.slice(0, 1_000) || "",
           isSecret: question.isSecret === true,
+          ...(typeof question.isOther === "boolean" ? { isOther: question.isOther } : {}),
           options: Array.isArray(question.options)
             ? question.options.filter(isRecord).slice(0, 10).map((option) => ({
                 label: optionalString(option.label)?.slice(0, 120) || "",
@@ -1576,12 +1719,14 @@ class AppServerConnection {
           }`
         : kind === "permission-approval"
           ? `Additional permission approval required: ${(optionalString(params.reason) || "Codex requested additional access.").slice(0, 500)}`
-          : "Codex requires user input.";
+          : kind === "mcp-elicitation"
+            ? `MCP input requested by ${requiredString(params.serverName, "MCP serverName")}: ${(optionalString(params.message) || "Input required.").slice(0, 1_000)}`
+            : "Codex requires user input.";
     const reason = optionalString(params.reason)?.slice(0, 500);
     const cwdLabel = safePathLabel(params.cwd);
     const grantRootLabel = safePathLabel(params.grantRoot);
     const availableDecisions = interactionDecisions(kind, params);
-    const autoResolutionMs = readAutoResolutionMs(params.autoResolutionMs);
+    const autoResolutionMs = kind === "user-input" ? undefined : readAutoResolutionMs(params.autoResolutionMs);
     const expiresAt = typeof autoResolutionMs === "number"
       ? Date.now() + autoResolutionMs
       : autoResolutionMs === null
@@ -1594,12 +1739,17 @@ class AppServerConnection {
       kind === "command-approval" ? params.additionalPermissions : params.permissions
     );
     const interaction: CodexPendingInteraction = {
+      ...(kind === "user-input" ? { origin: questionOrigin(context.inputRoutingVerified, context.inputOrigins.get(itemId), (questions || []).map(q => q.id)) } : {}),
       interactionId,
       kind,
       threadId,
       turnId,
       itemId,
       summary,
+      isBlocking: kind === "user-input" ? params.isBlocking !== false : true,
+      ...(kind === "mcp-elicitation" ? { elicitation: {
+        mode: params.mode as "form" | "url", serverName: requiredString(params.serverName, "MCP serverName")
+      } } : {}),
       ...(reason ? { reason } : {}),
       ...(cwdLabel ? { cwdLabel } : {}),
       ...(grantRootLabel ? { grantRootLabel } : {}),
@@ -1623,6 +1773,7 @@ class AppServerConnection {
       requestId,
       method,
       requestParams: params,
+      ...(privateInput ? { privateInput } : {}),
       resolve: resolveInteraction,
       reject: rejectInteraction,
       answered: false
@@ -1641,8 +1792,8 @@ class AppServerConnection {
       this.emit(
         context,
         event(
-          kind === "user-input" ? "input-required" : "approval-required",
-          "waiting",
+          isInputInteraction(kind) ? "input-required" : "approval-required",
+          interaction.isBlocking === false ? "updated" : "waiting",
           summary,
           { interaction }
         )
@@ -1691,7 +1842,8 @@ class AppServerConnection {
         turnId: context.turnId,
         turnStatus: status,
         backendKind: "app-server",
-          ...context.lineage,
+        ...context.lineage,
+        executionAccess: executionAccessEvidence(context.executionAccess),
         ...(failure ? { error: failure } : {})
       }
     });
@@ -2249,7 +2401,7 @@ function interactionDecisions(
   kind: CodexPendingInteraction["kind"],
   params: Record<string, unknown>
 ): CodexInteractionDecision[] | undefined {
-  if (kind === "user-input") return undefined;
+  if (isInputInteraction(kind)) return undefined;
   if (kind === "command-approval" && Array.isArray(params.availableDecisions)) {
     return [...new Set(params.availableDecisions.filter(isInteractionDecision))];
   }
@@ -2470,4 +2622,8 @@ function grantedPermissions(requested: Record<string, unknown>): Record<string, 
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isInputInteraction(kind: CodexPendingInteraction["kind"]): boolean {
+  return kind === "user-input" || kind === "mcp-elicitation";
 }

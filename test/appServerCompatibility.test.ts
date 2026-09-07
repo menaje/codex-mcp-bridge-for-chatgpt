@@ -46,6 +46,7 @@ describe("App Server compatibility contract", () => {
       ? { userAgent: "future-codex", platformFamily: "unix", platformOs: "test", futureField: { enabled: true } }
       : { userAgent: "future-codex", platformFamily: "unix" };
     writeFileSync(executable, `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href)};
 import { writeFileSync } from "node:fs";
 import readline from "node:readline";
 readline.createInterface({ input: process.stdin }).on("line", line => {

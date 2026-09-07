@@ -4,12 +4,7 @@ import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { loadConfig } from "./config.js";
 import { PRODUCT_INFO } from "./productInfo.js";
-import path from "node:path";
-import {
-  startBridgeCompanionServer,
-  type BridgeCompanionServer
-} from "./companionServer.js";
-import { RemoteCompanionManager } from "./remoteCompanionServer.js";
+import { startRuntimeCompanions } from "./runtimeCompanions.js";
 import { createStdioBridgeRuntime } from "./stdioServer.js";
 import { BridgeStateStore } from "./stateStore.js";
 
@@ -31,8 +26,7 @@ const upstream = createExecutionRuntime(config, {
   onLateResponse: (response) => appServerLateResponses.observe(response)
 });
 const runtime = createStdioBridgeRuntime(config, upstream, { stateStore });
-let companionServer: BridgeCompanionServer | undefined;
-let remoteCompanion: RemoteCompanionManager | undefined;
+let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
 let shuttingDown = false;
 
 for (const warning of config.startupWarnings) console.error(`warning: ${warning}`);
@@ -44,34 +38,7 @@ main().catch((error) => {
 
 async function main(): Promise<void> {
   await runtime.start();
-  const companionSocketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET?.trim();
-  if (companionSocketPath) {
-    const remoteStateFile = process.env.CODEX_MCP_BRIDGE_REMOTE_STATE_FILE?.trim() ||
-      path.join(path.dirname(config.stateDatabaseFile), "remote-management.json");
-    try {
-      remoteCompanion = new RemoteCompanionManager({
-        stateFile: remoteStateFile,
-        applicationService: runtime.applicationService
-      });
-      const remoteStatus = await remoteCompanion.start();
-      if (remoteStatus.enabled) {
-        console.error(
-          remoteStatus.listening
-            ? `remote companion ready at ${remoteStatus.endpoint}`
-            : `remote companion unavailable: ${remoteStatus.lastError || "unknown error"}`
-        );
-      }
-    } catch (error) {
-      remoteCompanion = undefined;
-      console.error(`remote companion unavailable: ${errorMessage(error)}`);
-    }
-    companionServer = await startBridgeCompanionServer({
-      socketPath: companionSocketPath,
-      applicationService: runtime.applicationService,
-      remoteManagement: remoteCompanion
-    });
-    console.error(`native companion ready at ${companionServer.socketPath}`);
-  }
+  companions = await startRuntimeCompanions(config, runtime.applicationService);
   console.error(
     `${PRODUCT_INFO.displayName} persistent stdio ready; build ${BRIDGE_BUILD_INFO.id} ` +
     `(${BRIDGE_BUILD_INFO.version})`
@@ -84,16 +51,10 @@ async function shutdown(reason: string, code = 0): Promise<void> {
   console.error(`received ${reason}, shutting down persistent stdio`);
   let exitCode = code;
   try {
-    await companionServer?.close();
+    await companions?.close();
   } catch (error) {
     exitCode = 1;
-    console.error(`native companion shutdown failed: ${errorMessage(error)}`);
-  }
-  try {
-    await remoteCompanion?.close();
-  } catch (error) {
-    exitCode = 1;
-    console.error(`remote companion shutdown failed: ${errorMessage(error)}`);
+    console.error(`companion shutdown failed: ${errorMessage(error)}`);
   }
   try {
     await runtime.close();

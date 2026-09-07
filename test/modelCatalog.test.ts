@@ -7,6 +7,7 @@ import {
   CodexCliModelCatalog,
   modelCatalogAdmissionFingerprint,
   modelCatalogFingerprint,
+  modelQuestionCapabilities,
   parseAppServerModelCatalog,
   parseCodexModelCatalog,
   type CodexModelCatalogProvider,
@@ -43,6 +44,25 @@ const catalogJson = JSON.stringify({
 });
 
 describe("Codex model catalog", () => {
+  it("distinguishes advertised question tools from missing catalog information", () => {
+    const raw = JSON.parse(catalogJson);
+    const unknown = parseCodexModelCatalog(JSON.stringify(raw))[0];
+    expect(modelQuestionCapabilities(unknown)).toEqual({ structuredAsync: "unknown", asyncMessage: "unknown", runtimeVerification: "required" });
+    raw.models[0].experimental_supported_tools = [];
+    const unadvertised = parseCodexModelCatalog(JSON.stringify(raw))[0];
+    expect(modelQuestionCapabilities(unadvertised).structuredAsync).toBe("not-advertised");
+    raw.models[0].experimental_supported_tools = ["request_user_input_async", "send_user_message_async"];
+    const advertised = parseCodexModelCatalog(JSON.stringify(raw))[0];
+    expect(modelQuestionCapabilities(advertised)).toEqual({ structuredAsync: "catalog-enabled", asyncMessage: "catalog-enabled", runtimeVerification: "required" });
+    for (const key of ["experimentalSupportedTools", "experimental_supported_tools"]) {
+      const appModel = parseAppServerModelCatalog({ data: [{ id: "catalog-current", model: "gpt-current", displayName: "Current",
+        defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }],
+        hidden: false, isDefault: true, [key]: ["request_user_input_async"] }] })[0];
+      expect(modelQuestionCapabilities(appModel).structuredAsync).toBe("catalog-enabled");
+      expect(modelQuestionCapabilities(appModel).asyncMessage).toBe("not-advertised");
+    }
+  });
+
   it("normalizes selectable models and filters hidden entries", () => {
     expect(parseCodexModelCatalog(catalogJson)).toEqual([
       {

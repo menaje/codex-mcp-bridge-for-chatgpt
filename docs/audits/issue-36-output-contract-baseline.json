@@ -1,5 +1,6 @@
 {
-  "auditVersion": 3,
+  "auditVersion": 4,
+  "questionFeatureIssue": 68,
   "issue": 36,
   "regressionIssue": 38,
   "featureIssue": 40,
@@ -109,43 +110,53 @@
     "schemaBytes": {
       "modelVisible": {
         "byTool": {
-          "codex_activity": 564,
+          "codex_activity": 638,
           "codex_activity_cancel": 887,
           "codex_activity_update": 887,
           "codex_agent": 641,
+          "codex_answer": 511,
+          "codex_ask_user": 422,
           "codex_cancel": 641,
-          "codex_models": 1067,
+          "codex_dashboard": 408,
+          "codex_input": 2002,
+          "codex_models": 1239,
           "codex_settings": 1724,
-          "codex_status": 3194,
+          "codex_status": 3586,
           "codex_steer": 1360,
-          "codex_task": 2404
+          "codex_task": 2416,
+          "codex_user_answer": 1357
         },
-        "totalBytes": 13369
+        "totalBytes": 18719
       },
       "appOnly": {
         "byTool": {
           "codex_activity_handoff": 910,
           "codex_activity_job_cancel": 2218,
-          "codex_activity_rehydrate": 3028,
-          "codex_activity_snapshot": 3028,
+          "codex_activity_rehydrate": 4883,
+          "codex_activity_snapshot": 4883,
           "codex_agent_recovery_detach": 2218,
           "codex_background_process_terminate": 2218,
-          "codex_diagnostics": 2630,
+          "codex_dashboard_snapshot": 43267,
+          "codex_diagnostics": 6446,
           "codex_interaction_respond": 2218,
           "codex_job_steer": 2218,
-          "codex_update_settings": 1724
+          "codex_question_card": 270,
+          "codex_question_notify": 315,
+          "codex_question_submit": 270,
+          "codex_settings_snapshot": 11175,
+          "codex_update_settings": 11175
         },
-        "totalBytes": 22410
+        "totalBytes": 94684
       }
     },
     "resultBytes": {
       "structuredContent": {
         "codex_activity": {
           "byFixture": {
-            "empty-activity-view": 103
+            "empty-activity-view": 128
           },
-          "maxBytes": 103,
-          "minBytes": 103
+          "maxBytes": 128,
+          "minBytes": 128
         },
         "codex_activity_cancel": {
           "byFixture": {
@@ -169,6 +180,20 @@
           "maxBytes": 234,
           "minBytes": 137
         },
+        "codex_answer": {
+          "byFixture": {
+            "gpt-question-flow": 220
+          },
+          "maxBytes": 220,
+          "minBytes": 220
+        },
+        "codex_ask_user": {
+          "byFixture": {
+            "gpt-question-flow": 141
+          },
+          "maxBytes": 141,
+          "minBytes": 141
+        },
         "codex_cancel": {
           "byFixture": {
             "job-cancelled": 208
@@ -176,19 +201,33 @@
           "maxBytes": 208,
           "minBytes": 208
         },
+        "codex_dashboard": {
+          "byFixture": {
+            "bridge-wide-read-only-overview": 323
+          },
+          "maxBytes": 323,
+          "minBytes": 323
+        },
+        "codex_input": {
+          "byFixture": {
+            "gpt-question-flow": 416
+          },
+          "maxBytes": 416,
+          "minBytes": 416
+        },
         "codex_models": {
           "byFixture": {
-            "current-model-catalog": 320
+            "current-model-catalog": 238
           },
-          "maxBytes": 320,
-          "minBytes": 320
+          "maxBytes": 238,
+          "minBytes": 238
         },
         "codex_settings": {
           "byFixture": {
-            "compact-settings": 437
+            "compact-settings": 391
           },
-          "maxBytes": 437,
-          "minBytes": 437
+          "maxBytes": 391,
+          "minBytes": 391
         },
         "codex_status": {
           "byFixture": {
@@ -219,6 +258,13 @@
           },
           "maxBytes": 863,
           "minBytes": 635
+        },
+        "codex_user_answer": {
+          "byFixture": {
+            "gpt-question-flow": 220
+          },
+          "maxBytes": 220,
+          "minBytes": 220
         }
       },
       "content": {
@@ -262,7 +308,7 @@
       "privateMeta": {
         "deterministicFixtures": {
           "codex/activityBootstrap@11": 478,
-          "codex/activityView@11": 1583
+          "codex/activityView@11": 1703
         },
         "realHostCapture": {
           "measured": false,
@@ -272,6 +318,7 @@
       }
     },
     "contentByteCaps": {
+      "codex_dashboard": 512,
       "codex_status": 1024,
       "codex_models": 512,
       "codex_settings": 768,
@@ -288,6 +335,7 @@
       "app_only_hydration": 1024
     },
     "structuredContentByteCaps": {
+      "codex_dashboard": 16384,
       "codex_status": 524288,
       "codex_models": 262144,
       "codex_settings": 32768,
@@ -305,16 +353,13 @@
     "modelPrimaryAnswerMaxJsonBytes": 24576
   },
   "finalGenerationBudget": {
-    "targetReductionPercent": 40,
-    "targetModelVisibleSchemaBytes": 12077,
-    "preIssue40ModelVisibleSchemaBytes": 12009,
-    "issue40SteeringSchemaBytes": 1360,
-    "issue40ExpandedTargetBytes": 13437,
-    "actualModelVisibleSchemaBytes": 13369,
-    "reductionBytes": 8119,
-    "reductionPercent": 40.337,
-    "headroomBytes": 68,
-    "enforcedAt": "W3+issue40-additive-tool",
+    "historicalIssue36ReductionTargetPercent": 40,
+    "targetModelVisibleSchemaBytes": 19500,
+    "actualModelVisibleSchemaBytes": 18719,
+    "questionToolsSchemaBytes": 4292,
+    "headroomBytes": 781,
+    "enforcedAt": "issue68-question-orchestration",
+    "liveChatGptQuestionWakeVerified": false,
     "passed": true
   }
 }

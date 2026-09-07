@@ -166,3 +166,5 @@ Release identity and supported targets are defined in `release-manifest.json`. H
 ## License
 
 MIT
+
+GPT handles ordinary Codex questions through `codex_input` and `codex_answer`. When the user’s opinion is needed, GPT can open a question card with `codex_ask_user` and retrieve the response with `codex_user_answer`. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.

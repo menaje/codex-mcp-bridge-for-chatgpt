@@ -28,6 +28,11 @@ public struct CardEnrichment: Codable, Sendable {
     public let timeouts: Int
     public let durationMs: Int
     public let usageTimedOut: Bool
+    public let runtimeUnavailable: Int?
+
+    public var isIncomplete: Bool {
+        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0
+    }
 }
 
 public enum DashboardAppendBucket: Sendable {

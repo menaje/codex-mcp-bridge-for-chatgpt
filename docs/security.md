@@ -169,8 +169,8 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   generation-9 and newer resources keep the compatible mutation boundary.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
   Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
-  sandbox has one stable operator-bounded shape; fixed access modes reject an
-  explicit override and enforce the saved policy, while adaptive mode accepts
+  sandbox has one stable operator-bounded shape; fixed access modes accept the
+  same value and reject conflicting intent, while adaptive mode accepts
   only owner-enabled capabilities. Its exact model/effort decision is resolved
   again at runtime.
   The user's independent Priority preference is then applied privately by the
@@ -451,10 +451,36 @@ approval boundary, but doing so removes Codex's independent command prompt.
 With the default `adaptive` strategy, omission uses the operator-configured
 default (read-only by default), while ChatGPT may send only an owner-enabled
 mutation sandbox for an authorized task. Fixed `read-only` and `always-full`
-descriptors omit the per-call field and enforce the saved strategy. A bridge
+keep the stable per-call field: an identical value is accepted, while a
+conflicting value returns `SANDBOX_CONFLICT`. Removing a conflicting request
+would change its meaning and must not be suggested as a generic retry. A bridge
 user can select only owner-enabled strategies. Preferences are shared by the
 bridge instance because the private no-auth tunnel does not supply per-user
 identity.
+
+## CLI permissions and interactions
+
+Fresh, continued, and forked work all recheck the current operator ceiling.
+Continue and fork retain their existing sandbox; changing sandbox requires a
+fresh context. The adapter passes cwd, sandbox, and approval policy when loading
+or forking a thread, verifies the returned policy before starting a turn, and
+sends the confirmed policy (including reviewer and named-profile identity) on
+each turn. A loaded in-memory thread reuses its confirmed policy; a reloaded
+thread must confirm it again. A policy mismatch stops before model execution.
+Safe turn evidence records the sandbox, approval policy, reviewer, profile,
+network setting, and writable-root count, without disclosing root paths.
+
+CLI compatibility is checked against the generated public request contracts
+used by the bridge, followed by initialization. New versions and additive
+schema changes are accepted. Unsupported optional operations are reported as
+unsupported; missing core permission fields prevent task admission. Neither
+the executable's version alone nor an entire-schema hash grants compatibility.
+
+MCP form and URL elicitations use app-private Activity controls. Form responses
+are validated against the original schema and follow the existing scope,
+lease, exact-interaction, and job-version checks. URLs and form schemas remain
+in worker memory and app-private hydration; responses are not persisted.
+Nonblocking questions remain visible while the Job and Agent continue running.
 
 ## Remaining risks
 
@@ -646,3 +672,7 @@ identity.
 - A compromised local user account can access the same files and processes.
 
 For sensitive code, expose a sanitized staging copy and run the bridge under a separate OS user, container, or VM with explicit filesystem and network policy.
+
+## GPT question boundaries
+
+Ordinary Codex question responses require a current same-scope question reference and verified separation of native questions from app approvals. The bridge selects `tool_call_mcp_elicitation` at App Server startup and verifies its stable, enabled state for the loaded thread before each turn. This changes approval transport, not permission policy or approval decisions. Unsupported or failed feature inspection, unrelated tool items, and legacy app-approval question IDs never open the GPT response path. MCP/app approvals, secret inputs and unknown origins remain on the existing approval path. No public responder accepts decisions or permission changes. User-authored card answers are the explicit exception to the prior interaction no-storage policy: they are retained until the question expires (at most 24 hours), then removed on the next question operation or restart. Codex response dispatch journals store hashes only and preserve uncertain delivery instead of resending. See [question retention and delivery](gpt-questions.md).

@@ -28,6 +28,7 @@ export type CodexModelServiceTier = {
 };
 
 export type CodexModelDescriptor = {
+  experimentalSupportedTools?: string[];
   id: string;
   catalogId?: string;
   displayName: string;
@@ -120,6 +121,7 @@ const rawModelSchema = z
     ]).optional().nullable(),
     upgrade_info: z.record(z.string(), z.unknown()).optional().nullable(),
     supports_personality: z.boolean().optional(),
+    experimental_supported_tools: z.array(z.string()).optional(),
     supported_in_api: z.boolean().optional()
   })
   .passthrough();
@@ -155,6 +157,8 @@ const appModelSchema = z.object({
   supportsPersonality: z.boolean().optional(),
   defaultServiceTier: z.string().trim().min(1).optional().nullable(),
   serviceTiers: z.array(appServiceTierSchema).default([]),
+  experimentalSupportedTools: z.array(z.string()).optional(),
+  experimental_supported_tools: z.array(z.string()).optional(),
   inputModalities: z.array(z.string().trim().min(1).max(100)).default(["text", "image"])
 }).passthrough();
 
@@ -362,6 +366,7 @@ export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
       defaultServiceTier: model.default_service_tier || undefined,
       serviceTiers: model.service_tiers,
       inputModalities: model.input_modalities,
+      ...(model.experimental_supported_tools ? { experimentalSupportedTools: model.experimental_supported_tools } : {}),
       supportedInApi: model.supported_in_api
     });
   }
@@ -396,6 +401,7 @@ export function parseAppServerModelCatalog(value: unknown): CodexModelDescriptor
       ...(model.supportsPersonality !== undefined ? { supportsPersonality: model.supportsPersonality } : {}),
       defaultServiceTier: model.defaultServiceTier || undefined,
       serviceTiers: model.serviceTiers,
+      ...((model.experimentalSupportedTools || model.experimental_supported_tools) ? { experimentalSupportedTools: model.experimentalSupportedTools || model.experimental_supported_tools } : {}),
       inputModalities: model.inputModalities
     } satisfies CodexModelDescriptor];
   });
@@ -564,6 +570,7 @@ export function modelCatalogFingerprint(models: CodexModelDescriptor[]): string 
     supportsPersonality: model.supportsPersonality ?? null,
     defaultServiceTier: model.defaultServiceTier || null,
     serviceTiers: model.serviceTiers.map((tier) => tier.id),
+    ...(model.experimentalSupportedTools ? { experimentalSupportedTools: model.experimentalSupportedTools } : {}),
     inputModalities: model.inputModalities
   }));
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
@@ -633,4 +640,10 @@ function isPersistedCatalog(value: unknown): value is PersistedCatalog {
     "raw" in value &&
     typeof value.raw === "string"
   );
+}
+
+export function modelQuestionCapabilities(model: CodexModelDescriptor) {
+  const tools = model.experimentalSupportedTools;
+  const state = (tool: string) => tools === undefined ? "unknown" as const : tools.includes(tool) ? "catalog-enabled" as const : "not-advertised" as const;
+  return { structuredAsync: state("request_user_input_async"), asyncMessage: state("send_user_message_async"), runtimeVerification: "required" as const };
 }

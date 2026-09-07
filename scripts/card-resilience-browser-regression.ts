@@ -234,6 +234,35 @@ try {
       assert.equal(state.busy, false);
       await record(`dashboard-${outcome}`);
     }
+    for (const lifecycle of ["pageshow", "visibility", "online"]) {
+      await open("dashboard-deferred");
+      await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].resolve('Last successful overview'));await page.waitForFunction(()=>window.__enrichments.length===1);");
+      const updated = await evaluate("()=>document.querySelector('#updated').textContent");
+      await run(`await page.evaluate(()=>{window.__nowOffset=31000;${lifecycle === "pageshow"
+        ? "window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));"
+        : lifecycle === "online" ? "window.dispatchEvent(new Event('online'));"
+        : "Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));"}});` + waitForRead(2));
+      assert.equal(await evaluate("()=>document.querySelector('#dashboard-content').hidden"), false, `${lifecycle}: hid last successful snapshot during refresh`);
+      await run("await page.evaluate(()=>window.__reads[1].reject(new Error('Transport unavailable')));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
+      let state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,text:document.body.innerText,message:document.querySelector('#message').textContent,updated:document.querySelector('#updated').textContent})");
+      assert.equal(state.hidden, false, `${lifecycle}: lost last successful snapshot on failure`);
+      assert(state.text.includes("Last successful overview"), `${lifecycle}: missing retained rows`);
+      assert.match(state.message, /마지막으로 불러온 현황/);
+      assert.equal(state.updated, updated, `${lifecycle}: replaced last successful timestamp`);
+      await run("await page.evaluate(()=>window.__enrichments[0].resolve('OBSOLETE ENRICHMENT'));await page.locator('#refresh').click();" + waitForRead(3));
+      await run("await page.evaluate(()=>window.__reads[2].resolve('Recovered in the same card'));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
+      state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,text:document.body.innerText,message:document.querySelector('#message').textContent})");
+      assert.equal(state.hidden, false);
+      assert(state.text.includes("Recovered in the same card"));
+      assert(!state.text.includes("OBSOLETE"));
+      assert(!state.message.includes("마지막으로 불러온 현황"));
+      await record(`dashboard-retain-and-retry-${lifecycle}`);
+    }
+    await open("dashboard-deferred");
+    await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].reject(new Error('Transport unavailable')));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
+    assert.match(await evaluate("()=>document.querySelector('#message').textContent"), /새로고침을 눌러 다시 시도/);
+    await run("await page.locator('#refresh').click();" + waitForRead(2) + "await page.evaluate(()=>window.__reads[1].resolve('Recovered cold card'));await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);");
+    await record("dashboard-cold-retry");
   }
 
   if (!group || group === "retained") {

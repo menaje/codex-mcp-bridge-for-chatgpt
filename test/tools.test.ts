@@ -961,20 +961,27 @@ describe("bridge tools", () => {
       "codex_activity_update",
       "codex_agent",
       "codex_agent_recovery_detach",
+      "codex_answer",
+      "codex_ask_user",
       "codex_background_process_terminate",
       "codex_cancel",
       "codex_dashboard",
       "codex_dashboard_snapshot",
       "codex_diagnostics",
+      "codex_input",
       "codex_interaction_respond",
       "codex_job_steer",
       "codex_models",
+      "codex_question_card",
+      "codex_question_notify",
+      "codex_question_submit",
       "codex_settings",
       "codex_settings_snapshot",
       "codex_status",
       "codex_steer",
       "codex_task",
-      "codex_update_settings"
+      "codex_update_settings",
+      "codex_user_answer",
     ]);
     const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
     const typelessModelLiterals: string[] = [];
@@ -1643,6 +1650,158 @@ describe("bridge tools", () => {
             "openWorld": false,
             "readOnly": true,
           },
+          "name": "codex_input",
+          "properties": [
+            "afterCursor",
+            "jobId",
+            "waitMs",
+          ],
+          "propertyCount": 3,
+          "schemaBytes": 305,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": true,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_answer",
+          "properties": [
+            "answers",
+            "jobId",
+            "questionRef",
+            "requestId",
+          ],
+          "propertyCount": 4,
+          "schemaBytes": 726,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_ask_user",
+          "properties": [
+            "expiresInMinutes",
+            "questions",
+            "requestId",
+            "title",
+          ],
+          "propertyCount": 4,
+          "schemaBytes": 1128,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_user_answer",
+          "properties": [
+            "responseRef",
+          ],
+          "propertyCount": 1,
+          "schemaBytes": 340,
+          "visibility": {
+            "app": false,
+            "model": true,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
+          "name": "codex_question_card",
+          "properties": [
+            "presentationToken",
+            "questionId",
+            "revision",
+            "scopeId",
+          ],
+          "propertyCount": 4,
+          "schemaBytes": 930,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_question_submit",
+          "properties": [
+            "presentationToken",
+            "questionId",
+            "response",
+            "revision",
+            "scopeId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 1389,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": false,
+          },
+          "name": "codex_question_notify",
+          "properties": [
+            "operation",
+            "presentationToken",
+            "questionId",
+            "revision",
+            "scopeId",
+          ],
+          "propertyCount": 5,
+          "schemaBytes": 1519,
+          "visibility": {
+            "app": true,
+            "model": false,
+            "operatorCapability": false,
+          },
+        },
+        {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "openWorld": false,
+            "readOnly": true,
+          },
           "name": "codex_dashboard",
           "properties": [],
           "propertyCount": 0,
@@ -1948,7 +2107,7 @@ describe("bridge tools", () => {
             "widgetInstanceId",
           ],
           "propertyCount": 8,
-          "schemaBytes": 2272,
+          "schemaBytes": 2825,
           "visibility": {
             "app": true,
             "model": false,
@@ -2146,7 +2305,7 @@ describe("bridge tools", () => {
             "taskContractVersion",
           ],
           "propertyCount": 11,
-          "schemaBytes": 5545,
+          "schemaBytes": 5598,
           "visibility": {
             "app": false,
             "model": true,
@@ -3173,6 +3332,29 @@ describe("bridge tools", () => {
     await close();
   }, 15_000);
 
+  it("reads contextual model metadata once per projection and refreshes it on the next read", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
+    try {
+      for (let index = 0; index < 24; index++) await runTask(client, { prompt: `Projection fixture ${index}` });
+      const original = catalog.getCachedCatalog.bind(catalog);
+      let displayName = "First current catalog";
+      const reads = vi.spyOn(catalog, "getCachedCatalog").mockImplementation(() => ({
+        ...original(), models: original().models.map(model => ({ ...model, displayName }))
+      }));
+      const first = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+      expect(JSON.stringify(first)).toContain(displayName);
+      expect(reads).toHaveBeenCalledTimes(1);
+      displayName = "Changed current catalog";
+      const second = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+      expect(JSON.stringify(second)).toContain(displayName);
+      expect(JSON.stringify(second)).not.toContain("First current catalog");
+      expect(reads).toHaveBeenCalledTimes(2);
+      expect(second.counts).toEqual(first.counts);
+    } finally { await close(); }
+  });
+
   it("shows every bridge-tracked conversation through a read-only Codex-runtime-only Dashboard", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
@@ -4050,6 +4232,8 @@ describe("bridge tools", () => {
     });
     expect((unknown as { structuredContent?: any }).structuredContent?.counts)
       .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 0 });
+    expect((unknown as { structuredContent?: any }).structuredContent?.enrichment)
+      .toMatchObject({ runtimeUnavailable: 1 });
 
     upstream.hangProbe = true;
     const timeoutStartedAt = Date.now();
@@ -7206,7 +7390,7 @@ describe("bridge tools", () => {
     await fullClient.close();
   });
 
-  it("keeps a stable sandbox field and rejects overrides in fixed access modes", async () => {
+  it("accepts matching sandbox intent and rejects conflicts in fixed access modes", async () => {
     const root = temporaryRoot();
     const readConfig = configFor(root);
     const readSettings = new UserSettingsStore(readConfig);
@@ -7226,20 +7410,10 @@ describe("bridge tools", () => {
       destructiveHint: false,
       openWorldHint: false
     });
-    const staleReadOverride = await readClient.client.callTool({
-      name: "codex_task",
-      arguments: {
-        prompt: "stale override",
-        sandbox: "read-only"
-      }
+    const explicitRead = await runTask(readClient.client, {
+      prompt: "fixed read", agentName: "Read Agent", contextMode: "fresh", sandbox: "read-only"
     });
-    expect(staleReadOverride.isError).toBe(true);
-    expect(JSON.stringify(staleReadOverride)).toContain("SANDBOX_OVERRIDE_UNAVAILABLE");
-    await runTask(readClient.client, {
-      prompt: "fixed read",
-      agentName: "Read Agent",
-      contextMode: "fresh"
-    });
+    expect(explicitRead.isError).not.toBe(true);
     expect(readUpstream.calls[0]?.args.sandbox).toBe("read-only");
     await readClient.close();
 
@@ -7264,8 +7438,15 @@ describe("bridge tools", () => {
       destructiveHint: true,
       openWorldHint: true
     });
+    const conflictingRead = await runTask(fullClient.client, {
+      prompt: "must be read-only", agentName: "Read intent", contextMode: "fresh", sandbox: "read-only"
+    });
+    expect(conflictingRead.isError).toBe(true);
+    expect(JSON.stringify(conflictingRead)).toContain("SANDBOX_CONFLICT");
+    expect(fullUpstream.calls).toHaveLength(0);
     await runTask(fullClient.client, {
       prompt: "fixed full",
+      sandbox: "danger-full-access",
       agentName: "Full Agent",
       contextMode: "fresh"
     });
@@ -10411,7 +10592,7 @@ describe("bridge tools", () => {
 
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+      args: { threadId: "thread-1", prompt: "follow up", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
     expect(jobs.get(parseToolJson(first).jobId)?.sessionDecision).toMatchObject({
       action: "start",
@@ -10734,6 +10915,7 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-1",
           prompt: "refine plan",
+          cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
           _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       },
@@ -10742,6 +10924,7 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-2",
           prompt: "continue build",
+          cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
           _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       }
@@ -13787,7 +13970,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "continue", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+      args: { threadId: "thread-1", prompt: "continue", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
 
     const unknown = await client.callTool({
@@ -16194,3 +16377,122 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
   }
   throw new Error(`Timed out waiting for job status ${expected}.`);
 }
+
+
+describe("session permission admission", () => {
+  it("rejects an unapplied read-only to workspace-write continuation override", async () => {
+    const root = temporaryRoot(), upstream = new FakeUpstream();
+    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }), upstream);
+    try {
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "read-only" }));
+      const result = await runTask(c.client, { prompt: "audit continue", agentId: first.agentId, contextMode: "continue", sandbox: "workspace-write" }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await c.close(); }
+  });
+  it("rejects a fork that would ignore an explicit read-only sandbox", async () => {
+    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
+    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }), upstream);
+    try {
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
+      const result = await runTask(c.client, { prompt: "audit fork", agentId: first.agentId, contextMode: "fork", sandbox: "read-only" }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await c.close(); }
+  });
+  it.each(["continue", "fork"])("rechecks a reduced operator ceiling on %s", async (contextMode) => {
+    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const initialConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const initial = await connectTestClient(initialConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(initialConfig, { stateStore: state }));
+    const first = parseToolJson(await runTask(initial.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
+    await initial.close();
+    const reducedConfig = configFor(root);
+    const reduced = await connectTestClient(reducedConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(reducedConfig, { stateStore: state }));
+    try {
+      const result = await runTask(reduced.client, { prompt: "audit after operator change", agentId: first.agentId, contextMode }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await reduced.close(); state.close(); }
+  });
+});
+
+
+describe("public v2 permission admission", () => {
+  it("rejects a full-access fork with an explicit read-only v2 request before admission", async () => {
+    const root=temporaryRoot(), upstream=new ForkLifecycleUpstream();
+    const c=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS:"1"}),upstream);
+    try {
+      const tool=(await c.client.listTools()).tools.find(t=>t.name==="codex_task")!;
+      const p=c.settings.current.projects[0]!;
+      const envelope=(tool.inputSchema.properties!.executionEnvelopeRef as {const:string}).const;
+      const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"2",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
+      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"},sandbox:"danger-full-access"});
+
+      expect(first.isError).not.toBe(true);
+      const id=parseToolJson(first).agentId;
+      const result=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",prompt:"synthetic read-only fork",activity:{mode:"existing",id:parseToolJson(first).activityId},agent:{mode:"existing",id,context:"fork"},sandbox:"read-only"});
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    }finally{await c.close();}
+  });
+});
+
+
+describe("CLI contract and interaction admission", () => {
+  it("rejects unsupported execution before creating a Job, Activity, or Agent", async () => {
+    class UnsupportedUpstream extends FakeUpstream {
+      async prepareExecution() { throw new Error("CODEX_PROTOCOL_UNSUPPORTED: thread/resume.sandbox"); }
+    }
+    const upstream = new UnsupportedUpstream();
+    const connected = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const result = await runTask(connected.client, { prompt: "must not run", contextMode: "fresh", agentName: "Unsupported" });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("CODEX_PROTOCOL_UNSUPPORTED");
+      expect(connected.jobs.list()).toHaveLength(0);
+      expect(connected.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(0);
+      expect(connected.jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(0);
+      expect(upstream.calls).toHaveLength(0);
+    } finally { await connected.close(); }
+  });
+
+  it("keeps nonblocking input running and exposes MCP URLs only in app-private controls", async () => {
+    class ElicitationUpstream extends InteractionUpstream {
+      interactionInput() { return { url: "https://example.test/verify?state=PRIVATE_CARD_URL" }; }
+    }
+    const upstream = new ElicitationUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const started = parseToolJson(await runTask(client, { prompt: "input test", agentName: "Input", contextMode: "fresh", executionMode: "background" }));
+      const emit = (interaction: CodexPendingInteraction) => upstream.progressNext({ progress: 1, event: {
+        eventId: interaction.interactionId, type: "input-required", phase: "updated", createdAt: Date.now(),
+        summary: interaction.summary, details: { interaction }
+      } } as CodexProgress);
+      emit({ interactionId: "nonblocking", kind: "user-input", isBlocking: false, threadId: "thread-1", turnId: "turn-1", itemId: "item-1",
+        summary: "Choose while working", questions: [{ id: "choice", header: "Choice", question: "Choose", isSecret: false, isOther: false }] });
+      expect(jobs.getAgent(started.agentId)?.lifecycle).toBe("active");
+      expect(jobs.get(started.jobId)?.pendingInteractions[0]).toMatchObject({ isBlocking: false, questions: [{ isOther: false }] });
+      const presentation = await presentCompactActivity(client, started.activityId, "61616161-6161-4161-8161-616161616161");
+      const card = automaticCardProof(presentation), meta = { "openai/widgetSessionId": "permission-input-card" };
+      const running = await client.callTool({ name: "codex_activity_snapshot", arguments: { card }, _meta: meta });
+      expect(JSON.stringify(parseToolJson(running))).not.toContain('"displayState":"input-required"');
+      emit({ interactionId: "elicitation", kind: "mcp-elicitation", isBlocking: true, threadId: "thread-1", turnId: "turn-1", itemId: "item-2",
+        summary: "Open the request", elicitation: { mode: "url", serverName: "fixture" } });
+      const pending = await client.callTool({ name: "codex_activity_snapshot", arguments: { card }, _meta: meta });
+      expect(JSON.stringify(pending.structuredContent)).not.toContain("PRIVATE_CARD_URL");
+      expect(JSON.stringify(pending._meta)).toContain("PRIVATE_CARD_URL");
+      expect(JSON.stringify(jobs.admissionStateStore.listJobs())).not.toContain("PRIVATE_CARD_URL");
+      const response = await client.callTool({ name: "codex_interaction_respond", arguments: {
+        requestId: "62626262-6262-4262-8262-626262626262", jobId: started.jobId, expectedJobVersion: jobs.get(started.jobId)!.version,
+        interactionId: "elicitation", response: { elicitation: { action: "accept", content: null } }, card
+      }, _meta: meta });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expect(upstream.interactionResponses.at(-1)).toMatchObject({ interactionId: "elicitation", response: { elicitation: { action: "accept", content: null } } });
+    } finally { upstream.resolveNext(); await close(); }
+  });
+});

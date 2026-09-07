@@ -295,5 +295,88 @@
       }
     }
   ],
-  "codex_task": []
+  "codex_task": [],
+  "codex_input": [
+    {
+      "fixture": "gpt-question-flow",
+      "structuredContent": {
+        "kind": "codex-input",
+        "jobId": "fixture-job",
+        "jobVersion": 1,
+        "cursor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "changed": true,
+        "active": true,
+        "questions": [],
+        "approvals": [],
+        "messages": [
+          {
+            "id": "message",
+            "text": "Which option?",
+            "createdAt": 1780000000000
+          }
+        ],
+        "historyLimited": true,
+        "hasMoreQuestions": false,
+        "nextActions": [
+          "Judge the message and answer within delegation."
+        ],
+        "waitedMs": 0,
+        "timedOut": false
+      }
+    }
+  ],
+  "codex_answer": [
+    {
+      "fixture": "gpt-question-flow",
+      "structuredContent": {
+        "kind": "codex-answer",
+        "jobId": "fixture-job",
+        "questionRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "delivery": "delivered",
+        "answersPersisted": false,
+        "nextActions": [
+          "Read Codex input or result."
+        ]
+      }
+    }
+  ],
+  "codex_ask_user": [
+    {
+      "fixture": "gpt-question-flow",
+      "structuredContent": {
+        "kind": "user-question",
+        "questionId": "fixture-question",
+        "status": "pending",
+        "expiresAt": 1780000000000,
+        "nextActions": [
+          "Read the user answer."
+        ]
+      }
+    }
+  ],
+  "codex_user_answer": [
+    {
+      "fixture": "gpt-question-flow",
+      "structuredContent": {
+        "kind": "user-answers",
+        "responses": [
+          {
+            "questionId": "fixture-question",
+            "responseRef": "fixture-response",
+            "status": "answered",
+            "title": "Choice",
+            "answers": [
+              {
+                "questionId": "color",
+                "values": [
+                  "Blue"
+                ]
+              }
+            ],
+            "expiresAt": 1780000000000
+          }
+        ]
+      }
+    }
+  ]
 }

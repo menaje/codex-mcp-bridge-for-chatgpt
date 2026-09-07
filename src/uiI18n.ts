@@ -1,3 +1,4 @@
+import { QUESTION_UI_TRANSLATIONS } from "./questionI18n.js";
 import { LOCALIZATION_AUDIT_OVERRIDES } from "./uiI18nAudit.js";
 
 export const SUPPORTED_UI_LOCALES = [
@@ -17,12 +18,20 @@ export const UI_LOCALE_PREFERENCES = ["auto", ...SUPPORTED_UI_LOCALES] as const;
 export type UiLocalePreference = (typeof UI_LOCALE_PREFERENCES)[number];
 
 const ENGLISH = {
+  ...QUESTION_UI_TRANSLATIONS.en,
+  "activity.openRequest": "Open request link",
+  "activity.optionalInput": "Work continues while you answer.",
+  "activity.otherAnswer": "Other answer",
+  "activity.yes": "Yes",
+  "activity.no": "No",
   "common.loading": "Loading…",
   "common.refresh": "Refresh",
   "common.cancel": "Cancel",
   "common.confirm": "Confirm",
   "common.error": "The request failed.",
   "common.errorCode": "The request failed ({code}).",
+  "usage.observedAt": "Usage last checked {time}",
+  "common.detailsRefreshFailed": "Some details could not be refreshed. Last checked values may be shown.",
   "usage.weeklyRemaining": "Account-wide Codex weekly remaining",
   "usage.resetsAt": "Resets {time}",
   "cancellation.reason": "Cancellation reason",
@@ -267,7 +276,7 @@ const ENGLISH = {
   "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled",
   "dashboard.title": "Codex overview",
   "dashboard.countsLabel": "Overview counts",
-  "dashboard.restoreFailed": "This client could not restore the card. Ask ChatGPT in this conversation to open the Codex overview again.",
+  "dashboard.restoreFailed": "Could not load the Codex overview. Use Refresh to try again.",
   "dashboard.scopeNotice": "Conversations currently known to this personal bridge through retained Jobs, Agents, or threads; not all ChatGPT history.",
   "dashboard.runtimeOnly": "Status comes only from Codex runtime evidence. Recent App Server process state uses bounded read-only probes; refresh is not a live health check of every historical thread. GPT verification and completion judgment are excluded.",
   "dashboard.projects": "Tracked projects",
@@ -359,6 +368,11 @@ type UiTranslationBundle = Record<UiTranslationKey, string>;
 
 const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
   ko: {
+  "activity.openRequest": "요청 링크 열기",
+  "activity.optionalInput": "답변하는 동안에도 작업은 계속됩니다.",
+  "activity.otherAnswer": "직접 입력",
+  "activity.yes": "예",
+  "activity.no": "아니요",
     "settings.usePriority": "Priority 빠른 처리 사용",
     "settings.usePriorityHint": "Codex 호출 시 브리지가 내부적으로 적용합니다. GPT는 모델과 추론 에포트만 선택합니다.",
     "settings.developerModeRefreshRequired": "저장되어 즉시 반영되었습니다. 이 배포에서 정적 도구 계약도 변경되었으므로 ChatGPT 개발자 모드 연결을 한 번 새로고침해 적용하세요.",
@@ -369,30 +383,65 @@ const OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationB
     "activity.title": "Codex 활동", "activity.running": "진행 중", "activity.attention": "확인 필요", "activity.verification": "검증 대기", "activity.failed": "실패", "activity.empty": "이 대화에는 아직 Activity가 없습니다.", "activity.forceStop": "강제 종료…", "activity.forceConfirmTitle": "Codex를 강제 종료할까요?", "activity.forceConfirm": "추적 중인 정확한 worker process group에 TERM을 보내고 필요하면 KILL로 자동 승격합니다. 같은 worker의 작업이 함께 중단될 수 있고 파일 변경은 되돌리지 않습니다.", "activity.forceStopping": "강제 종료 중…", "activity.forceStopped": "worker 종료를 확인했습니다.", "activity.viewDetails": "상세 보기", "activity.hideDetails": "상세 닫기", "activity.updated": "업데이트", "activity.noSignal": "최근 진행 신호가 없습니다. 프로세스 생존 여부는 알 수 없습니다.", "activity.terminating": "worker 프로세스 종료를 확인 중…", "activity.terminationFailed": "worker 종료를 확인하지 못했습니다.", "activity.unread": "읽지 않은 완료", "activity.manualRefresh": "실시간 갱신을 멈췄습니다. 직접 새로고침하세요.", "activity.partialChanges": "강제 종료는 디스크에 이미 기록된 변경을 되돌리지 않습니다.", "activity.jobs": "작업", "activity.threads": "스레드", "activity.events": "최근 활동", "activity.noEvents": "아직 공개된 진행 이벤트가 없습니다.", "activity.approval": "Codex가 승인을 요청했습니다", "activity.approve": "승인", "activity.approveSession": "세션 동안 승인", "activity.decline": "거부", "activity.answer": "답변 보내기", "activity.steer": "진행 중인 turn에 지시 추가", "activity.steerPlaceholder": "이 Codex turn에 추가할 지시…", "activity.orphaned": "브리지가 재시작되어 기존 실행을 더 이상 추적할 수 없습니다.", "activity.workerLost": "추적하던 worker 프로세스가 종료되었습니다.", "activity.inputRequired": "입력 필요"
   },
   ja: {
+  "activity.openRequest": "リクエストのリンクを開く",
+  "activity.optionalInput": "回答中も作業は続行されます。",
+  "activity.otherAnswer": "別の回答",
+  "activity.yes": "はい",
+  "activity.no": "いいえ",
     "settings.language": "インターフェース言語", "settings.language.auto": "自動", "settings.languageHint": "自動ではホストアプリの言語に従います。",
     "common.loading": "読み込み中…", "common.refresh": "更新", "common.cancel": "キャンセル", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "このブリッジ接続を使うすべての会話で共有されます。", "settings.access": "アクセス方式", "settings.model": "既定モデル", "settings.effort": "既定エフォート", "settings.concurrency": "最大同時ジョブ数", "settings.save": "設定を保存", "settings.refreshModels": "モデル一覧を更新", "settings.reset": "既定の設定に戻す", "activity.title": "Codex アクティビティ", "activity.running": "実行中", "activity.attention": "要確認", "activity.verification": "検証待ち", "activity.failed": "失敗", "activity.empty": "この会話にはまだアクティビティがありません。", "activity.forceStop": "強制終了…", "activity.forceConfirmTitle": "Codex を強制終了しますか？", "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。", "activity.forceStopping": "強制終了中…", "activity.viewDetails": "詳細を表示", "activity.hideDetails": "詳細を閉じる"
   },
   "zh-Hans": {
+  "activity.openRequest": "打开请求链接",
+  "activity.optionalInput": "回答时任务仍会继续。",
+  "activity.otherAnswer": "其他回答",
+  "activity.yes": "是",
+  "activity.no": "否",
     "settings.language": "界面语言", "settings.language.auto": "自动", "settings.languageHint": "自动模式跟随宿主应用的语言。",
     "common.loading": "正在加载…", "common.refresh": "刷新", "common.cancel": "取消", "common.confirm": "确认", "settings.title": "Codex Bridge 设置", "settings.scope": "由使用此桥接连接的所有对话共享。", "settings.access": "访问策略", "settings.model": "默认模型", "settings.effort": "默认推理强度", "settings.concurrency": "最大并发任务数", "settings.save": "保存设置", "settings.refreshModels": "刷新模型列表", "settings.reset": "恢复默认设置", "activity.title": "Codex 活动", "activity.running": "运行中", "activity.attention": "需要处理", "activity.verification": "等待验证", "activity.failed": "失败", "activity.empty": "此对话中还没有活动。", "activity.forceStop": "强制停止…", "activity.forceConfirmTitle": "强制停止 Codex？", "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。", "activity.forceStopping": "正在强制停止…", "activity.viewDetails": "查看详情", "activity.hideDetails": "收起详情"
   },
   "zh-Hant": {
+  "activity.openRequest": "開啟請求連結",
+  "activity.optionalInput": "回答時工作仍會繼續。",
+  "activity.otherAnswer": "其他回答",
+  "activity.yes": "是",
+  "activity.no": "否",
     "settings.language": "介面語言", "settings.language.auto": "自動", "settings.languageHint": "自動模式會跟隨主控應用程式的語言。",
     "common.loading": "載入中…", "common.refresh": "重新整理", "common.cancel": "取消", "common.confirm": "確認", "settings.title": "Codex Bridge 設定", "settings.scope": "由使用此橋接連線的所有對話共用。", "settings.access": "存取策略", "settings.model": "預設模型", "settings.effort": "預設推理強度", "settings.concurrency": "最大並行工作數", "settings.save": "儲存設定", "settings.refreshModels": "重新整理模型清單", "settings.reset": "還原預設設定", "activity.title": "Codex 活動", "activity.running": "執行中", "activity.attention": "需要處理", "activity.verification": "等待驗證", "activity.failed": "失敗", "activity.empty": "此對話中尚無活動。", "activity.forceStop": "強制停止…", "activity.forceConfirmTitle": "強制停止 Codex？", "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。", "activity.forceStopping": "正在強制停止…", "activity.viewDetails": "檢視詳細資料", "activity.hideDetails": "隱藏詳細資料"
   },
   es: {
+  "activity.openRequest": "Abrir enlace de la solicitud",
+  "activity.optionalInput": "El trabajo continúa mientras respondes.",
+  "activity.otherAnswer": "Otra respuesta",
+  "activity.yes": "Sí",
+  "activity.no": "No",
     "settings.language": "Idioma de la interfaz", "settings.language.auto": "Automático", "settings.languageHint": "El modo automático sigue el idioma de la aplicación anfitriona.",
     "common.loading": "Cargando…", "common.refresh": "Actualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configuración de Codex Bridge", "settings.scope": "Compartida por todas las conversaciones que usan este puente.", "settings.access": "Estrategia de acceso", "settings.model": "Modelo predeterminado", "settings.effort": "Esfuerzo predeterminado", "settings.concurrency": "Máximo de trabajos simultáneos", "settings.save": "Guardar configuración", "settings.refreshModels": "Actualizar modelos", "settings.reset": "Restaurar configuración predeterminada", "activity.title": "Actividades de Codex", "activity.running": "En curso", "activity.attention": "Requiere atención", "activity.verification": "Listo para verificar", "activity.failed": "Falló", "activity.empty": "Aún no hay actividades en esta conversación.", "activity.forceStop": "Forzar detención…", "activity.forceConfirmTitle": "¿Forzar la detención de Codex?", "activity.forceStopping": "Deteniendo…", "activity.viewDetails": "Ver detalles", "activity.hideDetails": "Ocultar detalles"
   },
   fr: {
+  "activity.openRequest": "Ouvrir le lien de la demande",
+  "activity.optionalInput": "Le travail continue pendant votre réponse.",
+  "activity.otherAnswer": "Autre réponse",
+  "activity.yes": "Oui",
+  "activity.no": "Non",
     "settings.language": "Langue de l’interface", "settings.language.auto": "Automatique", "settings.languageHint": "Le mode automatique suit la langue de l’application hôte.",
     "common.loading": "Chargement…", "common.refresh": "Actualiser", "common.cancel": "Annuler", "common.confirm": "Confirmer", "settings.title": "Paramètres de Codex Bridge", "settings.scope": "Partagés par toutes les conversations utilisant ce pont.", "settings.access": "Stratégie d’accès", "settings.model": "Modèle par défaut", "settings.effort": "Effort par défaut", "settings.concurrency": "Nombre maximal de tâches simultanées", "settings.save": "Enregistrer", "settings.refreshModels": "Actualiser les modèles", "settings.reset": "Rétablir les paramètres par défaut", "activity.title": "Activités Codex", "activity.running": "En cours", "activity.attention": "Attention requise", "activity.verification": "Prêt à vérifier", "activity.failed": "Échec", "activity.empty": "Aucune activité dans cette conversation.", "activity.forceStop": "Forcer l’arrêt…", "activity.forceConfirmTitle": "Forcer l’arrêt de Codex ?", "activity.forceStopping": "Arrêt forcé…", "activity.viewDetails": "Voir les détails", "activity.hideDetails": "Masquer les détails"
   },
   de: {
+  "activity.openRequest": "Anfragelink öffnen",
+  "activity.optionalInput": "Die Arbeit läuft während Ihrer Antwort weiter.",
+  "activity.otherAnswer": "Andere Antwort",
+  "activity.yes": "Ja",
+  "activity.no": "Nein",
     "settings.language": "Oberflächensprache", "settings.language.auto": "Automatisch", "settings.languageHint": "Automatisch folgt der Sprache der Host-Anwendung.",
     "common.loading": "Wird geladen…", "common.refresh": "Aktualisieren", "common.cancel": "Abbrechen", "common.confirm": "Bestätigen", "settings.title": "Codex-Bridge-Einstellungen", "settings.scope": "Für alle Unterhaltungen mit dieser Bridge-Verbindung gemeinsam.", "settings.access": "Zugriffsstrategie", "settings.model": "Standardmodell", "settings.effort": "Standardaufwand", "settings.concurrency": "Maximale parallele Jobs", "settings.save": "Einstellungen speichern", "settings.refreshModels": "Modellliste aktualisieren", "settings.reset": "Standardeinstellungen wiederherstellen", "activity.title": "Codex-Aktivitäten", "activity.running": "Läuft", "activity.attention": "Aufmerksamkeit erforderlich", "activity.verification": "Bereit zur Prüfung", "activity.failed": "Fehlgeschlagen", "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.", "activity.forceStop": "Stopp erzwingen…", "activity.forceConfirmTitle": "Codex zwangsweise stoppen?", "activity.forceStopping": "Stopp wird erzwungen…", "activity.viewDetails": "Details anzeigen", "activity.hideDetails": "Details ausblenden"
   },
   pt: {
+  "activity.openRequest": "Abrir link da solicitação",
+  "activity.optionalInput": "O trabalho continua enquanto você responde.",
+  "activity.otherAnswer": "Outra resposta",
+  "activity.yes": "Sim",
+  "activity.no": "Não",
     "settings.language": "Idioma da interface", "settings.language.auto": "Automático", "settings.languageHint": "O modo automático segue o idioma do aplicativo host.",
     "common.loading": "Carregando…", "common.refresh": "Atualizar", "common.cancel": "Cancelar", "common.confirm": "Confirmar", "settings.title": "Configurações do Codex Bridge", "settings.scope": "Compartilhadas por todas as conversas que usam esta ponte.", "settings.access": "Estratégia de acesso", "settings.model": "Modelo padrão", "settings.effort": "Esforço padrão", "settings.concurrency": "Máximo de trabalhos simultâneos", "settings.save": "Salvar configurações", "settings.refreshModels": "Atualizar modelos", "settings.reset": "Restaurar configurações padrão", "activity.title": "Atividades do Codex", "activity.running": "Em execução", "activity.attention": "Requer atenção", "activity.verification": "Pronto para verificar", "activity.failed": "Falhou", "activity.empty": "Ainda não há atividades nesta conversa.", "activity.forceStop": "Forçar parada…", "activity.forceConfirmTitle": "Forçar a parada do Codex?", "activity.forceStopping": "Forçando parada…", "activity.viewDetails": "Ver detalhes", "activity.hideDetails": "Ocultar detalhes"
   }
@@ -1887,6 +1936,41 @@ const CODEX_APP_THREAD_OVERRIDES: Record<
   }
 };
 
+const CARD_FRESHNESS_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
+  "ko": {
+    "usage.observedAt": "사용량 확인: {time}",
+    "common.detailsRefreshFailed": "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다."
+  },
+  "ja": {
+    "usage.observedAt": "使用量の最終確認: {time}",
+    "common.detailsRefreshFailed": "一部の詳細を更新できませんでした。最後に確認した値が表示される場合があります。"
+  },
+  "zh-Hans": {
+    "usage.observedAt": "用量最后确认时间：{time}",
+    "common.detailsRefreshFailed": "部分详情未能刷新，可能显示上次确认的值。"
+  },
+  "zh-Hant": {
+    "usage.observedAt": "用量最後確認時間：{time}",
+    "common.detailsRefreshFailed": "部分詳細資料未能更新，可能顯示上次確認的值。"
+  },
+  "es": {
+    "usage.observedAt": "Uso comprobado por última vez: {time}",
+    "common.detailsRefreshFailed": "No se pudieron actualizar algunos datos. Pueden mostrarse los últimos valores comprobados."
+  },
+  "fr": {
+    "usage.observedAt": "Dernière vérification de l’utilisation : {time}",
+    "common.detailsRefreshFailed": "Certains détails n’ont pas pu être actualisés. Les dernières valeurs vérifiées peuvent être affichées."
+  },
+  "de": {
+    "usage.observedAt": "Nutzung zuletzt geprüft: {time}",
+    "common.detailsRefreshFailed": "Einige Details konnten nicht aktualisiert werden. Möglicherweise werden die zuletzt geprüften Werte angezeigt."
+  },
+  "pt": {
+    "usage.observedAt": "Uso verificado pela última vez: {time}",
+    "common.detailsRefreshFailed": "Não foi possível atualizar alguns detalhes. Os últimos valores verificados podem ser exibidos."
+  }
+};
+
 const DASHBOARD_OVERRIDES: Partial<
   Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>>
 > = {
@@ -1900,7 +1984,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.target.job": "작업",
     "cancellation.target.activity": "액티비티",
     "dashboard.title": "Codex 전체 현황",
-    "dashboard.restoreFailed": "이 클라이언트에서 카드를 복원하지 못했습니다. 이 대화에서 ChatGPT에게 Codex 전체 현황을 다시 열어 달라고 요청하세요.",
+    "dashboard.restoreFailed": "현황을 불러오지 못했습니다. 새로고침을 눌러 다시 시도하세요.",
     "dashboard.scopeNotice": "이 개인 브리지가 보존 중인 작업·에이전트·스레드로 파악한 대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.",
     "dashboard.runtimeOnly": "상태는 Codex 런타임 근거만으로 계산합니다. 최근 App Server 프로세스는 제한된 읽기 전용 조회로 확인하며, 새로고침은 모든 과거 스레드의 실시간 상태 검사가 아닙니다. GPT의 검증·완료 판단은 사용하지 않습니다.",
     "dashboard.projects": "추적된 프로젝트",
@@ -1995,7 +2079,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "キャンセル理由 · {count}件",
     "cancellation.target.job": "ジョブ",
     "cancellation.target.activity": "アクティビティ",
-    "dashboard.restoreFailed": "このクライアントではカードを復元できませんでした。この会話で ChatGPT に Codex の全体状況をもう一度開くよう依頼してください。"
+    "dashboard.restoreFailed": "Codex の全体状況を読み込めませんでした。更新ボタンで再試行してください。"
   },
   "zh-Hans": {
     "usage.weeklyRemaining": "整个账户的 Codex 每周剩余额度",
@@ -2006,7 +2090,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "取消原因 · {count} 条",
     "cancellation.target.job": "任务",
     "cancellation.target.activity": "活动",
-    "dashboard.restoreFailed": "此客户端无法恢复卡片。请在此对话中让 ChatGPT 重新打开 Codex 概览。"
+    "dashboard.restoreFailed": "无法加载 Codex 概览。请点击刷新重试。"
   },
   "zh-Hant": {
     "usage.weeklyRemaining": "整個帳戶的 Codex 每週剩餘額度",
@@ -2017,7 +2101,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "取消原因 · {count} 筆",
     "cancellation.target.job": "工作",
     "cancellation.target.activity": "活動",
-    "dashboard.restoreFailed": "此用戶端無法還原卡片。請在此對話中要求 ChatGPT 重新開啟 Codex 概覽。"
+    "dashboard.restoreFailed": "無法載入 Codex 概覽。請點選重新整理再試一次。"
   },
   es: {
     "usage.weeklyRemaining": "Saldo semanal de Codex en toda la cuenta",
@@ -2028,7 +2112,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "Motivos de cancelación · {count}",
     "cancellation.target.job": "Tarea",
     "cancellation.target.activity": "Actividad",
-    "dashboard.restoreFailed": "Este cliente no pudo restaurar la tarjeta. Pide a ChatGPT en esta conversación que vuelva a abrir el resumen de Codex."
+    "dashboard.restoreFailed": "No se pudo cargar el resumen de Codex. Pulsa Actualizar para volver a intentarlo."
   },
   fr: {
     "usage.weeklyRemaining": "Solde Codex hebdomadaire du compte",
@@ -2039,7 +2123,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "Motifs d’annulation · {count}",
     "cancellation.target.job": "Tâche",
     "cancellation.target.activity": "Activité",
-    "dashboard.restoreFailed": "Ce client n’a pas pu restaurer la carte. Demandez à ChatGPT dans cette conversation de rouvrir la vue d’ensemble Codex."
+    "dashboard.restoreFailed": "Impossible de charger la vue d’ensemble Codex. Cliquez sur Actualiser pour réessayer."
   },
   de: {
     "usage.weeklyRemaining": "Kontoweites wöchentliches Codex-Restkontingent",
@@ -2050,7 +2134,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "Abbruchgründe · {count}",
     "cancellation.target.job": "Auftrag",
     "cancellation.target.activity": "Aktivität",
-    "dashboard.restoreFailed": "Dieser Client konnte die Karte nicht wiederherstellen. Bitte ChatGPT in dieser Unterhaltung, die Codex-Übersicht erneut zu öffnen."
+    "dashboard.restoreFailed": "Die Codex-Übersicht konnte nicht geladen werden. Klicke auf Aktualisieren, um es erneut zu versuchen."
   },
   pt: {
     "usage.weeklyRemaining": "Saldo semanal do Codex em toda a conta",
@@ -2061,7 +2145,7 @@ const DASHBOARD_OVERRIDES: Partial<
     "cancellation.reasons": "Motivos de cancelamento · {count}",
     "cancellation.target.job": "Tarefa",
     "cancellation.target.activity": "Atividade",
-    "dashboard.restoreFailed": "Este cliente não conseguiu restaurar o cartão. Peça ao ChatGPT nesta conversa para abrir novamente a visão geral do Codex."
+    "dashboard.restoreFailed": "Não foi possível carregar a visão geral do Codex. Clique em Atualizar para tentar novamente."
   }
 };
 
@@ -2071,8 +2155,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

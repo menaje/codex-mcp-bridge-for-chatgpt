@@ -1893,3 +1893,125 @@ private final class TestTrailingReadState: @unchecked Sendable {
         return NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "codex.runtime" ? 0.2 : 0)
     }
 }
+
+extension AppPresentationTests {
+    @MainActor
+    func testOlderSettingsSuccessCannotReplaceNewerRevision() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-audit-settings-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let policy: [String: Any] = ["mode": "fixed", "selection": ["model": "fixture-model", "reasoningEffort": "high"], "constraints": ["allowDelegation": true]]
+        let older = String(decoding: try JSONEncoder().encode(settingsSnapshot(settingsRevision: 4, accessStrategy: "read-only", policy: policy, catalogModels: [])), as: UTF8.self)
+        let newer = String(decoding: try JSONEncoder().encode(settingsSnapshot(settingsRevision: 5, accessStrategy: "adaptive", policy: policy, catalogModels: [])), as: UTF8.self)
+        let replies = TestDashboardReplySequence([
+            NativeFixtureReply(body: "{\"result\":\(older)}", delay: 0.4),
+            NativeFixtureReply(body: "{\"result\":\(newer)}")
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        let early = Task { await model.refreshSettings() }
+        for _ in 0..<50 {
+            if bridge.count("settings.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await model.refreshSettings()
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+        await early.value
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+        XCTAssertEqual(model.settings?.settings.accessStrategy, "adaptive")
+    }
+
+    @MainActor
+    func testOlderSettingsFailureCannotReplaceNewerSuccess() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-audit-error-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let policy: [String: Any] = ["mode": "fixed", "selection": ["model": "fixture-model", "reasoningEffort": "high"], "constraints": ["allowDelegation": true]]
+        let newer = String(decoding: try JSONEncoder().encode(settingsSnapshot(settingsRevision: 5, policy: policy, catalogModels: [])), as: UTF8.self)
+        let replies = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"outdated request failed"}}"#, delay: 0.4),
+            NativeFixtureReply(body: "{\"result\":\(newer)}")
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        let early = Task { await model.refreshSettings() }
+        for _ in 0..<50 {
+            if bridge.count("settings.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await model.refreshSettings()
+        XCTAssertNil(model.settingsLoadErrorMessage)
+        await early.value
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+        XCTAssertNil(model.settingsLoadErrorMessage)
+    }
+}
+
+
+extension AppPresentationTests {
+    @MainActor
+    func testSettingsReadCannotReplaceCompletedSave() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-save-read-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let policy: [String: Any] = ["mode": "fixed", "selection": ["model": "fixture-model", "reasoningEffort": "high"], "constraints": ["allowDelegation": true]]
+        let before = try settingsSnapshot(settingsRevision: 4, accessStrategy: "read-only", policy: policy, catalogModels: [])
+        let older = String(decoding: try JSONEncoder().encode(before), as: UTF8.self)
+        let newer = String(decoding: try JSONEncoder().encode(settingsSnapshot(settingsRevision: 5, policy: policy, catalogModels: [])), as: UTF8.self)
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            NativeFixtureReply(body: "{\"result\":\(method == "settings.update" ? newer : older)}", delay: method == "settings.snapshot" ? 0.4 : 0)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.settings = before
+        let read = Task { await model.refreshSettings() }
+        for _ in 0..<50 {
+            if bridge.count("settings.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let saved = await model.resetGeneralSettings()
+        XCTAssertTrue(saved)
+        await read.value
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+        // Even a later request must not lower a confirmed revision.
+        await model.refreshSettings()
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+        XCTAssertNil(model.settingsLoadErrorMessage)
+    }
+
+    @MainActor
+    func testDashboardEnrichmentFailureRemainsVisibleUntilRecovery() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-enrich-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+        let healthy = NativeFixtureReply(body: "{\"result\":\(snapshot)}")
+        let replies = TestDashboardReplySequence([healthy,
+            NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"supplemental read unavailable"}}"#), healthy, healthy, healthy])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        await model.refreshDashboard()
+        for _ in 0..<50 {
+            if model.dashboardEnrichmentFailed { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(model.dashboardEnrichmentFailed)
+        XCTAssertNotNil(model.dashboard)
+        XCTAssertNil(model.dashboardErrorMessage)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertTrue(model.dashboardEnrichmentFailed)
+        await model.refreshDashboard()
+        for _ in 0..<50 {
+            if !model.dashboardEnrichmentFailed { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model.dashboardEnrichmentFailed)
+    }
+}

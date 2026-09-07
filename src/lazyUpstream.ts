@@ -13,7 +13,8 @@ export class LazyCodexUpstream implements CodexUpstream {
   constructor(private readonly kind: CodexBackendKind, private readonly features: BackendCapabilities,
     private readonly factory: () => Promise<CodexUpstream>, private readonly dispose?: () => Promise<void>, private readonly guard?: () => void) {}
 
-  capabilities(): BackendCapabilities { return this.features; }
+  capabilities(): BackendCapabilities { return this.instance?.capabilities?.(this.kind) || this.features; }
+  async prepareExecution(...args: Args<"prepareExecution">) { return (await this.method("prepareExecution"))(...args); }
   listTools() { return this.instance?.listTools() || Promise.resolve({ backendKind: this.kind, initialized: false, capabilities: this.features }); }
   async callTool(...args: Args<"callTool">) { const instance = await this.get(); this.guard?.(); return instance.callTool(...args); }
   async listModels(...args: Args<"listModels">) { return (await this.method("listModels"))(...args); }
@@ -30,6 +31,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   async terminateBackgroundTerminal(...args: Args<"terminateBackgroundTerminal">) { return (await this.method("terminateBackgroundTerminal"))(...args); }
   async forceTerminateWorker(...args: Args<"forceTerminateWorker">) { return (await this.method("forceTerminateWorker"))(...args); }
   async respondToInteraction(...args: Args<"respondToInteraction">) { return (await this.method("respondToInteraction"))(...args); }
+  interactionInput(...args: Args<"interactionInput">) { return this.instance?.interactionInput?.(...args); }
   async steerThread(...args: Args<"steerThread">) { return (await this.method("steerThread"))(...args); }
   canResumeThread(...args: Args<"canResumeThread">) { return this.instance?.canResumeThread?.(...args); }
   canSteerThread(...args: Args<"canSteerThread">) { return this.instance?.canSteerThread?.(...args) === true; }
@@ -52,7 +54,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   }
   private async method<K extends keyof CodexUpstream>(name: K): Promise<NonNullable<CodexUpstream[K]>> {
     const instance = await this.get();
-    if (["listModels", "startThread", "continueThread", "forkThread"].includes(name)) this.guard?.();
+    if (["prepareExecution", "listModels", "startThread", "continueThread", "forkThread"].includes(name)) this.guard?.();
     const method = instance[name];
     if (typeof method !== "function") throw new Error(`Codex backend ${this.kind} does not support ${name}.`);
     return method.bind(instance) as NonNullable<CodexUpstream[K]>;

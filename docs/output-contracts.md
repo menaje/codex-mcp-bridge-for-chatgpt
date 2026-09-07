@@ -33,6 +33,10 @@ The channels are independent consumer contracts. Private `_meta` is presentation
 | `codex_dashboard` | Closed five-field aggregate summary: bridge-wide, read-only, Codex-runtime-only status source, and a redacted retained-state summary. No cross-scope rows enter model-visible structured content | The public result contains locale metadata but no Dashboard view. App-only `codex_dashboard_snapshot` is the sole current source of `_meta["codex/dashboardView@1"]` and active/recent/idle pages with hashed row/project/conversation keys and optional validated navigation candidates. Larger project/conversation pages are emitted only for older cards that send compatibility offsets. Project/Job/Activity/Agent/thread/worker/process IDs, paths, prompts, results, GPT judgments, controls, watchers, and handoff state remain absent |
 | `codex_activity` | Presentation mode, optional Activity identity/version, and exact scoped aggregate counts only | `mode: compact-monitor` returns one automatic `_meta["codex/activityView@11"]` presentation after Task fan-out; the default `full-history` mode returns the explicit paginated view. Automatic snapshots use compact current rows plus exact history counts. `codex_activity_rehydrate` reconstructs either an older retained Task shell from exact Job/request hints or a cold full-history card from its public mode and optional Activity identity/version |
 | `codex_models` | Neutral descriptors for only the current policy-allowed models, efforts, and service-tier support, including upstream descriptions and source/freshness; no policy summary, Priority state, recommendation, rank, default, or fallback | None |
+| `codex_input` | Exact Job/version, input cursor, one pending ordinary question request, up to 12 bounded public messages, approval-path indicators, wait outcome, and retrieval limits | No worker, process or raw request routing identity |
+| `codex_answer` | Exact Job/question reference, delivered or uncertain outcome, no-persist assertion, next actions | No raw submitted Codex answer |
+| `codex_ask_user` | Question ID, state, expiry, next actions | `codex/userQuestion@1` contains the scoped presentation proof for the reused Activity resource |
+| `codex_user_answer` | Unread response references, or one exact response with typed question and answer arrays | Form state is read separately through app-only `codex_question_card`; card submission never answers Codex |
 | `codex_steer` | Closed mutation result with exact compact Job/version, `active-codex-turn-only` scope, prompt-persistence assertion, `delivered | not-delivered | uncertain` delivery state, structured error, warnings, and next actions | None; the existing card-only `codex_job_steer` retains its separate lease-bound contract |
 | `codex_agent`, `codex_cancel`, `codex_activity_update`, `codex_activity_cancel` | Closed mutation envelope with action/outcome, strict typed target, bounded warnings/next actions, and affected IDs where relevant | Full lifecycle, cancellation provenance, process controls, and recovery data stay in bridge state or model-hidden app-only tools. Activity and Dashboard snapshots may separately project a bounded, initially collapsed model-tool cancellation explanation; a Job-target entry may include its Agent display name but no Agent ID |
 
@@ -40,7 +44,7 @@ Worker/process evidence, catalog fingerprints, bridge-instance data, project UUI
 
 ## Strict public envelopes
 
-All eleven model-visible output roots publish JSON Schema with
+All fifteen model-visible output roots publish JSON Schema with
 `additionalProperties: false`. Every public success or returned structured-error
 value is parsed through the corresponding strict runtime Zod schema before it
 crosses MCP. Nested public objects are also closed; the final public schemas
@@ -223,13 +227,11 @@ npx tsx scripts/output-contract-audit.ts
 npx tsx scripts/output-contract-audit.ts --check
 ```
 
-The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`,
-now audit version 3 with issue-38 regression and issue-40 steering evidence. The
-pre-issue-40 model-visible set remains 12,009 bytes: 8,119 bytes smaller than
-the 20,128-byte issue-36 baseline, a 40.337% reduction, and 68 bytes below its
-12,077-byte W3 ceiling. The additive `codex_steer` schema is 1,360 bytes, making
-the ten-tool total 13,369 bytes against a correspondingly additive 13,437-byte
-ceiling, again with 68 bytes of headroom. Every model-visible output
+The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`.
+It retains the historical issue-36/38/40 evidence separately from current schema measurements.
+Issue #68 adds four model-visible question tools and bounded input/capability summaries;
+the current fifteen-tool schema budget is 19,500 bytes. This budget change does not
+claim additional live ChatGPT verification. Every model-visible output
 `const`/`enum` leaf retains an explicit primitive type, including nullable enum
 nodes. The Task output contract remains the single-value string enum `["1"]`;
 the independent stable Task input contract is generation 2. Task
@@ -263,3 +265,7 @@ single-turn behavior, and raw-prompt absence; its sanitized record is
 is `docs/audits/issue-40-tool-schema-delta.json`. Deterministic crash-boundary
 fixtures remain distinct from the live-host evidence, and neither is represented
 as a distributed exactly-once guarantee.
+
+## Question result budgets
+
+Question tools validate closed output envelopes and cap both structured data and the compatibility copy at 128 KiB. `codex_input` returns one pending question group at a time (`hasMoreQuestions` signals more) and bounded public messages. Exact user-answer retrieval returns typed `{questionId, values}` entries rather than an open answer dictionary. Listing unread responses omits bodies and leaves them unread. Private card proof/hydration uses `codex/userQuestion@1` and is never the model’s answer channel.
