@@ -858,15 +858,19 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
   const rehydratedPresentation =
     value.correlation.presentation.kind === "historical" ||
     value.correlation.presentation.kind === "restored-explicit";
-  if ((value.source === "codex_activity_rehydrate") !== rehydratedPresentation) {
+  const emptyHistoryPresentation = value.source === "codex_activity" &&
+    value.correlation.activity === null &&
+    value.correlation.presentation.kind === "restored-explicit" &&
+    value.view.feed.mode === "full" && value.view.feed.activityTotal === 0;
+  if ((value.source === "codex_activity_rehydrate" || emptyHistoryPresentation) !== rehydratedPresentation) {
     context.addIssue({
       code: "custom",
       path: ["source"],
-      message: "Rehydrated Activity presentations are exclusive to the rehydrate source."
+      message: "Rehydrated Activity presentations are exclusive to the rehydrate source, except empty full-history openings."
     });
   }
   if (
-    value.source === "codex_activity_rehydrate" &&
+    rehydratedPresentation &&
     !activityRehydrateOutputSchema.safeParse(value.view).success
   ) {
     context.addIssue({
@@ -2180,6 +2184,13 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
+  private readonly changeListeners = new Set<() => void>();
+
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+
   private persistenceWarningShown = false;
   private lastPersistedAt = 0;
 
@@ -4160,10 +4171,12 @@ export class CodexJobRegistry {
   }
 
   private notify(jobId: string): void {
+    for (const listener of this.changeListeners) listener();
     for (const listener of [...(this.waiters.get(jobId) || [])]) listener();
   }
 
   private notifyScope(scopeId: string): void {
+    for (const listener of this.changeListeners) listener();
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
@@ -4640,6 +4653,14 @@ export function registerBridgeTools(
     cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
   };
   const applicationService: BridgeApplicationService = {
+    subscribeChanges(listener) {
+      const subscriptions = [
+        jobs.subscribeChanges(() => listener("dashboard")),
+        userSettings.subscribeChanges(() => { listener("settings"); listener("dashboard"); }),
+        modelCatalog.subscribe?.(() => listener("settings"))
+      ];
+      return () => { for (const unsubscribe of subscriptions) unsubscribe?.(); };
+    },
     async dashboardSnapshot(options = {}) {
       const startedAt = Date.now();
       const view = await buildDashboardView(
@@ -5473,13 +5494,17 @@ export function registerBridgeTools(
           "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy permits automatic cards only for background work."
         );
       }
-      const presentation: ActivityCardPresentationContext = mode === "compact-monitor"
+      const presentation: ActivityViewPresentationContext = mode === "compact-monitor"
         ? {
             kind: "automatic",
             activityPresentationId: args.presentationId as string,
             reservationOwnerId: args.presentationId as string
           }
-        : { kind: "explicit" };
+        : selected
+          ? { kind: "explicit" }
+          // An empty history has no Activity proof to lease or refresh. Use
+          // the scoped, non-owning rehydration path until work is available.
+          : { kind: "restored-explicit", mode: "full-history" };
       const renderHint = selected
         ? jobs.activityCardRenderHint(
             selected.activityId,
@@ -10485,6 +10510,7 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
+  subscribeChanges?(listener: (topic: "dashboard" | "settings") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;

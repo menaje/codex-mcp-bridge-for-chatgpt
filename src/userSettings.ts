@@ -97,6 +97,12 @@ export class UserSettingsStore {
   private readonly initial: GeneralSettings;
   private settings: GeneralSettings;
   private readonly warnings: string[] = [];
+  private readonly changeListeners = new Set<() => void>();
+
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
 
   constructor(
     private readonly config: BridgeConfig,
@@ -359,6 +365,9 @@ export class UserSettingsStore {
     this.settings = committedSettings;
     this.config.codexService?.setAppVisibility(this.settings.showBridgeThreadsInCodexApp);
     this.persistStandaloneState();
+    if (generalChanged || operations.length > 0) {
+      for (const listener of this.changeListeners) listener();
+    }
     return this.current;
   }
 

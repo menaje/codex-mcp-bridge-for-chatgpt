@@ -42,11 +42,13 @@ struct CodexRuntimeUpdateControls: View {
             if runtime.preferences.pinnedVersion != nil { Text("현재 버전 유지 중") }
         }
         .font(.caption).foregroundStyle(.secondary)
-        if let version = runtime.updateVersion {
+        if let version = runtime.updateVersion, runtime.stagedVersion != version {
             HStack {
                 Text(verbatim: version).monospacedDigit()
                 Button("코덱스 업데이트") { action("update") }
+                    .disabled(!runtime.actions.update)
                 Button("이 버전 건너뛰기") { preferences(skip: version) }
+                    .disabled(!runtime.actions.skip)
             }
         }
         if let skipped = runtime.preferences.skippedVersion {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -50,6 +50,31 @@ describe("RC-to-stable payload equivalence", () => {
     expect(second.digest).not.toBe(first.digest);
     expect(second.fileCount).toBe(first.fileCount);
   });
+
+  it.skipIf(process.platform !== "darwin")("preserves native executable permissions while excluding DMG signatures", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-payload-dmg-"));
+    try {
+      const binary = path.join(root, "probe");
+      execFileSync("cc", ["-x", "c", "-", "-o", binary], { input: "int main(void) { return 0; }\n" });
+      execFileSync("codesign", ["--force", "--sign", "-", binary], { stdio: "pipe" });
+      const archives: string[] = [];
+      for (const [name, mode] of [["candidate", 0o555], ["stable", 0o755]] as const) {
+        const staging = path.join(root, name);
+        const executable = path.join(staging, "Probe.app", "Contents", "MacOS", "probe");
+        mkdirSync(path.dirname(executable), { recursive: true });
+        copyFileSync(binary, executable);
+        chmodSync(executable, mode);
+        const archive = path.join(root, `${name}.dmg`);
+        execFileSync("hdiutil", ["create", "-srcfolder", staging, "-format", "UDZO", archive], { stdio: "pipe" });
+        archives.push(archive);
+      }
+      expect(compareReleaseArtifacts(archives[0], archives[0], "macos")).toMatchObject({ equivalent: true });
+      expect(() => compareReleaseArtifacts(archives[0], archives[1], "macos"))
+        .toThrow(/payload changed outside the allowed/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 function fixture(

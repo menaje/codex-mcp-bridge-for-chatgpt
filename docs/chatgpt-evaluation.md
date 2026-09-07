@@ -29,8 +29,8 @@
 
 | 사례 | 기준 | 현재 인증 기록 |
 | --- | --- | --- |
-| 동일 대화 Desktop → iOS → Web → 재진입 → widget 호출 | opaque scope ID A와 source 비교 | 미실행 |
-| 새 대화 / 복사·분기 대화 | 각각 별도 scope B/C, 자동 병합 없음 | 미실행 |
+| 동일 대화 Desktop → iOS → Web → 재진입 → widget 호출 | opaque scope ID A와 source 비교 | 부분 확인: Web 새 작업·전체 카드·재진입 후 재시도 및 widget 갱신. 전체 surface 비교는 미완료 |
+| 새 대화 / 복사·분기 대화 | 각각 별도 scope B/C, 자동 병합 없음 | 부분 확인: 새 Web 대화에서 실제 작업 완료, A/B opaque ID 불일치 확인. A/B에 각각 작업이 생긴 뒤에도 분기 대화 C는 host-metadata 조회 0개. C의 opaque ID는 미수집 |
 | Desktop inline / PiP / fullscreen | 지원 기능만 표시, 복원·갱신 가능 | 미실행 |
 | iOS background / iframe suspend / reopen | 오래된 제어 권한 재사용 없이 복원 | 미실행 |
 | 동일 대화의 여러 Activity 카드 | outbox lease 단일 소유, 중복 handoff 없음 | 미실행 |
@@ -38,7 +38,18 @@
 | locale 변경 / 미지원 locale | 번역 또는 정의된 fallback | 미실행 |
 | optional metadata 차이 | 존재 여부와 opaque scope 결과만 기록 | 미실행 |
 
+추가 Web 실측에서 390×844 화면의 Activity 카드와 작업 행 줄바꿈을 확인했다.
+이는 iOS 앱, PiP 또는 background/suspend 통과 기록은 아니다. 카드 갱신의
+ChatGPT HTTP 500과 터널 내부 502 관측은 복구 성공으로 처리하지 않았다.
+실제 빈 카드에서 발견한 갱신 오류는 로컬 재현 후 수정했으며, 수정 전후의
+생산 카드 HTML과 격리된 MCP 서버 응답을 인앱 브라우저에서 확인했다.
+
 현재 설치된 브리지의 읽기 전용 status가 성공했다는 사실만으로 이 매트릭스를 통과했다고 표시하지 않는다. 과거 실제 검사는 [기존 live smoke](audits/issue-38-chatgpt-live-smoke.md)에 해당 당시 범위로 보관한다. 자동화 가능한 기반 검사는 `npm run test:continuity`, `npm test`와 카드 브라우저 회귀 검사로 반복한다.
+
+[2026-09-07 실제 호스트·승인 검증](audits/2026-09-07-live-host-and-interactions.md)은 새 작업과 카드 복구, 새 대화 분리의 실행 증거를 기록한다. ChatGPT 자동 승인 검사에서 차단한 후속 실행과 컴퓨터 제어 도구가 접근을 거부한 네이티브 ChatGPT는 통과로 처리하지 않았다.
+
+[남은 이슈 재검토](audits/2026-09-07-remaining-issues-review.md)는 추가 대화·분기
+검증, 빈 Activity 카드 수정, 릴리즈 검사 수정과 실제 패키지 검증을 기록한다.
 
 ## 기록 양식
 

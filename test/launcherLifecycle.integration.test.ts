@@ -68,10 +68,15 @@ process.exit(2);
       runtimeStatusFile,
       healthURLFile,
       tunnelPIDFile,
-      runtimeLockDirectory
+      runtimeLockDirectory,
+      controlPlaneReadyFile
     });
     expect(first.output).not.toContain("sk-launcher-test");
     expect(first.output).not.toContain("sk-platform-key");
+    expect(first.output).not.toContain("sk-health-secret");
+    expect(first.output.match(/Tunnel health check failed/g)).toHaveLength(1);
+    expect(first.output).toContain("readyz=503");
+    expect(first.output.match(/Tunnel health check recovered/g)).toHaveLength(1);
     expect(JSON.parse(readFileSync(codexEnvironmentLog, "utf8"))).toEqual({
       openAIAPIKey: null,
       codexAPIKey: null,
@@ -115,7 +120,7 @@ process.exit(2);
       runtimeLockDirectory
     });
     expect(initializationCount(initializationLog)).toBe(2);
-  }, 30_000);
+  }, 45_000);
 });
 
 function writeExecutable(filePath: string, body: string): void {
@@ -183,6 +188,16 @@ if (args[0] === "doctor") process.exit(0);
 if (args[0] === "health") {
   try {
     if (!existsSync(controlPlaneReadyFile)) process.exit(1);
+    if (readFileSync(controlPlaneReadyFile, "utf8") === "fail") {
+      console.log(JSON.stringify({ readyz: { status: 503, body: "sk-health-secret-1234567890123456" },
+        control_plane_poll: { ok: false }, process: { running: true } }));
+      console.error("sk-health-secret-1234567890123456");
+      process.exit(1);
+    }
+    if (readFileSync(controlPlaneReadyFile, "utf8") === "slow") {
+      writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
+      await new Promise(resolve => setTimeout(resolve, 4_000));
+    }
     const url = readFileSync(option("--url-file"), "utf8").trim();
     const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
     process.kill(pid, 0);
@@ -229,6 +244,7 @@ async function runLauncher(paths: {
   healthURLFile: string;
   tunnelPIDFile: string;
   runtimeLockDirectory: string;
+  controlPlaneReadyFile?: string;
 }): Promise<{ output: string }> {
   const environment = { ...process.env };
   delete environment.CONTROL_PLANE_API_KEY;
@@ -264,8 +280,28 @@ async function runLauncher(paths: {
     expect(existsSync(
       path.join(path.dirname(paths.envFile), "run", "launcher.lock")
     )).toBe(true);
+    if (paths.controlPlaneReadyFile) {
+      const launcherPid = readStatus(paths.runtimeStatusFile).launcherPid;
+      writeFileSync(paths.controlPlaneReadyFile, "fail");
+      const failed = await waitForStatus(paths.runtimeStatusFile, child, status => status.tunnel?.phase === "degraded");
+      await waitForStatus(paths.runtimeStatusFile, child, status =>
+        status.tunnel?.phase === "degraded" && status.tunnel.lastCheckedAt !== failed.tunnel.lastCheckedAt);
+      writeFileSync(paths.controlPlaneReadyFile, "ready");
+      const recovered = await waitForStatus(paths.runtimeStatusFile, child, status => status.tunnel?.connected === true);
+      expect(recovered.launcherPid).toBe(launcherPid);
+      expect(recovered.phase).toBe("running");
+      writeFileSync(paths.controlPlaneReadyFile, "slow");
+      await waitForStatus(paths.runtimeStatusFile, child, () => existsSync(paths.controlPlaneReadyFile + ".checking"));
+    }
+    const shutdownStarted = Date.now();
     child.kill("SIGTERM");
     const result = await waitForProcessExit(child, 10_000);
+    if (paths.controlPlaneReadyFile) {
+      // A pending four-second probe must not hold up shutdown or outlive its owner.
+      expect(Date.now() - shutdownStarted).toBeLessThan(2_000);
+      const probePid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
+      expect(() => process.kill(probePid, 0)).toThrow();
+    }
     if (result.code !== 0) {
       throw new Error(`Launcher exited with ${result.code ?? result.signal}: ${output}`);
     }
@@ -332,6 +368,21 @@ function waitForProcessExit(
 
 function readStatus(filePath: string): Record<string, any> {
   return JSON.parse(readFileSync(filePath, "utf8")) as Record<string, any>;
+}
+
+async function waitForStatus(
+  filePath: string,
+  child: ChildProcess,
+  predicate: (status: Record<string, any>) => boolean
+): Promise<Record<string, any>> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error("Launcher exited during health monitoring.");
+    const status = readStatus(filePath);
+    if (predicate(status)) return status;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for a tunnel health transition.");
 }
 
 function initializationCount(filePath: string): number {

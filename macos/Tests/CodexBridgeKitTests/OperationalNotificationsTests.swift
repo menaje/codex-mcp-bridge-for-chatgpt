@@ -104,6 +104,57 @@ final class OperationalNotificationsTests: XCTestCase {
         XCTAssertNil(policy.observe(.problem(.runtime), scope: scope, now: origin.addingTimeInterval(1_070)))
     }
 
+    func testReadinessBannerWaitsForGraceAndClearsAsSoonAsConnectionRecovers() async throws {
+        let suite = "bridge-startup-notifications-test-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = OperationalNotifications(defaults: defaults, delivery: NotificationDeliveryFixture())
+        let model = AppModel(operationalNotifications: controller)
+        model.authStatus = try JSONDecoder().decode(CodexLoginStatus.self,
+            from: Data(#"{"installed":true,"authenticated":true,"summary":"ready"}"#.utf8))
+        func helper(phase: String, connected: Bool = false) throws -> HelperStatus {
+            let json = #"""
+            {"kind":"helper-status","generatedAt":"2026-09-06T00:00:00Z","phase":"\#(phase)","restartAttempt":0,
+            "configuration":{"path":"/private/config","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true},
+            "bridge":{"socketPath":"/private/socket","connected":true},
+            "tunnel":{"phase":"\#(connected ? "connected" : "starting")","doctorPassed":true,"processRunning":true,"connected":\#(connected)}}
+            """#
+            return try JSONDecoder().decode(HelperStatus.self, from: Data(json.utf8))
+        }
+
+        for (index, problem) in [OperationalProblem.runtime, .tunnel].enumerated() {
+            let start = origin.addingTimeInterval(Double(index) * 100)
+            model.helperStatus = try helper(phase: problem == .runtime ? "starting" : "running")
+            await model.refreshOperationalNotifications(at: start)
+            XCTAssertEqual(model.operationalObservation, .problem(problem))
+            XCTAssertEqual(model.health, .checking)
+            XCTAssertNil(model.operationalProblem)
+
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(59))
+            XCTAssertTrue(model.isBridgeConnectionChecking)
+            XCTAssertNil(model.operationalProblem)
+
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(60))
+            XCTAssertFalse(model.isBridgeConnectionChecking)
+            XCTAssertFalse(model.isTunnelConnectionChecking)
+            XCTAssertEqual(model.health, .attention)
+            XCTAssertEqual(model.operationalProblem, problem)
+
+            // A previous alert must not win over a new observation while the
+            // notification refresh is still waiting in its debounce window.
+            model.helperStatus = nil
+            XCTAssertTrue(model.isBridgeConnectionChecking)
+            XCTAssertEqual(model.health, .checking)
+            XCTAssertNil(model.operationalProblem)
+            model.helperStatus = try helper(phase: "running", connected: true)
+            XCTAssertTrue(model.bridgeConnected)
+            XCTAssertEqual(model.operationalObservation, .healthy)
+            XCTAssertEqual(model.health, .checking) // Dashboard is still loading.
+            XCTAssertNil(model.operationalProblem)
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(61))
+        }
+    }
+
     func testOperationalClassificationIgnoresTaskEventsAndManualOperations() throws {
         let model = AppModel()
         func helper(phase: String = "running", valid: Bool = true, bridge: Bool = true, tunnel: Bool = true) throws -> HelperStatus {

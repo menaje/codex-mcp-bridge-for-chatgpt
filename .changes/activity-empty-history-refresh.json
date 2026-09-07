@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Open empty Activity history with the scoped read-only refresh path so cards without a first Activity can refresh and discover later work.",
+  "breaking": false,
+  "migration": null
+}
