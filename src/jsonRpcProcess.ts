@@ -418,14 +418,18 @@ export class JsonRpcProcess {
   }
 
   private async handleServerRequest(request: JsonRpcRequest): Promise<void> {
+    if (!this.canRespondToServer) return;
     try {
       if (!this.options.onRequest) {
         throw Object.assign(new Error(`Unsupported server request: ${request.method}`), { code: -32601 });
       }
       const result = await this.options.onRequest(request.method, request.params, request.id);
+      // Approval/input handlers can settle after shutdown or a worker crash.
+      // The response belongs to that dead connection and cannot be delivered.
+      if (!this.canRespondToServer) return;
       this.write({ jsonrpc: "2.0", id: request.id, result: result ?? {} });
     } catch (error) {
-      if (error instanceof JsonRpcServerRequestResolved) return;
+      if (error instanceof JsonRpcServerRequestResolved || !this.canRespondToServer) return;
       const code = isRecord(error) && typeof error.code === "number" ? error.code : -32603;
       this.write({
         jsonrpc: "2.0",
@@ -436,6 +440,10 @@ export class JsonRpcProcess {
         }
       });
     }
+  }
+
+  private get canRespondToServer(): boolean {
+    return !this.closing && !this.exited && this.child?.stdin.writable === true;
   }
 
   private write(message: unknown): void {
