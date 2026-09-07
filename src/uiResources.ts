@@ -130,9 +130,17 @@ export function htmlForUiResource(
   if (revision.uri === currentUiResourceUri(name)) return currentHtml;
 
   for (const candidate of snapshotCandidates(name, revision.digest)) {
-    if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    if (existsSync(candidate)) return retainedUiRuntime(readFileSync(candidate, "utf8"));
   }
   return staleUiResourceNotice(name);
+}
+
+function retainedUiRuntime(html: string): string {
+  // Some retained source-rendered helpers captured esbuild's keepNames call
+  // without its runtime. Preserve the immutable files and their contracts;
+  // supply only the missing name decorator when serving those older cards.
+  if (!html.includes("__name(") || /(?:function|const|let|var)\s+__name\b/.test(html)) return html;
+  return html.replace("<script>", '<script>\nfunction __name(target,value){Object.defineProperty(target,"name",{value,configurable:true});return target}\n');
 }
 
 function snapshotCandidates(name: UiResourceName, digest: string): string[] {

@@ -6,6 +6,8 @@ type UnknownRecord = Record<string, unknown>;
  *
  * This function is also serialized into the self-contained card HTML. Keep it
  * free of module-local dependencies.
+ * OpenAI's compatibility bridge can wrap the complete MCP result in canonical
+ * metadata fields; result/tool_result also cover compatible MCP Apps hosts.
  */
 export function normalizeHostToolResult(value: unknown): unknown {
   const queue: unknown[] = [value];
@@ -36,9 +38,6 @@ export function normalizeHostToolResult(value: unknown): unknown {
       return record;
     }
 
-    // OpenAI's compatibility bridge can place the complete MCP result under
-    // either canonical field. `result` and `tool_result` cover nested bridge
-    // responses used by compatible MCP Apps hosts.
     for (const key of ["mcp_tool_result", "call_tool_result", "result", "tool_result"]) {
       if (Object.prototype.hasOwnProperty.call(record, key)) queue.push(record[key]);
     }

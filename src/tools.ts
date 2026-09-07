@@ -508,10 +508,17 @@ const cancellationDisplayOutputSchema = z.strictObject({
   requestedAt: z.iso.datetime()
 });
 
+const dashboardTokenUsageOutputSchema = z.object({
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  outputTokens: z.number(),
+  totalTokens: z.number()
+});
+
 const dashboardTurnOutputSchema = z.strictObject({
   activityKey: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   activityTitle: z.string().nullable(),
-  tokenUsage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number(), totalTokens: z.number() }).optional(),
+  tokenUsage: dashboardTokenUsageOutputSchema.optional(),
   execution: dashboardExecutionOutputSchema.optional(),
   status: z.enum(DASHBOARD_STATUSES),
   startedAt: z.string().nullable(),
@@ -541,6 +548,7 @@ const dashboardRowOutputSchema = z.strictObject({
   projectName: z.string().nullable(),
   agentName: z.string(),
   activityTitle: z.string().nullable(),
+  tokenUsage: dashboardTokenUsageOutputSchema.optional(),
   execution: dashboardExecutionOutputSchema.optional(),
   status: z.enum(DASHBOARD_STATUSES),
   createdAt: z.string(),
