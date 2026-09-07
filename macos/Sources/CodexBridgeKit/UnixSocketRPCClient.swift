@@ -70,10 +70,17 @@ public struct UnixSocketRPCClient: Sendable {
         do {
             responseData = try await withTaskCancellationHandler {
                 try Task.checkCancellation()
-                let value = try await Task.detached(priority: .userInitiated) {
-                    try transact(socketPath: socketPath, request: requestData, timeout: timeout,
-                        maximumResponseBytes: maximumResponseBytes, cancellation: cancellation)
-                }.value
+                // Long change waits must not occupy Swift's cooperative workers
+                // needed to schedule health reads and cancellation.
+                let value: Data = try await withCheckedThrowingContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            continuation.resume(returning: try transact(socketPath: socketPath,
+                                request: requestData, timeout: timeout,
+                                maximumResponseBytes: maximumResponseBytes, cancellation: cancellation))
+                        } catch { continuation.resume(throwing: error) }
+                    }
+                }
                 try Task.checkCancellation()
                 return value
             } onCancel: { cancellation.cancel() }

@@ -141,6 +141,9 @@ seconds; a dotenv change invalidates that display cache immediately. Admission,
 configuration mutations and shutdown still validate their own fresh evidence.
 Detail requests cannot delay this watchdog. Concurrent health requests share one
 in-flight read and a trailing read when another observation is requested.
+Blocking socket waits use separate I/O workers so a long change wait cannot
+occupy Swift's task executor and delay health requests or cancellation. Cancelled
+or superseded Dashboard reads cannot replace a newer result or its error state.
 
 The local helper and companion expose cancellable `changes.wait` requests. They
 wait up to twenty-five seconds for revisioned invalidations, without repeatedly

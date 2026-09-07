@@ -4,6 +4,27 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testPendingChangeWaitDoesNotDelayIndependentHealthRead() async throws {
+        let path = "/tmp/cb-rpc-independent-\(UUID().uuidString.prefix(8)).sock"
+        let connected = expectation(description: "change wait received")
+        let server = try NativeRPCFixture(path: path) { method in
+            if method == "changes.wait" {
+                connected.fulfill()
+                return NativeFixtureReply(body: #"{"result":{"revision":"same","topics":[]}}"#, delay: 2)
+            }
+            return NativeFixtureReply(body: #"{"result":{}}"#)
+        }
+        defer { server.stop() }
+        let started = Date()
+        let pending = Task { try await MacOSHelperClient(socketPath: path).waitForChanges(after: "same") }
+        defer { pending.cancel() }
+        await fulfillment(of: [connected], timeout: 1)
+        let _: EmptyParameters = try await UnixSocketRPCClient(socketPath: path).call("helper.health", params: EmptyParameters())
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        pending.cancel()
+        _ = try? await pending.value
+    }
+
     func testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout() async throws {
         let path = "/tmp/cb-cancel-\(UUID().uuidString.prefix(8)).sock"
         let listener = try makeListener(at: path)
