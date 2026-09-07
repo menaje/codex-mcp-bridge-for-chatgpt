@@ -318,6 +318,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: DiagnosticLog<MacOSHelperLogEntry>;
+  private bridgeStatusProbe: Promise<RuntimeAdmissionSnapshot | null> | undefined;
+  private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
   private cliManager?: CodexRuntimeManager;
   private sdkManager?: CodexRuntimeManager;
@@ -364,7 +366,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   async snapshot(): Promise<MacOSHelperStatus> {
     this.reconcileManagedRuntime();
-    const bridgeAdmission = await readBridgeAdmission(this.bridgeSocketPath);
+    const bridgeAdmission = await this.readBridgeStatus();
     const configuration = await this.configurationStatus();
     const managedRuntime = readManagedRuntimeStatus(this.runtimeStatusFile);
     const tunnel = normalizeTunnelStatus(
@@ -397,6 +399,31 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       },
       tunnel
     };
+  }
+
+  private readBridgeStatus(): Promise<RuntimeAdmissionSnapshot | null> {
+    if (this.bridgeStatusProbe) return this.bridgeStatusProbe;
+    const pid = this.managedPid;
+    const started = Date.now();
+    let failure: unknown;
+    const probe = readBridgeAdmission(this.bridgeSocketPath, 2_000, (error) => { failure = error; })
+      .then((admission) => {
+        if (pid !== this.managedPid) return null;
+        const connected = admission !== null;
+        const previous = this.bridgeProbeObservation?.pid === pid ? this.bridgeProbeObservation : undefined;
+        const failedAt = connected ? null : previous?.failedAt ?? started;
+        if (!connected && previous?.connected !== false && this.phase === "running") {
+          this.appendLog("helper", `Bridge status check failed (pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
+        } else if (connected && previous?.connected === false && previous.failedAt !== null) {
+          this.appendLog("helper", `Bridge status check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - previous.failedAt}ms).`);
+        }
+        this.bridgeProbeObservation = { pid, connected, failedAt };
+        return admission;
+      }).finally(() => {
+        if (this.bridgeStatusProbe === probe) this.bridgeStatusProbe = undefined;
+      });
+    this.bridgeStatusProbe = probe;
+    return probe;
   }
 
   async discoverSetup(): Promise<TunnelSetupDiscovery> {
@@ -1653,16 +1680,19 @@ function helperRequestId(value: unknown): string | number | null {
 }
 
 async function readBridgeAdmission(
-  socketPath: string
+  socketPath: string,
+  timeoutMs = 500,
+  onFailure?: (error: unknown) => void
 ): Promise<RuntimeAdmissionSnapshot | null> {
   try {
     return await bridgeRequest<RuntimeAdmissionSnapshot>(
       socketPath,
       "runtime.snapshot",
       {},
-      500
+      timeoutMs
     );
-  } catch {
+  } catch (error) {
+    onFailure?.(error);
     return null;
   }
 }
@@ -1694,7 +1724,7 @@ async function waitForManagedRuntime(
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("Managed runtime exited before the bridge and tunnel became ready.");
     }
-    const bridge = await readBridgeAdmission(socketPath);
+    const bridge = await readBridgeAdmission(socketPath, 2_000);
     const tunnel = normalizeTunnelStatus(
       readManagedRuntimeStatus(runtimeStatusFile),
       child.pid || null,

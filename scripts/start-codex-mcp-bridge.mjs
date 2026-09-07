@@ -102,6 +102,7 @@ let runtimeLocks = [];
 let ownsRuntimeState = false;
 let tunnelHealthTimer;
 let tunnelHealthProbeRunning = false;
+let tunnelHealthFailedAt;
 let runtimePhase = "starting";
 let activeRuntimeBuildId = "unbuilt";
 let tunnelState = {
@@ -519,7 +520,7 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("tunnel-client exited before the control-plane connection became ready.");
     }
-    const connected = probeTunnelHealth(tunnelClient, environment);
+    const { connected } = probeTunnelHealth(tunnelClient, environment);
     tunnelState = {
       ...tunnelState,
       phase: connected ? "connected" : "starting",
@@ -545,7 +546,11 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
     tunnelHealthProbeRunning = true;
     try {
       const processRunning = child.exitCode === null && child.signalCode === null;
-      const connected = processRunning && probeTunnelHealth(tunnelClient, environment);
+      const probe = processRunning
+        ? probeTunnelHealth(tunnelClient, environment)
+        : { connected: false, reason: "tunnel process is not running" };
+      const { connected } = probe;
+      recordTunnelHealthTransition(connected, probe.reason, child.pid);
       tunnelState = {
         ...tunnelState,
         phase: connected ? "connected" : "degraded",
@@ -567,6 +572,7 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
       };
       publishRuntimeStatus();
     } catch (error) {
+      recordTunnelHealthTransition(false, safeStatusText(error), child.pid);
       tunnelState = {
         ...tunnelState,
         phase: "degraded",
@@ -584,7 +590,9 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
 }
 
 function probeTunnelHealth(tunnelClient, environment) {
-  if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) return false;
+  if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) {
+    return { connected: false, reason: "health endpoint locator or pid file is missing" };
+  }
   const result = spawnSync(tunnelClient, [
     "health",
     "--json",
@@ -599,7 +607,35 @@ function probeTunnelHealth(tunnelClient, environment) {
     encoding: "utf8",
     timeout: 5_000
   });
-  return result.status === 0;
+  if (result.status === 0) return { connected: true };
+  const evidence = [`exit=${result.status ?? "none"}`];
+  if (result.error?.code) evidence.push(`error=${safeStatusText(result.error.code)}`);
+  if (result.signal) evidence.push(`signal=${result.signal}`);
+  // Only retain known non-secret fields. Never log the CLI's raw output,
+  // response bodies, URLs, or credentials returned by a failed endpoint.
+  try {
+    const report = JSON.parse(result.stdout);
+    for (const name of ["healthz", "readyz"]) {
+      if (Number.isInteger(report[name]?.status)) evidence.push(`${name}=${report[name].status}`);
+    }
+    if (typeof report.control_plane_poll?.ok === "boolean") {
+      evidence.push(`control-plane-poll=${report.control_plane_poll.ok}`);
+    }
+    if (typeof report.process?.running === "boolean") evidence.push(`process-running=${report.process.running}`);
+  } catch {
+    // A command that could not execute may not produce a JSON report.
+  }
+  return { connected: false, reason: evidence.join(", ") };
+}
+
+function recordTunnelHealthTransition(connected, reason, pid) {
+  if (!connected && tunnelHealthFailedAt === undefined) {
+    tunnelHealthFailedAt = Date.now();
+    console.error(`Tunnel health check failed (pid ${pid ?? "unknown"}): ${reason || "unknown failure"}.`);
+  } else if (connected && tunnelHealthFailedAt !== undefined) {
+    console.error(`Tunnel health check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - tunnelHealthFailedAt}ms).`);
+    tunnelHealthFailedAt = undefined;
+  }
 }
 
 function publishRuntimeStatus() {

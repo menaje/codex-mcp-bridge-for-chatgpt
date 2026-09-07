@@ -46,9 +46,9 @@ struct DashboardPopoverView: View {
                     runtimeUnavailableView
                 } else if model.needsSetup {
                     ConnectionRepairView()
-                } else if !model.bridgeConnected, model.isBridgeConnectionChecking {
+                } else if !model.bridgeConnected, model.isBridgeConnectionChecking, model.dashboard == nil {
                     connectionCheckingView
-                } else if !model.bridgeConnected {
+                } else if !model.bridgeConnected, !model.isBridgeConnectionChecking {
                     runtimeUnavailableView
                 } else if let dashboard = model.dashboard {
                     dashboardContent(dashboard)
@@ -1277,14 +1277,16 @@ struct ConnectionRepairView: View {
                         LabeledContent(
                             "Bridge",
                             value: BridgeAppLocalization.string(
-                                model.helperStatus?.bridge.connected == true ? "준비됨" : "연결 안 됨",
+                                model.helperStatus?.bridge.connected == true ? "준비됨" :
+                                    model.isBridgeConnectionChecking ? "Codex 브리지 상태 확인 중" : "연결 안 됨",
                                 locale: model.interfaceLocale
                             )
                         )
                         LabeledContent(
                             "Secure MCP Tunnel",
                             value: BridgeAppLocalization.string(
-                                model.helperStatus?.tunnel.connected == true ? "연결됨" : "연결 안 됨",
+                                model.helperStatus?.tunnel.connected == true ? "연결됨" :
+                                    model.isTunnelConnectionChecking ? "Secure MCP Tunnel 연결을 확인하고 있습니다." : "연결 안 됨",
                                 locale: model.interfaceLocale
                             )
                         )

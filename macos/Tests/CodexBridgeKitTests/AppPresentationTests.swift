@@ -280,6 +280,50 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalTransientFailurePreservesContentAndConfirmedFailureIsUnavailable() async throws {
+        let model = AppModel()
+        let start = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: start)
+        model.dashboard = try dashboardStatus(scope: "retained-local-dashboard")
+        let failure = try helperStatus(bridgeConnected: false)
+
+        model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(1))
+        XCTAssertEqual(model.health, .checking)
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "retained-local-dashboard")
+
+        model.recordLocalConnectionStatus(try helperStatus(), at: start.addingTimeInterval(2))
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertFalse(model.localConnectionRecovery.isChecking)
+
+        model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(3))
+        model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(11))
+        XCTAssertEqual(model.health, .unavailable)
+        await model.refreshDashboard()
+        XCTAssertNil(model.dashboard)
+    }
+
+    @MainActor
+    func testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot() throws {
+        let model = AppModel()
+        model.recordLocalConnectionStatus(try helperStatus(tunnelConnected: false))
+        XCTAssertTrue(model.isTunnelConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+        model.recordLocalConnectionStatus(try helperStatus(phase: "backoff", bridgeConnected: false, tunnelConnected: false))
+        XCTAssertEqual(model.health, .unavailable)
+    }
+
+    @MainActor
+    func testRecoveryGraceExpiresEvenWhileAStatusRequestIsStalled() async throws {
+        let model = AppModel()
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false))
+        XCTAssertEqual(model.health, .checking)
+        try await Task.sleep(nanoseconds: 8_100_000_000)
+        XCTAssertEqual(model.health, .unavailable)
+    }
+
+    @MainActor
     func testLoginItemApprovalOpensSystemSettingsInsteadOfReregistering() {
         let controller = TestLoginItemController(status: .requiresApproval)
         let model = AppModel(loginItemController: controller)

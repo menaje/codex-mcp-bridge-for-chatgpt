@@ -468,6 +468,48 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it("tolerates a 750ms status response and retains bounded failure and recovery diagnostics", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configFile = path.join(root, "config", ".env");
+    const bridgeSocket = path.join(root, "config", "run", "bridge.sock");
+    const launcher = path.join(bridgeRoot, "fake-launcher.mjs");
+    const delayFile = path.join(root, "snapshot-delay");
+    mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+    writeFileSync(path.join(bridgeRoot, "dist", "stdio.js"), "", { mode: 0o600 });
+    writeFileSync(delayFile, "0");
+    writeFakeLauncher(launcher, path.join(root, "arguments.json"), { snapshotDelayFile: delayFile });
+    updateRuntimeEnvFile(configFile, {
+      apiKey: "sk-supervisor-1234567890123456",
+      tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
+    });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot, envFile: configFile, bridgeSocketPath: bridgeSocket, launcherPath: launcher,
+      runtimeLockDirectory: path.join(root, "launcher.lock"), autoRestart: false, startTimeoutMs: 5_000
+    });
+    try {
+      const started = await supervisor.start();
+      writeFileSync(delayFile, "750");
+      expect(await supervisor.snapshot()).toMatchObject({
+        phase: "running", pid: started.pid, bridge: { connected: true }, lastExit: null, restartAttempt: 0
+      });
+      writeFileSync(delayFile, "2300");
+      const failures = await Promise.all([supervisor.snapshot(), supervisor.snapshot()]);
+      expect(failures.every(status => !status.bridge.connected && status.pid === started.pid)).toBe(true);
+      await supervisor.snapshot();
+      let messages = supervisor.logs(200).map(entry => entry.message);
+      expect(messages.filter(message => message.includes("Bridge status check failed"))).toHaveLength(1);
+      expect(messages.some(message => message.includes("Bridge companion request timed out"))).toBe(true);
+      writeFileSync(delayFile, "0");
+      expect(await supervisor.snapshot()).toMatchObject({ bridge: { connected: true }, lastExit: null, restartAttempt: 0 });
+      messages = supervisor.logs(200).map(entry => entry.message);
+      expect(messages.filter(message => message.includes("Bridge status check recovered"))).toHaveLength(1);
+    } finally {
+      writeFileSync(delayFile, "0");
+      await supervisor.close();
+    }
+  }, 15_000);
+
   it("does not change the dotenv when active work misses the drain deadline", async () => {
     const root = temporaryDirectory();
     const bridgeRoot = path.join(root, "runtime");
@@ -1234,6 +1276,7 @@ function writeFakeLauncher(
     writeRuntimeLock?: boolean;
     runtimeProfile?: string;
     detachedDescendantPidFile?: string;
+    snapshotDelayFile?: string;
   } = {}
 ): void {
   writeFileSync(file, `
@@ -1307,6 +1350,7 @@ if (runtimeStatusFile) {
   }), { mode: 0o600 });
 }
 const server = createServer((socket) => {
+  socket.on("error", () => undefined);
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk) => {
@@ -1345,11 +1389,16 @@ const server = createServer((socket) => {
       backgroundProcessAgents: ${options.backgroundProcesses || 0} > 0 ? 1 : 0,
       backgroundProcessUnknownAgents: ${options.backgroundProcessUnknownAgents || 0}
     };
-    socket.end(JSON.stringify({
-      jsonrpc: "2.0",
-      id: request.id,
-      result
-    }) + "\\n");
+    const delayFile = ${JSON.stringify(options.snapshotDelayFile || "")};
+    const responseDelay = request.method === "runtime.snapshot" && delayFile
+      ? Number(readFileSync(delayFile, "utf8")) : 0;
+    setTimeout(() => {
+      if (!socket.destroyed) socket.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result
+      }) + "\\n");
+    }, responseDelay);
   });
 });
 server.listen(socketPath);

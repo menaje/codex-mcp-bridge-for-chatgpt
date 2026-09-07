@@ -314,6 +314,7 @@ final class AppModel: ObservableObject {
     private let logger = Logger(subsystem: "com.menaje.codex-mcp-bridge", category: "app-model")
     private var pollingTask: Task<Void, Never>?
     private var bridgeReadinessTask: Task<Void, Never>?
+    private var connectionRecoveryExpiryTask: Task<Void, Never>?
     private var bridgeReadinessTaskGeneration = 0
     private var settingsPollingTask: Task<Void, Never>?
     private var loginPollingTask: Task<Void, Never>?
@@ -326,6 +327,8 @@ final class AppModel: ObservableObject {
     private var settingsAutosaveInProgress = false
     private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
+    private var statusRequestGeneration = 0
+    @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow()
     private var connectionGeneration = 0
     private var cachedRemoteClient: (
         profile: RemoteServerProfile,
@@ -378,6 +381,7 @@ final class AppModel: ObservableObject {
 
     var operationalObservation: OperationalObservation {
         guard !isBusy, !loginInProgress, !applicationShutdownInProgress else { return .unknown }
+        if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
             if let remoteOperationalProblem { return .problem(remoteOperationalProblem) }
@@ -554,6 +558,7 @@ final class AppModel: ObservableObject {
               helperStatus.phase == "starting" || helperStatus.phase == "running",
               !helperStatus.tunnel.connected else { return false }
         let tunnel = helperStatus.tunnel
+        if localConnectionRecovery.isChecking { return true }
         if tunnel.phase == "starting" { return true }
         if BridgeAppLocalization.isTunnelConnectionPending(
             problem: tunnel.lastProblem,
@@ -568,6 +573,10 @@ final class AppModel: ObservableObject {
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello == nil else { return false }
             return connectionErrorMessage == nil && statusErrorMessage == nil
+        }
+        if localConnectionRecovery.isChecking,
+           helperStatus == nil || (helperStatus?.phase == "running" && helperStatus?.configuration.valid == true) {
+            return true
         }
         if helperStatus?.phase == "starting" || isTunnelConnectionChecking { return true }
         guard helperStatus == nil else { return false }
@@ -1065,6 +1074,8 @@ final class AppModel: ObservableObject {
 
     func refreshStatus() async {
         let generation = connectionGeneration
+        statusRequestGeneration += 1
+        let requestGeneration = statusRequestGeneration
         if isRemoteClient {
             helperStatus = nil
             codexRuntime = nil
@@ -1079,14 +1090,14 @@ final class AppModel: ObservableObject {
             do {
                 guard let client = try remoteClientIfSelected() else { return }
                 let hello = try await client.hello()
-                guard generation == connectionGeneration, isRemoteClient else { return }
+                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 remoteHello = hello
                 remoteOperationalProblem = nil
                 statusErrorMessage = nil
                 connectionErrorMessage = nil
                 updateActiveProfile(from: hello)
             } catch {
-                guard generation == connectionGeneration, isRemoteClient else { return }
+                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
                 remoteHello = nil
                 remoteOperationalProblem = OperationalProblem.remoteError(error)
                 let message = localizedErrorDescription(error)
@@ -1100,17 +1111,41 @@ final class AppModel: ObservableObject {
         do {
             let client = await helperClient()
             let next = try await client.status()
-            guard generation == connectionGeneration, !isRemoteClient else { return }
-            helperStatus = next
+            guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
+            recordLocalConnectionStatus(next)
             statusErrorMessage = nil
-            if !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
+            if next.bridge.connected, next.tunnel.connected,
+               !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
                 await loadCodexRuntime(kind: "cli")
                 if usesSdkForNewAgents { await loadCodexRuntime(kind: "sdk") }
             }
         } catch {
-            guard generation == connectionGeneration, !isRemoteClient else { return }
-            helperStatus = nil
+            guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
+            recordLocalConnectionStatus(nil)
             statusErrorMessage = localizedErrorDescription(error)
+            logger.error("helper status check failed: \(error.localizedDescription, privacy: .public)")
+        }
+        beginBridgeReadinessPollingIfNeeded()
+    }
+
+    func recordLocalConnectionStatus(_ next: HelperStatus?, at now: Date = Date()) {
+        helperStatus = next
+        localConnectionRecovery.observe(
+            available: next?.bridge.connected == true && next?.tunnel.connected == true,
+            retryable: next.map { $0.phase == "running" && $0.configuration.valid } ?? true,
+            at: now
+        )
+        if !localConnectionRecovery.isChecking {
+            connectionRecoveryExpiryTask?.cancel()
+            connectionRecoveryExpiryTask = nil
+        } else if connectionRecoveryExpiryTask == nil {
+            let generation = connectionGeneration
+            connectionRecoveryExpiryTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(nanoseconds: 8_000_000_000) } catch { return }
+                guard let self, generation == self.connectionGeneration else { return }
+                self.localConnectionRecovery.expire()
+                self.connectionRecoveryExpiryTask = nil
+            }
         }
     }
 
@@ -1119,6 +1154,7 @@ final class AppModel: ObservableObject {
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         guard bridgeConnected else {
+            if isBridgeConnectionChecking { return }
             dashboard = nil
             dashboardErrorMessage = nil
             return
@@ -1192,6 +1228,7 @@ final class AppModel: ObservableObject {
 
     func refreshSettings(refreshModels: Bool = false) async {
         guard bridgeConnected else {
+            if isBridgeConnectionChecking { return }
             settings = nil
             settingsLoadErrorMessage = nil
             return
@@ -2069,6 +2106,10 @@ final class AppModel: ObservableObject {
     }
 
     private func resetConnectionContext() {
+        connectionRecoveryExpiryTask?.cancel()
+        connectionRecoveryExpiryTask = nil
+        localConnectionRecovery = ConnectionRecoveryWindow()
+        statusRequestGeneration += 1
         remoteOperationalProblem = nil
         operationalActionRequiredProblem = nil
         cancelBridgeReadinessPolling()
@@ -2177,6 +2218,8 @@ final class AppModel: ObservableObject {
     }
 
     private func cancelAllPolling() {
+        connectionRecoveryExpiryTask?.cancel()
+        connectionRecoveryExpiryTask = nil
         pollingTask?.cancel()
         pollingTask = nil
         cancelBridgeReadinessPolling()
@@ -2191,8 +2234,10 @@ final class AppModel: ObservableObject {
     }
 
     private var shouldPollForBridgeReadiness: Bool {
-        guard !isRemoteClient, !bridgeConnected, !needsSetup else { return false }
-        return helperStatus == nil || helperStatus?.phase == "starting"
+        guard !isRemoteClient, !needsSetup else { return false }
+        if localConnectionRecovery.isChecking || isTunnelConnectionChecking { return true }
+        return helperStatus?.phase == "starting" ||
+            (helperStatus == nil && statusErrorMessage == nil && startupErrorMessage == nil)
     }
 
     private func cancelBridgeReadinessPolling() {
@@ -2202,8 +2247,7 @@ final class AppModel: ObservableObject {
     }
 
     private func beginBridgeReadinessPollingIfNeeded() {
-        cancelBridgeReadinessPolling()
-        guard shouldPollForBridgeReadiness else { return }
+        guard shouldPollForBridgeReadiness, bridgeReadinessTask == nil else { return }
 
         let taskGeneration = bridgeReadinessTaskGeneration
         let expectedConnectionGeneration = connectionGeneration
@@ -2217,7 +2261,7 @@ final class AppModel: ObservableObject {
 
             for _ in 0..<60 {
                 do {
-                    try await Task.sleep(nanoseconds: 500_000_000)
+                    try await Task.sleep(nanoseconds: self.localConnectionRecovery.isChecking ? 1_000_000_000 : 500_000_000)
                 } catch {
                     return
                 }
@@ -2252,7 +2296,7 @@ final class AppModel: ObservableObject {
                 if !wasBridgeConnected, self.bridgeConnected {
                     self.logger.info("bridge became ready; refreshing startup content immediately")
                     await self.refreshBridgeContent()
-                    return
+                    if !self.shouldPollForBridgeReadiness { return }
                 }
                 guard self.shouldPollForBridgeReadiness else { return }
             }
@@ -2299,7 +2343,7 @@ final class AppModel: ObservableObject {
                 ticks += 1
                 let becameBridgeConnected = !wasBridgeConnected && self.bridgeConnected
                 if becameBridgeConnected {
-                    self.cancelBridgeReadinessPolling()
+                    if !self.isBridgeConnectionChecking { self.cancelBridgeReadinessPolling() }
                     await self.refreshBridgeContent()
                 } else if ticks.isMultiple(of: 3) {
                     await self.refreshDashboard()

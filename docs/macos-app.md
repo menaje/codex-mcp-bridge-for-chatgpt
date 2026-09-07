@@ -118,6 +118,14 @@ and the Tunnel's control-plane readiness probe are current. Status from another
 launcher PID, an older runtime build, an expired heartbeat, or a future-dated
 record is treated as unavailable.
 
+Routine companion status probes allow two seconds for a response. A failed
+observation while the runtime remains running is presented as checking for at
+most eight seconds, with one-second retries and retained Dashboard/Settings
+content. A confirmed runtime stop or exit bypasses that grace period. These
+presentation rules do not reuse stale admission or shutdown evidence. Helper
+and Tunnel diagnostics record failure/recovery transitions with PID and duration;
+Tunnel diagnostics retain only non-secret probe status fields.
+
 ## First run and connection repair
 
 The helper first inspects the existing runtime configuration. A valid file is
