@@ -15,7 +15,7 @@ async function fixture() {
     await onProgress("verifying"); const command = path.join(target, "codex"); await writeFile(command, `version=${version}`, { mode: 0o700 }); return command;
   };
   const options: RuntimeManagerOptions = { root, environment: { PATH: bin }, appPaths: [], probe, installer,
-    defaultVersion: "0.153.3", supportedVersions: ["0.153.3", "0.153.4"], latestVersion: async () => "0.153.4" };
+    defaultVersion: "0.153.3", latestVersion: async () => "0.153.4" };
   const manager = new CodexRuntimeManager(options);
   const external = async (name = "codex", version = "0.153.3") => {
     const command = path.join(bin, name); await writeFile(command, `version=${version}`, { mode: 0o700 }); return command;
@@ -115,6 +115,27 @@ describe("Codex installation ownership and selection", () => {
     expect(snapshot.actions.update).toBe(false); expect(snapshot.actions.remove).toBe(false); expect(snapshot.actions.reinstall).toBe(false);
     await expect(f.manager.remove()).rejects.toThrow("CODEX_NOT_BRIDGE_OWNED");
     expect(await readFile(original, "utf8")).toBe("version=0.153.3");
+  });
+  it.each(["app", "terminal"] as const)("refreshes a replaced %s binary without changing the saved choice or a live lease", async source => {
+    const f = await fixture();
+    const command = await f.external();
+    const manager = new CodexRuntimeManager({ ...f.options, appPaths: source === "app" ? [command] : [] });
+    const before = (await manager.snapshot()).selection!;
+    expect(before.source).toBe(source);
+    const lease = await manager.acquire();
+    try {
+      await writeFile(`${command}.next`, "version=99.0.0", { mode: 0o700 });
+      await rename(`${command}.next`, command);
+      const after = await manager.snapshot();
+      expect(after.selection).toMatchObject({ id: before.id, source, command, version: "99.0.0", available: true });
+      expect(after.installedVersion).toBe("99.0.0");
+      expect(after.runningVersions).toEqual(["0.153.3"]);
+      expect(lease.selection.version).toBe("0.153.3");
+      expect((await manager.resolve()).version).toBe("99.0.0");
+      expect(after.actions.update).toBe(false);
+      expect(after.actions.remove).toBe(false);
+    } finally { await lease.release(); }
+    expect((await manager.snapshot()).runningVersions).toEqual([]);
   });
   it("fails closed on damaged state instead of choosing an external installation", async () => {
     const f = await fixture(); await f.external(); await mkdir(f.root); await writeFile(path.join(f.root, "cli-state.json"), "{}");
@@ -227,12 +248,12 @@ describe("Bridge-owned version lifecycle", () => {
     const repaired = await f.manager.retry();
     expect(repaired.selection?.available).toBe(true); expect(repaired.actions.retry).toBe(false);
   });
-  it("keeps supported-version validation separate from discovering a newer release", async () => {
+  it("allows an unknown newer stable release while preserving explicit user update control", async () => {
     const f = await fixture(); await f.manager.install();
     const manager = new CodexRuntimeManager({ ...f.options, latestVersion: async () => "99.0.0" });
     const snapshot = await manager.checkUpdates();
-    expect(snapshot.latestVersion).toBe("99.0.0"); expect(snapshot.actions.update).toBe(false);
-    await expect(manager.install("update")).rejects.toThrow("CODEX_ACTION_UNAVAILABLE");
+    expect(snapshot.latestVersion).toBe("99.0.0"); expect(snapshot.actions.update).toBe(true);
+    expect((await manager.install("update")).installedVersion).toBe("99.0.0");
   });
   it("queues a user selection while running and never changes the executable used by the live process", async () => {
     const f = await fixture(); await f.external(); const selected = await f.manager.resolve(); const release = await f.manager.lease(selected);
@@ -247,8 +268,8 @@ describe("Bridge-owned version lifecycle", () => {
 describe("latest stable installation admission", () => {
   it("resolves the initial latest version and validates it before activation", async () => {
     const f = await fixture(), verified: string[] = [];
-    const manager = new CodexRuntimeManager({ ...f.options, defaultVersion: undefined, allowLatest: true,
-      supportedVersions: ["0.153.3"], validationId: "test-contract", validateInstall: async (_command, version) => { verified.push(version); } });
+    const manager = new CodexRuntimeManager({ ...f.options, defaultVersion: undefined,
+      validationId: "test-contract", validateInstall: async (_command, version) => { verified.push(version); } });
     const result = await manager.install();
     expect(verified).toEqual(["0.153.4"]); expect(result.selection).toMatchObject({ version: "0.153.4", compatible: true });
     expect((await new CodexRuntimeManager({ ...f.options, validationId: "test-contract" }).snapshot()).selection?.available).toBe(true);
@@ -264,7 +285,7 @@ describe("latest stable installation admission", () => {
   it("preserves the selected installation on failed verification and does not activate an unverified latest version", async () => {
     const f = await fixture(); await f.manager.install(); await f.manager.checkUpdates();
     const selected = await f.manager.resolve();
-    const manager = new CodexRuntimeManager({ ...f.options, allowLatest: true, validateInstall: async () => { throw new Error("incompatible"); } });
+    const manager = new CodexRuntimeManager({ ...f.options,  validateInstall: async () => { throw new Error("incompatible"); } });
     await expect(manager.install("update")).rejects.toThrow("CODEX_INSTALL_FAILED");
     expect((await manager.snapshot()).selection?.command).toBe(selected.command);
     expect((await manager.snapshot()).stagedVersion).toBeNull();

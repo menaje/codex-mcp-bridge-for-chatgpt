@@ -20,12 +20,7 @@ import type {
 
 const INTERNAL_BACKEND_ARGUMENT = "_bridgeBackendKind";
 
-/**
- * Keeps both Codex protocols available during migration. New threads use the
- * configured default, while every continuation is pinned to the backend that
- * created its thread. The routing hint is stripped before the request reaches
- * Codex.
- */
+/** Routes App Server execution while preserving retired backend identities in history. */
 export class CodexBackendRouter implements CodexUpstream {
   accountRevision?: () => string;
   private readonly threadBackends = new Map<string, CodexBackendKind>();
@@ -34,15 +29,14 @@ export class CodexBackendRouter implements CodexUpstream {
 
   constructor(
     private readonly defaultBackend: CodexBackendKind,
-    mcpOrRegistry: CodexUpstream | ReadonlyMap<CodexBackendKind, CodexUpstream>,
-    appBackend?: CodexUpstream,
-    sdkBackend?: CodexUpstream
+    appOrRegistry: CodexUpstream | ReadonlyMap<CodexBackendKind, CodexUpstream>
   ) {
-    this.backends = "callTool" in mcpOrRegistry
-      ? new Map<CodexBackendKind, CodexUpstream>([["mcp-server", mcpOrRegistry],
-          ...(appBackend ? [["app-server", appBackend] as const] : []),
-          ...(sdkBackend ? [["codex-sdk", sdkBackend] as const] : [])])
-      : new Map(mcpOrRegistry);
+    this.backends = "callTool" in appOrRegistry
+      ? new Map([["app-server", appOrRegistry]])
+      : new Map(appOrRegistry);
+    if (defaultBackend !== "app-server" || [...this.backends.keys()].some(kind => kind !== "app-server")) {
+      throw new Error("CODEX_BACKEND_RETIRED: Only Codex App Server can execute new work.");
+    }
     if (!this.backends.has(defaultBackend)) throw new Error(`Codex backend ${defaultBackend} is not installed or enabled.`);
   }
 
@@ -60,7 +54,7 @@ export class CodexBackendRouter implements CodexUpstream {
   }
 
   capabilities(backendKind = this.defaultBackend): BackendCapabilities {
-    return this.backend(backendKind).capabilities?.(backendKind) || defaultCapabilities(backendKind);
+    return backendKind === "app-server" ? this.backend(backendKind).capabilities?.(backendKind) || defaultCapabilities(backendKind) : defaultCapabilities(backendKind);
   }
 
   async listModels(backendKind = this.defaultBackend): Promise<unknown> {
@@ -72,13 +66,13 @@ export class CodexBackendRouter implements CodexUpstream {
   }
 
   async readAccountSnapshot() {
-    return this.backend(this.defaultBackend === "mcp-server" ? "app-server" : this.defaultBackend).readAccountSnapshot?.() ?? null;
+    return this.backend(this.defaultBackend).readAccountSnapshot?.() ?? null;
   }
 
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
     // Account usage is exposed only by App Server and is independent of the
     // protocol selected for task execution.
-    const backend = this.backend(this.defaultBackend === "mcp-server" ? "app-server" : this.defaultBackend);
+    const backend = this.backend(this.defaultBackend);
     return backend.readAccountRateLimits?.() ?? null;
   }
 
@@ -91,7 +85,6 @@ export class CodexBackendRouter implements CodexUpstream {
       "codex",
       {
         prompt: input.prompt,
-        ...(input.backendKind === "codex-sdk" && input.contextId ? { _bridgeCodexContext: input.contextId } : {}),
         cwd: input.cwd,
         sandbox: input.sandbox,
         "approval-policy": input.approvalPolicy,
@@ -153,6 +146,7 @@ export class CodexBackendRouter implements CodexUpstream {
   async archiveThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
     const kind = backendKind || this.threadBackends.get(threadId);
     if (!kind) throw new Error("The Agent thread backend is unknown.");
+    if (kind !== "app-server") return; // Local archival preserves retired history without launching it.
     const backend = this.backend(kind);
     if (!backend.archiveThread) return;
     await backend.archiveThread(threadId, kind);
@@ -161,6 +155,7 @@ export class CodexBackendRouter implements CodexUpstream {
   async restoreThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
     const kind = backendKind || this.threadBackends.get(threadId);
     if (!kind) throw new Error("The Agent thread backend is unknown.");
+    if (kind !== "app-server") return; // Local archival preserves retired history without launching it.
     const backend = this.backend(kind);
     if (!backend.restoreThread) return;
     await backend.restoreThread(threadId, kind);
@@ -209,6 +204,7 @@ export class CodexBackendRouter implements CodexUpstream {
   canResumeThread(threadId: string, backendKind?: CodexBackendKind): boolean | undefined {
     const kind = backendKind || this.threadBackends.get(threadId);
     if (!kind) return undefined;
+    if (kind !== "app-server") return false;
     return this.backend(kind).canResumeThread?.(threadId, kind);
   }
 
@@ -220,6 +216,7 @@ export class CodexBackendRouter implements CodexUpstream {
     if (!kind) {
       return { state: "unknown", reason: "transient", threadId, retryable: true };
     }
+    if (kind !== "app-server") return { state: "orphaned", reason: "missing", threadId, retryable: false };
     const backend = this.backend(kind);
     if (backend.probeThread) return backend.probeThread(threadId, kind);
     const resumable = backend.canResumeThread?.(threadId, kind);
@@ -310,6 +307,7 @@ export class CodexBackendRouter implements CodexUpstream {
   }
 
   private backend(kind: CodexBackendKind): CodexUpstream {
+    if (kind !== "app-server") throw new Error("CODEX_BACKEND_RETIRED: This execution path was removed. Start a fresh App Server context with an explicit handoff summary; existing history is preserved.");
     const backend = this.backends.get(kind);
     if (!backend) throw new Error(`Codex backend ${kind} is not installed or enabled. The thread was not moved to another backend.`);
     return backend;
@@ -346,20 +344,13 @@ function selectionArguments(
 ): Record<string, unknown> {
   return {
     model: selection.model,
-    config: {
-      model_reasoning_effort: selection.reasoningEffort,
-      ...(backendKind === "mcp-server" && selection.serviceTier
-        ? { service_tier: selection.serviceTier }
-        : {})
-    },
-    ...(backendKind !== "mcp-server" && selection.serviceTier
-      ? { serviceTier: selection.serviceTier }
-      : {})
+    config: { model_reasoning_effort: selection.reasoningEffort },
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
   };
 }
 
 function defaultCapabilities(kind: CodexBackendKind): BackendCapabilities {
-  return kind !== "mcp-server"
+  return kind === "app-server"
     ? {
         selectionScope: "turn",
         supportsModelOverrideOnContinue: true,

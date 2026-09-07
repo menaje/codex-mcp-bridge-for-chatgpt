@@ -119,7 +119,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   schema contains only `requestId`, `jobId`, `expectedJobVersion`, and `prompt`;
   conversation scope and the Job's Activity, Agent, current thread, and active
   turn are derived and revalidated by the server immediately before dispatch.
-  It rejects MCP Server Jobs, stale versions, inactive or terminating Jobs,
+  It rejects retired-backend Jobs, stale versions, inactive or terminating Jobs,
   cross-scope roots, and missing positive active-turn evidence. It never queues
   input for an idle or terminal Agent, addresses an internal Codex subagent,
   resolves an interaction, records an approval, changes execution or Activity
@@ -541,10 +541,7 @@ identity.
   Server interface as experimental, so it is not represented as a production
   stability guarantee.
 - App Server model/effort and independent Priority changes are sent on the next
-  `turn/start` of the same thread. MCP Server continuation cannot override its
-  admission-time selection: model/effort changes return
-  `THREAD_OVERRIDE_UNSUPPORTED`, while a changed Priority preference applies to
-  newly started threads and the existing thread retains its pinned tier.
+  `turn/start` of the same thread. Retired execution paths cannot resume; an explicit summary handoff creates a fresh App Server context.
 - Each retained Job exposes a selection-only execution audit that separates the
   requested, policy-effective, and evidence-backed actual model/effort. A
   `model/rerouted` event supplies actual-model and reason evidence; when App

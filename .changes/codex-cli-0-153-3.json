@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "patch",
-  "summary": "Codex CLI 호환성 기준을 0.153.3으로 갱신해 설정에서 GPT-6 Astra를 포함한 최신 모델 카탈로그를 표시합니다.",
+  "summary": "Update the reproducible App Server protocol test baseline to Codex CLI 0.153.3.",
   "breaking": false,
   "migration": null
 }

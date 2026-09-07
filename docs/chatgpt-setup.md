@@ -1,11 +1,6 @@
 # Connect Codex MCP Bridge for ChatGPT
 
-> [!WARNING]
-> The stable default backend is `mcp-server`. App Server is experimental and is
-> not officially supported for production workloads. Enable it only for personal
-> or development use with monitoring and rollback ownership. Roll back by restoring
-> `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and restarting the bridge; existing
-> App Server Agents remain pinned to their original backend.
+The bridge uses the selected Codex CLI's App Server for execution. ChatGPT connects to the bridge through MCP.
 
 ## 1. Prepare Codex and the bridge
 
@@ -13,13 +8,10 @@ Confirm that Codex is installed and authenticated:
 
 ```bash
 codex --version
-codex mcp-server --help
 codex app-server --help
 ```
 
-The App Server path fails closed unless `codex --version` matches the exact
-`toolchain.codexCli` value in `release-manifest.json` (currently `0.153.3`).
-The stable MCP backend does not perform this App Server admission check.
+App Server connections validate the required public protocol. CLI versions are recorded for diagnostics; there is no bridge-owned version allowlist. See [installation and compatibility policy](codex-runtimes.md).
 
 Install and verify the bridge:
 
@@ -408,7 +400,7 @@ Read the exact Job first and send only the four public fields:
 
 The bridge derives conversation scope and resolves Activity, Agent, current
 App Server thread, and active turn from the exact Job. It rejects stale
-versions, cross-scope or inconsistent roots, MCP Server Jobs, inactive turns,
+versions, cross-scope or inconsistent roots, retired-backend Jobs, inactive turns,
 and terminating/cancelled Jobs. A successful call appends input to the current
 turn without emitting a new turn. It cannot change the admitted model/effort,
 project, cwd, sandbox, Activity policy, or output schema, and cannot address an
@@ -573,7 +565,7 @@ In a new ChatGPT conversation:
     confirm the UI/result says summary-only continuity;
 20. trigger a context-window failure and confirm it remains a structured,
     replay-safe error with no silent model/effort downgrade;
-21. inspect `codex_status` for the experimental policy, exact CLI, catalog
+21. inspect `codex_status` for the selected CLI, catalog
     freshness, aggregate RSS/FD, startup/crash/config/MCP health, and orphaned
     count; verify no worker identifier, full path, raw reasoning, MCP payload,
     or collaboration prompt appears;
@@ -583,7 +575,7 @@ In a new ChatGPT conversation:
 23. retry that exact steering request and confirm one upstream `turn/steer`, then
     change the prompt under the same request UUID and confirm
     `STEERING_REQUEST_CONFLICT` with no second dispatch;
-24. exercise stale version, inactive/terminal turn, active MCP Server Job, and
+24. exercise stale version, inactive/terminal turn, retired-backend Job, and
     explicit cancellation races; confirm `STALE_JOB_VERSION`,
     `JOB_NOT_ACTIVE`, and `STEERING_UNSUPPORTED` remain distinct and no future
     turn is queued;

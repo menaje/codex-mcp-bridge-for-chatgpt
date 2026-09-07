@@ -27,7 +27,7 @@ The manifest controls:
 - public display name and description;
 - npm package name, retained executable name, and packaged file list;
 - Node and npm versions used by local package metadata and GitHub Actions;
-- the exact Codex CLI version admitted for the experimental App Server;
+- the reproducible Codex CLI baseline for protocol regression checks;
 - GitHub owner and repository name;
 - personal/local plugin identity, descriptions, developer, category,
   capabilities, starter prompts, and registered ChatGPT app connection;
@@ -110,18 +110,9 @@ another connection Refresh.
 
 ## App Server protocol compatibility
 
-`release-manifest.json`'s `toolchain.codexCli` is the single supported-version
-authority. Runtime App Server admission executes the configured Codex
-executable with `--version` before starting each new worker generation and
-fails closed on an unavailable, malformed, or different version. The MCP
-backend remains independent from this experimental admission gate.
+`release-manifest.json`'s `toolchain.codexCli` is the development test baseline. Runtime connections inspect the chosen executable and validate the public initialization response, without a CLI version allowlist or full-schema hash gate.
 
-`app-server-schema.lock.json` stores only the supported-version metadata, file
-counts, and aggregate SHA-256 fingerprints for the official experimental JSON
-Schema and TypeScript generators. JSON objects are recursively canonicalized
-because generated definition order is not stable; TypeScript line endings and
-trailing whitespace are normalized for cross-platform comparison. Full
-multi-megabyte generated trees are never committed.
+`app-server-schema.lock.json` records the baseline version, file counts and aggregate fingerprints for generated JSON Schema and TypeScript. `protocol/cli-contract.json` records normalized JSON fingerprints for development drift review only. These files do not approve or reject user installations.
 
 After installing the manifest-pinned CLI, verify the lock without network
 access:
@@ -144,25 +135,13 @@ manifest. The release workflow installs the exact manifest version
 and regenerates both schema formats before build/test, so ordinary unit tests
 remain offline and fixture-driven.
 
-### App Server canary and rollback gate
+### App Server execution verification and recovery
 
-Do not switch the default backend merely because schema and fixture tests pass.
-OpenAI documents App Server as experimental and unsupported for production
-workloads. An operator canary requires explicit risk acceptance, no active
-turns/approvals/input/background terminals at restart, the exact CLI/schema
-check above, a real restart continuation, and two real turns that use different
-allowed model/effort selections.
+App Server is the only execution path. Schema snapshots detect development drift; they do not approve end-user versions. Before a live release smoke check, finish active turns and resolve approvals, input and background processes before restarting.
 
-During the canary, inspect `codex_status` for catalog freshness, aggregate
-worker RSS/FD, startup/crash/config/MCP health, retryable probe failures, and
-orphaned-Agent count. Record both turns' requested/effective/actual selection
-audits, any reroute reason, the stable session/thread continuation after an App
-Server and bridge restart, and a summary-only cross-backend handoff. Exercise
-command, file, permission, and user-input resolution—including cancel,
-decline, session acceptance when advertised, automatic resolution, and expiry.
-Rollback by restoring `CODEX_MCP_BRIDGE_DEFAULT_BACKEND=mcp-server` and
-restarting. The setting applies only to new threads; existing App Server
-threads stay pinned and are neither converted nor deleted.
+Check catalog freshness, worker health, retryable failures and orphaned Agents. Verify restart continuation and two allowed model/effort selections, recording requested/effective/actual selection and any reroute. Exercise command, file, permission and user-input resolution, including cancel, decline, session acceptance, automatic resolution and expiry.
+
+If recovery is needed, restore the previous bridge release or an explicitly selected CLI installation. Preserve history and authentication. Do not reactivate a retired execution backend or replay requests as a recovery step. See [runtime policy](codex-runtimes.md).
 
 For the issue-40 steering gate, use a deliberately long-running root Job and
 record that one `codex_steer` call reaches the same active turn without another
@@ -177,12 +156,7 @@ the durable dispatch boundary must
 return `DELIVERY_UNCERTAIN` on replay without automatic resend. Attach the dated,
 sanitized evidence; do not mark the gate passed from fake-protocol tests alone.
 
-The live canary consumes authenticated model capacity and is therefore a
-manual release gate, not an ordinary fixture CI step. Attach the dated canary
-record and the accountable operator's explicit experimental-risk acceptance to
-the release or epic before changing the default backend. Schema compatibility,
-fixture recovery tests, or a maintainer's code review do not substitute for
-those two records.
+Live verification consumes authenticated model capacity and remains separate from ordinary fixture CI. Record its dated evidence and scope; schema and fixture results alone do not establish live feature parity.
 
 ### Native macOS app distribution gate
 

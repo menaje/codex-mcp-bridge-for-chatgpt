@@ -31,16 +31,12 @@ describe("CodexJobRegistry persistence", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["SDK_AUTH_REQUIRED", "authentication-failure"], ["Codex SDK request failed (TimeoutError).", "sdk-timeout"],
-    ["Codex SDK request failed (CancelledError).", "sdk-abort"], ["CODEX_WORKER_LOST: SDK worker exited", "worker-loss"]
-  ])("records SDK failure provenance for %s without inventing user cancellation", async (message, origin) => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "jobs.json");
+  it.each([["upstream unavailable", "upstream-failure"], ["CODEX_WORKER_LOST: Worker exited", "worker-loss"]])("records %s without inventing user cancellation", async (message, origin) => {
+    const root = temporaryRoot(), stateFile = path.join(root, "jobs.json");
     const registry = persistentRegistry(root, stateFile);
-    const job = registry.start({ ...jobInput(root), backendKind: "codex-sdk" }, async () => { throw new Error(message); });
+    const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async () => { throw new Error(message); });
     await job.promise;
-    expect(persistentRegistry(root, stateFile).get(job.jobId)).toMatchObject({ backendKind: "codex-sdk", terminalOrigin: origin });
+    expect(persistentRegistry(root, stateFile).get(job.jobId)).toMatchObject({ backendKind: "app-server", terminalOrigin: origin });
     expect(registry.listCancellationIntents({ jobId: job.jobId })).toHaveLength(0);
   });
   it("retains completed results across bridge registry restarts", async () => {
@@ -113,26 +109,27 @@ describe("CodexJobRegistry persistence", () => {
     });
   });
 
-  it("marks jobs that were running at restart as interrupted", async () => {
+  it.each(["mcp-server", "codex-sdk", "app-server"] as const)("marks %s jobs that were running at restart as interrupted without replay", async backendKind => {
     const root = temporaryRoot();
     const stateFile = path.join(root, "private", "jobs.json");
     const registry = persistentRegistry(root, stateFile);
-    const job = registry.start(
-      jobInput(root),
-      async () => new Promise<ToolResult>(() => undefined)
-    );
+    const execute = vi.fn(async () => new Promise<ToolResult>(() => undefined));
+    const job = registry.start({ ...jobInput(root), backendKind }, execute);
     await Promise.resolve();
 
     const restored = persistentRegistry(root, stateFile);
     const loaded = restored.get(job.jobId);
 
     expect(loaded).toMatchObject({
+      backendKind,
       status: "interrupted",
       terminalOrigin: "bridge-restart",
       trackingState: "orphaned",
       version: 2,
       error: "The bridge restarted before this Codex job reached a terminal state."
     });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(restored.listCancellationIntents({ jobId: job.jobId })).toEqual([]);
   });
 
   it("treats resolved MCP error results as failed jobs", async () => {

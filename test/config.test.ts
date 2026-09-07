@@ -41,7 +41,7 @@ describe("config policy", () => {
     expect(config).not.toHaveProperty("defaultSessionMode");
     expect(config).not.toHaveProperty("autoResumeTtlMs");
     expect(config).not.toHaveProperty("fastReturnMs");
-    expect(config.defaultBackend).toBe("mcp-server");
+    expect(config.defaultBackend).toBe("app-server");
     expect(config.upstreamPoolSize).toBe(4);
     expect(config.maxRetainedJobs).toBe(100);
     expect(config.maxJobResultBytes).toBe(1048576);
@@ -188,6 +188,12 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
       })
     ).toThrow(/absolute path/);
+  });
+
+  it.each(["mcp-server", "codex-sdk"])("migrates the retired %s setting to App Server with a notice", backend => {
+    const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_DEFAULT_BACKEND: backend });
+    expect(config.defaultBackend).toBe("app-server");
+    expect(config.startupWarnings).toEqual([expect.stringContaining("execution backend has been retired")]);
   });
 
   it("ignores the retired task-timeout environment value", () => {

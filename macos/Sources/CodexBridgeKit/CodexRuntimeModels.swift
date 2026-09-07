@@ -51,23 +51,9 @@ public struct CodexRuntimeActions: Codable, Sendable, Equatable {
 }
 
 public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
-    public struct Bundle: Codable, Sendable, Equatable {
-        public let python: String
-        public let sdk: String
-        public let codex: String
-        public let channel: String
-    }
-    public struct SessionStorage: Codable, Sendable, Equatable {
-        public let visibleInCodexApp: Bool
-        public let persistent: Bool
-    }
     public let billing: CodexAccountUsage.Billing.Costs?
     public let account: CodexAccountUsage?
-    public let sessionStorage: SessionStorage?
     public let knownVersions: [String]?
-    public let bundle: Bundle?
-    public let requestedAuthMode: String?
-    public let auth: CodexSdkAuthStatus?
     public struct ManagedVersion: Codable, Sendable, Equatable {
         public let version: String
         public let bytes: Int
@@ -76,7 +62,6 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
         public let recovery: Bool
     }
     public let managedVersions: [ManagedVersion]?
-    public let previousBackend: String?
     public let selection: CodexInstallation?
     public let candidates: [CodexInstallation]
     public let selectionRequired: Bool
@@ -124,24 +109,6 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.preferences = preferences
     }
 }
-
-public struct CodexSdkAuthRequest: Encodable, Sendable {
-    public let authMode: String
-    public let confirmApiBilling: Bool
-    public let apiKey: String?
-    public init(authMode: String, confirmApiBilling: Bool = false, apiKey: String? = nil) {
-        self.authMode = authMode
-        self.confirmApiBilling = confirmApiBilling
-        self.apiKey = apiKey
-    }
-}
-
-public struct CodexSdkAuthStatus: Codable, Sendable, Equatable {
-    public let requestedAuthMode: String
-    public let resolvedAuthMode: String?
-    public let authenticated: Bool
-}
-
 
 public struct CodexAccountUsage: Codable, Sendable, Equatable {
     public struct Window: Codable, Sendable, Equatable, Identifiable {

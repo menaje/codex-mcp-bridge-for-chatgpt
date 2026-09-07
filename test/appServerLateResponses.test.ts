@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SUPPORTED_CODEX_CLI_VERSION } from "../src/appServerCompatibility.js";
+import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import {
   AppServerLateResponseJournal,
   MAX_RETAINED_APP_SERVER_LATE_RESPONSES
@@ -51,7 +51,7 @@ describe("AppServerLateResponseJournal", () => {
         requestTimeoutMs: 30,
         onLateResponse: (response) => journal.observe(response)
       },
-      { versionProbe: async () => SUPPORTED_CODEX_CLI_VERSION }
+      { versionProbe: async () => CODEX_CLI_TEST_VERSION }
     );
 
     try {

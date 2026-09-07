@@ -167,7 +167,6 @@ import {
   CANCELLATION_REASON_MAX_LENGTH,
   JOB_TERMINAL_ORIGINS,
   cancellationTerminationCorrelation,
-  sdkFailureOrigin,
   type BeginCancellationOperationInput,
   type CancellationIntentRecord,
   type CancellationOperationRecord,
@@ -1042,7 +1041,7 @@ const settingsViewOutputSchema = z.strictObject({
       archived: z.boolean()
     })),
     maxConcurrentJobs: z.number().int().positive(),
-    defaultBackend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
+    defaultBackend: z.literal("app-server"),
     allowWorkspaceWrite: z.boolean(),
     allowDangerFullAccess: z.boolean(),
     operatorModelCeiling: z.array(modelChoiceZod()).nullable(),
@@ -3462,7 +3461,7 @@ export class CodexJobRegistry {
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
       executionMode: input.executionMode || "background",
-      backendKind: input.backendKind || "mcp-server",
+      backendKind: input.backendKind || "app-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
       requestHashVersion: input.requestHashVersion || CURRENT_TASK_REQUEST_HASH_VERSION,
@@ -3583,10 +3582,7 @@ export class CodexJobRegistry {
       undo = onComplete?.(result) || undefined;
       job.threadId = job.sessionDecision.threadId;
       job.status = "failed";
-      const failure = isRecord(result.structuredContent) && isRecord(result.structuredContent.error) ? result.structuredContent.error : {};
-      job.terminalOrigin = job.backendKind === "codex-sdk"
-        ? sdkFailureOrigin(toolResultErrorMessage(result), typeof failure.upstreamKind === "string" ? failure.upstreamKind : undefined)
-        : "upstream-failure";
+      job.terminalOrigin = "upstream-failure";
       job.cancellationIntentId = undefined;
       job.result = retained.result;
       job.resultBytes = retained.originalBytes;
@@ -3619,8 +3615,7 @@ export class CodexJobRegistry {
     const workerLost =
       error instanceof Error && error.message.startsWith("CODEX_WORKER_LOST:");
     job.status = workerLost ? "interrupted" : "failed";
-    job.terminalOrigin = workerLost ? "worker-loss" : job.backendKind === "codex-sdk"
-      ? sdkFailureOrigin(error instanceof Error ? error.message : "") : "upstream-failure";
+    job.terminalOrigin = workerLost ? "worker-loss" : "upstream-failure";
     if (workerLost) job.trackingState = "worker-lost";
     job.cancellationIntentId = undefined;
     job.result = undefined;
@@ -7769,7 +7764,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. Existing threads stay pinned to their creation backend. When context='fresh' crosses backends, provide handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. New work uses Codex App Server. Threads from retired execution paths require context='fresh' with handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -8787,6 +8782,9 @@ async function requireAgentSession(
     throw new Error(
       "AGENT_ORPHANED: The Agent current thread session is unavailable. Use contextMode='fresh' for an explicit replacement."
     );
+  }
+  if (session.backendKind !== "app-server") {
+    throw new Error("CODEX_BACKEND_RETIRED: This thread's execution path was removed. Start a fresh App Server context with an explicit handoffSummary; its original history and credentials are preserved.");
   }
   let probe: Awaited<ReturnType<NonNullable<CodexUpstream["probeThread"]>>> | undefined;
   try {
@@ -11205,9 +11203,7 @@ async function inspectBridgeBackgroundProcessImpact(
   for (const agent of listAllDashboardAgents(jobs)) {
     const thread = jobs.listAgentThreads(agent.agentId).find((entry) => entry.isCurrent);
     if (thread && backendSupports(thread.backendKind, "supportsBackgroundTerminals")) threads.set(`${thread.backendKind}\0${thread.threadId}`, thread);
-    for (const sdkThread of jobs.listAgentThreads(agent.agentId).filter(item => item.backendKind === "codex-sdk")) {
-      threads.set(`${sdkThread.backendKind}\0${sdkThread.threadId}`, sdkThread);
-    }
+
   }
   const candidates = [...threads.values()];
   if (candidates.length === 0) {
@@ -14518,7 +14514,7 @@ async function buildSettingsView(
     },
     warnings: [
       `Backend routing: ${config.defaultBackend} applies only to new or deliberately fresh Agent threads. ` +
-        "Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
+        "Existing Agent threads retain their original execution identity. Retired execution paths cannot resume. Choose context='fresh' with an explicit handoffSummary to create an App Server context; the prior transcript and backend state are not copied.",
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])
@@ -14956,9 +14952,6 @@ function applyModelSelection(
   payload.model = selection.model;
   payload.config = {
     model_reasoning_effort: selection.reasoningEffort,
-    ...(backendKind === "mcp-server" && selection.serviceTier
-      ? { service_tier: selection.serviceTier }
-      : {})
   };
   if (backendSupports(backendKind, "supportsTurnSelection") && selection.serviceTier) {
     payload.serviceTier = selection.serviceTier;

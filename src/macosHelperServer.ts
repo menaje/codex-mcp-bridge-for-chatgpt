@@ -43,8 +43,6 @@ import {
 } from "./companionServer.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { atomicRuntimeJson, CodexRuntimeManager, withRuntimeLock, type CliRuntimeSnapshot } from "./codexRuntime.js";
-import { configureSdkAuth, readSdkAuthPolicy, readSdkAuthStatus, sdkEnvironment,
-  sdkLoginCommand, sdkRoot, readInstalledSdkLock, type SdkAuthStatus } from "./sdkRuntime.js";
 import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
 import {
   discoverTunnelSetup,
@@ -106,7 +104,6 @@ const helperRequestSchema = z.strictObject({
     "runtime.restart",
     "runtime.configure",
     "codex.runtime",
-    "codex.sdk-auth",
     "runtime.repair",
     "runtime.logs"
   ]),
@@ -133,7 +130,7 @@ const stopParamsSchema = z.strictObject({
 });
 const restartParamsSchema = stopParamsSchema;
 const runtimeConfigureParamsSchema = z.strictObject({
-  defaultBackend: z.enum(["app-server", "mcp-server", "codex-sdk"]),
+  defaultBackend: z.literal("app-server"),
   maximumAccess: z.enum(["read-only", "workspace-write", "full-access"]),
   mode: z.enum(["drain", "force"]).default("drain"),
   timeoutMs: z.number().int().min(1_000).max(MAX_DRAIN_TIMEOUT_MS)
@@ -143,9 +140,9 @@ const logsParamsSchema = z.strictObject({
   limit: z.number().int().min(1).max(HELPER_LOG_LIMIT).default(100)
 });
 const codexRuntimeParamsSchema = z.strictObject({
-  kind: z.enum(["cli", "sdk"]).optional(),
+  kind: z.literal("cli").optional(),
   includeAccount: z.boolean().optional(),
-  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences", "restore-backend"]),
+  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences"]),
   selectionId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
   billing: z.object({ adminKey: z.string().max(32768), organizationId: z.string().max(164), projectId: z.string().max(165).nullable() }).optional(),
@@ -156,8 +153,6 @@ const codexRuntimeParamsSchema = z.strictObject({
   }).optional()
 });
 export type CodexRuntimeAction = z.infer<typeof codexRuntimeParamsSchema>;
-const sdkAuthParamsSchema = z.strictObject({ authMode: z.enum(["chatgpt", "api-key"]),
-  confirmApiBilling: z.boolean().optional(), apiKey: z.string().max(32768).optional() });
 const companionHelloSchema = z.object({
   protocol: z.object({
     name: z.string(),
@@ -233,7 +228,6 @@ export type CodexLoginStatus = {
 };
 
 export type MacOSHelperController = {
-  configureSdkAuth?(request: z.infer<typeof sdkAuthParamsSchema>): Promise<SdkAuthStatus>;
   codexRuntime?(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot>;
   snapshot(): Promise<MacOSHelperStatus>;
   health?(): Promise<MacOSHelperStatus>;
@@ -252,7 +246,7 @@ export type MacOSHelperController = {
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
-    defaultBackend?: "app-server" | "mcp-server" | "codex-sdk";
+    defaultBackend?: "app-server";
     maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
@@ -343,7 +337,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private codexService?: CodexService;
-  private sdkAuthentication?: { command: string; mode: string; at: number; status: SdkAuthStatus };
   private readonly bridgeRoot: string;
   private readonly envFile: string;
   private readonly bridgeSocketPath: string;
@@ -377,7 +370,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
   private cliManager?: CodexRuntimeManager;
-  private sdkManager?: CodexRuntimeManager;
   private cliInstallation?: Promise<unknown>;
   private cliUpdateCheck?: Promise<unknown>;
 
@@ -525,7 +517,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   applyConfiguration(values: {
     apiKey?: string;
     tunnelId?: string;
-    defaultBackend?: "app-server" | "mcp-server" | "codex-sdk";
+    defaultBackend?: "app-server";
     maximumAccess?: "read-only" | "workspace-write" | "full-access";
     mode: "drain" | "force";
     timeoutMs: number;
@@ -542,10 +534,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         await this.adoptExistingRuntime();
       }
       const prepared = prepareRuntimeEnvUpdate(this.envFile, values);
-      if (values.defaultBackend === "codex-sdk") {
-        const previous = (await this.configurationStatus()).operatorConfiguration.defaultBackend;
-        if (previous !== "codex-sdk") await atomicRuntimeJson(path.join(sdkRoot(commandEnvironment(this.envFile)), "previous-backend.json"), { backend: previous });
-      }
+
       const wasRunning = this.isManagedRuntimeRunning();
       if (!prepared.changed) {
         const status = wasRunning
@@ -701,28 +690,19 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
-    const manager = request.kind === "sdk" ? this.sdkManager ||= this.selectedCodexService().sdk : this.selectedCliManager();
+    const manager = this.selectedCliManager();
     this.watchManager(manager);
     switch (request.action) {
       case "status": {
         const base = await manager.snapshot();
-        const service = this.selectedCodexService(), kind = request.kind === "sdk" ? "codex-sdk" : "app-server";
+        const service = this.selectedCodexService(), kind = "app-server" as const;
         const snapshot = { ...base, billing: await service.billing.configuration(), account: base.selection?.available
           ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null };
         if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
             (!snapshot.checkedAt || Date.now() - Date.parse(snapshot.checkedAt) > 24 * 60 * 60_000)) {
           this.cliUpdateCheck = manager.checkUpdates().catch(() => undefined).finally(() => { this.cliUpdateCheck = undefined; });
         }
-        const bundle = request.kind === "sdk" && snapshot.selection ? await readInstalledSdkLock(snapshot.selection.command).catch(() => null) : null;
-        const sdkAuth = request.kind === "sdk" && snapshot.selection?.available
-          ? request.includeAccount !== false ? await this.selectedSdkAuth()
-            : this.sdkAuthentication?.command === snapshot.selection.command && this.sdkAuthentication.mode === service.cacheRevision() ? this.sdkAuthentication.status : undefined
-          : undefined;
-        return request.kind === "sdk" ? { ...snapshot, ...(bundle ? { bundle: { python: bundle.python, sdk: bundle.sdk, codex: bundle.codexRuntime, channel: bundle.channel } } : {}),
-          requestedAuthMode: (await readSdkAuthPolicy(commandEnvironment(this.envFile))).requestedAuthMode,
-          ...(sdkAuth ? { auth: sdkAuth } : {}),
-          sessionStorage: await this.selectedCodexService().sdkContext().then(context => ({ visibleInCodexApp: context.visibleInCodexApp, persistent: context.persistent })),
-          previousBackend: await this.previousSdkBackend() } : snapshot;
+        return snapshot;
       }
       case "configure-billing": {
         if (!request.billing) throw new Error("CODEX_BILLING_SETTINGS_REQUIRED");
@@ -754,25 +734,12 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       case "cleanup": return manager.cleanup();
       case "remove": return manager.remove();
       case "apply-pending": await manager.applyPending(); return manager.snapshot();
-      case "restore-backend": {
-        const previous = await this.previousSdkBackend();
-        if (!previous) throw new Error("CODEX_PREVIOUS_BACKEND_UNKNOWN: Choose the execution backend in server settings.");
-        const configuration = await this.configurationStatus();
-        await this.applyConfiguration({ defaultBackend: previous, maximumAccess: configuration.operatorConfiguration.maximumAccess,
-          mode: "drain", timeoutMs: DEFAULT_DRAIN_TIMEOUT_MS });
-        return manager.snapshot();
-      }
+
     }
   }
 
   async authStatus(): Promise<CodexLoginStatus> {
     const environment = commandEnvironment(this.envFile);
-    if ((await this.configurationStatus()).operatorConfiguration.defaultBackend === "codex-sdk") {
-      const selected = await (this.sdkManager ||= this.selectedCodexService().sdk).resolve().catch(() => null);
-      if (!selected) return { installed: false, authenticated: false, summary: "Install the Codex SDK environment in bridge settings." };
-      const status = await this.selectedSdkAuth();
-      return { installed: true, ...status, summary: status.authenticated ? "The selected SDK authentication is available." : "The selected SDK authentication requires local setup." };
-    }
     const selected = await this.selectedCliManager().resolve(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX).catch(() => null);
     if (!selected) return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
     const account = await this.selectedCodexService().readAccount("app-server");
@@ -781,7 +748,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       summary: account?.authenticated ? "Codex login is available." : "Codex login is required." };
   }
 
-  startLogin(kind?: "cli" | "sdk"): Promise<{ started: true }> {
+  startLogin(_kind?: "cli"): Promise<{ started: true }> {
     return this.exclusive(async () => {
       if (isChildRunning(this.loginProcess)) {
         this.appendLog("helper", "The existing Codex browser login is still in progress.");
@@ -789,18 +756,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
 
       const environment = commandEnvironment(this.envFile);
-      const useSdk = kind ? kind === "sdk" : (await this.configurationStatus()).operatorConfiguration.defaultBackend === "codex-sdk";
-      if (useSdk && (await readSdkAuthPolicy(environment)).requestedAuthMode !== "chatgpt") throw new Error("SDK_API_LOGIN_LOCAL_ONLY: Set the API key in local SDK settings.");
-      const manager = useSdk ? this.sdkManager ||= this.selectedCodexService().sdk : this.selectedCliManager();
-      const { selection: selected, release } = await manager.acquire(useSdk ? undefined : environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
-      let command: string;
-      try { command = useSdk ? await sdkLoginCommand(selected.command, environment) : selected.command; }
-      catch (error) { await release(); throw error; }
-      const sdkContext = useSdk ? await this.selectedCodexService().sdkContext() : null;
-      if (sdkContext && !sdkContext.visibleInCodexApp) assertRuntimeEnvOutsideProjectRoots(path.join(sdkContext.home, "auth.json"), await this.registeredProjectRoots());
+      const { selection: selected, release } = await this.selectedCliManager().acquire(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
+      const command = selected.command;
       const child = spawn(command, ["login"], {
         detached: true,
-        env: sdkContext ? { ...sdkEnvironment(environment), CODEX_HOME: sdkContext.home } : environment,
+        env: environment,
         stdio: "ignore"
       });
       this.loginProcess = child;
@@ -829,42 +789,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     });
   }
 
-  private async selectedSdkAuth(): Promise<SdkAuthStatus> {
-    const environment = commandEnvironment(this.envFile);
-    return withRuntimeLock(sdkRoot(environment), "auth", async () => {
-      const manager = this.sdkManager ||= this.selectedCodexService().sdk;
-      const { selection, release } = await manager.acquire();
-      try {
-        const context = await this.selectedCodexService().sdkContext();
-        const mode = this.selectedCodexService().cacheRevision();
-        const cached = this.sdkAuthentication;
-        if (cached?.command === selection.command && cached.mode === mode && Date.now() - cached.at < 30_000) return cached.status;
-        const status = await readSdkAuthStatus(selection.command, environment, context.home, context.authMode);
-        this.sdkAuthentication = { command: selection.command, mode, at: Date.now(), status };
-        return status;
-      } finally { await release(); }
-    });
-  }
-
   start(): Promise<MacOSHelperStatus> {
     return this.exclusive(() => this.startUnlocked(true));
-  }
-
-  configureSdkAuth(request: z.infer<typeof sdkAuthParamsSchema>): Promise<SdkAuthStatus> {
-    return this.exclusive(async () => {
-      const environment = commandEnvironment(this.envFile);
-      assertRuntimeEnvOutsideProjectRoots(path.join(sdkRoot(environment), "profiles", "api-key", "auth.json"), await this.registeredProjectRoots());
-      await configureSdkAuth(request, environment);
-      this.sdkAuthentication = undefined;
-      return this.selectedSdkAuth();
-    });
-  }
-
-  private async previousSdkBackend(): Promise<"app-server" | "mcp-server" | null> {
-    try {
-      const value = JSON.parse(await readFile(path.join(sdkRoot(commandEnvironment(this.envFile)), "previous-backend.json"), "utf8"));
-      return value.backend === "app-server" || value.backend === "mcp-server" ? value.backend : null;
-    } catch { return null; }
   }
 
   prepareShutdown(options: {
@@ -881,8 +807,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   restart(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
       const cli = await this.selectedCliManager().snapshot();
-      const sdk = await (this.sdkManager ||= this.selectedCodexService().sdk).snapshot();
-      const protectMemory = !!(cli.operation?.phase === "pending" || cli.pendingSelection || sdk.operation?.phase === "pending");
+      const protectMemory = !!(cli.operation?.phase === "pending" || cli.pendingSelection);
       if (protectMemory) {
         await this.assertRuntimeChangeSafe();
       }
@@ -989,7 +914,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (await this.adoptExistingRuntime()) return this.snapshot();
 
     await this.selectedCliManager().applyPending();
-    await (this.sdkManager ||= this.selectedCodexService().sdk).applyPending();
 
     await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
@@ -1592,10 +1516,7 @@ async function dispatchHelperLine(
         if (!controller.codexRuntime) throw new Error("Codex runtime management is unavailable in this helper.");
         result = await controller.codexRuntime(codexRuntimeParamsSchema.parse(request.params || {}));
         break;
-      case "codex.sdk-auth":
-        if (!controller.configureSdkAuth) throw new Error("SDK authentication management is unavailable in this helper.");
-        result = await controller.configureSdkAuth(sdkAuthParamsSchema.parse(request.params || {}));
-        break;
+
       case "runtime.repair":
         result = await controller.repair(restartParamsSchema.parse(request.params || {}));
         break;
@@ -1607,7 +1528,6 @@ async function dispatchHelperLine(
     }
     if (["runtime.start", "runtime.stop", "runtime.restart", "runtime.repair", "helper.prepare-shutdown"].includes(request.method)) changes?.notify("runtime");
     if (["setup.apply", "setup.import", "setup.repair-permissions", "runtime.configure"].includes(request.method)) changes?.notify("configuration");
-    if (request.method === "codex.sdk-auth") changes?.notify("auth");
     if (request.method === "codex.runtime" && (request.params as { action?: string })?.action !== "status") changes?.notify("installation");
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {

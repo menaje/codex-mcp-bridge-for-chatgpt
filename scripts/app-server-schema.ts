@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  SUPPORTED_CODEX_CLI_VERSION,
-  verifySupportedCodexCli
+  CODEX_CLI_TEST_VERSION,
+  verifyCodexCli
 } from "../src/appServerCompatibility.js";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,7 +58,7 @@ export function fingerprintGeneratedDirectory(
 
 export function validateAppServerSchemaLock(
   value: unknown,
-  expectedCodexCliVersion = SUPPORTED_CODEX_CLI_VERSION
+  expectedCodexCliVersion = CODEX_CLI_TEST_VERSION
 ): AppServerSchemaLock {
   const lock = requiredRecord(value, "App Server schema lock");
   assertExactKeys(
@@ -70,7 +70,7 @@ export function validateAppServerSchemaLock(
   if (lock.supportedCodexCliVersion !== expectedCodexCliVersion) {
     throw new Error(
       `App Server schema lock targets Codex CLI ${String(lock.supportedCodexCliVersion)} but ` +
-      `release-manifest.json supports ${expectedCodexCliVersion}. Run npm run app-server:compat:update with the supported CLI.`
+      `release-manifest.json tests ${expectedCodexCliVersion}. Run npm run app-server:compat:update with the test baseline CLI.`
     );
   }
   if (lock.includeExperimental !== true) {
@@ -87,7 +87,7 @@ export function validateAppServerSchemaLock(
 
 export function loadAppServerSchemaLock(
   repoRoot = DEFAULT_REPO_ROOT,
-  expectedCodexCliVersion = SUPPORTED_CODEX_CLI_VERSION
+  expectedCodexCliVersion = CODEX_CLI_TEST_VERSION
 ): AppServerSchemaLock {
   const file = path.join(repoRoot, LOCK_FILENAME);
   let parsed: unknown;
@@ -121,12 +121,12 @@ export async function generateAppServerSchemaLock(
   inspectJson?: (directory: string) => void
 ): Promise<AppServerSchemaLock> {
   const supportedVersion = readManifestCodexCliVersion(repoRoot);
-  if (supportedVersion !== SUPPORTED_CODEX_CLI_VERSION) {
+  if (supportedVersion !== CODEX_CLI_TEST_VERSION) {
     throw new Error("Runtime and release-manifest Codex CLI compatibility contracts disagree.");
   }
-  const observedVersion = await verifySupportedCodexCli(codexCommand);
-  if (observedVersion !== SUPPORTED_CODEX_CLI_VERSION) {
-    throw new Error(`Schema generation requires the CI pin ${SUPPORTED_CODEX_CLI_VERSION}; user-supported ${observedVersion} is not the reproducibility baseline.`);
+  const observedVersion = await verifyCodexCli(codexCommand);
+  if (observedVersion !== CODEX_CLI_TEST_VERSION) {
+    throw new Error(`Schema generation requires the CI pin ${CODEX_CLI_TEST_VERSION}; user-supported ${observedVersion} is not the reproducibility baseline.`);
   }
 
   const temporary = mkdtempSync(path.join(tmpdir(), "codex-app-server-schema-"));
@@ -161,7 +161,7 @@ export async function generateAppServerSchemaLock(
 function managedCliContract(directory: string) {
   const files = Object.fromEntries(walkFiles(directory).sort().map(file => [path.relative(directory, file).split(path.sep).join("/"),
     createHash("sha256").update(JSON.stringify(normalizeProtocolSchema(JSON.parse(readFileSync(file, "utf8"))))).digest("hex")]));
-  return { schemaVersion: 1, baseline: SUPPORTED_CODEX_CLI_VERSION, files };
+  return { schemaVersion: 1, baseline: CODEX_CLI_TEST_VERSION, files };
 }
 
 function readManifestCodexCliVersion(repoRoot: string): string {
@@ -185,9 +185,9 @@ export async function checkAppServerSchema(
 ): Promise<AppServerSchemaLock> {
   const expected = loadAppServerSchemaLock(repoRoot);
   const actual = await generateAppServerSchemaLock(codexCommand, repoRoot, directory => {
-    const expectedContract = JSON.parse(readFileSync(path.join(repoRoot, "sdk", "cli-contract.json"), "utf8"));
+    const expectedContract = JSON.parse(readFileSync(path.join(repoRoot, "protocol", "cli-contract.json"), "utf8"));
     if (stableJson(expectedContract) !== stableJson(managedCliContract(directory))) {
-      throw new Error("Managed installation contract drifted. Review the protocol and run app-server:compat:update.");
+      throw new Error("Development protocol snapshot drifted. Review the protocol and run app-server:compat:update.");
     }
   });
   assertAppServerSchemaMatches(expected, actual);
@@ -204,7 +204,7 @@ export async function updateAppServerSchemaLock(
   const temporary = `${file}.tmp-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
   renameSync(temporary, file);
-  const contractFile = path.join(repoRoot, "sdk", "cli-contract.json");
+  const contractFile = path.join(repoRoot, "protocol", "cli-contract.json");
   mkdirSync(path.dirname(contractFile), { recursive: true });
   writeFileSync(`${contractFile}.tmp`, JSON.stringify(contract, null, 2) + "\n", "utf8");
   renameSync(`${contractFile}.tmp`, contractFile);
@@ -234,7 +234,7 @@ function generateSchema(
   } catch {
     throw new Error(
       `Configured Codex executable ${JSON.stringify(codexCommand)} could not run app-server ${generator} ` +
-      `for supported CLI ${SUPPORTED_CODEX_CLI_VERSION}.`
+      `for supported CLI ${CODEX_CLI_TEST_VERSION}.`
     );
   }
 }

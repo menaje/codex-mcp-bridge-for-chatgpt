@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,11 +11,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  SUPPORTED_CODEX_CLI_VERSION,
+  CODEX_CLI_TEST_VERSION,
   parseCodexCliVersion,
   probeCodexCliVersion,
-  verifySupportedCodexCli
+  verifyCodexCli
 } from "../src/appServerCompatibility.js";
+import { verifyCliConnection } from "../src/runtimeCompatibility.js";
 import {
   assertAppServerSchemaMatches,
   fingerprintGeneratedDirectory,
@@ -27,30 +29,54 @@ const FAKE_CODEX = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs",
 
 describe("App Server compatibility contract", () => {
   it("parses the official CLI version shape and uses the manifest pin", async () => {
-    expect(SUPPORTED_CODEX_CLI_VERSION).toBe("0.153.3");
+    expect(CODEX_CLI_TEST_VERSION).toBe("0.153.3");
     expect(parseCodexCliVersion("codex-cli 0.153.3\n")).toBe("0.153.3");
-    await expect(probeCodexCliVersion(FAKE_CODEX, 2_000)).resolves.toBe(SUPPORTED_CODEX_CLI_VERSION);
+    await expect(probeCodexCliVersion(FAKE_CODEX, 2_000)).resolves.toBe(CODEX_CLI_TEST_VERSION);
   });
 
-  it("reports configured, expected, and observed versions on mismatch", async () => {
-    await expect(
-      verifySupportedCodexCli("/configured/codex", 500, async () => "0.153.2")
-    ).rejects.toThrow(
-      'Configured Codex executable "/configured/codex" reported version 0.153.2; this bridge supports Codex CLI 0.153.3, 0.153.1'
-    );
+  it.each(["0.144.0", "0.153.4", "99.0.0", "100.0.0-alpha.1"])("accepts the diagnostic version %s without a bridge allowlist", async version => {
+    await expect(verifyCodexCli("selected-codex", 500, async () => version)).resolves.toBe(version);
   });
 
-  it("accepts a validated app-bundled version independently of the unchanged CI pin", async () => {
-    expect(SUPPORTED_CODEX_CLI_VERSION).toBe("0.153.3");
-    await expect(verifySupportedCodexCli("app-codex", 500, async () => "0.153.1")).resolves.toBe("0.153.1");
-    await expect(verifySupportedCodexCli("newer-codex", 500, async () => "0.154.0")).rejects.toThrow("Your selection was preserved");
+  it.each([true, false])("checks an isolated public connection and cleans up (valid=%s)", async valid => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-connection-test-"));
+    const executable = path.join(root, "codex.mjs");
+    const log = path.join(root, "request.json");
+    const result = valid
+      ? { userAgent: "future-codex", platformFamily: "unix", platformOs: "test", futureField: { enabled: true } }
+      : { userAgent: "future-codex", platformFamily: "unix" };
+    writeFileSync(executable, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+import readline from "node:readline";
+readline.createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  writeFileSync(process.env.CONNECTION_TEST_LOG, JSON.stringify({ message, home: process.env.CODEX_HOME, args: process.argv.slice(2) }));
+  process.stdout.write(JSON.stringify({ id: message.id, result: ${JSON.stringify(result)} }) + "\\n");
+});
+`, { mode: 0o700 });
+    try {
+      const connection = verifyCliConnection(executable, {
+        ...process.env, CODEX_HOME: root, CONNECTION_TEST_LOG: log
+      });
+      if (valid) await expect(connection).resolves.toBeUndefined();
+      else await expect(connection).rejects.toThrow(/CODEX_PROTOCOL_INCOMPATIBLE.*platformOs/);
+      const request = JSON.parse(readFileSync(log, "utf8"));
+      expect(request.args).toEqual(["app-server", "--listen", "stdio://"]);
+      expect(request.message.method).toBe("initialize");
+      expect(request.home).not.toBe(root);
+      expect(existsSync(request.home)).toBe(false);
+      expect(existsSync(root)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not copy command output or child-process details into admission errors", async () => {
     const secretDetail = "/private/operator/path: SECRET_STDERR";
     let failure: Error | undefined;
     try {
-      await verifySupportedCodexCli("configured-codex", 500, async () => {
+      await verifyCodexCli("configured-codex", 500, async () => {
         throw new Error(secretDetail);
       });
     } catch (error) {
@@ -88,7 +114,7 @@ describe("App Server compatibility contract", () => {
     const raw = JSON.parse(readFileSync(path.join(REPO_ROOT, "app-server-schema.lock.json"), "utf8"));
     const expected = validateAppServerSchemaLock(raw);
     expect(expected).toMatchObject({
-      supportedCodexCliVersion: SUPPORTED_CODEX_CLI_VERSION,
+      supportedCodexCliVersion: CODEX_CLI_TEST_VERSION,
       includeExperimental: true,
       jsonSchema: { fileCount: 416 },
       typescript: { fileCount: 827 }

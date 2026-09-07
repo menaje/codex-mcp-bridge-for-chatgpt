@@ -1,17 +1,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexService } from "../src/codexService.js";
-import { CodexSdkUpstream, SDK_CAPABILITIES } from "../src/sdkUpstream.js";
+import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { projectCodexAccount, estimateCodexCost } from "../src/codexAccount.js";
-import { projectSdkResolution } from "../src/sdkBundleResolution.js";
+import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "codex-service-test-")); roots.push(root);
   const environment = { HOME: root, PATH: "", CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
@@ -19,6 +20,64 @@ async function fixture() {
 }
 
 describe("Codex execution context", () => {
+  async function accountFixture() {
+    const f = await fixture();
+    const command = fileURLToPath(new URL("./fixtures/fake-codex-app-server-init-incompatible.mjs", import.meta.url));
+    f.service.environment.PATH = process.env.PATH || "";
+    const release = vi.fn(async () => {});
+    vi.spyOn(f.service.cli, "acquire").mockResolvedValue({
+      selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "99.0.0" },
+      release
+    });
+    return { ...f, release };
+  }
+
+  it("rejects an incompatible account connection before querying the account and releases its lease", async () => {
+    const f = await accountFixture();
+    await expect(f.service.readCliAccount()).rejects.toThrow(/CODEX_PROTOCOL_INCOMPATIBLE.*platformFamily, platformOs/);
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles failed initialization notification without querying the account or leaking its lease", async () => {
+    const f = await accountFixture();
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request")
+      .mockResolvedValueOnce({ userAgent: "fixture", platformFamily: "unix", platformOs: "test" })
+      .mockResolvedValue({ account: null });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockImplementation(() => {
+      const failure = Promise.reject(new Error("fixture notification transport failure"));
+      void failure.catch(() => undefined);
+      return failure;
+    });
+    await expect(f.service.readCliAccount()).rejects.toThrow("fixture notification transport failure");
+    expect(request.mock.calls.map(call => call[0])).toEqual(["initialize"]);
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases account ownership even when the connection cannot close cleanly", async () => {
+    const f = await accountFixture();
+    vi.spyOn(JsonRpcProcess.prototype, "request")
+      .mockResolvedValueOnce({ userAgent: "fixture", platformFamily: "unix", platformOs: "test" })
+      .mockResolvedValue({ account: null });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockResolvedValue();
+    vi.spyOn(JsonRpcProcess.prototype, "close").mockRejectedValue(new Error("fixture close failure"));
+    await expect(f.service.readCliAccount()).rejects.toThrow("fixture close failure");
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["mcp-server", "codex-sdk"] as const)("retires %s without rewriting historical credentials or storage", async kind => {
+    const f = await fixture();
+    const directory = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "sdk", "profiles", "api-key");
+    await mkdir(directory, { recursive: true });
+    const file = path.join(directory, "auth.json");
+    const original = JSON.stringify({ fixture: "preserved-credential" });
+    await writeFile(file, original);
+    await expect(f.service.sessionPolicy(kind, true, "old-thread")).rejects.toThrow("CODEX_BACKEND_RETIRED");
+    expect(await f.service.readAccount(kind)).toBeNull();
+    expect(await readFile(file, "utf8")).toBe(original);
+    expect(await f.service.sessionPolicy("app-server", false)).toEqual({ persistent: false, visibleInCodexApp: false });
+    expect(await f.service.sessionPolicy("app-server", true)).toEqual({ persistent: true, visibleInCodexApp: true });
+  });
+
   it("keeps account display stable across metadata refreshes but clears it when authentication or selection changes", async () => {
     const f = await fixture();
     await mkdir(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, { recursive: true });
@@ -38,48 +97,9 @@ describe("Codex execution context", () => {
     await writeFile(path.join(f.root, ".codex", "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "fixture-secret" }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
   });
-  it("separates persistence from app sharing, preserves private thread bindings after preference changes and restart", async () => {
-    const f = await fixture();
-    const privatePolicy = await f.service.sessionPolicy("codex-sdk", false);
-    const sharedPolicy = await f.service.sessionPolicy("codex-sdk", true);
-    expect(privatePolicy).toMatchObject({ persistent: true, visibleInCodexApp: false });
-    expect(sharedPolicy).toMatchObject({ persistent: true, visibleInCodexApp: true });
-    expect(privatePolicy.contextId).not.toBe(sharedPolicy.contextId);
-    f.service.bindThread("thread-private", f.service.context(privatePolicy.contextId!));
-    const reentered = new CodexService(f.environment);
-    expect(reentered.threadContext("thread-private").id).toBe(privatePolicy.contextId);
-    await expect(reentered.sessionPolicy("codex-sdk", true, "thread-private")).rejects.toThrow("SDK_FORK_STORAGE_CHANGE");
-    expect(() => reentered.threadContext("legacy-unbound")).toThrow("SDK_SESSION_CONTEXT_UNKNOWN");
-  });
-  it("never advertises app sharing for API profiles or an unconfirmed custom app home", async () => {
-    const f = await fixture();
-    await mkdir(path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "sdk"), { recursive: true });
-    await writeFile(path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "sdk", "auth-policy.json"), JSON.stringify({ schemaVersion: 1, requestedAuthMode: "api-key", apiBillingConfirmedAt: new Date().toISOString() }));
-    expect(await f.service.sessionPolicy("codex-sdk", true)).toMatchObject({ persistent: true, visibleInCodexApp: false });
-    expect((await f.service.sdkContext(true)).home).toContain("profiles/api-key");
-    const other = await fixture();
-    expect(await new CodexService({ ...other.environment, CODEX_HOME: path.join(other.root, "custom") }).sessionPolicy("codex-sdk", true)).toMatchObject({ visibleInCodexApp: false });
-  });
-  it("routes SDK continuations and forks to their original profile, including after adapter recreation", async () => {
-    const f = await fixture(), calls: string[] = [];
-    const first = await f.service.sdkContext(false), second = await f.service.sdkContext(true);
-    const create = () => new CodexSdkUpstream(1, {}, f.environment, f.service, context => new LazyCodexUpstream("codex-sdk", SDK_CAPABILITIES, async () => ({
-      listTools: async () => ({}), close: async () => {},
-      callTool: async (name, args, _progress, assigned) => {
-        expect(args).not.toHaveProperty("_bridgeCodexContext"); calls.push(context.id);
-        const threadId = name === "codex" ? `thread-${context.id}` : String(args.threadId);
-        assigned?.({ backendKind: "codex-sdk", workerId: `sdk-${context.id}-0`, workerGeneration: 1, threadId });
-        return { content: [], structuredContent: { threadId, backendKind: "codex-sdk" } };
-      }
-    })));
-    const sdk = create();
-    await sdk.callTool("codex", { _bridgeCodexContext: first.id });
-    await sdk.callTool("codex", { _bridgeCodexContext: second.id });
-    await sdk.close();
-    const resumed = create();
-    await resumed.callTool("codex-reply", { threadId: `thread-${first.id}` });
-    expect(calls).toEqual([first.id, second.id, first.id]); await resumed.close();
-  });
+
+
+
   it("invalidates account caches but does not block normal token refreshes; account changes require new admission", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const auth = path.join(home, "auth.json");
@@ -104,11 +124,11 @@ describe("Codex execution context", () => {
   it("allows authentication setup after an initial lazy admission failure without demanding a restart", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     let ready = false;
-    const upstream = new LazyCodexUpstream("codex-sdk", SDK_CAPABILITIES, async () => {
-      if (!ready) throw new Error("SDK_AUTH_REQUIRED");
+    const upstream = new LazyCodexUpstream("app-server", APP_SERVER_CAPABILITIES, async () => {
+      if (!ready) throw new Error("CODEX_AUTH_REQUIRED");
       return { listTools: async () => ({}), close: async () => {}, callTool: async () => ({ content: [] }) };
     }, undefined, f.service.admissionGuard());
-    await expect(upstream.callTool("codex", {})).rejects.toThrow("SDK_AUTH_REQUIRED");
+    await expect(upstream.callTool("codex", {})).rejects.toThrow("CODEX_AUTH_REQUIRED");
     await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "new-login" } }));
     ready = true;
     await expect(upstream.callTool("codex", {})).resolves.toEqual({ content: [] });
@@ -152,20 +172,5 @@ describe("account usage and billing projection", () => {
       { inputPerMillion: 2, cachedInputPerMillion: 1, outputPerMillion: 4, asOf: "2026-09-05" })).toEqual({ kind: "estimate", usd: 5.5, asOf: "2026-09-05" });
     expect(estimateCodexCost({ inputTokens: 1, cachedInputTokens: 2, outputTokens: 1 },
       { inputPerMillion: 2, cachedInputPerMillion: 1, outputPerMillion: 4, asOf: "2026-09-05" })).toBeNull();
-  });
-});
-
-describe("SDK latest bundle resolution", () => {
-  const wheel = (name: string, version: string, requires_dist?: string[]) => ({ metadata: { name, version, requires_dist },
-    download_info: { url: `https://files.pythonhosted.org/${name}.whl`, archive_info: { hashes: { sha256: "a".repeat(64) } } } });
-  it("installs the SDK's exact CLI dependency rather than the independently latest CLI and freezes every wheel", () => {
-    const result = projectSdkResolution({ install: [wheel("openai-codex", "0.148.0", ["openai-codex-cli-bin==0.147.5"]), wheel("openai-codex-cli-bin", "0.147.5"), wheel("pydantic", "2.13.5")] }, "0.148.0");
-    expect(result.codexRuntime).toBe("0.147.5"); expect(result.requirements.match(/--hash=sha256/g)).toHaveLength(3);
-  });
-  it("rejects source builds, untrusted wheel URLs, and mismatched CLI dependencies", () => {
-    const sdk = wheel("openai-codex", "0.148.0", ["openai-codex-cli-bin==0.147.5"]), cli = wheel("openai-codex-cli-bin", "0.148.0");
-    expect(() => projectSdkResolution({ install: [sdk, cli] }, "0.148.0")).toThrow("SDK_RUNTIME_DEPENDENCY_MISMATCH");
-    sdk.download_info.url = "https://example.com/unsafe.whl";
-    expect(() => projectSdkResolution({ install: [sdk, cli] }, "0.148.0")).toThrow("SDK_RESOLUTION_UNTRUSTED");
   });
 });

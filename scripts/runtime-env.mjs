@@ -27,7 +27,7 @@ export const RUNTIME_ENV_MANAGED_KEYS = [
 ];
 
 const DEFAULT_OPERATOR_CONFIGURATION = Object.freeze({
-  defaultBackend: "mcp-server",
+  defaultBackend: "app-server",
   maximumAccess: "read-only"
 });
 
@@ -363,7 +363,7 @@ export function updateRuntimeEnvFile(
 function runtimeOperatorUpdates({ defaultBackend, maximumAccess }) {
   const updates = {};
   if (defaultBackend !== undefined) {
-    if (defaultBackend !== "app-server" && defaultBackend !== "mcp-server" && defaultBackend !== "codex-sdk") {
+    if (defaultBackend !== "app-server") {
       throw new Error(`Invalid Codex execution backend: ${String(defaultBackend)}`);
     }
     updates.CODEX_MCP_BRIDGE_DEFAULT_BACKEND = defaultBackend;
@@ -382,8 +382,7 @@ function runtimeOperatorConfiguration(values) {
   const dangerFullAccess = runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS);
   const workspaceWrite = dangerFullAccess || runtimeBoolean(values.CODEX_MCP_BRIDGE_ALLOW_WRITE);
   return {
-    defaultBackend: ["app-server", "mcp-server", "codex-sdk"].includes(values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND)
-      ? values.CODEX_MCP_BRIDGE_DEFAULT_BACKEND : "mcp-server",
+    defaultBackend: "app-server",
     maximumAccess: dangerFullAccess
       ? "full-access"
       : workspaceWrite

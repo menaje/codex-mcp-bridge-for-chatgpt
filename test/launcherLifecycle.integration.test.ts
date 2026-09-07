@@ -50,7 +50,6 @@ writeFileSync(${JSON.stringify(codexEnvironmentLog)}, JSON.stringify({
   codexAPIKey: process.env.CODEX_API_KEY ?? null,
   unrelatedSecret: process.env.AWS_SECRET_ACCESS_KEY ?? null
 }));
-if (process.argv.slice(2).join(" ") === "mcp-server --help") process.exit(0);
 process.exit(2);
 `);
     writeExecutable(fakeTunnel, fakeTunnelSource({

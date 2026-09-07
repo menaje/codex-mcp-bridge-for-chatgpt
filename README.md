@@ -61,7 +61,7 @@ The native client-only mode is currently available on macOS. Windows and Linux u
 
 Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex**, use an existing app/terminal Codex or install a bridge-managed CLI. A single existing installation is selected automatically; saved choices and manual update preferences are preserved. The app guides you through the Tunnel runtime key, Tunnel ID, Codex browser login, and first project.
 
-An optional experimental Python SDK environment is available as a separate execution choice. See [Codex installation, updates and SDK authentication](docs/codex-runtimes.md) for ownership, supported versions, limitations and recovery.
+The bridge connects directly to the selected Codex through App Server. See [Codex installation and updates](docs/codex-runtimes.md) for ownership, compatibility, authentication and recovery.
 
 Client mode does not start or require a local Bridge, Tunnel, or Codex runtime. Paste the one-time invitation copied from the server Mac, then select that saved server.
 
@@ -135,7 +135,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - Broader write or full access must be allowed by the server before a task can use it.
 - This is a personal bridge for one trusted operator. Shared settings are not isolated by ChatGPT account.
 - These controls are policy boundaries, not operating-system isolation. Use a separate OS user, container, VM, or disposable project copy when stronger isolation is required.
-- `mcp-server` is the stable default backend. App Server support is experimental and intended for personal or development use.
+- Execution uses the selected Codex CLI through App Server. Compatibility depends on the public protocol and required features, without a bridge-owned version allowlist.
 
 ## Documentation
 

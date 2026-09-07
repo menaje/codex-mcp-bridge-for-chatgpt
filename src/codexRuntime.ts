@@ -1,4 +1,4 @@
-import { CLI_CONTRACT_ID, verifyManagedCliContract } from "./runtimeCompatibility.js";
+import { CLI_INSTALL_VALIDATION_ID, verifyCliConnection } from "./runtimeCompatibility.js";
 import { constants } from "node:fs";
 import { access, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -7,7 +7,6 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { SUPPORTED_CODEX_CLI_VERSION, SUPPORTED_CODEX_CLI_VERSIONS } from "./appServerCompatibility.js";
 import { installManagedCli } from "./runtimeDownloads.js";
 
 const executeFile = promisify(execFile);
@@ -56,11 +55,6 @@ export type CliRuntimeSnapshot = {
     rollback: boolean; cleanup: boolean; retry: boolean; applyPending: boolean; skip: boolean };
   billing?: import("./codexBilling.js").CodexBillingSnapshot;
   account?: import("./codexAccount.js").CodexAccountSnapshot | null;
-  sessionStorage?: { visibleInCodexApp: boolean; persistent: boolean };
-  bundle?: { python: string; sdk: string; codex: string; channel: string };
-  requestedAuthMode?: "chatgpt" | "api-key";
-  auth?: { requestedAuthMode: "chatgpt" | "api-key"; resolvedAuthMode: "chatgpt" | "api-key" | null; authenticated: boolean };
-  previousBackend?: "app-server" | "mcp-server" | null;
   managedVersions: { version: string; bytes: number; active: boolean; staged: boolean; recovery: boolean }[];
 };
 export type RuntimeInstaller = (options: {
@@ -70,12 +64,11 @@ export type RuntimeInstaller = (options: {
 export type RuntimeManagerOptions = {
   root?: string; environment?: NodeJS.ProcessEnv; appPaths?: string[];
   probe?: (command: string) => Promise<string | null>; installer?: RuntimeInstaller;
-  latestVersion?: () => Promise<string>; supportedVersions?: readonly string[];
+  latestVersion?: () => Promise<string>;
   defaultVersion?: string; discoverExternal?: boolean;
   explicitCommand?: string;
   validateInstall?: (command: string, version: string) => Promise<void>;
   validationId?: string;
-  allowLatest?: boolean;
 };
 type RuntimeLease = { pid: number; selection: CliSelection; startedAt: string };
 
@@ -99,13 +92,7 @@ export class CodexRuntimeManager {
       path.join(homedir(), ".codex-mcp-bridge", "runtimes"));
   }
 
-  private get allowsLatest(): boolean { return this.options.allowLatest ?? !this.options.installer; }
-  private get validationId(): string { return this.options.validationId || CLI_CONTRACT_ID; }
-  private managedSupported(install: ManagedInstall): boolean { return this.supported(install.version) || install.validation === this.validationId; }
-
-  private supported(version: string | null): boolean {
-    return version !== null && (this.options.supportedVersions || SUPPORTED_CODEX_CLI_VERSIONS).includes(version);
-  }
+  private get validationId(): string { return this.options.validationId || CLI_INSTALL_VALIDATION_ID; }
 
   private configuredCommand(): string | undefined {
     if (this.options.discoverExternal === false) return undefined;
@@ -159,7 +146,7 @@ export class CodexRuntimeManager {
           : process.platform === "win32" && physicalPath.endsWith(".exe") ? physicalPath : entry.command;
         const version = await this.probe(command);
         return { ...entry, source: managed ? "bridge" as const : entry.source, command, id: selectionId(physicalPath), physicalPath, version,
-          available: version !== null, compatible: managed ? this.managedSupported(managed) : this.supported(version) };
+          available: version !== null, compatible: version !== null };
       } catch { return null; }
     }));
     // App provenance wins for a terminal symlink to the same app binary.
@@ -193,13 +180,13 @@ export class CodexRuntimeManager {
       abandoned.reduce((sum, item) => sum + item.bytes, 0);
     const isManaged = selection?.source === "bridge";
     const updateVersion = !configuredCommand && isManaged && !state.preferences.pinnedVersion && state.latestVersion &&
-      (this.allowsLatest || this.supported(state.latestVersion)) && newerThan(state.latestVersion, selection.version) &&
+      newerThan(state.latestVersion, selection.version) &&
       state.preferences.skippedVersion !== state.latestVersion ? state.latestVersion : null;
     const busy = state.operation && ["downloading", "installing", "verifying"].includes(state.operation.phase) && pidAlive(state.operation.ownerPid);
     const recovery = state.managed.find(item => item.id === state.recoveryId);
     return {
       selectionRevision: state.selectionRevision,
-      knownVersions: [...(this.options.supportedVersions || SUPPORTED_CODEX_CLI_VERSIONS)],
+      knownVersions: [...new Set([...state.managed.map(item => item.version), ...(state.latestVersion ? [state.latestVersion] : [])])],
       selection, candidates, selectionRequired: !selection || !selection.available,
       ...(configuredCommand ? { configuredCommand } : {}),
       pendingSelection: state.pendingSelection, installedVersion: selection?.version ?? null,
@@ -214,7 +201,7 @@ export class CodexRuntimeManager {
         install: !configuredCommand && !busy && !state.managed.some(item => item.id === state.activeId),
         update: !busy && !!updateVersion, remove: !busy && !(configuredCommand && isManaged) && state.managed.length > 0 && !leases.some(item => item.selection.source === "bridge"),
         reinstall: !configuredCommand && !busy && !!isManaged && !selection.available,
-        rollback: !configuredCommand && !busy && !!isManaged && !!recovery && this.managedSupported(recovery) && (!state.preferences.pinnedVersion || state.preferences.pinnedVersion === recovery.version),
+        rollback: !configuredCommand && !busy && !!isManaged && !!recovery && (!state.preferences.pinnedVersion || state.preferences.pinnedVersion === recovery.version),
         cleanup: !busy && reclaimableBytes > 0, retry: !configuredCommand && state.operation?.phase === "failed",
         applyPending: !configuredCommand && !busy && leases.length === 0 && !!(state.pendingSelection || state.stagedId), skip: !!updateVersion
       }
@@ -325,7 +312,6 @@ export class CodexRuntimeManager {
       });
       throw new Error("CODEX_UPDATE_CHECK_FAILED: The latest stable version could not be resolved. Choose a known version explicitly or retry.");
     }
-    if (!this.supported(version) && !this.allowsLatest) throw new Error("CODEX_VERSION_UNSUPPORTED: This release has not validated that version.");
     if (snapshot.preferences.pinnedVersion && version !== snapshot.preferences.pinnedVersion) throw new Error("CODEX_VERSION_PINNED: Release the version pin before choosing another version.");
     const id = `${version}-${randomUUID()}`;
     const directory = path.join(this.root, "cli", id);
@@ -351,8 +337,8 @@ export class CodexRuntimeManager {
       });
       if (!inside(directory, command) || await this.probe(command) !== version) throw new Error("CODEX_VERIFY_FAILED: Installed executable failed its version check.");
       if (this.options.validateInstall) await this.options.validateInstall(command, version);
-      else if (!this.options.installer) await verifyManagedCliContract(command, version, this.environment);
-      const install: ManagedInstall = { id, version, ...(this.allowsLatest ? { validation: this.validationId } : {}), command: path.relative(directory, command),
+      else if (!this.options.installer) await verifyCliConnection(command, this.environment);
+      const install: ManagedInstall = { id, version, validation: this.validationId, command: path.relative(directory, command),
         verifiedAt: new Date().toISOString(), bytes: await directoryBytes(directory), sha256: await fileDigest(command) };
       await this.changeState(state => {
         state.managed.push(install);
@@ -483,16 +469,16 @@ export class CodexRuntimeManager {
     return result;
   }
   private async verified(install: ManagedInstall): Promise<boolean> {
-    try { return this.managedSupported(install) && await fileDigest(this.managedCommand(install)) === install.sha256 && await this.probe(this.managedCommand(install)) === install.version; }
+    try { return await fileDigest(this.managedCommand(install)) === install.sha256 && await this.probe(this.managedCommand(install)) === install.version; }
     catch { return false; }
   }
   private async inspectSelection(selection: CliSelection): Promise<CliCandidate> {
     const version = await this.probe(selection.command);
     let intact = true;
-    let compatible = this.supported(version);
+    let compatible = version !== null;
     if (selection.source === "bridge") {
       const installed = (await this.readState()).managed.find(item => this.managedCommand(item) === selection.command);
-      compatible = !!installed && this.managedSupported(installed);
+      compatible = !!installed && version !== null;
       try {
         const info = await stat(selection.command);
         const stamp = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;

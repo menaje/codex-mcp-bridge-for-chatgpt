@@ -4,7 +4,7 @@ This guide covers the user-facing setup for Codex MCP Bridge for ChatGPT. Choose
 
 Official background:
 
-- [Run Codex as an MCP server](https://developers.openai.com/codex/mcp/)
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
 - [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 - [Connect an MCP app to ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt)
 
@@ -190,7 +190,7 @@ Confirm Codex is available and sign in:
 
 ```bash
 codex --version
-codex mcp-server --help
+codex app-server --help
 codex login
 ```
 
@@ -305,11 +305,9 @@ Do not place `.env`, credentials, or other common secret files inside a register
 
 The Server tab is available only on the Mac that owns the local server:
 
-- **MCP Server** is the stable default with the strongest compatibility and recovery behavior.
-- **App Server** is experimental and adds richer thread and background-process control. Use it only for personal or development work and keep rollback available.
-- **Maximum Allowed Access** is the hard server ceiling: Read Only, Workspace Write, or Full Access.
+Codex execution uses the selected CLI through App Server. **Maximum Allowed Access** sets the server ceiling: Read Only, Workspace Write or Full Access. Changing it safely drains active work and restarts the server.
 
-Changing either setting safely drains active work and restarts the server. Existing Agents remain associated with the backend on which they were created; newly created or freshly restarted contexts use the new backend.
+Installation, updates, authentication and migration from earlier releases are described in [Codex installations and updates](codex-runtimes.md).
 
 ## Where data is stored
 

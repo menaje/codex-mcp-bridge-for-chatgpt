@@ -59,18 +59,11 @@ jobs:
           cache: npm
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
-      - name: Install supported Codex CLI
+      - name: Install Codex CLI schema-test baseline
         run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
       - name: Check App Server protocol schemas
         run: npm run app-server:compat:check
       - run: npm run check
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Verify pinned Python SDK and timer-free long execution
-        env:
-          CODEX_MCP_BRIDGE_SDK_LONG_TEST: "1"
-        run: npm run sdk:check
       - run: npm audit --omit=dev
 
   macos-check:

@@ -445,8 +445,7 @@ struct DashboardPopoverView: View {
                 .disabled(model.needsSetup || model.isBusy)
             }
 
-            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true,
-               model.helperStatus?.configuration.operatorConfiguration.defaultBackend != "codex-sdk" {
+            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true {
                 Button("코덱스 업데이트") {
                     Task { await model.manageCodex(.init(action: "update")) }
                 }

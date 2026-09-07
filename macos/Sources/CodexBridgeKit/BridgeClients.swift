@@ -163,10 +163,6 @@ public struct MacOSHelperClient: Sendable {
         try await rpc.call("codex.runtime", params: request, timeout: 30)
     }
 
-    public func configureSdkAuth(_ request: CodexSdkAuthRequest) async throws -> CodexSdkAuthStatus {
-        try await rpc.call("codex.sdk-auth", params: request, timeout: 60)
-    }
-
     public func repairConfigurationPermissions() async throws -> RuntimeConfigurationStatus {
         try await rpc.call(
             "setup.repair-permissions",

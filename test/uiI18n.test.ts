@@ -97,8 +97,7 @@ describe("human-facing UI localization", () => {
       );
       for (const key of [
         "settings.codexAppThreads",
-        "settings.codexAppThreadsHint",
-        "settings.codexAppThreadsMcpHint"
+        "settings.codexAppThreadsHint"
       ] as const) {
         expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
       }
@@ -174,9 +173,6 @@ describe("human-facing UI localization", () => {
         UI_TRANSLATIONS[locale]["activity.workComplete"]
       );
     }
-    expect(UI_TRANSLATIONS.ko["settings.appServerExperimental"]).toContain(
-      "개인·개발 환경에서만 사용"
-    );
     expect(UI_TRANSLATIONS.ko["settings.allowedScope.catalog"]).toBe(
       "사용 가능한 모든 모델·에포트"
     );
@@ -196,9 +192,6 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsHint"]).toContain(
       "Codex 앱 목록에 나타나지 않으며"
-    );
-    expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsMcpHint"]).toContain(
-      "MCP Server 백엔드는 스레드를 숨길 수 없습니다"
     );
     expect(UI_TRANSLATIONS.ko["settings.developerModeRefreshRequired"]).toContain(
       "정적 도구 계약도 변경"
@@ -396,7 +389,7 @@ describe("human-facing UI localization", () => {
       "elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true"
     );
     expect(SETTINGS_CARD_HTML).toContain(
-      'view.capabilities.defaultBackend==="app-server"'
+      't["settings.codexAppThreadsHint"]'
     );
     expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
@@ -626,7 +619,7 @@ describe("human-facing UI localization", () => {
       .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.idle"'));
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
-    expect(SETTINGS_CARD_HTML).toContain(
+    expect(SETTINGS_CARD_HTML).not.toContain(
       'class="notice experimental-notice" data-i18n="settings.appServerExperimental"'
     );
     expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
