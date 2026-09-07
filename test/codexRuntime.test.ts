@@ -144,6 +144,72 @@ describe("Codex installation ownership and selection", () => {
 });
 
 describe("Bridge-owned version lifecycle", () => {
+  it("uses the same selected identity as discovery through a symlinked runtime directory", async () => {
+    const f = await fixture();
+    await mkdir(f.root);
+    const alias = path.join(f.directory, "managed-alias");
+    await symlink(f.root, alias);
+    const manager = new CodexRuntimeManager({ ...f.options, root: alias });
+    const installed = await manager.install();
+    const candidate = installed.candidates.find(item => item.command === installed.selection?.command)!;
+    expect(installed.selection?.id).toBe(candidate.id);
+    expect(installed.selection?.physicalPath).toBe(candidate.physicalPath);
+    expect((await new CodexRuntimeManager({ ...f.options, root: alias }).snapshot()).selection?.id).toBe(candidate.id);
+  });
+  it("does not offer a modified managed binary as a selectable installation even if its version still matches", async () => {
+    const f = await fixture();
+    const manager = new CodexRuntimeManager({ ...f.options, probe: file => readFile(file, "utf8")
+      .then(value => /^version=(\d+\.\d+\.\d+)/.exec(value)?.[1] || null).catch(() => null) });
+    const installed = await manager.install();
+    await writeFile(installed.selection!.command, "version=0.153.3\nmodified executable");
+    const broken = await manager.snapshot();
+    expect(broken.selection?.available).toBe(false);
+    const candidate = broken.candidates.find(item => item.source === "bridge")!;
+    expect(candidate.available).toBe(false);
+    await expect(manager.select(candidate.id)).rejects.toThrow("CODEX_SELECTION_UNAVAILABLE");
+    expect(broken.actions.reinstall).toBe(true);
+  });
+  it("does not download an already staged update again while waiting for a running version to finish", async () => {
+    const f = await fixture(); await f.manager.install();
+    const acquired = await f.manager.acquire();
+    try {
+      await f.manager.checkUpdates();
+      const pending = await f.manager.install("update");
+      expect(pending.stagedVersion).toBe("0.153.4");
+      expect(pending.actions.update).toBe(false);
+      await expect(f.manager.install("update")).rejects.toThrow("CODEX_ACTION_UNAVAILABLE");
+      expect((await f.manager.snapshot()).managedVersions).toHaveLength(2);
+    } finally { await acquired.release(); }
+    await f.manager.applyPending();
+    expect((await f.manager.snapshot()).installedVersion).toBe("0.153.4");
+  });
+  it("offers rollback only when the recovery executable remains intact", async () => {
+    const f = await fixture();
+    const installed = await f.manager.install();
+    await f.manager.checkUpdates(); await f.manager.install("update");
+    expect((await f.manager.snapshot()).actions.rollback).toBe(true);
+    await rm(installed.selection!.command);
+    const brokenRecovery = await f.manager.snapshot();
+    expect(brokenRecovery.actions.rollback).toBe(false);
+    expect(brokenRecovery.selection?.available).toBe(true);
+    await expect(f.manager.rollback()).rejects.toThrow("CODEX_ACTION_UNAVAILABLE");
+  });
+  it("rechecks a staged update under the state lock when another request used an older snapshot", async () => {
+    const f = await fixture(); await f.manager.install(); await f.manager.checkUpdates();
+    const acquired = await f.manager.acquire();
+    try {
+      const before = await f.manager.snapshot();
+      await f.manager.install("update");
+      const read = f.manager.snapshot.bind(f.manager);
+      let first = true;
+      f.manager.snapshot = async () => {
+        if (first) { first = false; return before; }
+        return read();
+      };
+      await expect(f.manager.install("update")).rejects.toThrow("already waiting to be applied");
+      expect((await f.manager.snapshot()).managedVersions).toHaveLength(2);
+    } finally { await acquired.release(); }
+  });
   it("retains a verified staged installation when activation fails and retries without downloading it again", async () => {
     const f = await fixture(); await f.manager.install(); await f.manager.checkUpdates();
     const activate = f.manager.applyPending.bind(f.manager);

@@ -145,8 +145,8 @@ export class CodexRuntimeManager {
         const command = managed ? this.managedCommand(managed)
           : process.platform === "win32" && physicalPath.endsWith(".exe") ? physicalPath : entry.command;
         const version = await this.probe(command);
-        return { ...entry, source: managed ? "bridge" as const : entry.source, command, id: selectionId(physicalPath), physicalPath, version,
-          available: version !== null, compatible: version !== null };
+        return this.inspectSelection({ source: managed ? "bridge" as const : entry.source,
+          command, id: selectionId(physicalPath), physicalPath, version }, state);
       } catch { return null; }
     }));
     // App provenance wins for a terminal symlink to the same app binary.
@@ -183,7 +183,14 @@ export class CodexRuntimeManager {
       newerThan(state.latestVersion, selection.version) &&
       state.preferences.skippedVersion !== state.latestVersion ? state.latestVersion : null;
     const busy = state.operation && ["downloading", "installing", "verifying"].includes(state.operation.phase) && pidAlive(state.operation.ownerPid);
+    const stagedVersion = state.managed.find(item => item.id === state.stagedId)?.version ?? null;
+    const updateAlreadyStaged = !!updateVersion && stagedVersion === updateVersion;
     const recovery = state.managed.find(item => item.id === state.recoveryId);
+    const recoveryCommand = recovery ? this.managedCommand(recovery) : null;
+    const recoveryAvailable = recovery && recoveryCommand ? (await this.inspectSelection({
+      id: selectionId(recoveryCommand), source: "bridge", command: recoveryCommand,
+      physicalPath: recoveryCommand, version: recovery.version
+    }, state)).available : false;
     return {
       selectionRevision: state.selectionRevision,
       knownVersions: [...new Set([...state.managed.map(item => item.version), ...(state.latestVersion ? [state.latestVersion] : [])])],
@@ -193,17 +200,17 @@ export class CodexRuntimeManager {
       runningVersions: [...new Set(leases.map(item => item.selection.version).filter((value): value is string => value !== null))],
       updateVersion, latestVersion: state.latestVersion, checkedAt: state.checkedAt,
       lastSuccessfulCheckAt: state.lastSuccessfulCheckAt, updateCheckError: state.updateCheckError, preferences: state.preferences,
-      operation: state.operation, stagedVersion: state.managed.find(item => item.id === state.stagedId)?.version ?? null,
+      operation: state.operation, stagedVersion,
       recoveryVersion: recovery?.version ?? null, reclaimableBytes,
       managedVersions: state.managed.map(item => ({ version: item.version, bytes: item.bytes, active: item.id === state.activeId,
         staged: item.id === state.stagedId, recovery: item.id === state.recoveryId })),
       actions: {
         install: !configuredCommand && !busy && !state.managed.some(item => item.id === state.activeId),
-        update: !busy && !!updateVersion, remove: !busy && !(configuredCommand && isManaged) && state.managed.length > 0 && !leases.some(item => item.selection.source === "bridge"),
+        update: !busy && !!updateVersion && !updateAlreadyStaged, remove: !busy && !(configuredCommand && isManaged) && state.managed.length > 0 && !leases.some(item => item.selection.source === "bridge"),
         reinstall: !configuredCommand && !busy && !!isManaged && !selection.available,
-        rollback: !configuredCommand && !busy && !!isManaged && !!recovery && (!state.preferences.pinnedVersion || state.preferences.pinnedVersion === recovery.version),
+        rollback: !configuredCommand && !busy && !!isManaged && !!recovery && recoveryAvailable && (!state.preferences.pinnedVersion || state.preferences.pinnedVersion === recovery.version),
         cleanup: !busy && reclaimableBytes > 0, retry: !configuredCommand && state.operation?.phase === "failed",
-        applyPending: !configuredCommand && !busy && leases.length === 0 && !!(state.pendingSelection || state.stagedId), skip: !!updateVersion
+        applyPending: !configuredCommand && !busy && leases.length === 0 && !!(state.pendingSelection || state.stagedId), skip: !busy && !!updateVersion && !updateAlreadyStaged
       }
     };
   }
@@ -324,6 +331,9 @@ export class CodexRuntimeManager {
       if (action === "update" && (state.preferences.pinnedVersion || state.preferences.skippedVersion === version || state.selection?.command !== snapshot.selection?.command)) {
         throw new Error("CODEX_ACTION_UNAVAILABLE: Your update preferences or selection changed.");
       }
+      if (action === "update" && state.managed.some(item => item.id === state.stagedId && item.version === version)) {
+        throw new Error("CODEX_ACTION_UNAVAILABLE: This update is already waiting to be applied.");
+      }
       if (action === "install" && state.activeId) throw new Error("CODEX_ACTION_UNAVAILABLE: An installation was already activated while resolving the version.");
       state.operation = operation(action, "downloading", version);
     });
@@ -375,7 +385,8 @@ export class CodexRuntimeManager {
         state.activeId = staged.id; state.stagedId = null;
         const command = this.managedCommand(staged);
         if (state.stagedSelectionRevision === null || state.stagedSelectionRevision === state.selectionRevision) {
-          state.selection = { id: selectionId(command), source: "bridge", command, physicalPath: command, version: staged.version };
+          const physicalPath = await physicalCodexPath(command);
+          state.selection = { id: selectionId(physicalPath), source: "bridge", command, physicalPath, version: staged.version };
           state.selectionRequired = false;
         }
         state.stagedSelectionRevision = null;
@@ -472,15 +483,19 @@ export class CodexRuntimeManager {
     try { return await fileDigest(this.managedCommand(install)) === install.sha256 && await this.probe(this.managedCommand(install)) === install.version; }
     catch { return false; }
   }
-  private async inspectSelection(selection: CliSelection): Promise<CliCandidate> {
+  private async inspectSelection(selection: CliSelection, savedState?: RuntimeState): Promise<CliCandidate> {
     const version = await this.probe(selection.command);
     let intact = true;
     let compatible = version !== null;
     if (selection.source === "bridge") {
-      const installed = (await this.readState()).managed.find(item => this.managedCommand(item) === selection.command);
+      const installed = (savedState || await this.readState()).managed.find(item => this.managedCommand(item) === selection.command);
       compatible = !!installed && version !== null;
       try {
         const info = await stat(selection.command);
+        const physicalPath = await physicalCodexPath(selection.command);
+        // Older state may identify a managed installation by a symlinked root.
+        // Match discovery without switching the saved command or installation.
+        selection = { ...selection, physicalPath, id: selectionId(physicalPath) };
         const stamp = `${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
         let cached = this.digestCache.get(selection.command);
         if (!cached || cached.stamp !== stamp) {
