@@ -3400,6 +3400,100 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("keeps Dashboard token usage on running and completed rows", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+
+    try {
+      const running = parseToolJson(await runTask(client, {
+        prompt: "Dashboard token usage regression",
+        executionMode: "background"
+      }));
+      const { view: initial } = await freshDashboardSnapshot(rawCallTool);
+      expect(initial.activeRows).toHaveLength(1);
+      expect(initial.activeRows[0]).not.toHaveProperty("tokenUsage");
+
+      const usage = {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 100,
+        totalTokens: 1_100
+      };
+      const zeroUsage = {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      };
+      let usageSequence = 0;
+      const reportUsage = (total: Record<string, unknown>) => {
+        upstream.progressNext({
+          progress: ++usageSequence,
+          event: {
+            eventId: `usage:dashboard:${usageSequence}`,
+            type: "usage",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: "Codex token usage updated.",
+            details: { total, last: zeroUsage }
+          }
+        });
+      };
+
+      reportUsage({ inputTokens: 100 });
+      const { view: incomplete } = await freshDashboardSnapshot(rawCallTool);
+      expect(incomplete.activeRows[0]).not.toHaveProperty("tokenUsage");
+
+      reportUsage(zeroUsage);
+      const { view: zero } = await freshDashboardSnapshot(rawCallTool);
+      expect(zero.activeRows[0].tokenUsage).toEqual(zeroUsage);
+
+      reportUsage({ ...usage, privateDetail: "must not enter the dashboard" });
+      for (const bucket of ["activeRows", "terminalRows"] as const) {
+        if (bucket === "terminalRows") {
+          upstream.resolveNext(fakeCodexResult("dashboard-usage-thread"));
+          await waitForJobStatus(client, running.jobId, "completed");
+        }
+
+        const opened = await rawCallTool({
+          name: "codex_dashboard",
+          arguments: { scopeId: SCOPE_A }
+        });
+        expect(opened.isError).not.toBe(true);
+        expect(opened.structuredContent).toMatchObject({
+          kind: "dashboard",
+          readOnly: true
+        });
+        expect(JSON.stringify(opened.structuredContent)).not.toContain("tokenUsage");
+
+        for (const enrich of [false, true]) {
+          const { view } = await freshDashboardSnapshot(rawCallTool, { enrich });
+          expect(view[bucket]).toHaveLength(1);
+          expect(view[bucket][0].tokenUsage).toEqual(usage);
+          expect(view[bucket][0].latestTurn).not.toHaveProperty("tokenUsage");
+          expect(JSON.stringify(view)).not.toContain("privateDetail");
+        }
+
+        const nativeView = await applicationService.dashboardSnapshot({
+          inspectRuntime: false,
+          legacyGrouping: { projectOffset: 0, conversationOffset: 0 }
+        });
+        expect(nativeView[bucket][0]).toMatchObject({ tokenUsage: usage });
+        expect(nativeView.conversations?.[0]?.rows[0])
+          .toMatchObject({ tokenUsage: usage });
+        expect(nativeView.projects?.[0]?.conversations[0]?.rows[0])
+          .toMatchObject({ tokenUsage: usage });
+      }
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
   it("links an active App Server Agent to its validated local Codex thread", async () => {
     const root = temporaryRoot();
     const threadId = "41414141-4141-4141-8141-414141414141";

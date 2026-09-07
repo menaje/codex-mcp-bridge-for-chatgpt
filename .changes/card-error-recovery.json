@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Handle rejected Activity controls, recover Settings loads and wrapped responses without losing drafts on locale changes, restore retained card helpers, and ignore stale Dashboard requests after remount.",
+  "breaking": false,
+  "migration": null
+}

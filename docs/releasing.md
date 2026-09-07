@@ -99,6 +99,16 @@ template drift. Do not edit generated manifests or snapshots by hand. A SemVer
 change with identical cards preserves the URIs; a card or relevant metadata
 change produces new URIs even before the next version bump.
 
+Retained snapshots that reference the source compiler's missing `__name`
+helper receive a small name-decorator bootstrap when served. Their stored
+snapshots, resource identities, and protocol generations remain unchanged;
+the bootstrap only supplies that missing runtime function. Current cards must
+serialize without compiler-only dependencies. `test/uiResourceCompatibility.test.ts`
+executes the affected helpers across every retained revision, and
+`npm run test:card-resilience-browser` covers card error recovery, host result
+wrappers, draft preservation, and late responses after remount. Run it again
+with `-- --built` after building to check the packaged HTML as well.
+
 A restart with an unchanged build does not require plugin metadata refresh.
 After a UI or tool-metadata change, follow the OpenAI deployment order: sync and
 build, restart the MCP server, select **Refresh** in ChatGPT Plugins, then test a
