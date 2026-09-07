@@ -324,6 +324,97 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testHiddenDashboardDoesNotRefreshButOpeningAndFallbackDo() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-visible-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            NativeFixtureReply(body: method == "helper.health" ? "{\"result\":\(status)}" : "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}")
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "dashboard.snapshot" ? 0.2 : 0)
+        }
+        defer { helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(paths: paths)
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.scheduleBackgroundRefreshes()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 0)
+        XCTAssertEqual(bridge.count("settings.snapshot"), 0)
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
+        model.setDashboardVisible(false)
+        let before = bridge.count("dashboard.snapshot")
+        model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), before)
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(320))
+        model.setDashboardVisible(false)
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(50))
+        model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), before + 2)
+        model.setDashboardVisible(false)
+        model.cancelAllPolling()
+    }
+
+    @MainActor
+    func testLifecycleNoticeUpdatesMenuHealthWithoutWaitingForPolling() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-event-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let state = TestLifecycleNoticeState(status: String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self))
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in state.reply(method) }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); state.changed.signal(); helper.stop(); try? FileManager.default.removeItem(at: root) }
+        await model.refreshStatus()
+        for _ in 0..<50 {
+            if helper.count("changes.wait") >= 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(model.helperChangesAvailable)
+        XCTAssertTrue(model.bridgeConnected)
+        state.setStatus(String(decoding: try JSONEncoder().encode(helperStatus(phase: "backoff", bridgeConnected: false, tunnelConnected: false)), as: UTF8.self))
+        state.changed.signal()
+        for _ in 0..<50 {
+            if model.health == .unavailable { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.health, .unavailable)
+    }
+
+    @MainActor
+    func testSlowDetailsCannotBlockHealthAndConcurrentChecksAreCoalesced() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-health-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            if method == "helper.health" { return NativeFixtureReply(body: "{\"result\":\(status)}", delay: 0.05) }
+            return NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "codex.runtime" ? 1.5 : 0)
+        }
+        defer { helper.stop(); try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(paths: paths)
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.scheduleBackgroundRefreshes()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(helper.count("codex.runtime"), 1)
+        let started = Date()
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<10 { group.addTask { await model.refreshStatus() } }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        XCTAssertLessThanOrEqual(helper.count("helper.health"), 2)
+        XCTAssertTrue(model.bridgeConnected)
+        model.prepareForSystemSleep()
+        XCTAssertEqual(model.operationalObservation, .unknown)
+    }
+
+    @MainActor
     func testLoginItemApprovalOpensSystemSettingsInsteadOfReregistering() {
         let controller = TestLoginItemController(status: .requiresApproval)
         let model = AppModel(loginItemController: controller)
@@ -1639,5 +1730,25 @@ private func writeTestResponse(_ response: Data, to connection: Int32) throws {
             guard written > 0 else { throw POSIXError(.EPIPE) }
             sent += written
         }
+    }
+}
+
+private final class TestLifecycleNoticeState: @unchecked Sendable {
+    let changed = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var status: String
+    private var revision = 0
+    init(status: String) { self.status = status }
+    func setStatus(_ value: String) { lock.withLock { status = value } }
+    func reply(_ method: String) -> NativeFixtureReply {
+        if method == "helper.health" {
+            return NativeFixtureReply(body: lock.withLock { "{\"result\":\(status)}" })
+        }
+        if method == "changes.wait" {
+            let current = lock.withLock { () -> Int in revision += 1; return revision }
+            if current > 1 { _ = changed.wait(timeout: .now() + 2) }
+            return NativeFixtureReply(body: "{\"result\":{\"revision\":\"test:\(current)\",\"topics\":[\"runtime\"]}}")
+        }
+        return NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}")
     }
 }

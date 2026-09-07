@@ -160,12 +160,12 @@ struct CodexRuntimeSettingsPane: View {
         .onAppear { model.codexSettingsVisible = isSelected }
         .onChange(of: isSelected) { model.codexSettingsVisible = $0 }
         .onDisappear { model.codexSettingsVisible = false }
-        .task(id: "\(isSelected):\(installing)") {
+        .task(id: "\(isSelected):\(installing):\(model.helperChangesAvailable)") {
             while !Task.isCancelled, let interval = CodexSettingsRefreshPolicy.interval(isVisible: isSelected, installationInProgress: installing) {
                 await model.manageCodex(.init(action: "status", includeAccount: !installing))
                 guard !Task.isCancelled else { return }
                 await model.manageCodex(.init(action: "status", kind: "sdk", includeAccount: !installing))
-                do { try await Task.sleep(for: .seconds(interval)) } catch { return }
+                do { try await Task.sleep(for: .seconds(model.helperChangesAvailable ? 60 : interval)) } catch { return }
             }
         }
         .confirmationDialog("브리지가 설치한 Codex를 삭제할까요?", isPresented: $showDeleteConfirmation) {

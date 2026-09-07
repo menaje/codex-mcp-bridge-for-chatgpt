@@ -126,6 +126,45 @@ presentation rules do not reuse stale admission or shutdown evidence. Helper
 and Tunnel diagnostics record failure/recovery transitions with PID and duration;
 Tunnel diagnostics retain only non-secret probe status fields.
 
+### Native refresh policy
+
+Connection health has its own ten-second watchdog. `helper.health` omits CLI
+discovery/account details and reuses configuration validation for at most sixty
+seconds; a dotenv change invalidates that display cache immediately. Admission,
+configuration mutations and shutdown still validate their own fresh evidence.
+Detail requests cannot delay this watchdog. Concurrent health requests share one
+in-flight read and a trailing read when another observation is requested.
+
+The local helper and companion expose cancellable `changes.wait` requests. They
+wait up to twenty-five seconds for revisioned invalidations, without repeatedly
+building snapshots. Process transitions, tunnel state changes (excluding routine
+heartbeat writes), login completion, authentication-file changes, installation
+progress, Job/Agent changes and settings/model changes trigger relevant refreshes.
+Each server restart changes the revision epoch so reconnecting clients resync.
+The channel carries only topic names and revision identifiers, accepts at most
+four pending watchers, and releases a watcher when its socket closes. It is not
+exposed through the remote HTTPS application method allowlist.
+
+| Information | Refresh policy |
+| --- | --- |
+| Local connection | Change notices and an independent ten-second watchdog |
+| Tunnel readiness | Asynchronous CLI probe every five seconds, five-second deadline; existing twenty-second heartbeat expiry remains |
+| Dashboard | On opening and changes; thirty-second visible reconciliation, or ten seconds with older/remote servers; no background Dashboard reads when hidden |
+| Dashboard enrichment | At most once per thirty seconds for automatic visible updates |
+| Settings | On opening and changes; sixty-second visible fallback; pending edits are preserved |
+| Authentication | Login completion/auth changes and opening a window; five-minute fallback, two-second bounded browser-login checks |
+| CLI/SDK details | Installation changes and window entry; five-minute background fallback; visible settings reconcile each minute with change support, otherwise thirty seconds or two seconds during installation |
+| Operational notifications | Reevaluate on observed state changes and watchdog observations; existing sixty-second grace/deduplication remains |
+
+The app coalesces bursts of automatic refresh requests over 250 ms. A macOS wake
+or network-path change requests a fresh health observation and relevant content;
+network availability alone never proves tunnel readiness. Sleep interrupts the
+notification recovery observation window. Closing both content windows cancels
+the companion watcher, while helper lifecycle observation remains active. Old
+helpers that do not support the new methods use the existing status RPC and
+periodic fallback. Watch failures retry with bounded exponential backoff and do
+not themselves mark a healthy runtime as disconnected.
+
 ## First run and connection repair
 
 The helper first inspects the existing runtime configuration. A valid file is

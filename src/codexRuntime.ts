@@ -81,6 +81,11 @@ type RuntimeLease = { pid: number; selection: CliSelection; startedAt: string };
 
 /** One saved choice. Discovery never changes an existing choice or an explicit removal. */
 export class CodexRuntimeManager {
+  private readonly changeListeners = new Set<() => void>();
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
   readonly root: string;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly options: RuntimeManagerOptions;
@@ -555,6 +560,7 @@ export class CodexRuntimeManager {
       const state = await this.readState();
       await change(state);
       await atomicRuntimeJson(path.join(this.root, "cli-state.json"), stateSchema.parse(state));
+      for (const listener of this.changeListeners) listener();
     });
   }
 }

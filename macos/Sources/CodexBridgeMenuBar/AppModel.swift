@@ -1,5 +1,6 @@
 import CodexBridgeKit
 import Foundation
+import Network
 import OSLog
 import SwiftUI
 
@@ -247,8 +248,28 @@ final class AppModel: ObservableObject {
     }
     private let operationalNotifications: OperationalNotifications?
     private var remoteOperationalProblem: OperationalProblem?
-    private var notificationPollingTask: Task<Void, Never>?
-    @Published var helperStatus: HelperStatus?
+    private var notificationRefreshTask: Task<Void, Never>?
+    private var notificationsStarted = false
+    private var statusRefreshTask: Task<Void, Never>?
+    private var statusRefreshPending = false
+    private var helperChangesTask: Task<Void, Never>?
+    private var companionChangesTask: Task<Void, Never>?
+    private var helperChangesUnsupported = false
+    private var companionChangesUnsupported = false
+    @Published private(set) var helperChangesAvailable = false
+    @Published private(set) var companionChangesAvailable = false
+    private var refreshEventTasks: [String: Task<Void, Never>] = [:]
+    private var refreshEventTaskIDs: [String: UUID] = [:]
+    private var pendingRefreshEvents = Set<String>()
+    private var lastScheduledRefresh: [String: Date] = [:]
+    private var lastDashboardEnrichment: Date?
+    private var networkMonitor: NWPathMonitor?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private(set) var dashboardVisible = false
+    private(set) var settingsWindowVisible = false
+    private var settingsInvalidated = false
+    private var systemObservationPending = false
+    @Published var helperStatus: HelperStatus? { didSet { scheduleOperationalObservation() } }
     @Published var codexRuntime: CodexRuntimeSnapshot?
     @Published var codexRuntimeError: String?
     @Published var sdkRuntime: CodexRuntimeSnapshot?
@@ -257,26 +278,25 @@ final class AppModel: ObservableObject {
     var codexSettingsVisible = false
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
-    private var lastCodexRuntimeRefresh: Date?
     @Published var sdkAuthStatus: CodexSdkAuthStatus?
     @Published var dashboard: DashboardSnapshot?
     @Published var settings: SettingsSnapshot?
-    @Published var authStatus: CodexLoginStatus?
+    @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
     @Published var logs: [HelperLogEntry] = []
     @Published private(set) var setupDiscovery: TunnelSetupDiscovery?
     @Published var setupDiscoveryErrorMessage: String?
-    @Published var startupErrorMessage: String?
-    @Published var statusErrorMessage: String?
+    @Published var startupErrorMessage: String? { didSet { scheduleOperationalObservation() } }
+    @Published var statusErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var dashboardErrorMessage: String?
     @Published var settingsLoadErrorMessage: String?
     @Published var settingsErrorMessage: String?
     @Published var runtimeErrorMessage: String?
     @Published private(set) var runtimeFailureCanRetryWithForce = false
-    @Published var authErrorMessage: String?
+    @Published var authErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var logsErrorMessage: String?
     @Published var settingsConflictMessage: String?
-    @Published var isBusy = false
-    @Published var loginInProgress = false
+    @Published var isBusy = false { didSet { scheduleOperationalObservation() } }
+    @Published var loginInProgress = false { didSet { scheduleOperationalObservation() } }
     @Published var lastDashboardRefresh: Date?
     @Published var runtimeImpact: RuntimeAdmissionSnapshot?
     @Published var runtimeImpactErrorMessage: String?
@@ -316,7 +336,6 @@ final class AppModel: ObservableObject {
     private var bridgeReadinessTask: Task<Void, Never>?
     private var connectionRecoveryExpiryTask: Task<Void, Never>?
     private var bridgeReadinessTaskGeneration = 0
-    private var settingsPollingTask: Task<Void, Never>?
     private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
@@ -328,7 +347,7 @@ final class AppModel: ObservableObject {
     private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
     private var statusRequestGeneration = 0
-    @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow()
+    @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
     private var cachedRemoteClient: (
         profile: RemoteServerProfile,
@@ -380,7 +399,7 @@ final class AppModel: ObservableObject {
     }
 
     var operationalObservation: OperationalObservation {
-        guard !isBusy, !loginInProgress, !applicationShutdownInProgress else { return .unknown }
+        guard !isBusy, !loginInProgress, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
         if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
@@ -427,15 +446,19 @@ final class AppModel: ObservableObject {
     }
 
     private func beginOperationalNotifications() {
-        guard operationalNotifications != nil, notificationPollingTask == nil else { return }
-        notificationPollingTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.operationalNotifications?.refresh(observation: self.operationalObservation,
-                    scope: self.operationalNotificationScope, locale: self.interfaceLocale)
-                self.operationalActionRequiredProblem = self.operationalNotifications?.actionRequired
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-            }
+        notificationsStarted = true
+        scheduleOperationalObservation()
+    }
+
+    private func scheduleOperationalObservation() {
+        guard notificationsStarted, operationalNotifications != nil, notificationRefreshTask == nil else { return }
+        notificationRefreshTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+            guard let self else { return }
+            self.notificationRefreshTask = nil
+            await self.operationalNotifications?.refresh(observation: self.operationalObservation,
+                scope: self.operationalNotificationScope, locale: self.interfaceLocale)
+            self.operationalActionRequiredProblem = self.operationalNotifications?.actionRequired
         }
     }
 
@@ -1034,8 +1057,8 @@ final class AppModel: ObservableObject {
             isBusy = true
             defer { isBusy = false }
             startupErrorMessage = nil
-            await refreshAll()
             beginPolling()
+            await refreshAll()
             return
         }
         logger.info("starting helper bootstrap")
@@ -1046,8 +1069,8 @@ final class AppModel: ObservableObject {
             try await bootstrapper.ensureRunning(paths: paths)
             logger.info("helper bootstrap completed")
             startupErrorMessage = nil
-            await refreshAll()
             beginPolling()
+            await refreshAll()
         } catch {
             logger.error("helper bootstrap failed: \(error.localizedDescription, privacy: .public)")
             startupErrorMessage = localizedErrorDescription(error)
@@ -1056,7 +1079,10 @@ final class AppModel: ObservableObject {
 
     func refreshAll(refreshModels: Bool = false) async {
         await refreshStatus()
-        if !isRemoteClient { await refreshAuthStatus() }
+        if !isRemoteClient {
+            await refreshAuthStatus()
+            enqueueRefresh(["codex"])
+        }
         if !isRemoteClient, needsSetup {
             await refreshSetupDiscovery()
         } else {
@@ -1073,9 +1099,31 @@ final class AppModel: ObservableObject {
     }
 
     func refreshStatus() async {
+        statusRefreshPending = true
+        if let task = statusRefreshTask { await task.value; return }
+        let generation = connectionGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.statusRefreshPending, !Task.isCancelled, generation == self.connectionGeneration {
+                self.statusRefreshPending = false
+                await self.refreshStatusOnce()
+            }
+        }
+        statusRefreshTask = task
+        await task.value
+        if generation == connectionGeneration { statusRefreshTask = nil }
+    }
+
+    private func refreshStatusOnce() async {
         let generation = connectionGeneration
         statusRequestGeneration += 1
         let requestGeneration = statusRequestGeneration
+        defer {
+            if generation == connectionGeneration, requestGeneration == statusRequestGeneration {
+                systemObservationPending = false
+                scheduleOperationalObservation()
+            }
+        }
         if isRemoteClient {
             helperStatus = nil
             codexRuntime = nil
@@ -1110,15 +1158,11 @@ final class AppModel: ObservableObject {
         connectionErrorMessage = nil
         do {
             let client = await helperClient()
-            let next = try await client.status()
+            let next = try await client.health()
             guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
             recordLocalConnectionStatus(next)
             statusErrorMessage = nil
-            if next.bridge.connected, next.tunnel.connected,
-               !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
-                await loadCodexRuntime(kind: "cli")
-                if usesSdkForNewAgents { await loadCodexRuntime(kind: "sdk") }
-            }
+            beginChangeWatchingIfNeeded()
         } catch {
             guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, !isRemoteClient else { return }
             recordLocalConnectionStatus(nil)
@@ -1149,7 +1193,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshDashboard() async {
+    func refreshDashboard(enrich: Bool = true) async {
         dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
@@ -1168,18 +1212,17 @@ final class AppModel: ObservableObject {
                 idleOffset: 0,
                 enrich: false
             )
-            guard connection == connectionGeneration else { return }
+            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
             dashboard = next
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
             }
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
-            scheduleDashboardEnrichment(
-                generation: generation,
-                terminalOffset: 0,
-                idleOffset: 0
-            )
+            if enrich {
+                lastDashboardEnrichment = Date()
+                scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
+            }
         } catch {
             guard connection == connectionGeneration else { return }
             dashboardErrorMessage = localizedErrorDescription(error)
@@ -1272,27 +1315,28 @@ final class AppModel: ObservableObject {
     }
 
     func setSettingsWindowVisible(_ visible: Bool) {
-        if !visible {
-            settingsPollingTask?.cancel()
-            settingsPollingTask = nil
-            Task { @MainActor [weak self] in
-                await self?.flushSettingsAutosave()
-            }
-            return
+        settingsWindowVisible = visible
+        if visible {
+            settingsInvalidated = true
+            enqueueRefresh(["status", "settings", "auth", "codex"])
+        } else {
+            Task { @MainActor [weak self] in await self?.flushSettingsAutosave() }
         }
-        guard settingsPollingTask == nil else { return }
-        settingsPollingTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                guard let self, !Task.isCancelled else { return }
-                if !self.isBusy &&
-                    !self.settingsAutosaveInProgress &&
-                    self.pendingSettingsDraft == nil {
-                    await self.refreshSettings()
-                    self.refreshLoginItemStatus()
-                }
-            }
+        beginChangeWatchingIfNeeded()
+    }
+
+    func setDashboardVisible(_ visible: Bool) {
+        dashboardVisible = visible
+        if visible {
+            enqueueRefresh(["status", "dashboard", "auth", "codex"])
+        } else {
+            refreshEventTasks.removeValue(forKey: "dashboard")?.cancel()
+            pendingRefreshEvents.remove("dashboard")
+            dashboardRequestGeneration += 1
+            dashboardEnrichmentTask?.cancel()
+            dashboardEnrichmentTask = nil
         }
+        beginChangeWatchingIfNeeded()
     }
 
     func scheduleSettingsAutosave(_ draft: SettingsDraft) {
@@ -1568,7 +1612,6 @@ final class AppModel: ObservableObject {
                 if sdkRuntime != next { sdkRuntime = next }
             } else {
                 if codexRuntime != next { codexRuntime = next }
-                lastCodexRuntimeRefresh = Date()
             }
             setCodexRuntimeError(nil, kind: kind)
         } catch {
@@ -2106,6 +2149,16 @@ final class AppModel: ObservableObject {
     }
 
     private func resetConnectionContext() {
+        cancelChangeWatching()
+        statusRefreshTask?.cancel()
+        statusRefreshTask = nil
+        statusRefreshPending = false
+        for task in refreshEventTasks.values { task.cancel() }
+        refreshEventTasks.removeAll()
+        refreshEventTaskIDs.removeAll()
+        pendingRefreshEvents.removeAll()
+        lastScheduledRefresh.removeAll()
+        lastDashboardEnrichment = nil
         connectionRecoveryExpiryTask?.cancel()
         connectionRecoveryExpiryTask = nil
         localConnectionRecovery = ConnectionRecoveryWindow()
@@ -2217,14 +2270,27 @@ final class AppModel: ObservableObject {
         return ISO8601DateFormatter().date(from: value)
     }
 
-    private func cancelAllPolling() {
+    func cancelAllPolling() {
+        cancelChangeWatching()
+        statusRefreshTask?.cancel()
+        statusRefreshTask = nil
+        statusRefreshPending = false
+        for task in refreshEventTasks.values { task.cancel() }
+        refreshEventTasks.removeAll()
+        refreshEventTaskIDs.removeAll()
+        pendingRefreshEvents.removeAll()
+        notificationRefreshTask?.cancel()
+        notificationRefreshTask = nil
+        notificationsStarted = false
+        networkMonitor?.cancel()
+        networkMonitor = nil
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        workspaceObservers.removeAll()
         connectionRecoveryExpiryTask?.cancel()
         connectionRecoveryExpiryTask = nil
         pollingTask?.cancel()
         pollingTask = nil
         cancelBridgeReadinessPolling()
-        settingsPollingTask?.cancel()
-        settingsPollingTask = nil
         loginPollingTask?.cancel()
         loginPollingTask = nil
         authRefreshTask?.cancel()
@@ -2332,26 +2398,204 @@ final class AppModel: ObservableObject {
     }
 
     private func beginPolling() {
+        beginChangeWatchingIfNeeded()
+        beginSystemEventsIfNeeded()
         guard pollingTask == nil else { return }
         pollingTask = Task { @MainActor [weak self] in
-            var ticks = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
                 guard let self, !Task.isCancelled else { return }
-                let wasBridgeConnected = self.bridgeConnected
+                let wasConnected = self.bridgeConnected
                 await self.refreshStatus()
-                ticks += 1
-                let becameBridgeConnected = !wasBridgeConnected && self.bridgeConnected
-                if becameBridgeConnected {
-                    if !self.isBridgeConnectionChecking { self.cancelBridgeReadinessPolling() }
-                    await self.refreshBridgeContent()
-                } else if ticks.isMultiple(of: 3) {
-                    await self.refreshDashboard()
+                guard !Task.isCancelled else { return }
+                if !wasConnected, self.bridgeConnected {
+                    self.enqueueRefresh(["dashboard", "settings", "auth", "codex"])
                 }
-                if !self.isRemoteClient, ticks.isMultiple(of: 6) {
-                    await self.refreshAuthStatus()
+                self.scheduleBackgroundRefreshes()
+                self.scheduleOperationalObservation()
+            }
+        }
+    }
+
+    func scheduleBackgroundRefreshes(at now: Date = Date()) {
+        func due(_ topic: String, every interval: TimeInterval) -> Bool {
+            lastScheduledRefresh[topic].map { now.timeIntervalSince($0) >= interval } ?? true
+        }
+        if dashboardVisible, due("dashboard", every: companionChangesAvailable ? 30 : 10) {
+            enqueueRefresh(["dashboard"])
+        }
+        if settingsWindowVisible, settingsInvalidated || due("settings", every: 60) {
+            enqueueRefresh(["settings"])
+        }
+        if !isRemoteClient {
+            if due("auth", every: 300) { enqueueRefresh(["auth"]) }
+            if !codexSettingsVisible, due("codex", every: 300) { enqueueRefresh(["codex"]) }
+        }
+    }
+
+    func refreshAfterSystemEvent() {
+        guard !applicationShutdownInProgress, !applicationShutdownCompleted, pollingTask != nil else { return }
+        // Expire freshness on wake: elapsed sleep is not observed connectivity.
+        lastScheduledRefresh.removeAll()
+        enqueueRefresh(["status", "dashboard", "settings", "auth", "codex"])
+        beginChangeWatchingIfNeeded()
+        refreshLoginItemStatus()
+    }
+
+    private func beginSystemEventsIfNeeded() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshAfterSystemEvent() }
+        }
+        monitor.start(queue: DispatchQueue(label: "bridge.network-changes", qos: .utility))
+        networkMonitor = monitor
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshAfterSystemEvent() }
+        })
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.prepareForSystemSleep() }
+        })
+    }
+
+    func prepareForSystemSleep() {
+        systemObservationPending = true
+        statusRequestGeneration += 1
+        connectionRecoveryExpiryTask?.cancel()
+        connectionRecoveryExpiryTask = nil
+        localConnectionRecovery = ConnectionRecoveryWindow()
+        scheduleOperationalObservation()
+    }
+
+    private func enqueueRefresh(_ topics: Set<String>) {
+        guard !applicationShutdownInProgress, !applicationShutdownCompleted else { return }
+        for topic in topics {
+            if topic == "dashboard", !dashboardVisible { continue }
+            if topic == "settings", !settingsWindowVisible { settingsInvalidated = true; continue }
+            if ["auth", "codex"].contains(topic), isRemoteClient { continue }
+            pendingRefreshEvents.insert(topic)
+            guard refreshEventTasks[topic] == nil else { continue }
+            let generation = connectionGeneration
+            let taskID = UUID()
+            refreshEventTaskIDs[topic] = taskID
+            refreshEventTasks[topic] = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer {
+                    if generation == self.connectionGeneration, self.refreshEventTaskIDs[topic] == taskID {
+                        self.refreshEventTasks[topic] = nil
+                        self.refreshEventTaskIDs[topic] = nil
+                    }
+                }
+                while !Task.isCancelled, generation == self.connectionGeneration, self.pendingRefreshEvents.remove(topic) != nil {
+                    do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                    // All arrivals during the debounce belong to this read.
+                    self.pendingRefreshEvents.remove(topic)
+                    guard !Task.isCancelled, generation == self.connectionGeneration else { return }
+                    self.lastScheduledRefresh[topic] = Date()
+                    switch topic {
+                    case "status": await self.refreshStatus()
+                    case "dashboard":
+                        if self.dashboardVisible {
+                            let enrich = self.lastDashboardEnrichment.map { Date().timeIntervalSince($0) >= 30 } ?? true
+                            await self.refreshDashboard(enrich: enrich)
+                        }
+                    case "settings":
+                        if self.settingsWindowVisible, !self.isBusy, !self.settingsAutosaveInProgress, self.pendingSettingsDraft == nil {
+                            self.settingsInvalidated = false
+                            await self.refreshSettings()
+                        } else { self.settingsInvalidated = true }
+                    case "auth": await self.refreshAuthStatus()
+                    case "codex":
+                        await self.loadCodexRuntime(kind: "cli", includeAccount: self.codexRuntime?.isInstalling != true)
+                        if self.usesSdkForNewAgents || self.codexSettingsVisible {
+                            await self.loadCodexRuntime(kind: "sdk", includeAccount: self.sdkRuntime?.isInstalling != true)
+                        }
+                    default: break
+                    }
                 }
             }
         }
+    }
+
+    private func beginChangeWatchingIfNeeded() {
+        guard !applicationShutdownInProgress, !applicationShutdownCompleted, !isRemoteClient else { return }
+        let generation = connectionGeneration
+        if helperChangesTask == nil, !helperChangesUnsupported {
+            helperChangesTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let client = await self.helperClient()
+                var revision: String?
+                var failures = 0
+                while !Task.isCancelled, generation == self.connectionGeneration {
+                    do {
+                        let notice = try await client.waitForChanges(after: revision)
+                        guard !Task.isCancelled, generation == self.connectionGeneration else { return }
+                        self.helperChangesAvailable = true
+                        revision = notice.revision
+                        failures = 0
+                        var topics = Set<String>()
+                        if notice.topics.contains("runtime") { topics.insert("status") }
+                        if notice.topics.contains("configuration") { topics.formUnion(["status", "settings", "auth", "codex"]) }
+                        if notice.topics.contains("auth") { topics.formUnion(["auth", "codex"]) }
+                        if notice.topics.contains("installation") { topics.insert("codex") }
+                        self.enqueueRefresh(topics)
+                    } catch {
+                        guard !Task.isCancelled, generation == self.connectionGeneration else { return }
+                        self.helperChangesAvailable = false
+                        if let error = error as? LocalRPCError, error.isUnsupportedMethod {
+                            self.helperChangesUnsupported = true
+                            return
+                        }
+                        self.enqueueRefresh(["status"])
+                        failures += 1
+                        do { try await Task.sleep(for: .seconds(min(30, pow(2, Double(min(failures - 1, 5)))))) } catch { return }
+                    }
+                }
+            }
+        }
+        guard dashboardVisible || settingsWindowVisible else {
+            companionChangesTask?.cancel()
+            companionChangesTask = nil
+            return
+        }
+        guard companionChangesTask == nil, !companionChangesUnsupported, bridgeConnected else { return }
+        companionChangesTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let paths = await self.resolvedPaths()
+            let client = BridgeCompanionClient(socketPath: paths.bridgeSocket.path)
+            var revision: String?
+            var failures = 0
+            while !Task.isCancelled, generation == self.connectionGeneration {
+                do {
+                    let notice = try await client.waitForChanges(after: revision)
+                    guard !Task.isCancelled, generation == self.connectionGeneration else { return }
+                    self.companionChangesAvailable = true
+                    revision = notice.revision
+                    failures = 0
+                    self.enqueueRefresh(Set(notice.topics))
+                } catch {
+                    guard !Task.isCancelled, generation == self.connectionGeneration else { return }
+                    self.companionChangesAvailable = false
+                    if let error = error as? LocalRPCError, error.isUnsupportedMethod {
+                        self.companionChangesUnsupported = true
+                        return
+                    }
+                    failures += 1
+                    do { try await Task.sleep(for: .seconds(min(30, pow(2, Double(min(failures - 1, 5)))))) } catch { return }
+                }
+            }
+        }
+    }
+
+    private func cancelChangeWatching() {
+        helperChangesTask?.cancel()
+        helperChangesTask = nil
+        companionChangesTask?.cancel()
+        companionChangesTask = nil
+        helperChangesAvailable = false
+        companionChangesAvailable = false
+        helperChangesUnsupported = false
+        companionChangesUnsupported = false
     }
 }

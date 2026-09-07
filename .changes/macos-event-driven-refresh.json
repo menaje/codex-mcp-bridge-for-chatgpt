@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep menu bar health independent of slow details, refresh visible content on change notices, and recover cleanly after sleep or network changes.",
+  "breaking": false,
+  "migration": null
+}

@@ -195,6 +195,10 @@ if (args[0] === "health") {
       console.error("sk-health-secret-1234567890123456");
       process.exit(1);
     }
+    if (readFileSync(controlPlaneReadyFile, "utf8") === "slow") {
+      writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
+      await new Promise(resolve => setTimeout(resolve, 4_000));
+    }
     const url = readFileSync(option("--url-file"), "utf8").trim();
     const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
     process.kill(pid, 0);
@@ -287,9 +291,18 @@ async function runLauncher(paths: {
       const recovered = await waitForStatus(paths.runtimeStatusFile, child, status => status.tunnel?.connected === true);
       expect(recovered.launcherPid).toBe(launcherPid);
       expect(recovered.phase).toBe("running");
+      writeFileSync(paths.controlPlaneReadyFile, "slow");
+      await waitForStatus(paths.runtimeStatusFile, child, () => existsSync(paths.controlPlaneReadyFile + ".checking"));
     }
+    const shutdownStarted = Date.now();
     child.kill("SIGTERM");
     const result = await waitForProcessExit(child, 10_000);
+    if (paths.controlPlaneReadyFile) {
+      // A pending four-second probe must not hold up shutdown or outlive its owner.
+      expect(Date.now() - shutdownStarted).toBeLessThan(2_000);
+      const probePid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
+      expect(() => process.kill(probePid, 0)).toThrow();
+    }
     if (result.code !== 0) {
       throw new Error(`Launcher exited with ${result.code ?? result.signal}: ${output}`);
     }

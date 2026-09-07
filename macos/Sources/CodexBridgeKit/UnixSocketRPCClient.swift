@@ -65,14 +65,22 @@ public struct UnixSocketRPCClient: Sendable {
         let socketPath = self.socketPath
         let timeout = requestTimeout ?? self.timeout
         let maximumResponseBytes = self.maximumResponseBytes
-        let responseData = try await Task.detached(priority: .userInitiated) {
-            try transact(
-                socketPath: socketPath,
-                request: requestData,
-                timeout: timeout,
-                maximumResponseBytes: maximumResponseBytes
-            )
-        }.value
+        let cancellation = SocketCancellation()
+        let responseData: Data
+        do {
+            responseData = try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                let value = try await Task.detached(priority: .userInitiated) {
+                    try transact(socketPath: socketPath, request: requestData, timeout: timeout,
+                        maximumResponseBytes: maximumResponseBytes, cancellation: cancellation)
+                }.value
+                try Task.checkCancellation()
+                return value
+            } onCancel: { cancellation.cancel() }
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
         do {
             let envelope = try JSONDecoder().decode(RPCResponse<Result>.self, from: responseData)
             guard envelope.jsonrpc == "2.0", envelope.id == requestID else {
@@ -114,7 +122,8 @@ private func transact(
     socketPath: String,
     request: Data,
     timeout: TimeInterval,
-    maximumResponseBytes: Int
+    maximumResponseBytes: Int,
+    cancellation: SocketCancellation
 ) throws -> Data {
     let pathBytes = Array(socketPath.utf8)
     guard !pathBytes.isEmpty, pathBytes.count < MemoryLayout.size(ofValue: sockaddr_un().sun_path) else {
@@ -124,7 +133,10 @@ private func transact(
     guard descriptor >= 0 else {
         throw LocalRPCError.connectionFailed(posixMessage())
     }
-    defer { Darwin.close(descriptor) }
+    defer { cancellation.close(descriptor) }
+    try cancellation.attach(descriptor)
+    var noSignal: Int32 = 1
+    _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
     _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
 
     var socketTimeout = timeval(
@@ -170,6 +182,7 @@ private func transact(
         throw LocalRPCError.peerIdentityMismatch
     }
 
+    try cancellation.check()
     var payload = request
     payload.append(0x0A)
     try payload.withUnsafeBytes { rawBuffer in
@@ -200,4 +213,32 @@ private func transact(
 
 private func posixMessage() -> String {
     String(cString: strerror(errno))
+}
+
+// Cancellation interrupts a blocking read without closing/reusing its descriptor
+// underneath another thread. The transaction alone owns the final close.
+private final class SocketCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32?
+    private var cancelled = false
+
+    func attach(_ value: Int32) throws {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { throw CancellationError() }
+        descriptor = value
+    }
+    func check() throws {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { throw CancellationError() }
+    }
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+        if let descriptor { _ = Darwin.shutdown(descriptor, SHUT_RDWR) }
+    }
+    func close(_ value: Int32) {
+        lock.lock(); defer { lock.unlock() }
+        descriptor = nil
+        Darwin.close(value)
+    }
 }

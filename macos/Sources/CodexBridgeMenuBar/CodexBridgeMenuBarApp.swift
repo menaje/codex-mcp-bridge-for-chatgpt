@@ -118,7 +118,7 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        Self.model?.refreshLoginItemStatus()
+        Self.model?.refreshAfterSystemEvent()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

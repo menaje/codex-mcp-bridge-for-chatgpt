@@ -7,6 +7,10 @@ public struct BridgeCompanionClient: Sendable {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
     }
 
+    public func waitForChanges(after: String?) async throws -> ChangeNotice {
+        try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
+    }
+
     public func dashboard(
         limit: Int = 20,
         terminalOffset: Int = 0,
@@ -80,6 +84,15 @@ public struct MacOSHelperClient: Sendable {
             ),
             timeout: Self.controlTimeout(timeoutMilliseconds, restartAfterStop: false)
         )
+    }
+
+    public func waitForChanges(after: String?) async throws -> ChangeNotice {
+        try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
+    }
+
+    public func health() async throws -> HelperStatus {
+        do { return try await rpc.call("helper.health", params: EmptyParameters(), timeout: 5) }
+        catch let error as LocalRPCError where error.isUnsupportedMethod { return try await status() }
     }
 
     public func status() async throws -> HelperStatus {

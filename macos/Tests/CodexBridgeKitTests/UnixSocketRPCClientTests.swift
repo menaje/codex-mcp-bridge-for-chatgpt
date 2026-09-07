@@ -4,6 +4,31 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testCancellingChangeWaitClosesSocketWithoutWaitingForTimeout() async throws {
+        let path = "/tmp/cb-cancel-\(UUID().uuidString.prefix(8)).sock"
+        let listener = try makeListener(at: path)
+        defer { Darwin.close(listener); unlink(path) }
+        let connected = expectation(description: "request received")
+        let server = Task.detached { () throws -> Void in
+            let client = Darwin.accept(listener, nil, nil)
+            guard client >= 0 else { throw POSIXError(.EIO) }
+            defer { Darwin.close(client) }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            guard Darwin.read(client, &buffer, buffer.count) > 0 else { throw POSIXError(.EIO) }
+            connected.fulfill()
+            XCTAssertEqual(Darwin.read(client, &buffer, buffer.count), 0)
+        }
+        let client = MacOSHelperClient(socketPath: path)
+        let request = Task { try await client.waitForChanges(after: "same-revision") }
+        await fulfillment(of: [connected], timeout: 2)
+        let started = Date()
+        request.cancel()
+        do { _ = try await request.value; XCTFail("Cancelled wait returned a value") }
+        catch is CancellationError { }
+        try await server.value
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
     func testPerCallTimeoutCanOutliveShortClientDefault() async throws {
         let socketPath = "/tmp/cb-rpc-\(getpid())-\(UUID().uuidString.prefix(8)).sock"
         unlink(socketPath)

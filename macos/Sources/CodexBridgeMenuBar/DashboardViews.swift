@@ -61,15 +61,11 @@ struct DashboardPopoverView: View {
         }
         .frame(width: 460, height: 660)
         .environment(\.locale, model.interfaceLocale)
+        .onAppear { model.setDashboardVisible(true) }
+        .onDisappear { model.setDashboardVisible(false) }
         .task {
-            if model.isRemoteClient {
-                await model.refreshAll()
-            } else if model.helperStatus == nil {
+            if model.isRemoteClient ? model.remoteHello == nil : model.helperStatus == nil {
                 await model.start()
-            } else {
-                await model.refreshStatus()
-                await model.refreshAuthStatus()
-                await model.refreshDashboard()
             }
         }
         .confirmationDialog(

@@ -23,6 +23,25 @@ afterEach(async () => {
 });
 
 describe("native companion server", () => {
+  it("pushes application invalidations without loading hidden snapshots and releases its subscription", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    let listener: (topic: "dashboard" | "settings") => void = () => undefined;
+    const unsubscribe = vi.fn();
+    service.subscribeChanges = callback => { listener = callback; return unsubscribe; };
+    const server = await startBridgeCompanionServer({ socketPath, applicationService: service });
+    servers.push(server);
+    const first = await request(socketPath, { jsonrpc: "2.0", id: 1, method: "changes.wait", params: { waitMs: 0 } });
+    const revision = (first.result as { revision: string }).revision;
+    const waiting = request(socketPath, { jsonrpc: "2.0", id: 2, method: "changes.wait", params: { after: revision } });
+    listener("settings");
+    expect(await waiting).toMatchObject({ result: { topics: ["settings"] } });
+    expect(service.dashboardSnapshot).not.toHaveBeenCalled();
+    expect(service.settingsSnapshot).not.toHaveBeenCalled();
+    await server.close();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
   it("serves a versioned hello over a private Unix socket", async () => {
     const socketPath = temporarySocketPath();
     const server = await startBridgeCompanionServer({

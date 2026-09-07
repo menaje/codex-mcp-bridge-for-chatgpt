@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, execFile } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
 import {
@@ -102,6 +102,7 @@ let runtimeLocks = [];
 let ownsRuntimeState = false;
 let tunnelHealthTimer;
 let tunnelHealthProbeRunning = false;
+let tunnelHealthCancellation;
 let tunnelHealthFailedAt;
 let runtimePhase = "starting";
 let activeRuntimeBuildId = "unbuilt";
@@ -520,7 +521,8 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("tunnel-client exited before the control-plane connection became ready.");
     }
-    const { connected } = probeTunnelHealth(tunnelClient, environment);
+    const { connected } = await probeTunnelHealth(tunnelClient, environment);
+    if (shuttingDown || child.exitCode !== null || child.signalCode !== null) throw new Error("Tunnel stopped while checking readiness.");
     tunnelState = {
       ...tunnelState,
       phase: connected ? "connected" : "starting",
@@ -541,14 +543,15 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
 }
 
 function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
-  tunnelHealthTimer = setInterval(() => {
+  tunnelHealthTimer = setInterval(async () => {
     if (shuttingDown || tunnelHealthProbeRunning) return;
     tunnelHealthProbeRunning = true;
     try {
       const processRunning = child.exitCode === null && child.signalCode === null;
       const probe = processRunning
-        ? probeTunnelHealth(tunnelClient, environment)
+        ? await probeTunnelHealth(tunnelClient, environment)
         : { connected: false, reason: "tunnel process is not running" };
+      if (shuttingDown || child.exitCode !== null || child.signalCode !== null) return;
       const { connected } = probe;
       recordTunnelHealthTransition(connected, probe.reason, child.pid);
       tunnelState = {
@@ -572,6 +575,7 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
       };
       publishRuntimeStatus();
     } catch (error) {
+      if (shuttingDown) return;
       recordTunnelHealthTransition(false, safeStatusText(error), child.pid);
       tunnelState = {
         ...tunnelState,
@@ -589,11 +593,13 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
   tunnelHealthTimer.unref();
 }
 
-function probeTunnelHealth(tunnelClient, environment) {
+async function probeTunnelHealth(tunnelClient, environment) {
   if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) {
     return { connected: false, reason: "health endpoint locator or pid file is missing" };
   }
-  const result = spawnSync(tunnelClient, [
+  const cancellation = new AbortController();
+  tunnelHealthCancellation = cancellation;
+  const result = await new Promise(resolveProbe => execFile(tunnelClient, [
     "health",
     "--json",
     "--url-file",
@@ -605,8 +611,15 @@ function probeTunnelHealth(tunnelClient, environment) {
     cwd: repoRoot,
     env: environment,
     encoding: "utf8",
-    timeout: 5_000
-  });
+    timeout: 5_000,
+    signal: cancellation.signal,
+    killSignal: "SIGKILL",
+    maxBuffer: 64 * 1024
+  }, (error, stdout) => resolveProbe({
+    status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+    error, signal: error?.signal, stdout
+  })));
+  if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
   if (result.status === 0) return { connected: true };
   const evidence = [`exit=${result.status ?? "none"}`];
   if (result.error?.code) evidence.push(`error=${safeStatusText(result.error.code)}`);
@@ -716,6 +729,7 @@ function shutdown(code = 0, phase = "stopped") {
   process.exitCode = Math.max(process.exitCode || 0, code);
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
+  tunnelHealthCancellation?.abort();
   shutdownPromise = (async () => {
     if (tunnelHealthTimer) {
       clearInterval(tunnelHealthTimer);

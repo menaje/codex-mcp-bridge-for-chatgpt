@@ -20,6 +20,8 @@ import {
   type MacOSHelperStatus
 } from "../src/macosHelperServer.js";
 import type { BridgeCompanionServer } from "../src/companionServer.js";
+import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
 
@@ -30,6 +32,60 @@ afterEach(async () => {
 });
 
 describe("macOS runtime helper RPC", () => {
+  it("keeps health independent of installation discovery and account queries", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "helper-health-"));
+    const manager = new CodexRuntimeManager({ root: path.join(root, "runtime"), discoverExternal: false });
+    const snapshot = vi.spyOn(manager, "snapshot").mockImplementation(() => new Promise(() => undefined));
+    const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile: path.join(root, ".env"),
+      bridgeSocketPath: path.join(root, "bridge.sock"), codexRuntimeManager: manager });
+    const socketPath = path.join(root, "helper.sock");
+    const server = await startMacOSHelperServer({ socketPath, controller });
+    servers.push(server);
+    const result = await request(socketPath, { jsonrpc: "2.0", id: 1, method: "helper.health", params: {} });
+    expect(result).toMatchObject({ result: { kind: "helper-status", phase: "stopped" } });
+    expect(snapshot).not.toHaveBeenCalled();
+    expect((result.result as Record<string, unknown>).codexRuntime).toBeUndefined();
+  });
+
+  it("ignores unchanged tunnel heartbeats and invalidates cached configuration on file changes", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "helper-changes-"));
+    const envFile = path.join(root, ".env");
+    updateRuntimeEnvFile(envFile, { apiKey: "sk-native-test-1234567890123456", tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" });
+    const runtimeStatusFile = path.join(root, "launcher-status.json");
+    const state = { phase: "running", runtimeBuildId: "test", tunnel: { phase: "connected", profile: "managed", transport: "stdio",
+      doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null } };
+    writeManagedRuntimeStatus(runtimeStatusFile, state);
+    const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile, runtimeStatusFile,
+      bridgeSocketPath: path.join(root, "bridge.sock"), registeredProjectRoots: () => [] });
+    const changes: string[] = [];
+    const unsubscribe = controller.subscribeChanges(topic => changes.push(topic));
+    try {
+      expect((await controller.health()).configuration.valid).toBe(true);
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, lastCheckedAt: new Date(Date.now() + 1).toISOString() } });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(changes).not.toContain("runtime");
+      writeManagedRuntimeStatus(runtimeStatusFile, { ...state, tunnel: { ...state.tunnel, connected: false, phase: "degraded" } });
+      await vi.waitFor(() => expect(changes).toContain("runtime"));
+      writeFileSync(envFile, "", { mode: 0o600 });
+      await vi.waitFor(() => expect(changes).toContain("configuration"));
+      expect((await controller.health()).configuration.valid).toBe(false);
+    } finally { unsubscribe(); }
+  });
+
+  it("delivers a lifecycle change before the next health poll", async () => {
+    const controller = fakeController();
+    let listener: (topic: string) => void = () => undefined;
+    controller.subscribeChanges = callback => { listener = callback; return () => undefined; };
+    const socketPath = temporarySocketPath();
+    servers.push(await startMacOSHelperServer({ socketPath, controller }));
+    const first = await request(socketPath, { jsonrpc: "2.0", id: 1, method: "changes.wait", params: { waitMs: 0 } });
+    const revision = (first.result as { revision: string }).revision;
+    const waiting = request(socketPath, { jsonrpc: "2.0", id: 2, method: "changes.wait", params: { after: revision } });
+    listener("runtime");
+    expect(await waiting).toMatchObject({ result: { topics: ["runtime"] } });
+    expect(controller.snapshot).not.toHaveBeenCalled();
+  });
+
   it("serves a versioned, private control surface", async () => {
     const socketPath = temporarySocketPath();
     const server = await startMacOSHelperServer({
