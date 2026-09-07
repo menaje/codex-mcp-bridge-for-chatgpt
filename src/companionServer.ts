@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 import * as z from "zod/v4";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import type {
   BridgeApplicationService,
@@ -38,6 +39,7 @@ const requestSchema = z.strictObject({
   id: requestIdSchema,
   method: z.enum([
     "companion.hello",
+    "changes.wait",
     "dashboard.snapshot",
     "settings.snapshot",
     "settings.update",
@@ -147,7 +149,7 @@ export type PrivateJsonLineServerOptions = {
   maxRequestBytes: number;
   maxResponseBytes: number;
   maxClients?: number;
-  dispatch(line: string): Promise<Record<string, unknown>>;
+  dispatch(line: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
   requestTooLarge(): Record<string, unknown>;
   internalError(error: unknown): Record<string, unknown>;
 };
@@ -160,19 +162,24 @@ export type PrivateJsonLineServerOptions = {
 export async function startBridgeCompanionServer(
   options: BridgeCompanionServerOptions
 ): Promise<BridgeCompanionServer> {
-  return startPrivateJsonLineServer({
+  const changes = new ChangeSignal(["dashboard", "settings"]);
+  const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
+  const server = await startPrivateJsonLineServer({
     socketPath: options.socketPath,
     maxRequestBytes: COMPANION_MAX_REQUEST_BYTES,
     maxResponseBytes: COMPANION_MAX_RESPONSE_BYTES,
     maxClients: COMPANION_MAX_CLIENTS,
-    dispatch: (line) => dispatchLine(
+    dispatch: (line, signal) => dispatchLine(
       line,
       options.applicationService,
-      options.remoteManagement
+      options.remoteManagement,
+      unsubscribe ? changes : undefined,
+      signal
     ),
     requestTooLarge: () => errorResponse(null, -32600, "Companion request is too large."),
     internalError: (error) => errorResponse(null, -32603, safeErrorMessage(error))
-  });
+  }).catch(error => { unsubscribe?.(); changes.close(); throw error; });
+  return { socketPath: server.socketPath, close: async () => { unsubscribe?.(); changes.close(); await server.close(); } };
 }
 
 /** Shared transport hardening for the bridge and helper's distinct RPC surfaces. */
@@ -213,6 +220,8 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
   socket.setEncoding("utf8");
   let buffer = "";
   let requestQueue = Promise.resolve();
+  const cancellation = new AbortController();
+  socket.once("close", () => cancellation.abort());
 
   socket.on("data", (chunk: string) => {
     buffer += chunk;
@@ -228,7 +237,10 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
       buffer = buffer.slice(newline + 1);
       if (!line.trim()) continue;
       requestQueue = requestQueue
-        .then(() => options.dispatch(line))
+        .then(() => {
+          if (cancellation.signal.aborted) throw new Error("CONNECTION_CLOSED");
+          return options.dispatch(line, cancellation.signal);
+        })
         .then((response) => writeResponse(socket, response, options.maxResponseBytes))
         .catch((error) => {
           writeResponse(socket, options.internalError(error), options.maxResponseBytes);
@@ -241,7 +253,9 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
 async function dispatchLine(
   line: string,
   applicationService: BridgeApplicationService,
-  remoteManagement?: RemoteCompanionControl
+  remoteManagement?: RemoteCompanionControl,
+  changes?: ChangeSignal,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
   let decoded: unknown;
   try {
@@ -249,13 +263,15 @@ async function dispatchLine(
   } catch {
     return errorResponse(null, -32700, "Invalid JSON.");
   }
-  return dispatchCompanionPayload(decoded, applicationService, remoteManagement);
+  return dispatchCompanionPayload(decoded, applicationService, remoteManagement, changes, signal);
 }
 
 export async function dispatchCompanionPayload(
   decoded: unknown,
   applicationService: BridgeApplicationService,
-  remoteManagement?: RemoteCompanionControl
+  remoteManagement?: RemoteCompanionControl,
+  changes?: ChangeSignal,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
   const parsed = requestSchema.safeParse(decoded);
   if (!parsed.success) {
@@ -263,7 +279,13 @@ export async function dispatchCompanionPayload(
   }
   const request = parsed.data;
   try {
-    const result = await dispatchRequest(request, applicationService, remoteManagement);
+    const result = request.method === "changes.wait"
+      ? await (() => {
+          if (!changes) throw new Error("CHANGES_UNSUPPORTED");
+          const params = changeWaitParamsSchema.parse(request.params || {});
+          return changes.wait(params.after, params.waitMs, signal);
+        })()
+      : await dispatchRequest(request, applicationService, remoteManagement);
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return errorResponse(request.id, -32602, safeErrorMessage(error));

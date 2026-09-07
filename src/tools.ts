@@ -2172,6 +2172,13 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
+  private readonly changeListeners = new Set<() => void>();
+
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+
   private persistenceWarningShown = false;
   private lastPersistedAt = 0;
 
@@ -4152,10 +4159,12 @@ export class CodexJobRegistry {
   }
 
   private notify(jobId: string): void {
+    for (const listener of this.changeListeners) listener();
     for (const listener of [...(this.waiters.get(jobId) || [])]) listener();
   }
 
   private notifyScope(scopeId: string): void {
+    for (const listener of this.changeListeners) listener();
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
@@ -4632,6 +4641,14 @@ export function registerBridgeTools(
     cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
   };
   const applicationService: BridgeApplicationService = {
+    subscribeChanges(listener) {
+      const subscriptions = [
+        jobs.subscribeChanges(() => listener("dashboard")),
+        userSettings.subscribeChanges(() => { listener("settings"); listener("dashboard"); }),
+        modelCatalog.subscribe?.(() => listener("settings"))
+      ];
+      return () => { for (const unsubscribe of subscriptions) unsubscribe?.(); };
+    },
     async dashboardSnapshot(options = {}) {
       const startedAt = Date.now();
       const view = await buildDashboardView(
@@ -10477,6 +10494,7 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
+  subscribeChanges?(listener: (topic: "dashboard" | "settings") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;

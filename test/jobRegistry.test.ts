@@ -11,6 +11,26 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("CodexJobRegistry persistence", () => {
+  it("notifies native subscribers when work starts and settles, then unsubscribes", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "jobs.json"));
+    const changed = vi.fn();
+    const unsubscribe = registry.subscribeChanges(changed);
+    let complete: (value: ToolResult) => void = () => undefined;
+    const job = registry.start(jobInput(root), () => new Promise(resolve => { complete = resolve; }));
+    await Promise.resolve();
+    expect(changed).toHaveBeenCalled();
+    changed.mockClear();
+    complete(result("native-notice"));
+    await job.promise;
+    expect(changed).toHaveBeenCalled();
+    unsubscribe();
+    changed.mockClear();
+    const next = registry.start({ ...jobInput(root), requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }, async () => result("after-unsubscribe"));
+    await next.promise;
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it.each([["upstream unavailable", "upstream-failure"], ["CODEX_WORKER_LOST: Worker exited", "worker-loss"]])("records %s without inventing user cancellation", async (message, origin) => {
     const root = temporaryRoot(), stateFile = path.join(root, "jobs.json");
     const registry = persistentRegistry(root, stateFile);

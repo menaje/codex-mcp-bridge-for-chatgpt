@@ -25,6 +25,19 @@ import {
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 
 describe("user settings and project registry", () => {
+  it("notifies after committed changes but not rejected or unchanged writes", () => {
+    const store = new UserSettingsStore(configFor());
+    const revisions: number[] = [];
+    const unsubscribe = store.subscribeChanges(() => revisions.push(store.current.settingsRevision));
+    store.update({ uiLocalePreference: "ko" }, 0);
+    store.update({ uiLocalePreference: "ko" }, 1);
+    expect(() => store.update({ uiLocalePreference: "en" }, 0)).toThrow(SETTINGS_REVISION_CONFLICT);
+    expect(revisions).toEqual([1]);
+    unsubscribe();
+    store.update({ uiLocalePreference: "en" }, 1);
+    expect(revisions).toEqual([1]);
+  });
+
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({

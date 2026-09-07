@@ -1,3 +1,4 @@
+import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { CodexService } from "./codexService.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -6,7 +7,8 @@ import {
   existsSync,
   lstatSync,
   readFileSync,
-  unlinkSync
+  unlinkSync,
+  watch
 } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
@@ -88,6 +90,8 @@ const helperRequestSchema = z.strictObject({
   method: z.enum([
     "helper.hello",
     "helper.status",
+    "helper.health",
+    "changes.wait",
     "helper.prepare-shutdown",
     "setup.discover",
     "setup.import",
@@ -226,6 +230,8 @@ export type CodexLoginStatus = {
 export type MacOSHelperController = {
   codexRuntime?(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot>;
   snapshot(): Promise<MacOSHelperStatus>;
+  health?(): Promise<MacOSHelperStatus>;
+  subscribeChanges?(listener: (topic: string) => void): () => void;
   discoverSetup(): Promise<TunnelSetupDiscovery>;
   importSetup(values: {
     candidateId: string;
@@ -281,6 +287,55 @@ export type MacOSBridgeSupervisorOptions = {
 };
 
 export class MacOSBridgeSupervisor implements MacOSHelperController {
+  private readonly changeListeners = new Set<(topic: string) => void>();
+  private readonly watchedManagers = new WeakSet<CodexRuntimeManager>();
+  private readonly managerSubscriptions = new Set<() => void>();
+  private configurationGeneration = 0;
+  private healthConfiguration?: { at: number; generation: number; value: RuntimeEnvStatus };
+
+  private changed(topic: string): void {
+    if (topic === "configuration") { this.configurationGeneration++; this.healthConfiguration = undefined; }
+    for (const listener of this.changeListeners) listener(topic);
+  }
+
+  subscribeChanges(listener: (topic: string) => void): () => void {
+    this.changeListeners.add(listener);
+    const watchers: ReturnType<typeof watch>[] = [];
+    const observeFile = (file: string, changed: () => void) => {
+      try {
+        // Watch the directory because private state files are replaced atomically.
+        const watcher = watch(path.dirname(file), { persistent: false }, (_, filename) => {
+          if (!filename || String(filename) === path.basename(file)) changed();
+        });
+        watcher.on("error", () => { watcher.close(); });
+        watchers.push(watcher);
+      } catch { /* The watchdog also works before directories are created. */ }
+    };
+    let runtimeFingerprint = this.runtimeChangeFingerprint();
+    observeFile(this.runtimeStatusFile, () => {
+      const next = this.runtimeChangeFingerprint();
+      if (next !== runtimeFingerprint) { runtimeFingerprint = next; this.changed("runtime"); }
+    });
+    observeFile(this.envFile, () => this.changed("configuration"));
+    const environment = commandEnvironment(this.envFile);
+    observeFile(path.join(environment.CODEX_HOME || path.join(homedir(), ".codex"), "auth.json"), () => this.changed("auth"));
+    return () => { this.changeListeners.delete(listener); for (const watcher of watchers) watcher.close(); };
+  }
+
+  private runtimeChangeFingerprint(): string {
+    const state = readManagedRuntimeStatus(this.runtimeStatusFile);
+    if (!state) return "missing";
+    // A routine heartbeat is not a connection change.
+    return JSON.stringify({ pid: state.launcherPid, phase: state.phase, build: state.runtimeBuildId,
+      tunnel: { ...state.tunnel, lastCheckedAt: null } });
+  }
+
+  private watchManager(manager: CodexRuntimeManager): void {
+    if (this.watchedManagers.has(manager)) return;
+    this.watchedManagers.add(manager);
+    this.managerSubscriptions.add(manager.subscribeChanges(() => this.changed("installation")));
+  }
+
   private codexService?: CodexService;
   private readonly bridgeRoot: string;
   private readonly envFile: string;
@@ -311,6 +366,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: DiagnosticLog<MacOSHelperLogEntry>;
+  private bridgeStatusProbe: Promise<RuntimeAdmissionSnapshot | null> | undefined;
+  private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
   private cliManager?: CodexRuntimeManager;
   private cliInstallation?: Promise<unknown>;
@@ -354,10 +411,17 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.setupDiscoveryHomeDirectory = options.setupDiscoveryHomeDirectory;
   }
 
-  async snapshot(): Promise<MacOSHelperStatus> {
+  health(): Promise<MacOSHelperStatus> { return this.snapshot({ includeDetails: false }); }
+
+  async snapshot(options: { includeDetails?: boolean } = {}): Promise<MacOSHelperStatus> {
     this.reconcileManagedRuntime();
-    const bridgeAdmission = await readBridgeAdmission(this.bridgeSocketPath);
-    const configuration = await this.configurationStatus();
+    const bridgeAdmission = await this.readBridgeStatus();
+    const includeDetails = options.includeDetails !== false;
+    const generation = this.configurationGeneration;
+    const cached = this.healthConfiguration;
+    const configuration = !includeDetails && cached?.generation === generation && Date.now() - cached.at < 60_000
+      ? cached.value : await this.configurationStatus();
+    if (configuration !== cached?.value && generation === this.configurationGeneration) this.healthConfiguration = { at: Date.now(), generation, value: configuration };
     const managedRuntime = readManagedRuntimeStatus(this.runtimeStatusFile);
     const tunnel = normalizeTunnelStatus(
       managedRuntime,
@@ -375,7 +439,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       lastProblem: helperStatusProblem(this.lastError),
       restartAttempt: this.restartAttempt,
       configuration,
-      ...(this.cliManager ? { codexRuntime: await this.cliManager.snapshot() } : {}),
+      ...(includeDetails && this.cliManager ? { codexRuntime: await this.cliManager.snapshot() } : {}),
       bridge: {
         socketPath: this.bridgeSocketPath,
         connected: bridgeAdmission !== null,
@@ -389,6 +453,31 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       },
       tunnel
     };
+  }
+
+  private readBridgeStatus(): Promise<RuntimeAdmissionSnapshot | null> {
+    if (this.bridgeStatusProbe) return this.bridgeStatusProbe;
+    const pid = this.managedPid;
+    const started = Date.now();
+    let failure: unknown;
+    const probe = readBridgeAdmission(this.bridgeSocketPath, 2_000, (error) => { failure = error; })
+      .then((admission) => {
+        if (pid !== this.managedPid) return null;
+        const connected = admission !== null;
+        const previous = this.bridgeProbeObservation?.pid === pid ? this.bridgeProbeObservation : undefined;
+        const failedAt = connected ? null : previous?.failedAt ?? started;
+        if (!connected && previous?.connected !== false && this.phase === "running") {
+          this.appendLog("helper", `Bridge status check failed (pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
+        } else if (connected && previous?.connected === false && previous.failedAt !== null) {
+          this.appendLog("helper", `Bridge status check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - previous.failedAt}ms).`);
+        }
+        this.bridgeProbeObservation = { pid, connected, failedAt };
+        return admission;
+      }).finally(() => {
+        if (this.bridgeStatusProbe === probe) this.bridgeStatusProbe = undefined;
+      });
+    this.bridgeStatusProbe = probe;
+    return probe;
   }
 
   async discoverSetup(): Promise<TunnelSetupDiscovery> {
@@ -602,6 +691,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
     const manager = this.selectedCliManager();
+    this.watchManager(manager);
     switch (request.action) {
       case "status": {
         const base = await manager.snapshot();
@@ -677,6 +767,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       child.once("exit", () => {
         void release();
         if (this.loginProcess === child) this.loginProcess = undefined;
+        this.changed("auth");
       });
       try {
         await new Promise<void>((resolve, reject) => {
@@ -751,6 +842,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   async close(): Promise<void> {
+    for (const unsubscribe of this.managerSubscriptions) unsubscribe();
+    this.managerSubscriptions.clear();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
     await this.exclusive(() => this.prepareShutdownUnlocked({ mode: "force", timeoutMs: 5_000 }));
@@ -1182,6 +1275,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (this.managedPid === child.pid) this.managedPid = undefined;
     this.startedAt = null;
     this.lastExit = { at: new Date().toISOString(), code, signal };
+    this.changed("runtime");
     this.appendLog("runtime", `Managed runtime exited (${code ?? signal ?? "unknown"}).`);
     if (this.manualStop) {
       this.phase = "stopped";
@@ -1288,6 +1382,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const safe = redactRuntimeText(message);
     if (!safe) return;
     this.logEntries.append({ at: new Date().toISOString(), source, message: safe });
+    if (source === "helper") this.changed("runtime");
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -1301,20 +1396,25 @@ export async function startMacOSHelperServer(options: {
   socketPath: string;
   controller: MacOSHelperController;
 }): Promise<BridgeCompanionServer> {
-  return startPrivateJsonLineServer({
+  const changes = new ChangeSignal(["runtime", "configuration", "auth", "installation"]);
+  const unsubscribe = options.controller.subscribeChanges?.(topic => changes.notify(topic));
+  const server = await startPrivateJsonLineServer({
     socketPath: options.socketPath,
     maxRequestBytes: HELPER_MAX_REQUEST_BYTES,
     maxResponseBytes: HELPER_MAX_RESPONSE_BYTES,
     maxClients: 8,
-    dispatch: (line) => dispatchHelperLine(line, options.controller),
+    dispatch: (line, signal) => dispatchHelperLine(line, options.controller, unsubscribe ? changes : undefined, signal),
     requestTooLarge: () => helperError(null, -32600, "Helper request is too large."),
     internalError: (error) => helperError(null, -32603, safeErrorMessage(error))
-  });
+  }).catch(error => { unsubscribe?.(); changes.close(); throw error; });
+  return { socketPath: server.socketPath, close: async () => { unsubscribe?.(); changes.close(); await server.close(); } };
 }
 
 async function dispatchHelperLine(
   line: string,
-  controller: MacOSHelperController
+  controller: MacOSHelperController,
+  changes?: ChangeSignal,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
   let decoded: unknown;
   try {
@@ -1357,6 +1457,16 @@ async function dispatchHelperLine(
           ],
           status: await controller.snapshot()
         };
+        break;
+      case "changes.wait": {
+        if (!changes) throw new Error("CHANGES_UNSUPPORTED");
+        const params = changeWaitParamsSchema.parse(request.params || {});
+        result = await changes.wait(params.after, params.waitMs, signal);
+        break;
+      }
+      case "helper.health":
+        emptyParamsSchema.parse(request.params || {});
+        result = await (controller.health?.() || controller.snapshot());
         break;
       case "helper.status":
         emptyParamsSchema.parse(request.params || {});
@@ -1416,6 +1526,9 @@ async function dispatchHelperLine(
         break;
       }
     }
+    if (["runtime.start", "runtime.stop", "runtime.restart", "runtime.repair", "helper.prepare-shutdown"].includes(request.method)) changes?.notify("runtime");
+    if (["setup.apply", "setup.import", "setup.repair-permissions", "runtime.configure"].includes(request.method)) changes?.notify("configuration");
+    if (request.method === "codex.runtime" && (request.params as { action?: string })?.action !== "status") changes?.notify("installation");
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return helperError(request.id, -32602, safeErrorMessage(error));
@@ -1574,16 +1687,19 @@ function helperRequestId(value: unknown): string | number | null {
 }
 
 async function readBridgeAdmission(
-  socketPath: string
+  socketPath: string,
+  timeoutMs = 500,
+  onFailure?: (error: unknown) => void
 ): Promise<RuntimeAdmissionSnapshot | null> {
   try {
     return await bridgeRequest<RuntimeAdmissionSnapshot>(
       socketPath,
       "runtime.snapshot",
       {},
-      500
+      timeoutMs
     );
-  } catch {
+  } catch (error) {
+    onFailure?.(error);
     return null;
   }
 }
@@ -1615,7 +1731,7 @@ async function waitForManagedRuntime(
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("Managed runtime exited before the bridge and tunnel became ready.");
     }
-    const bridge = await readBridgeAdmission(socketPath);
+    const bridge = await readBridgeAdmission(socketPath, 2_000);
     const tunnel = normalizeTunnelStatus(
       readManagedRuntimeStatus(runtimeStatusFile),
       child.pid || null,
