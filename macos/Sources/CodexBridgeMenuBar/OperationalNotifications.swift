@@ -46,13 +46,18 @@ enum OperationalObservation: Equatable {
 }
 
 struct OperationalNotificationPolicy: Codable {
+    // Persist unresolved causes, not a recovery interval that cannot be observed
+    // while the app is closed. Older saved healthySince values are ignored.
+    private enum CodingKeys: String, CodingKey { case entries }
     struct Entry: Codable {
         var firstObserved: Date
         var delivered = false
     }
     var entries: [String: Entry] = [:]
     var healthySince: [String: Date] = [:]
+    private var lastObservationAt: [String: Date] = [:]
     static let grace: TimeInterval = 60
+    private static let maximumObservationGap: TimeInterval = 30
 
     static func scope(_ identity: String) -> String {
         SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -60,8 +65,15 @@ struct OperationalNotificationPolicy: Codable {
     static func key(scope: String, problem: OperationalProblem) -> String { "\(scope):\(problem.rawValue)" }
 
     mutating func observe(_ observation: OperationalObservation, scope: String, now: Date) -> OperationalProblem? {
+        if let previous = lastObservationAt[scope],
+           now < previous || now.timeIntervalSince(previous) > Self.maximumObservationGap {
+            healthySince.removeValue(forKey: scope)
+        }
+        lastObservationAt[scope] = now
         switch observation {
-        case .unknown: return nil // A refresh/restart is not proof of recovery.
+        case .unknown:
+            healthySince.removeValue(forKey: scope)
+            return nil // A gap in observations is not proof of continuous recovery.
         case .healthy:
             entries = entries.filter { !$0.key.hasPrefix(scope + ":") || $0.value.delivered }
             if healthySince[scope] == nil { healthySince[scope] = now }

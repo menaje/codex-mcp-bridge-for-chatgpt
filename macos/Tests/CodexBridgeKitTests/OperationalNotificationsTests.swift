@@ -19,6 +19,8 @@ final class OperationalNotificationsTests: XCTestCase {
         XCTAssertNil(policy.observe(.unknown, scope: scope, now: origin.addingTimeInterval(120)))
         XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(180)))
         XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(190)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(210)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(230)))
         XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(250)))
         XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(260)))
         XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(320)), .tunnel)
@@ -62,6 +64,44 @@ final class OperationalNotificationsTests: XCTestCase {
         XCTAssertFalse(controller.bridgeEnabled)
         XCTAssertTrue(controller.securityEnabled)
         XCTAssertEqual(delivery.identifiers.count, Set(delivery.identifiers).count)
+    }
+
+    func testRestartAndUnknownObservationCannotCountAsContinuousRecovery() throws {
+        var policy = OperationalNotificationPolicy()
+        _ = policy.observe(.problem(.tunnel), scope: scope, now: origin)
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(60)), .tunnel)
+        policy.markDelivered(scope: scope, problem: .tunnel)
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(70))
+
+        policy = try JSONDecoder().decode(OperationalNotificationPolicy.self, from: JSONEncoder().encode(policy))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_000))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_010)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_070)))
+
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_080))
+        _ = policy.observe(.unknown, scope: scope, now: origin.addingTimeInterval(1_090))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_200))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_210)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_270)))
+
+        // A fully observed stable recovery still permits a later, distinct outage notification.
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_300))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_320))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_340))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_360))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_400)))
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_460)), .tunnel)
+    }
+
+    func testSuspendedPollingCannotCountAsContinuousRecovery() {
+        var policy = OperationalNotificationPolicy()
+        _ = policy.observe(.problem(.runtime), scope: scope, now: origin)
+        policy.markDelivered(scope: scope, problem: .runtime)
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(70))
+        // Simulate a suspended process without a chance to publish an explicit unknown observation.
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_000))
+        _ = policy.observe(.problem(.runtime), scope: scope, now: origin.addingTimeInterval(1_010))
+        XCTAssertNil(policy.observe(.problem(.runtime), scope: scope, now: origin.addingTimeInterval(1_070)))
     }
 
     func testOperationalClassificationIgnoresTaskEventsAndManualOperations() throws {
