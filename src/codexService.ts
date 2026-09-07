@@ -7,6 +7,7 @@ import { CodexRuntimeManager } from "./codexRuntime.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { validateInitializeResponse } from "./runtimeCompatibility.js";
 
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -99,16 +100,17 @@ export class CodexService {
   }
   async readCliAccount(): Promise<CodexAccountSnapshot> {
     const { selection, release } = await this.cli.acquire();
-    const rpc = new JsonRpcProcess({ command: selection.command, args: ["app-server"],
+    const rpc = new JsonRpcProcess({ command: selection.command, args: ["app-server", "--listen", "stdio://"],
       env: this.environment, debugLabel: "Codex account", omitJsonRpcHeader: true });
     try {
-      await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
-      rpc.notify("initialized", {});
+      const initialized = await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
+      validateInitializeResponse(initialized);
+      await rpc.notify("initialized", {});
       const account = await rpc.request("account/read", { refreshToken: false }, { timeoutMs: 15_000 });
       const mode = projectCodexAccount(account, null).authMode;
       const limits = mode === "chatgpt" ? await rpc.request("account/rateLimits/read", undefined, { timeoutMs: 15_000 }).catch(() => null) : null;
       return projectCodexAccount(account, limits);
-    } finally { await rpc.close(); await release(); }
+    } finally { try { await rpc.close(); } finally { await release(); } }
   }
   private readRecord(group: string, id: string): Record<string, unknown> | null {
     try { return JSON.parse(readFileSync(path.join(path.join(this.cli.root, "service"), group, `${id}.json`), "utf8")); }

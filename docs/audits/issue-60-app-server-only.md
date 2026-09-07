@@ -20,6 +20,10 @@ OpenAI deprecated the internal `codex mcp-server` command on [2026-08-24](https:
 
 The continuity smoke script now selects both retired-backend handoff tests. Its previous reference to the deleted MCP execution test was removed so the migration check is actually executed.
 
+## Test-app self-review
+
+The follow-up review found that the account inquiry connection did not yet share the execution worker's initialization checks. It now validates required initialization fields, waits for the `initialized` notification to be written, and releases its CLI lease even if closing the connection fails. These failures could otherwise hide the actual incompatibility, continue an incomplete handshake, or leave an installation marked in use. Three regression cases failed before the fix and passed afterward, including a real child-process fixture with an incompatible initialization response.
+
 ## Verification scope
 
 - The targeted runtime, restart and App Server suite passed 88 tests after the added boundary cases.

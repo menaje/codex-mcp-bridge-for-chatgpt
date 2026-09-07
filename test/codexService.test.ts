@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexService } from "../src/codexService.js";
 import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
@@ -8,9 +9,10 @@ import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { projectCodexAccount, estimateCodexCost } from "../src/codexAccount.js";
+import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "codex-service-test-")); roots.push(root);
   const environment = { HOME: root, PATH: "", CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
@@ -18,6 +20,50 @@ async function fixture() {
 }
 
 describe("Codex execution context", () => {
+  async function accountFixture() {
+    const f = await fixture();
+    const command = fileURLToPath(new URL("./fixtures/fake-codex-app-server-init-incompatible.mjs", import.meta.url));
+    f.service.environment.PATH = process.env.PATH || "";
+    const release = vi.fn(async () => {});
+    vi.spyOn(f.service.cli, "acquire").mockResolvedValue({
+      selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "99.0.0" },
+      release
+    });
+    return { ...f, release };
+  }
+
+  it("rejects an incompatible account connection before querying the account and releases its lease", async () => {
+    const f = await accountFixture();
+    await expect(f.service.readCliAccount()).rejects.toThrow(/CODEX_PROTOCOL_INCOMPATIBLE.*platformFamily, platformOs/);
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles failed initialization notification without querying the account or leaking its lease", async () => {
+    const f = await accountFixture();
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request")
+      .mockResolvedValueOnce({ userAgent: "fixture", platformFamily: "unix", platformOs: "test" })
+      .mockResolvedValue({ account: null });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockImplementation(() => {
+      const failure = Promise.reject(new Error("fixture notification transport failure"));
+      void failure.catch(() => undefined);
+      return failure;
+    });
+    await expect(f.service.readCliAccount()).rejects.toThrow("fixture notification transport failure");
+    expect(request.mock.calls.map(call => call[0])).toEqual(["initialize"]);
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases account ownership even when the connection cannot close cleanly", async () => {
+    const f = await accountFixture();
+    vi.spyOn(JsonRpcProcess.prototype, "request")
+      .mockResolvedValueOnce({ userAgent: "fixture", platformFamily: "unix", platformOs: "test" })
+      .mockResolvedValue({ account: null });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockResolvedValue();
+    vi.spyOn(JsonRpcProcess.prototype, "close").mockRejectedValue(new Error("fixture close failure"));
+    await expect(f.service.readCliAccount()).rejects.toThrow("fixture close failure");
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["mcp-server", "codex-sdk"] as const)("retires %s without rewriting historical credentials or storage", async kind => {
     const f = await fixture();
     const directory = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "sdk", "profiles", "api-key");

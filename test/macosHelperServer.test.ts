@@ -1011,7 +1011,8 @@ writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({
 import {createInterface} from "node:readline";
 createInterface({input:process.stdin}).on("line", line => {
  const request=JSON.parse(line); if(request.id===undefined)return;
- const result=request.method==="account/read" ? {account:{type:"chatgpt",email:"user@example.com",planType:"plus"}} : {};
+ const result=request.method==="initialize" ? {userAgent:"fixture",platformFamily:"unix",platformOs:"macos"}
+   : request.method==="account/read" ? {account:{type:"chatgpt",email:"user@example.com",planType:"plus"}} : {};
  process.stdout.write(JSON.stringify({id:request.id,result})+"\\n");
 });
 `, { mode: 0o700 });
@@ -1040,7 +1041,7 @@ createInterface({input:process.stdin}).on("line", line => {
     });
     expect(JSON.stringify(status)).not.toContain("user@example.com");
     expect(JSON.parse(readFileSync(invocationFile, "utf8"))).toEqual({
-      args: ["app-server"],
+      args: ["app-server", "--listen", "stdio://"],
       codexHome
     });
     unlinkSync(invocationFile);
