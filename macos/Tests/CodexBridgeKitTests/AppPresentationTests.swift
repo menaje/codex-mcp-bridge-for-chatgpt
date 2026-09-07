@@ -363,6 +363,30 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testChangesDuringAuthAndInstallationReadsGetATrailingRefresh() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-trailing-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let state = TestTrailingReadState()
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in state.reply(method) }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        let initialAuth = Task { await model.refreshAuthStatus() }
+        try await Task.sleep(for: .milliseconds(50))
+        await model.refreshAuthStatus()
+        await initialAuth.value
+        XCTAssertEqual(helper.count("auth.status"), 2)
+        XCTAssertEqual(model.authStatus?.authenticated, true)
+        let initialDetails = Task { await model.manageCodex(.init(action: "status", includeAccount: false)) }
+        try await Task.sleep(for: .milliseconds(50))
+        await model.manageCodex(.init(action: "status", includeAccount: false))
+        await initialDetails.value
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(helper.count("codex.runtime"), 2)
+    }
+
+    @MainActor
     func testLifecycleNoticeUpdatesMenuHealthWithoutWaitingForPolling() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-event-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -1750,5 +1774,17 @@ private final class TestLifecycleNoticeState: @unchecked Sendable {
             return NativeFixtureReply(body: "{\"result\":{\"revision\":\"test:\(current)\",\"topics\":[\"runtime\"]}}")
         }
         return NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}")
+    }
+}
+
+private final class TestTrailingReadState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var authReads = 0
+    func reply(_ method: String) -> NativeFixtureReply {
+        if method == "auth.status" {
+            let authenticated = lock.withLock { () -> Bool in authReads += 1; return authReads > 1 }
+            return NativeFixtureReply(body: "{\"result\":{\"installed\":true,\"authenticated\":\(authenticated),\"summary\":\"test\"}}", delay: 0.2)
+        }
+        return NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "codex.runtime" ? 0.2 : 0)
     }
 }

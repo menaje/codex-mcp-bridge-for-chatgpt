@@ -339,6 +339,8 @@ final class AppModel: ObservableObject {
     private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
+    private var authRefreshPending = false
+    private var codexRuntimePendingReads = Set<String>()
     private var dashboardEnrichmentTask: Task<Void, Never>?
     private var settingsAutosaveDebounceTask: Task<Void, Never>?
     private var remotePairingExpirationTask: Task<Void, Never>?
@@ -1480,16 +1482,19 @@ final class AppModel: ObservableObject {
     }
 
     func refreshAuthStatus() async {
-        if let authRefreshTask {
-            await authRefreshTask.value
-            return
-        }
-        let task = Task<Void, Never> { @MainActor [weak self] in
-            await self?.refreshAuthStatusOnce()
+        authRefreshPending = true
+        if let task = authRefreshTask { await task.value; return }
+        let generation = connectionGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.authRefreshPending, !Task.isCancelled, generation == self.connectionGeneration {
+                self.authRefreshPending = false
+                await self.refreshAuthStatusOnce()
+            }
         }
         authRefreshTask = task
         await task.value
-        authRefreshTask = nil
+        if generation == connectionGeneration { authRefreshTask = nil }
     }
 
     private func refreshAuthStatusOnce() async {
@@ -1599,9 +1604,18 @@ final class AppModel: ObservableObject {
     }
 
     private func loadCodexRuntime(kind: String, includeAccount: Bool = true, force: Bool = false) async {
-        guard !isRemoteClient, force || codexRuntimeReads[kind, default: 0] == 0 else { return }
+        guard !isRemoteClient else { return }
+        guard force || codexRuntimeReads[kind, default: 0] == 0 else {
+            codexRuntimePendingReads.insert(kind)
+            return
+        }
         codexRuntimeReads[kind, default: 0] += 1
-        defer { codexRuntimeReads[kind, default: 1] -= 1 }
+        defer {
+            codexRuntimeReads[kind, default: 1] -= 1
+            if codexRuntimeReads[kind, default: 0] == 0, codexRuntimePendingReads.remove(kind) != nil {
+                enqueueRefresh(["codex"])
+            }
+        }
         codexRuntimeReadRevision[kind, default: 0] += 1
         let revision = codexRuntimeReadRevision[kind], connection = connectionGeneration
         do {
@@ -2149,6 +2163,10 @@ final class AppModel: ObservableObject {
     }
 
     private func resetConnectionContext() {
+        authRefreshTask?.cancel()
+        authRefreshTask = nil
+        authRefreshPending = false
+        codexRuntimePendingReads.removeAll()
         cancelChangeWatching()
         statusRefreshTask?.cancel()
         statusRefreshTask = nil
@@ -2295,6 +2313,8 @@ final class AppModel: ObservableObject {
         loginPollingTask = nil
         authRefreshTask?.cancel()
         authRefreshTask = nil
+        authRefreshPending = false
+        codexRuntimePendingReads.removeAll()
         dashboardEnrichmentTask?.cancel()
         dashboardEnrichmentTask = nil
     }
