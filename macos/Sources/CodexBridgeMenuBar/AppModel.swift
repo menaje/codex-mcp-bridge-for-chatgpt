@@ -430,8 +430,24 @@ final class AppModel: ObservableObject {
     }
 
     var operationalProblem: OperationalProblem? {
-        if case .problem(let problem) = operationalObservation { return problem }
-        return nil
+        guard case .problem(let problem) = operationalObservation else { return nil }
+        // Readiness still feeds the notification grace period, but is not yet
+        // a failure to show alongside the menu's connection-checking view.
+        if isBridgeConnectionChecking, problem == .runtime || problem == .tunnel { return nil }
+        return problem
+    }
+
+    private var currentActionRequiredProblem: OperationalProblem? {
+        guard let problem = operationalActionRequiredProblem,
+              operationalObservation == .problem(problem) else { return nil }
+        return problem
+    }
+
+    private var connectionCheckRequiresAttention: Bool {
+        switch currentActionRequiredProblem {
+        case .runtime, .tunnel, .remoteConnection: return true
+        default: return false
+        }
     }
 
     func requestNotificationAuthorization() async {
@@ -458,10 +474,14 @@ final class AppModel: ObservableObject {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
             guard let self else { return }
             self.notificationRefreshTask = nil
-            await self.operationalNotifications?.refresh(observation: self.operationalObservation,
-                scope: self.operationalNotificationScope, locale: self.interfaceLocale)
-            self.operationalActionRequiredProblem = self.operationalNotifications?.actionRequired
+            await self.refreshOperationalNotifications()
         }
+    }
+
+    func refreshOperationalNotifications(at now: Date = Date()) async {
+        await operationalNotifications?.refresh(observation: operationalObservation,
+            scope: operationalNotificationScope, locale: interfaceLocale, now: now)
+        operationalActionRequiredProblem = operationalNotifications?.actionRequired
     }
 
     private func resolvedPaths() async -> RuntimePaths {
@@ -578,7 +598,7 @@ final class AppModel: ObservableObject {
     }
 
     var isTunnelConnectionChecking: Bool {
-        guard !isRemoteClient,
+        guard !isRemoteClient, !needsSetup, !connectionCheckRequiresAttention,
               let helperStatus,
               helperStatus.phase == "starting" || helperStatus.phase == "running",
               !helperStatus.tunnel.connected else { return false }
@@ -595,6 +615,7 @@ final class AppModel: ObservableObject {
     }
 
     var isBridgeConnectionChecking: Bool {
+        guard !needsSetup, !connectionCheckRequiresAttention else { return false }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello == nil else { return false }
             return connectionErrorMessage == nil && statusErrorMessage == nil
@@ -634,7 +655,7 @@ final class AppModel: ObservableObject {
     }
 
     var health: MenuBarHealth {
-        if operationalActionRequiredProblem != nil { return .attention }
+        if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }

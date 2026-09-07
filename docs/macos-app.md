@@ -126,6 +126,13 @@ presentation rules do not reuse stale admission or shutdown evidence. Helper
 and Tunnel diagnostics record failure/recovery transitions with PID and duration;
 Tunnel diagnostics retain only non-secret probe status fields.
 
+During startup and Tunnel readiness, the menu shows checking without an
+unavailable/recovery banner. Invalid configuration and confirmed runtime failure
+still show recovery guidance immediately. If readiness remains unresolved past
+the existing sixty-second operational notification grace, the menu switches from
+checking to attention and recovery guidance. Fresh observations take precedence
+over a previous alert while the notification refresh is still pending.
+
 ### Native refresh policy
 
 Connection health has its own ten-second watchdog. `helper.health` omits CLI

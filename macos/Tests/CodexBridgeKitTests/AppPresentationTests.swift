@@ -237,6 +237,7 @@ final class AppPresentationTests: XCTestCase {
 
         XCTAssertTrue(model.isBridgeConnectionChecking)
         XCTAssertEqual(model.health, .checking)
+        XCTAssertNil(model.operationalProblem)
 
         model.helperStatus = try helperStatus(
             phase: "starting",
@@ -245,6 +246,7 @@ final class AppPresentationTests: XCTestCase {
         )
         XCTAssertTrue(model.isBridgeConnectionChecking)
         XCTAssertEqual(model.health, .checking)
+        XCTAssertNil(model.operationalProblem)
 
         model.helperStatus = try helperStatus(
             phase: "starting",
@@ -253,6 +255,12 @@ final class AppPresentationTests: XCTestCase {
         )
         XCTAssertTrue(model.isBridgeConnectionChecking)
         XCTAssertEqual(model.health, .checking)
+        XCTAssertNil(model.operationalProblem)
+
+        model.helperStatus = try helperStatus(tunnelConnected: false)
+        XCTAssertTrue(model.isTunnelConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+        XCTAssertNil(model.operationalProblem)
 
         model.helperStatus = try helperStatus(
             phase: "stopped",
@@ -261,6 +269,25 @@ final class AppPresentationTests: XCTestCase {
         )
         XCTAssertFalse(model.isBridgeConnectionChecking)
         XCTAssertEqual(model.health, .unavailable)
+    }
+
+    @MainActor
+    func testConfirmedStartupFailuresStillShowRecoveryGuidance() throws {
+        let model = AppModel()
+        model.startupErrorMessage = "Helper could not start"
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.operationalProblem, .runtime)
+
+        model.startupErrorMessage = nil
+        model.helperStatus = try helperStatus(
+            phase: "starting", bridgeConnected: false, tunnelConnected: false,
+            configurationValid: false
+        )
+        XCTAssertTrue(model.needsSetup)
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.operationalProblem, .configuration)
     }
 
     @MainActor
@@ -290,6 +317,7 @@ final class AppPresentationTests: XCTestCase {
         model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(1))
         XCTAssertEqual(model.health, .checking)
         XCTAssertEqual(model.operationalObservation, .unknown)
+        XCTAssertNil(model.operationalProblem)
         await model.refreshDashboard()
         XCTAssertEqual(model.dashboard?.scope, "retained-local-dashboard")
 
@@ -300,6 +328,7 @@ final class AppPresentationTests: XCTestCase {
         model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(3))
         model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(11))
         XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.operationalProblem, .runtime)
         await model.refreshDashboard()
         XCTAssertNil(model.dashboard)
     }
@@ -312,6 +341,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(model.health, .checking)
         model.recordLocalConnectionStatus(try helperStatus(phase: "backoff", bridgeConnected: false, tunnelConnected: false))
         XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.operationalProblem, .runtime)
     }
 
     @MainActor
@@ -1428,14 +1458,15 @@ private enum TestLoginItemError: LocalizedError {
 private func helperStatus(
     phase: String = "running",
     bridgeConnected: Bool = true,
-    tunnelConnected: Bool = true
+    tunnelConnected: Bool = true,
+    configurationValid: Bool = true
 ) throws -> HelperStatus {
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
       "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
-      "configuration":{"path":"/private/.env","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
+      "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
       "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
       "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
     }
