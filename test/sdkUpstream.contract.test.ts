@@ -107,6 +107,25 @@ describe.skipIf(!python)("exact Python SDK public API contract (fake Codex trans
     } finally { await sdk.close(); }
   });
 
+  // SDK 0.147.0 invokes approval_handler on its sole reader thread. A server-owned
+  // expiry suppresses the bridge reply, leaving that reader blocked; see #29 and the audit.
+  // Opt in to reproduce without billing; keep the expected behavior as a regression target.
+  it.skipIf(process.env.CODEX_MCP_BRIDGE_SDK_EXPIRY_REPRO !== "1")("expires unanswered SDK input and rejects a late response", async () => {
+    const sdk = pool();
+    const events: CodexProgress[] = [];
+    try {
+      const result = await sdk.callTool("codex", {
+        prompt: "expire input locally", cwd: "/tmp", sandbox: "read-only", "approval-policy": "on-request"
+      }, event => events.push(event));
+      expect(result).toMatchObject({ content: [{ text: "LOCAL INPUT EXPIRED" }], structuredContent: { turnStatus: "completed" } });
+      const interaction = events.map(event => event.event?.details?.interaction).find(Boolean) as { interactionId: string; autoResolutionMs: number };
+      expect(interaction.autoResolutionMs).toBe(20);
+      expect(events.some(event => event.event?.details?.resolution === "expired")).toBe(true);
+      await expect(sdk.respondToInteraction(interaction.interactionId, { answers: { auto: ["late"] } }))
+        .rejects.toThrow("Unknown or already resolved");
+    } finally { await sdk.close(); }
+  }, 15_000);
+
   it("fails closed for unsupported SDK methods and retains the same worker after a supported request", async () => {
     const sdk = pool();
     try {

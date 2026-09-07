@@ -121,7 +121,11 @@ struct NativeSettingsView: View {
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
             synchronizeDraft()
-            if model.settings == nil { selectedTab = "connection" }
+            if let target = model.requestedSettingsTab { selectedTab = target; model.requestedSettingsTab = nil }
+            else if model.settings == nil { selectedTab = "connection" }
+        }
+        .onChange(of: model.requestedSettingsTab) { target in
+            if let target { selectedTab = target; model.requestedSettingsTab = nil }
         }
         .onChange(of: model.connectionContextID) { _ in
             syncState = SettingsDraftSyncState()
@@ -233,6 +237,14 @@ private struct ConnectionSettingsPane: View {
             }
 
             Section("이 Mac의 앱 설정") {
+                Toggle("브리지 문제 발생 시 알림", isOn: $model.bridgeProblemNotificationsEnabled)
+                Toggle("보안 및 연결 승인 알림", isOn: $model.securityNotificationsEnabled)
+                Button("macOS 알림 허용 확인") {
+                    Task { await model.requestNotificationAuthorization() }
+                }
+                Text("알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle(
                     "로그인 시 메뉴 막대 앱 실행",
                     isOn: Binding(

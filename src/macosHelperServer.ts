@@ -1,4 +1,5 @@
 import { CodexService } from "./codexService.js";
+import { DiagnosticLog } from "./diagnosticLog.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import {
@@ -267,6 +268,8 @@ export type MacOSHelperController = {
 };
 
 export type MacOSBridgeSupervisorOptions = {
+  logRetentionMs?: number;
+  logMaxBytes?: number;
   bridgeRoot: string;
   envFile?: string;
   bridgeSocketPath: string;
@@ -314,7 +317,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private manualStop = false;
   private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
-  private readonly logEntries: MacOSHelperLogEntry[] = [];
+  private readonly logEntries: DiagnosticLog<MacOSHelperLogEntry>;
   private operation: Promise<unknown> = Promise.resolve();
   private cliManager?: CodexRuntimeManager;
   private sdkManager?: CodexRuntimeManager;
@@ -322,6 +325,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private cliUpdateCheck?: Promise<unknown>;
 
   constructor(options: MacOSBridgeSupervisorOptions) {
+    this.logEntries = new DiagnosticLog({ maxEntries: HELPER_LOG_LIMIT,
+      maxBytes: options.logMaxBytes ?? 1_024 * 1_024, retentionMs: options.logRetentionMs ?? 24 * 60 * 60_000 });
     this.bridgeRoot = path.resolve(options.bridgeRoot);
     this.envFile = path.resolve(options.envFile || defaultRuntimeEnvFile());
     this.cliManager = options.codexRuntimeManager;
@@ -817,7 +822,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   logs(limit: number): MacOSHelperLogEntry[] {
-    return this.logEntries.slice(-Math.max(1, Math.min(HELPER_LOG_LIMIT, limit)));
+    return this.logEntries.recent(limit);
   }
 
   async close(): Promise<void> {
@@ -1358,10 +1363,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private appendLog(source: MacOSHelperLogEntry["source"], message: string): void {
     const safe = redactRuntimeText(message);
     if (!safe) return;
-    this.logEntries.push({ at: new Date().toISOString(), source, message: safe });
-    if (this.logEntries.length > HELPER_LOG_LIMIT) {
-      this.logEntries.splice(0, this.logEntries.length - HELPER_LOG_LIMIT);
-    }
+    this.logEntries.append({ at: new Date().toISOString(), source, message: safe });
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {

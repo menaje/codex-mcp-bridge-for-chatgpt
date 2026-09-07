@@ -317,9 +317,14 @@ struct CodexBridgeMenuBarApp: App {
     @StateObject private var model: AppModel
 
     init() {
+        let notificationDelivery = SystemOperationalNotificationDelivery()
         let appModel = AppModel(
-            connectionStore: UserDefaultsBridgeConnectionStore()
+            connectionStore: UserDefaultsBridgeConnectionStore(),
+            operationalNotifications: OperationalNotifications(defaults: .standard, delivery: notificationDelivery)
         )
+        notificationDelivery.onOpen = { [weak appModel] problem, scope in
+            appModel?.showOperationalProblem(problem, scope: scope)
+        }
         _model = StateObject(wrappedValue: appModel)
         BridgeAppDelegate.model = appModel
     }

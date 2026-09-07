@@ -28,6 +28,18 @@ struct DashboardPopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let problem = model.operationalProblem {
+                Button {
+                    model.showOperationalProblem(problem)
+                } label: {
+                    Label(BridgeAppLocalization.string(problem.messageKey, locale: model.interfaceLocale),
+                        systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
             Divider()
             Group {
                 if !model.hasConnectionTarget {

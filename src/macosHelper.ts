@@ -26,6 +26,8 @@ const supervisor = new MacOSBridgeSupervisor({
   bridgeRoot,
   envFile,
   bridgeSocketPath,
+  logRetentionMs: boundedNumber(args.logRetentionHours, 24, 1, 168) * 60 * 60_000,
+  logMaxBytes: boundedNumber(args.logMaxKiB, 1_024, 16, 4_096) * 1_024,
   runtimeLockDirectory: args.runtimeLockDirectory
 });
 const server = await startMacOSHelperServer({
@@ -65,6 +67,8 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 type HelperArguments = {
+  logRetentionHours?: string;
+  logMaxKiB?: string;
   socket?: string;
   bridgeSocket?: string;
   bridgeRoot?: string;
@@ -76,6 +80,8 @@ type HelperArguments = {
 function parseArguments(raw: string[]): HelperArguments {
   const parsed: HelperArguments = {};
   const valueOptions = new Map<string, keyof HelperArguments>([
+    ["--log-retention-hours", "logRetentionHours"],
+    ["--log-max-kib", "logMaxKiB"],
     ["--socket", "socket"],
     ["--bridge-socket", "bridgeSocket"],
     ["--bridge-root", "bridgeRoot"],
@@ -95,4 +101,13 @@ function parseArguments(raw: string[]): HelperArguments {
     (parsed as Record<string, string | boolean | undefined>)[key] = value;
   }
   return parsed;
+}
+
+function boundedNumber(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Diagnostic log limits must be whole numbers between ${minimum} and ${maximum}.`);
+  }
+  return value;
 }

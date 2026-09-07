@@ -67,7 +67,9 @@
     "test:activity-browser": "tsx scripts/activity-card-browser-regression.ts",
     "test:progressive-browser": "tsx scripts/progressive-card-browser-regression.ts",
     "check": "npm run build && npm run test",
-    "sdk:check": "node scripts/check-sdk.mjs"
+    "sdk:check": "node scripts/check-sdk.mjs",
+    "macos:remote:check": "tsx scripts/check-native-remote.ts",
+    "test:continuity": "node scripts/check-thread-continuity.mjs"
   },
   "keywords": [
     "codex",

@@ -237,6 +237,17 @@ struct SettingsDraftSyncState: Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var requestedSettingsTab: String?
+    @Published private(set) var operationalActionRequiredProblem: OperationalProblem?
+    @Published var bridgeProblemNotificationsEnabled = true {
+        didSet { operationalNotifications?.bridgeEnabled = bridgeProblemNotificationsEnabled }
+    }
+    @Published var securityNotificationsEnabled = true {
+        didSet { operationalNotifications?.securityEnabled = securityNotificationsEnabled }
+    }
+    private let operationalNotifications: OperationalNotifications?
+    private var remoteOperationalProblem: OperationalProblem?
+    private var notificationPollingTask: Task<Void, Never>?
     @Published var helperStatus: HelperStatus?
     @Published var codexRuntime: CodexRuntimeSnapshot?
     @Published var codexRuntimeError: String?
@@ -328,6 +339,7 @@ final class AppModel: ObservableObject {
         paths: RuntimePaths? = nil,
         loginItemController: (any LoginItemControlling)? = nil,
         connectionStore: (any BridgeConnectionPreferencesStoring)? = nil,
+        operationalNotifications: OperationalNotifications? = nil,
         credentialStore: any RemoteCredentialStoring = KeychainRemoteCredentialStore(),
         remoteClientFactory: @escaping @Sendable (
             RemoteServerProfile,
@@ -350,11 +362,77 @@ final class AppModel: ObservableObject {
         self.paths = paths
         self.loginItemController = loginItemController ?? ServiceManagementLoginItemController()
         self.connectionStore = connectionStore
+        self.operationalNotifications = operationalNotifications
         self.credentialStore = credentialStore
         self.remoteClientFactory = remoteClientFactory
         self.remotePairingFactory = remotePairingFactory
         self.connectionPreferences = connectionStore?.load() ?? BridgeConnectionPreferences()
         menuBarLoginItemStatus = self.loginItemController.status
+        bridgeProblemNotificationsEnabled = operationalNotifications?.bridgeEnabled ?? true
+        securityNotificationsEnabled = operationalNotifications?.securityEnabled ?? true
+    }
+
+    var operationalNotificationScope: String {
+        OperationalNotificationPolicy.scope(isRemoteClient ? (activeRemoteProfile?.serverId ?? "unselected") : "local")
+    }
+
+    var operationalObservation: OperationalObservation {
+        guard !isBusy, !loginInProgress, !applicationShutdownInProgress else { return .unknown }
+        if isRemoteClient {
+            guard activeRemoteProfile != nil else { return .unknown }
+            if let remoteOperationalProblem { return .problem(remoteOperationalProblem) }
+            return remoteHello == nil ? .unknown : .healthy
+        }
+        guard let status = helperStatus else {
+            return startupErrorMessage != nil || statusErrorMessage != nil ? .problem(.runtime) : .unknown
+        }
+        if !status.configuration.valid { return .problem(.configuration) }
+        // An intentional stop is healthy. Failed/retrying starts still have a grace period.
+        if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
+        if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
+        if !status.tunnel.connected { return .problem(.tunnel) }
+        if usesSdkForNewAgents {
+            if let sdkRuntime, sdkRuntime.installedVersion == nil { return .problem(.installation) }
+            if let auth = sdkRuntime?.auth { return auth.authenticated ? .healthy : .problem(.authentication) }
+            if let account = sdkRuntime?.account {
+                return account.authenticated ? .healthy : .problem(.authentication)
+            }
+            return .unknown
+        }
+        guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authentication) }
+        if !auth.installed { return .problem(.installation) }
+        return auth.authenticated ? .healthy : .problem(.authentication)
+    }
+
+    var operationalProblem: OperationalProblem? {
+        if case .problem(let problem) = operationalObservation { return problem }
+        return nil
+    }
+
+    func requestNotificationAuthorization() async {
+        if await operationalNotifications?.requestAuthorization() == false,
+           let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func showOperationalProblem(_ problem: OperationalProblem, scope: String? = nil) {
+        requestedSettingsTab = isRemoteClient || (scope != nil && scope != operationalNotificationScope)
+            ? "connection" : problem.settingsTab
+        SettingsWindowController.shared.show(model: self)
+    }
+
+    private func beginOperationalNotifications() {
+        guard operationalNotifications != nil, notificationPollingTask == nil else { return }
+        notificationPollingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.operationalNotifications?.refresh(observation: self.operationalObservation,
+                    scope: self.operationalNotificationScope, locale: self.interfaceLocale)
+                self.operationalActionRequiredProblem = self.operationalNotifications?.actionRequired
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
     }
 
     private func resolvedPaths() async -> RuntimePaths {
@@ -522,6 +600,7 @@ final class AppModel: ObservableObject {
     }
 
     var health: MenuBarHealth {
+        if operationalActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
@@ -940,6 +1019,7 @@ final class AppModel: ObservableObject {
     }
 
     private func startOnce() async {
+        beginOperationalNotifications()
         if isRemoteClient {
             logger.info("starting in remote client mode without local helper bootstrap")
             isBusy = true
@@ -1001,12 +1081,14 @@ final class AppModel: ObservableObject {
                 let hello = try await client.hello()
                 guard generation == connectionGeneration, isRemoteClient else { return }
                 remoteHello = hello
+                remoteOperationalProblem = nil
                 statusErrorMessage = nil
                 connectionErrorMessage = nil
                 updateActiveProfile(from: hello)
             } catch {
                 guard generation == connectionGeneration, isRemoteClient else { return }
                 remoteHello = nil
+                remoteOperationalProblem = OperationalProblem.remoteError(error)
                 let message = localizedErrorDescription(error)
                 statusErrorMessage = message
                 connectionErrorMessage = message
@@ -1023,6 +1105,7 @@ final class AppModel: ObservableObject {
             statusErrorMessage = nil
             if !codexSettingsVisible && (codexRuntime == nil || lastCodexRuntimeRefresh.map { Date().timeIntervalSince($0) >= 30 } != false) {
                 await loadCodexRuntime(kind: "cli")
+                if usesSdkForNewAgents { await loadCodexRuntime(kind: "sdk") }
             }
         } catch {
             guard generation == connectionGeneration, !isRemoteClient else { return }
@@ -1986,6 +2069,8 @@ final class AppModel: ObservableObject {
     }
 
     private func resetConnectionContext() {
+        remoteOperationalProblem = nil
+        operationalActionRequiredProblem = nil
         cancelBridgeReadinessPolling()
         connectionGeneration += 1
         invalidateRemoteClient()

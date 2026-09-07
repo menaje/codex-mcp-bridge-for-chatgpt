@@ -26,6 +26,30 @@ final class RemoteConnectionTests: XCTestCase {
             XCTAssertEqual(hello.protocol.name, remoteCompanionProtocolName)
             XCTAssertEqual(hello.protocol.version, remoteCompanionProtocolVersion)
         }
+
+        let runtime = try await client.runtimeStatus()
+        XCTAssertGreaterThanOrEqual(runtime.activeJobs, 0)
+        do {
+            _ = try await RemoteCompanionClient.pair(invitation: invitation, deviceName: "Replay")
+            XCTFail("A pairing invitation must only be accepted once.")
+        } catch { /* A used invitation must be rejected. */ }
+
+        let unauthorized = try RemoteCompanionClient(profile: result.profile, credential: "device_invalid_fixture")
+        defer { unauthorized.close() }
+        do {
+            _ = try await unauthorized.runtimeStatus()
+            XCTFail("An invalid device credential must not read runtime state.")
+        } catch let error as RemoteCompanionError {
+            guard case .unauthorized = error else { return XCTFail("Expected unauthorized.") }
+        }
+        var replaced = result.profile
+        replaced.certificateSha256 = String(repeating: "0", count: 64)
+        let mismatched = try RemoteCompanionClient(profile: replaced, credential: result.credential)
+        defer { mismatched.close() }
+        do {
+            _ = try await mismatched.hello()
+            XCTFail("A replaced certificate must not be accepted.")
+        } catch { /* The production URLSession certificate delegate rejects the connection. */ }
     }
 
     func testPairingInvitationCarriesPinnedServerIdentityAndExpires() throws {
