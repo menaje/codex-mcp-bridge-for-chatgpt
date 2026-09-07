@@ -850,15 +850,19 @@ export const activityViewPrivateMetadataSchema = z.strictObject({
   const rehydratedPresentation =
     value.correlation.presentation.kind === "historical" ||
     value.correlation.presentation.kind === "restored-explicit";
-  if ((value.source === "codex_activity_rehydrate") !== rehydratedPresentation) {
+  const emptyHistoryPresentation = value.source === "codex_activity" &&
+    value.correlation.activity === null &&
+    value.correlation.presentation.kind === "restored-explicit" &&
+    value.view.feed.mode === "full" && value.view.feed.activityTotal === 0;
+  if ((value.source === "codex_activity_rehydrate" || emptyHistoryPresentation) !== rehydratedPresentation) {
     context.addIssue({
       code: "custom",
       path: ["source"],
-      message: "Rehydrated Activity presentations are exclusive to the rehydrate source."
+      message: "Rehydrated Activity presentations are exclusive to the rehydrate source, except empty full-history openings."
     });
   }
   if (
-    value.source === "codex_activity_rehydrate" &&
+    rehydratedPresentation &&
     !activityRehydrateOutputSchema.safeParse(value.view).success
   ) {
     context.addIssue({
@@ -5482,13 +5486,17 @@ export function registerBridgeTools(
           "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy permits automatic cards only for background work."
         );
       }
-      const presentation: ActivityCardPresentationContext = mode === "compact-monitor"
+      const presentation: ActivityViewPresentationContext = mode === "compact-monitor"
         ? {
             kind: "automatic",
             activityPresentationId: args.presentationId as string,
             reservationOwnerId: args.presentationId as string
           }
-        : { kind: "explicit" };
+        : selected
+          ? { kind: "explicit" }
+          // An empty history has no Activity proof to lease or refresh. Use
+          // the scoped, non-owning rehydration path until work is available.
+          : { kind: "restored-explicit", mode: "full-history" };
       const renderHint = selected
         ? jobs.activityCardRenderHint(
             selected.activityId,

@@ -129,8 +129,15 @@ function stripMacSignatures(root) {
   for (const file of candidates) {
     const display = spawnSync("codesign", ["--display", file], { stdio: "ignore" });
     if (display.status !== 0) continue;
-    chmodSync(file, lstatSync(file).mode | 0o200);
-    execFileSync("codesign", ["--remove-signature", file], { stdio: "ignore" });
+    const originalMode = lstatSync(file).mode & 0o7777;
+    chmodSync(file, originalMode | 0o200);
+    try {
+      execFileSync("codesign", ["--remove-signature", file], { stdio: "ignore" });
+    } finally {
+      // Signature removal needs a writable copy, but permissions remain part
+      // of the release payload and must not be normalized with the signature.
+      chmodSync(file, originalMode);
+    }
   }
 }
 
