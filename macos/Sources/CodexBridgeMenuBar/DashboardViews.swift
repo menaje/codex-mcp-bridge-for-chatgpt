@@ -222,7 +222,7 @@ struct DashboardPopoverView: View {
                     Button("재시작") { Task { await model.restartRuntime(force: false) } }
                 }
                 .disabled(model.isBusy)
-                Button("Tunnel 프로필 복구…") { showRepairConfirmation = true }
+                Button("Tunnel 프로필 복구") { showRepairConfirmation = true }
                     .disabled(model.isBusy)
             }
             if !model.isRemoteClient, model.helperStatus?.phase == "safe-mode" {
@@ -375,15 +375,13 @@ struct DashboardPopoverView: View {
                 presentSettingsWindow()
             } label: {
                 Label("설정", systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
             }
+            .buttonStyle(.borderless)
             .keyboardShortcut(",")
-
-            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true,
-               model.helperStatus?.configuration.operatorConfiguration.defaultBackend != "codex-sdk" {
-                Button("코덱스 업데이트") {
-                    Task { await model.manageCodex(.init(action: "update")) }
-                }
-            }
+            .help("설정")
+            .accessibilityLabel("설정")
 
             if model.isRemoteClient {
                 Menu {
@@ -401,8 +399,15 @@ struct DashboardPopoverView: View {
                     Divider()
                     Button("서버 연결 관리") { presentSettingsWindow() }
                 } label: {
-                    Label(model.connectionTargetName, systemImage: "network")
+                    Label("서버", systemImage: "server.rack")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help(Text("서버") + Text(verbatim: " · \(model.connectionTargetName)"))
+                .accessibilityLabel("서버")
+                .accessibilityValue(Text(verbatim: model.connectionTargetName))
                 .disabled(model.isBusy)
             } else {
                 Menu {
@@ -434,15 +439,25 @@ struct DashboardPopoverView: View {
                     }
                 } label: {
                     Label("서버", systemImage: "server.rack")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 28, height: 28)
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("서버")
+                .accessibilityLabel("서버")
                 .disabled(model.needsSetup || model.isBusy)
             }
 
+            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true,
+               model.helperStatus?.configuration.operatorConfiguration.defaultBackend != "codex-sdk" {
+                Button("코덱스 업데이트") {
+                    Task { await model.manageCodex(.init(action: "update")) }
+                }
+            }
+
             Spacer()
-            Button(BridgeAppLocalization.string(
-                model.isRemoteClient ? "앱 종료" : "앱 종료…",
-                locale: model.interfaceLocale
-            )) {
+            Button {
                 if model.isRemoteClient {
                     shutdownAndQuit(force: false)
                 } else {
@@ -458,14 +473,21 @@ struct DashboardPopoverView: View {
                         }
                     }
                 }
+            } label: {
+                Label("앱 종료", systemImage: "power")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
             }
+            .buttonStyle(.borderless)
             .disabled(model.isBusy)
-            .help(BridgeAppLocalization.string(
+            .help("앱 종료")
+            .accessibilityLabel("앱 종료")
+            .accessibilityHint(Text(verbatim: BridgeAppLocalization.string(
                 model.isRemoteClient
                     ? "이 클라이언트 앱만 종료하며 원격 서버는 변경하지 않습니다."
                     : "메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.",
                 locale: model.interfaceLocale
-            ))
+            )))
         }
         .padding(12)
     }

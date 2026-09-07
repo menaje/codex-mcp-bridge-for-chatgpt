@@ -1545,54 +1545,54 @@
         }
       }
     },
-    "Tunnel 프로필 복구…": {
+    "Tunnel 프로필 복구": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Repair Tunnel Profile…"
+            "value": "Repair Tunnel Profile"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tunnelプロファイルを修復…"
+            "value": "Tunnelプロファイルを修復"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "修复 Tunnel 配置文件…"
+            "value": "修复 Tunnel 配置文件"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "修復 Tunnel 設定檔…"
+            "value": "修復 Tunnel 設定檔"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reparar perfil del Tunnel…"
+            "value": "Reparar perfil del Tunnel"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Réparer le profil du Tunnel…"
+            "value": "Réparer le profil du Tunnel"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tunnel-Profil reparieren…"
+            "value": "Tunnel-Profil reparieren"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Corrigir perfil do Tunnel…"
+            "value": "Corrigir perfil do Tunnel"
           }
         }
       }
@@ -2273,106 +2273,107 @@
         }
       }
     },
-    "· 원격 서버 설정": {
+    "%@ · 원격 관리": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Remote Server Settings"
+            "value": "%@ · Remote Management"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "・リモートサーバー設定"
+            "value": "%@・リモート管理"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "· 远程服务器设置"
+            "value": "%@ · 远程管理"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "· 遠端伺服器設定"
+            "value": "%@ · 遠端管理"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Configuración del servidor remoto"
+            "value": "%@ · Administración remota"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Paramètres du serveur distant"
+            "value": "%@ · Gestion à distance"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Einstellungen des Remote-Servers"
+            "value": "%@ · Fernverwaltung"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Configurações do servidor remoto"
+            "value": "%@ · Gerenciamento remoto"
           }
         }
-      }
+      },
+      "extractionState": "manual"
     },
-    "· 이 Mac의 서버 설정": {
+    "이 Mac의 설정": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "· This Mac’s Server Settings"
+            "value": "Settings for This Mac"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "・このMacのサーバー設定"
+            "value": "このMacの設定"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "· 此 Mac 的服务器设置"
+            "value": "此 Mac 的设置"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "· 此 Mac 的伺服器設定"
+            "value": "此 Mac 的設定"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Configuración del servidor de este Mac"
+            "value": "Configuración de este Mac"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Paramètres du serveur de ce Mac"
+            "value": "Paramètres de ce Mac"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Servereinstellungen dieses Macs"
+            "value": "Einstellungen dieses Macs"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "· Configurações do servidor deste Mac"
+            "value": "Configurações deste Mac"
           }
         }
       }
@@ -2737,58 +2738,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Forçar aplicação e reinicialização"
-          }
-        }
-      }
-    },
-    "강제로 저장하고 재시작…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Force Apply and Restart…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "強制的に適用して再起動…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "强制应用并重启…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "強制應用並重啟…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Forzar aplicación y reinicio…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Forcer l’application et le redémarrage…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anwenden und Neustart erzwingen…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Forçar aplicação e reinicialização…"
           }
         }
       }
@@ -3205,58 +3154,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Conectar a um servidor existente"
-          }
-        }
-      }
-    },
-    "기존 서버에 연결…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connect to Existing Server…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "既存のサーバーに接続…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接现有服务器…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "連線現有伺服器…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conectar a un servidor existente…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Se connecter à un serveur existant…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mit vorhandenem Server verbinden…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conectar a um servidor existente…"
           }
         }
       }
@@ -3985,58 +3882,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Excluir registro"
-          }
-        }
-      }
-    },
-    "등록 삭제…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove Registration…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "登録を削除…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除注册…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刪除註冊…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eliminar registro…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Supprimer l’inscription…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Registrierung löschen…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Excluir registro…"
           }
         }
       }
@@ -5393,54 +5238,54 @@
         }
       }
     },
-    "복원…": {
+    "복원": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore…"
+            "value": "Restore"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "復元…"
+            "value": "復元"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复…"
+            "value": "恢复"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢復…"
+            "value": "恢復"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaurar…"
+            "value": "Restaurar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaurer…"
+            "value": "Restaurer"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Wiederherstellen…"
+            "value": "Wiederherstellen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaurar…"
+            "value": "Restaurar"
           }
         }
       }
@@ -6533,58 +6378,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Modo de seleção"
-          }
-        }
-      }
-    },
-    "선택…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選択…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Elegir…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choisir…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auswählen…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Escolher…"
           }
         }
       }
@@ -7733,58 +7526,6 @@
         }
       }
     },
-    "앱 종료…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Quit App…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを終了…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "退出应用…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "退出應用…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salir de la app…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Quitter l’app…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "App beenden…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Encerrar aplicativo…"
-          }
-        }
-      }
-    },
     "앱과 관련 프로세스를 모두 종료할까요?": {
       "localizations": {
         "en": {
@@ -8197,58 +7938,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pareie um servidor na aba Conexão."
-          }
-        }
-      }
-    },
-    "연결 폴더 변경…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Change Linked Folder…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "リンク先フォルダを変更…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更改关联文件夹…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更改關聯資料夾…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cambiar carpeta vinculada…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modifier le dossier lié…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Verknüpften Ordner ändern…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alterar pasta vinculada…"
           }
         }
       }
@@ -9241,54 +8930,54 @@
         }
       }
     },
-    "이름 변경…": {
+    "이름 변경": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rename…"
+            "value": "Rename"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "名前を変更…"
+            "value": "名前を変更"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重命名…"
+            "value": "重命名"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新命名…"
+            "value": "重新命名"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cambiar nombre…"
+            "value": "Cambiar nombre"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Renommer…"
+            "value": "Renommer"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Umbenennen…"
+            "value": "Umbenennen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Renomear…"
+            "value": "Renomear"
           }
         }
       }
@@ -9497,58 +9186,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Redefinir configurações gerais"
-          }
-        }
-      }
-    },
-    "일반 설정 초기화…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reset General Settings…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一般設定をリセット…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重置常规设置…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重置常規設定…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restablecer configuración general…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Réinitialiser les paramètres généraux…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Allgemeine Einstellungen zurücksetzen…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Redefinir configurações gerais…"
           }
         }
       }
@@ -10645,54 +10282,54 @@
         }
       }
     },
-    "저장하고 서버 재시작…": {
+    "저장하고 서버 재시작": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Apply and Restart Server…"
+            "value": "Apply and Restart Server"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "適用してサーバーを再起動…"
+            "value": "適用してサーバーを再起動"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "应用并重启服务器…"
+            "value": "应用并重启服务器"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "應用並重啟伺服器…"
+            "value": "應用並重啟伺服器"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aplicar y reiniciar el servidor…"
+            "value": "Aplicar y reiniciar el servidor"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Appliquer et redémarrer le serveur…"
+            "value": "Appliquer et redémarrer le serveur"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anwenden und Server neu starten…"
+            "value": "Anwenden und Server neu starten"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aplicar e reiniciar servidor…"
+            "value": "Aplicar e reiniciar servidor"
           }
         }
       }
@@ -11945,54 +11582,54 @@
         }
       }
     },
-    "최신 값 불러오기…": {
+    "최신 값 불러오기": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reload Latest Values…"
+            "value": "Reload Latest Values"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "最新の値を再読み込み…"
+            "value": "最新の値を再読み込み"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新加载最新值…"
+            "value": "重新加载最新值"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新載入最新值…"
+            "value": "重新載入最新值"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Volver a cargar los valores más recientes…"
+            "value": "Volver a cargar los valores más recientes"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recharger les valeurs les plus récentes…"
+            "value": "Recharger les valeurs les plus récentes"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neueste Werte laden…"
+            "value": "Neueste Werte laden"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recarregar valores mais recentes…"
+            "value": "Recarregar valores mais recentes"
           }
         }
       }
@@ -12413,54 +12050,54 @@
         }
       }
     },
-    "폐기…": {
+    "폐기": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Revoke…"
+            "value": "Revoke"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "取り消す…"
+            "value": "取り消す"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "撤销…"
+            "value": "撤销"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "撤銷…"
+            "value": "撤銷"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Revocar…"
+            "value": "Revocar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Révoquer…"
+            "value": "Révoquer"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Widerrufen…"
+            "value": "Widerrufen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Revogar…"
+            "value": "Revogar"
           }
         }
       }
@@ -23118,54 +22755,54 @@
         }
       }
     },
-    "연결 끄기…": {
+    "연결 끄기": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Turn Off Connections…"
+            "value": "Turn Off Connections"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "接続をオフ…"
+            "value": "接続をオフ"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "关闭连接…"
+            "value": "关闭连接"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "關閉連線…"
+            "value": "關閉連線"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Desactivar conexiones…"
+            "value": "Desactivar conexiones"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Désactiver les connexions…"
+            "value": "Désactiver les connexions"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Verbindungen deaktivieren…"
+            "value": "Verbindungen deaktivieren"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Desativar conexões…"
+            "value": "Desativar conexões"
           }
         }
       }

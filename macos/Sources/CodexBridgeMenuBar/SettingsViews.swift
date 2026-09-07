@@ -40,11 +40,16 @@ struct NativeSettingsView: View {
                         .font(.headline)
                     HStack(spacing: 5) {
                         Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
-                        Text(model.connectionTargetName)
-                        Text(BridgeAppLocalization.string(
-                            model.isRemoteClient ? "· 원격 서버 설정" : "· 이 Mac의 서버 설정",
-                            locale: model.interfaceLocale
-                        ))
+                            .accessibilityHidden(true)
+                        if model.isRemoteClient {
+                            Text(verbatim: BridgeAppLocalization.format(
+                                "%@ · 원격 관리",
+                                locale: model.interfaceLocale,
+                                model.connectionTargetName
+                            ))
+                        } else {
+                            Text("이 Mac의 설정")
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -65,7 +70,7 @@ struct NativeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     Spacer()
-                    Button("최신 값 불러오기…") {
+                    Button("최신 값 불러오기") {
                         showDiscardDraftConfirmation = true
                     }
                 }
@@ -223,7 +228,7 @@ private struct ConnectionSettingsPane: View {
                             Task { await model.setConnectionMode(.localHost) }
                         }
                     } else {
-                        Button("기존 서버에 연결…") {
+                        Button("기존 서버에 연결") {
                             showRemoteConnectionSheet = true
                         }
                     }
@@ -518,7 +523,7 @@ private struct ConnectionSettingsPane: View {
                         model.isBusy
                 )
                 if model.remoteManagementStatus?.enabled == true {
-                    Button("연결 끄기…", role: .destructive) {
+                    Button("연결 끄기", role: .destructive) {
                         showDisableRemoteConnectionConfirmation = true
                     }
                     .disabled(model.isBusy)
@@ -626,7 +631,7 @@ private struct ConnectionSettingsPane: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("폐기…", role: .destructive) {
+                        Button("폐기", role: .destructive) {
                             deviceRevocationTarget = device
                         }
                     }
@@ -1086,7 +1091,7 @@ private struct GeneralSettingsPane: View {
 
             Section {
                 HStack {
-                    Button("일반 설정 초기화…", role: .destructive) {
+                    Button("일반 설정 초기화", role: .destructive) {
                         model.cancelPendingSettingsAutosave()
                         showResetConfirmation = true
                     }
@@ -1357,7 +1362,7 @@ private struct RuntimeStatusPane: View {
                 HStack {
                     Spacer()
                     if model.isBusy { ProgressView().controlSize(.small) }
-                    Button("저장하고 서버 재시작…") {
+                    Button("저장하고 서버 재시작") {
                         showApplyConfirmation = true
                     }
                     .buttonStyle(.borderedProminent)
@@ -1398,7 +1403,7 @@ private struct RuntimeStatusPane: View {
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                     if canRetryWithForce {
-                        Button("강제로 저장하고 재시작…", role: .destructive) {
+                        Button("강제로 저장하고 재시작", role: .destructive) {
                             showForceConfirmation = true
                         }
                         .disabled(model.isBusy)
@@ -1633,14 +1638,14 @@ private struct ProjectRow: View {
             Spacer()
             Menu {
                 if project.archivedAt == nil {
-                    Button("이름 변경…", action: rename)
-                    Button("연결 폴더 변경…", action: relocate)
+                    Button("이름 변경", action: rename)
+                    Button("연결 폴더 변경", action: relocate)
                     Divider()
                     Button("보관", action: archive)
                 } else {
-                    Button("복원…", action: restore)
+                    Button("복원", action: restore)
                     Divider()
-                    Button("등록 삭제…", role: .destructive, action: delete)
+                    Button("등록 삭제", role: .destructive, action: delete)
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -1715,7 +1720,7 @@ private struct ProjectEditorSheet: View {
                     )
                     .textFieldStyle(.roundedBorder)
                     if !usesRemotePaths {
-                        Button("선택…") {
+                        Button("선택") {
                             let panel = NSOpenPanel()
                             panel.canChooseFiles = false
                             panel.canChooseDirectories = true

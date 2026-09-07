@@ -5,7 +5,6 @@ struct CodexAccountUsageView: View {
     @EnvironmentObject private var model: AppModel
     let account: CodexAccountUsage
     var runtimeKind: String? = nil
-    @State private var showCredits = false
     @State private var showBilling = false
     @State private var adminKey = ""
     @State private var organizationId = ""
@@ -37,12 +36,14 @@ struct CodexAccountUsageView: View {
                 }
                 if account.windows.isEmpty { Text("사용량 정보를 확인할 수 없습니다.").font(.caption) }
                 if let credits = account.credits {
-                    FullRowDisclosure("추가 크레딧", isExpanded: $showCredits) {
-                        if let balance = credits.balance { LabeledContent("잔액", value: balance) }
-                        if credits.unlimited { Text("크레딧 제한 없음") }
-                        Text("잔액만으로 크레딧 사용 이력을 알 수는 없습니다.")
-                            .font(.caption).foregroundStyle(.secondary)
+                    LabeledContent("추가 크레딧") {
+                        if credits.unlimited {
+                            Text("크레딧 제한 없음")
+                        } else {
+                            Text(verbatim: credits.balance ?? "—")
+                        }
                     }
+                    .help("잔액만으로 크레딧 사용 이력을 알 수는 없습니다.")
                 }
                 if let credits = account.resetCredits, credits.availableCount > 0 {
                     LabeledContent("사용량 초기화 쿠폰", value: credits.availableCount.formatted())
