@@ -9,7 +9,7 @@ import {
   parseCodexWeeklyUsage,
   type CodexAppServerLateResponse
 } from "../src/appServerUpstream.js";
-import { SUPPORTED_CODEX_CLI_VERSION } from "../src/appServerCompatibility.js";
+import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
 import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
@@ -147,18 +147,26 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   });
 
-  it("rejects an unsupported configured CLI before admitting an App Server worker", async () => {
-    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, {
-      versionProbe: async () => "0.144.0"
-    });
+  it("admits a previously unknown newer version when its public protocol works", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, { versionProbe: async () => "99.0.0" });
+    try { await expect(pool.listModels()).resolves.toHaveProperty("data"); }
+    finally { await pool.close(); }
+  });
+
+  it("tolerates new optional fields and notifications but rejects unknown permission requests", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {}, { versionProbe: async () => "99.0.0" });
+    const events: CodexPublicEvent[] = [];
     try {
-      await expect(pool.listModels()).rejects.toThrow(
-        `Configured Codex executable ${JSON.stringify(FIXTURE)} reported version 0.144.0; ` +
-        `this bridge supports Codex CLI ${SUPPORTED_CODEX_CLI_VERSION}`
-      );
-    } finally {
-      await pool.close();
-    }
+      const optional = await pool.callTool("codex", task("future optional notification"), progress => {
+        if (progress.event) events.push(progress.event);
+      });
+      expect(optional.isError).not.toBe(true);
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_FUTURE_PAYLOAD");
+      const rejected = await pool.callTool("codex", task("unknown permission request"));
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain("Unsupported App Server request: item/futurePermission/requestApproval");
+      expect((await pool.callTool("codex", task("normal request after rejection"))).isError).not.toBe(true);
+    } finally { await pool.close(); }
   });
 
   it("deduplicates concurrent version probes for one worker admission", async () => {
@@ -167,7 +175,7 @@ describe("CodexAppServerUpstreamPool", () => {
       versionProbe: async () => {
         probes += 1;
         await new Promise((resolve) => setTimeout(resolve, 10));
-        return SUPPORTED_CODEX_CLI_VERSION;
+        return CODEX_CLI_TEST_VERSION;
       }
     });
     try {
@@ -203,7 +211,7 @@ describe("CodexAppServerUpstreamPool", () => {
       protocolFixture("init-timeout"),
       1,
       { initializeTimeoutMs: 750, requestTimeoutMs: 2_000 },
-      { versionProbe: async () => SUPPORTED_CODEX_CLI_VERSION }
+      { versionProbe: async () => CODEX_CLI_TEST_VERSION }
     );
     const running = pool.listModels();
     const settled = running.then(

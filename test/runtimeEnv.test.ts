@@ -235,7 +235,7 @@ describe("runtime environment", () => {
       hasTunnelId: true,
       tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
       operatorConfiguration: {
-        defaultBackend: "mcp-server",
+        defaultBackend: "app-server",
         maximumAccess: "read-only"
       },
       issue: null,

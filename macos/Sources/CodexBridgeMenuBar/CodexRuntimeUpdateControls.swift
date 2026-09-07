@@ -10,12 +10,12 @@ struct CodexRuntimeUpdateControls: View {
     private var failed: Bool { runtime.updateCheckError != nil || (runtime.operation?.action == "check-updates" && runtime.operation?.phase == "failed") }
 
     var body: some View {
-        Toggle(kind == "sdk" ? "현재 SDK 버전 유지" : "현재 버전 유지", isOn: Binding(
+        Toggle("현재 버전 유지", isOn: Binding(
             get: { runtime.preferences.pinnedVersion != nil },
             set: { value in preferences(pin: .some(value ? runtime.installedVersion : nil)) }
         ))
         HStack {
-            Toggle(kind == "sdk" ? "SDK 업데이트 알림" : "업데이트 알림", isOn: Binding(
+            Toggle("업데이트 알림", isOn: Binding(
                 get: { runtime.preferences.notifications },
                 set: { preferences(notifications: $0) }
             ))
@@ -45,7 +45,7 @@ struct CodexRuntimeUpdateControls: View {
         if let version = runtime.updateVersion {
             HStack {
                 Text(verbatim: version).monospacedDigit()
-                Button(kind == "sdk" ? "SDK 실행환경 업데이트" : "코덱스 업데이트") { action("update") }
+                Button("코덱스 업데이트") { action("update") }
                 Button("이 버전 건너뛰기") { preferences(skip: version) }
             }
         }

@@ -167,7 +167,7 @@ describe("Codex model catalog", () => {
 
     const first = await catalog.getCatalog({ refresh: true });
     expect(events).toEqual([{
-      backendKind: "mcp-server",
+      backendKind: "app-server",
       previousFingerprint: undefined,
       fingerprint: first.fingerprint
     }]);
@@ -182,7 +182,7 @@ describe("Codex model catalog", () => {
     const refreshed = await catalog.getCatalog({ refresh: true });
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual({
-      backendKind: "mcp-server",
+      backendKind: "app-server",
       previousFingerprint: first.fingerprint,
       fingerprint: refreshed.fingerprint
     });

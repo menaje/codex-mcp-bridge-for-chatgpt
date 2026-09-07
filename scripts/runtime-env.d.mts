@@ -16,7 +16,7 @@ export type StatusProblem = {
 };
 
 export type RuntimeOperatorConfiguration = {
-  defaultBackend: "app-server" | "mcp-server" | "codex-sdk";
+  defaultBackend: "app-server";
   maximumAccess: "read-only" | "workspace-write" | "full-access";
 };
 

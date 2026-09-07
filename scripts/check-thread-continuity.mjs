@@ -10,7 +10,7 @@ const stages = [
   { name: "MCP discovery and transport reconnection", files: ["test/server.test.ts", "test/stdioServer.test.ts"],
     pattern: "stable task descriptor|stateless HTTP task descriptor|keeps async Codex jobs|host-derived scope stable" },
   { name: "Public task, exact Agent continuation, and backend binding", files: ["test/tools.test.ts"],
-    pattern: "starts a sanitized read-only session|reuses one Agent across linked Activities|keeps an MCP Agent pinned|admitted App Server thread resumable" },
+    pattern: "starts a sanitized read-only session|reuses one Agent across linked Activities|preserves (mcp-server|codex-sdk) history and requires an explicit summary-only handoff|admitted App Server thread resumable" },
   { name: "Codex process restart, thread resume, fork, and invalid identity", files: ["test/appServerUpstream.test.ts"],
     pattern: "exact turn-level continuation|recovers a durable thread|forks, archives, restores|classifies exact thread/read" }
 ];

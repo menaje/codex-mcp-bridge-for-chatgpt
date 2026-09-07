@@ -1153,12 +1153,7 @@ private struct GeneralSettingsPane: View {
     }
 
     private var threadVisibilityDescription: String {
-        let key: String
-        if snapshot.capabilities.defaultBackend == "app-server" {
-            key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
-        } else {
-            key = "MCP Server에서는 이 설정으로 Codex 앱 연결 여부를 바꿀 수 없습니다. App Server로 전환한 뒤 만드는 새 작업과 새 컨텍스트부터 적용됩니다."
-        }
+        let key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
 
@@ -1283,11 +1278,10 @@ private struct GeneralSettingsPane: View {
 private struct RuntimeStatusPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
-    @State private var defaultBackend = "mcp-server"
+    private let defaultBackend = "app-server"
     @State private var maximumAccess = "read-only"
     @State private var showApplyConfirmation = false
     @State private var showForceConfirmation = false
-    @State private var backendTransitionDetailsExpanded = false
 
     private var savedConfiguration: RuntimeOperatorConfiguration? {
         model.helperStatus?.configuration.operatorConfiguration
@@ -1295,8 +1289,7 @@ private struct RuntimeStatusPane: View {
 
     private var isDirty: Bool {
         guard let savedConfiguration else { return false }
-        return defaultBackend != savedConfiguration.defaultBackend ||
-            maximumAccess != savedConfiguration.maximumAccess
+        return maximumAccess != savedConfiguration.maximumAccess
     }
 
     private var nonRoutingWarnings: [String] {
@@ -1310,39 +1303,9 @@ private struct RuntimeStatusPane: View {
         model.runtimeFailureCanRetryWithForce
     }
 
-    private var backendDescription: String {
-        let key: String
-        if defaultBackend == "codex-sdk" {
-            key = "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다. 기존 CLI 선택은 유지됩니다."
-        } else if defaultBackend == "app-server" {
-            key = "실험적 방식입니다. 스레드와 백그라운드 프로세스를 더 세밀하게 제어하고 Codex 앱에 표시되지 않는 임시 스레드를 지원합니다."
-        } else {
-            key = "안정적인 기본 방식입니다. 호환성과 복구 안정성을 우선하며 일부 스레드·백그라운드 프로세스 제어는 제한됩니다."
-        }
-        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
-    }
-
     var body: some View {
         Form {
             Section("서버 설정") {
-                Picker("Codex 실행 백엔드", selection: $defaultBackend) {
-                    Text("App Server").tag("app-server")
-                    Text("MCP Server").tag("mcp-server")
-                    Text("Python SDK · 실험적").tag("codex-sdk")
-                        .disabled(model.sdkRuntime?.selection?.available != true)
-                }
-                Text(backendDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                FullRowDisclosure(
-                    "백엔드 전환 시 알아둘 점",
-                    isExpanded: $backendTransitionDetailsExpanded
-                ) {
-                    Text("변경 사항은 서버를 재시작한 뒤 새 에이전트 또는 새로 시작한 에이전트부터 적용됩니다. 기존 에이전트는 생성 당시 백엔드를 계속 사용하며, 다른 백엔드로 새로 시작할 때는 이전 작업을 요약해 전달해야 합니다.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 3)
-                }
                 Picker("허용할 최대 접근 권한", selection: $maximumAccess) {
                     Text("읽기 전용").tag("read-only")
                     Text("작업 폴더 쓰기").tag("workspace-write")
@@ -1455,7 +1418,6 @@ private struct RuntimeStatusPane: View {
 
     private func synchronize() {
         guard let savedConfiguration else { return }
-        defaultBackend = savedConfiguration.defaultBackend
         maximumAccess = savedConfiguration.maximumAccess
     }
 }

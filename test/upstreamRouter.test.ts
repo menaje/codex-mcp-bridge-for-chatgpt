@@ -5,9 +5,8 @@ import { backendRoutingArgument, CodexBackendRouter } from "../src/upstreamRoute
 
 describe("CodexBackendRouter", () => {
   it("forwards ephemeral only for App Server thread starts", async () => {
-    const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");
-    const router = new CodexBackendRouter("app-server", mcp.backend, app.backend);
+    const router = new CodexBackendRouter("app-server", app.backend);
     const selection = { model: "gpt-5.6-sol", reasoningEffort: "high" };
 
     await router.startThread?.({
@@ -24,23 +23,12 @@ describe("CodexBackendRouter", () => {
       ephemeral: true
     });
 
-    await router.startThread?.({
-      backendKind: "mcp-server",
-      prompt: "visible",
-      cwd: "/tmp/project",
-      sandbox: "read-only",
-      approvalPolicy: "never",
-      selection,
-      ephemeral: true
-    });
-    expect(mcp.calls.at(-1)?.args).not.toHaveProperty("ephemeral");
     await router.close();
   });
 
   it("uses the configured backend for new threads and pins every continuation", async () => {
-    const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");
-    const router = new CodexBackendRouter("app-server", mcp.backend, app.backend);
+    const router = new CodexBackendRouter("app-server", app.backend);
 
     const started = await router.callTool("codex", { prompt: "start" });
     expect(started.structuredContent).toMatchObject({ threadId: "app-server-thread-1" });
@@ -55,14 +43,12 @@ describe("CodexBackendRouter", () => {
       name: "codex-reply",
       args: { threadId: "app-server-thread-1", prompt: "continue" }
     });
-    expect(mcp.calls).toHaveLength(0);
     await router.close();
   });
 
   it("reads account rate limits from App Server regardless of the task backend", async () => {
-    const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");
-    const router = new CodexBackendRouter("mcp-server", mcp.backend, app.backend);
+    const router = new CodexBackendRouter("app-server", app.backend);
 
     await expect(router.readAccountRateLimits()).resolves.toMatchObject({
       limitId: "codex",
@@ -70,34 +56,27 @@ describe("CodexBackendRouter", () => {
       windowDurationMins: 10_080
     });
     expect(app.rateLimitReads).toHaveLength(1);
-    expect(mcp.rateLimitReads).toHaveLength(0);
     await router.close();
   });
 
-  it("restores persisted backend affinity and rejects a conflicting routing hint", async () => {
-    const mcp = fakeBackend("mcp-server");
+  it.each(["mcp-server", "codex-sdk"] as const)("keeps %s history pinned while rejecting execution and silent migration", async kind => {
     const app = fakeBackend("app-server");
-    const router = new CodexBackendRouter("app-server", mcp.backend, app.backend);
-    router.bindThread("persisted-mcp", "mcp-server");
-
-    await expect(
-      router.callTool("codex-reply", { threadId: "persisted-mcp", prompt: "resume" })
-    ).resolves.toMatchObject({ structuredContent: { threadId: "persisted-mcp" } });
-    expect(mcp.calls).toHaveLength(1);
-    await expect(
-      router.callTool("codex-reply", {
-        threadId: "persisted-mcp",
-        prompt: "wrong backend",
-        ...backendRoutingArgument("app-server")
-      })
-    ).rejects.toThrow(/pinned to backend mcp-server/);
+    const router = new CodexBackendRouter("app-server", app.backend);
+    router.bindThread("retired-thread", kind);
+    await expect(router.continueThread({ backendKind: kind, threadId: "retired-thread", prompt: "resume" })).rejects.toThrow("CODEX_BACKEND_RETIRED");
+    await expect(router.forkThread({ backendKind: kind, threadId: "retired-thread", prompt: "fork" })).rejects.toThrow("CODEX_BACKEND_RETIRED");
+    await expect(router.callTool("codex-reply", { threadId: "retired-thread", prompt: "wrong backend", ...backendRoutingArgument("app-server") })).rejects.toThrow("pinned to backend");
+    expect(router.canResumeThread("retired-thread")).toBe(false);
+    expect(router.canSteerThread("retired-thread")).toBe(false);
+    await router.archiveThread("retired-thread");
+    expect(app.calls).toHaveLength(0);
+    expect(() => new CodexBackendRouter(kind, app.backend)).toThrow("CODEX_BACKEND_RETIRED");
     await router.close();
   });
 
   it("routes force-stop and App Server controls without exposing the internal marker", async () => {
-    const mcp = fakeBackend("mcp-server");
     const app = fakeBackend("app-server");
-    const router = new CodexBackendRouter("mcp-server", mcp.backend, app.backend);
+    const router = new CodexBackendRouter("app-server", app.backend);
     router.bindThread("app-thread", "app-server");
     const assignment: UpstreamWorkerAssignment = {
       backendKind: "app-server",

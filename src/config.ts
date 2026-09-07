@@ -7,6 +7,7 @@ import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
+/** Includes retired values only to preserve historical records; new execution uses App Server. */
 export type CodexBackendKind = "mcp-server" | "app-server" | "codex-sdk";
 export function isCodexBackendKind(value: unknown): value is CodexBackendKind {
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk";
@@ -29,7 +30,7 @@ export type BridgeConfig = {
   codexService?: import("./codexService.js").CodexService;
   codexCommandResolver?: () => Promise<string>;
   runtimeStatusResolver?: () => Promise<string[]>;
-  defaultBackend: CodexBackendKind;
+  defaultBackend: "app-server";
   allowedRoots: string[];
   defaultSandbox: SandboxMode;
   defaultAccessStrategy: AccessStrategy;
@@ -71,7 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     read("MCP_SESSION_IDLE_TTL_MS") || String(30 * 60 * 1000)
   );
   const maxMcpSessions = parsePositiveInt(read("MAX_MCP_SESSIONS") || "64");
-  const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "mcp-server");
+  const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "app-server");
   // Project folders are registered in user settings. ROOTS remains only as a
   // backwards-compatible operator ceiling for existing deployments that set
   // it explicitly; a normal installation has no second root registry.
@@ -117,6 +118,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  if (read("DEFAULT_BACKEND") && read("DEFAULT_BACKEND") !== "app-server") {
+    startupWarnings.push("The saved execution backend has been retired. New work uses Codex App Server. Existing history is preserved; use a fresh context with an explicit summary to continue retired sessions.");
+  }
   if (configuredRoots) {
     startupWarnings.push(
       "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. Remove it to manage all project folders only from Codex settings."
@@ -464,8 +468,8 @@ function parseAccessStrategy(raw: string): AccessStrategy {
   throw new Error(`Invalid default access strategy: ${raw}`);
 }
 
-function parseBackendKind(raw: string): CodexBackendKind {
-  if (raw === "mcp-server" || raw === "app-server" || raw === "codex-sdk") return raw;
+function parseBackendKind(raw: string): "app-server" {
+  if (raw === "mcp-server" || raw === "app-server" || raw === "codex-sdk") return "app-server";
   throw new Error(`Invalid default Codex backend: ${raw}`);
 }
 

@@ -979,7 +979,7 @@ describe("http server", () => {
     await eventually(() => coordinator.status.bindingCount === 0);
   });
 
-  it.each(["mcp-server", "app-server", "codex-sdk"] as const)("keeps a %s foreground job running to completion after its HTTP response detaches", async backend => {
+  it.each(["app-server"] as const)("keeps a %s foreground job running to completion after its HTTP response detaches", async backend => {
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-detach-state-"));
     const stateStore = new BridgeStateStore({ file: path.join(stateDirectory, "state.sqlite") });
     const preferences = new UserSettingsStore(loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" }), { stateStore });

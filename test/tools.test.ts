@@ -165,7 +165,7 @@ class DeferredUpstream extends FakeUpstream {
   ): Promise<ToolResult> {
     this.calls.push({ name, args });
     onAssigned?.({
-      backendKind: "mcp-server",
+      backendKind: "app-server",
       workerId: "fake-0",
       workerGeneration: 1,
       workerPid: 999_001,
@@ -767,7 +767,7 @@ class DescriptionRefreshingModelCatalog extends FakeModelCatalog {
 class TaskRefreshingModelCatalog extends FakeModelCatalog {
   private refreshed = false;
   private readonly listeners = new Set<(event: {
-    backendKind: "mcp-server";
+    backendKind: "app-server";
     previousFingerprint?: string;
     snapshot: CodexModelCatalogSnapshot;
   }) => void>();
@@ -787,7 +787,7 @@ class TaskRefreshingModelCatalog extends FakeModelCatalog {
       this.refreshed = true;
       const snapshot = this.snapshot(false);
       for (const listener of this.listeners) {
-        listener({ backendKind: "mcp-server", previousFingerprint, snapshot });
+        listener({ backendKind: "app-server", previousFingerprint, snapshot });
       }
       return snapshot;
     }
@@ -795,7 +795,7 @@ class TaskRefreshingModelCatalog extends FakeModelCatalog {
   }
 
   subscribe(listener: (event: {
-    backendKind: "mcp-server";
+    backendKind: "app-server";
     previousFingerprint?: string;
     snapshot: CodexModelCatalogSnapshot;
   }) => void): () => void {
@@ -944,28 +944,7 @@ describe("bridge tools", () => {
     }
   });
 
-  it("defers safe shutdown for a loaded SDK thread without calling unsupported process inventory", async () => {
-    class SdkShutdownUpstream extends ShutdownImpactUpstream {
-      loaded = true;
-      canResumeThread(): boolean { return this.loaded; }
-    }
-    const upstream = new SdkShutdownUpstream();
-    const bridge = await connectTestClient(configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "codex-sdk" }), upstream);
-    try {
-      bridge.settings.update({ showBridgeThreadsInCodexApp: true }, bridge.settings.current.revision);
-      const completed = parseToolJson(await runTask(bridge.client, { prompt: "complete an SDK task before shutdown" }));
-      expect(completed.threadId).toBe("thread-1");
-      await expect(bridge.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true })).resolves.toMatchObject({
-        backgroundProcessState: "unknown", backgroundProcesses: 0, backgroundProcessUnknownAgents: 1
-      });
-      upstream.loaded = false;
-      await expect(bridge.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true })).resolves.toMatchObject({
-        backgroundProcessState: "confirmed", backgroundProcesses: 0, backgroundProcessUnknownAgents: 0
-      });
-      expect(upstream.loadedTerminalReads).toEqual([]);
-      expect(upstream.resumedTerminalReads).toEqual([]);
-    } finally { await bridge.close(); }
-  });
+
 
   it("publishes the consolidated Activity, settings, and Codex tools", async () => {
     const root = temporaryRoot();
@@ -5666,7 +5645,7 @@ describe("bridge tools", () => {
       "gpt-5.6-sol",
       "gpt-5.6-terra"
     ]);
-    expect(catalog.calls).toEqual([{ refresh: true, backendKind: "mcp-server" }]);
+    expect(catalog.calls).toEqual([{ refresh: true, backendKind: "app-server" }]);
 
     const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
     const selection = task.inputSchema.properties?.selection as {
@@ -5996,8 +5975,8 @@ describe("bridge tools", () => {
     await client.callTool({ name: "codex_settings", arguments: {} });
     await client.callTool({ name: "codex_settings", arguments: { refreshModels: true } });
     expect(catalog.calls).toEqual([
-      { refresh: false, backendKind: "mcp-server" },
-      { refresh: true, backendKind: "mcp-server" }
+      { refresh: false, backendKind: "app-server" },
+      { refresh: true, backendKind: "app-server" }
     ]);
     await close();
   });
@@ -6251,11 +6230,11 @@ describe("bridge tools", () => {
     expect(upstream.calls.map((call) => call.args)).toEqual([
       expect.objectContaining({
         model: "gpt-5.6-sol",
-        config: { model_reasoning_effort: "high", service_tier: "priority" }
+        config: { model_reasoning_effort: "high" }, serviceTier: "priority"
       }),
       expect.objectContaining({
         model: "gpt-5.6-sol",
-        config: { model_reasoning_effort: "max", service_tier: "priority" }
+        config: { model_reasoning_effort: "max" }, serviceTier: "priority"
       })
     ]);
 
@@ -7425,6 +7404,7 @@ describe("bridge tools", () => {
           prompt: "inspect",
           cwd: realpathSync(root),
           sandbox: "read-only",
+          ephemeral: true,
           "approval-policy": "on-request",
           model: "gpt-5.6-sol",
           config: { model_reasoning_effort: "max" }
@@ -7467,20 +7447,7 @@ describe("bridge tools", () => {
     });
     await close();
 
-    const mcpUpstream = new FakeUpstream();
-    const mcpConfig = configFor(root);
-    const mcpSettings = new UserSettingsStore(mcpConfig);
-    mcpSettings.update({ showBridgeThreadsInCodexApp: false }, mcpSettings.current.revision);
-    const mcpClient = await connectTestClient(
-      mcpConfig,
-      mcpUpstream,
-      undefined,
-      new FakeModelCatalog(),
-      mcpSettings
-    );
-    await runTask(mcpClient.client, { prompt: "MCP thread", sessionMode: "new" });
-    expect(mcpUpstream.calls[0]?.args).not.toHaveProperty("ephemeral");
-    await mcpClient.close();
+
   });
 
   it("creates and reuses one explicit Activity across parallel background Codex jobs", async () => {
@@ -7780,7 +7747,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("keeps an MCP Agent pinned and requires an explicit summary-only handoff for a fresh App Server thread", async () => {
+  it.each(["mcp-server", "codex-sdk"] as const)("preserves %s history and requires an explicit summary-only handoff to App Server", async retiredKind => {
     const root = realpathSync(temporaryRoot());
     const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
     const upstream = new FakeUpstream();
@@ -7801,7 +7768,7 @@ describe("bridge tools", () => {
       threadId: "mcp-thread",
       projectId: project.id,
       projectLabel: project.name,
-      backendKind: "mcp-server",
+      backendKind: retiredKind,
       cwd: root,
       sandbox: "read-only",
       contextMode: "fresh"
@@ -7809,7 +7776,7 @@ describe("bridge tools", () => {
     sessions.record({
       threadId: "mcp-thread",
       scopeId: SCOPE_A,
-      backendKind: "mcp-server",
+      backendKind: retiredKind,
       cwd: root,
       projectId: project.id,
       projectLabel: project.name,
@@ -7832,7 +7799,7 @@ describe("bridge tools", () => {
     const settingsResult = await client.callTool({ name: "codex_settings", arguments: {} });
     expect((settingsResult as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
       .toEqual(expect.arrayContaining([
-        expect.stringContaining("Existing Agent threads remain pinned"),
+        expect.stringContaining("Retired execution paths cannot resume"),
         expect.stringContaining("handoffSummary")
       ]));
 
@@ -7841,11 +7808,9 @@ describe("bridge tools", () => {
       activityTitle: "Pinned continuation",
       agent: { mode: "existing", id: agent.agentId, context: "continue" }
     });
-    expect(continued).toMatchObject({ structuredContent: { threadId: "mcp-thread" } });
-    expect(upstream.calls[0]).toMatchObject({
-      name: "codex-reply",
-      args: { threadId: "mcp-thread", prompt: "continue on the pinned backend" }
-    });
+    expect(continued.isError).toBe(true);
+    expect(JSON.stringify(continued)).toContain("CODEX_BACKEND_RETIRED");
+    expect(upstream.calls).toHaveLength(0);
 
     const missing = await runTask(client, {
       prompt: "move to the configured backend",
@@ -7861,7 +7826,7 @@ describe("bridge tools", () => {
         }
       }
     });
-    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls).toHaveLength(0);
 
     const summary = "Completed repository audit; continue with the two remaining implementation gaps.";
     const handoffRequestId = "82828282-8282-4282-8282-828282828282";
@@ -7882,16 +7847,16 @@ describe("bridge tools", () => {
     expect(handedOffStructured).toMatchObject({ threadId: "thread-1" });
     expect(jobs.get(handedOffStructured.jobId)?.sessionDecision).toMatchObject({
       handoff: {
-        sourceBackend: "mcp-server",
+        sourceBackend: retiredKind,
         targetBackend: "app-server",
         sourceThreadId: "mcp-thread",
         continuity: "explicit-summary-only",
         summarySha256: expect.stringMatching(/^[0-9a-f]{64}$/)
       }
     });
-    expect(upstream.calls[1]).toMatchObject({ name: "codex" });
-    expect(String(upstream.calls[1]?.args.prompt)).toContain("No transcript, hidden context");
-    expect(String(upstream.calls[1]?.args.prompt)).toContain(summary);
+    expect(upstream.calls[0]).toMatchObject({ name: "codex" });
+    expect(String(upstream.calls[0]?.args.prompt)).toContain("No transcript, hidden context");
+    expect(String(upstream.calls[0]?.args.prompt)).toContain(summary);
     expect(JSON.stringify(handedOff)).not.toContain(summary);
     const exactRetry = await runTask(client, handoffArgs);
     expect(exactRetry).toMatchObject({ structuredContent: { threadId: "thread-1" } });
@@ -7901,11 +7866,11 @@ describe("bridge tools", () => {
     });
     expect(changedSummary.isError).toBe(true);
     expect(JSON.stringify(changedSummary)).toContain("already used for a different Codex task");
-    expect(upstream.calls).toHaveLength(2);
+    expect(upstream.calls).toHaveLength(1);
     expect(jobs.listAgentThreads(agent.agentId)).toEqual([
       expect.objectContaining({
         threadId: "mcp-thread",
-        backendKind: "mcp-server",
+        backendKind: retiredKind,
         isCurrent: false
       }),
       expect.objectContaining({
@@ -8894,15 +8859,15 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("distinguishes an active MCP Server Job from steerable App Server work", async () => {
+  it("rejects steering when the execution transport does not provide it", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
     const started = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
-        prompt: "active MCP work",
-        agentName: "MCP Agent",
+        prompt: "active work without steering support",
+        agentName: "Unsteerable Agent",
         contextMode: "fresh",
         executionMode: "background"
       }
@@ -8913,7 +8878,7 @@ describe("bridge tools", () => {
         requestId: "95959595-9595-4595-8595-959595959590",
         jobId: started.jobId,
         expectedJobVersion: jobs.get(started.jobId)?.version,
-        prompt: "MCP Server cannot steer an in-flight turn."
+        prompt: "This transport cannot steer an in-flight turn."
       }
     });
     expect(result.isError).toBe(true);
@@ -10219,59 +10184,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("rejects an MCP policy change until the caller explicitly starts a new thread", async () => {
-    const root = temporaryRoot();
-    const upstream = new FakeUpstream();
-    const config = configFor(root, {
-      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
-      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
-    });
-    const { client, close } = await connectTestClient(config, upstream);
-    const started = await runTask(client, { prompt: "start MCP thread", sessionMode: "new" });
-    const activityId = taskActivityId(started);
-    const agentId = parseToolJson(started).agentId;
 
-    await client.callTool({
-      name: "codex_update_settings",
-      arguments: {
-        expectedRevision: 0,
-        modelPolicy: {
-          mode: "fixed",
-          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-          constraints: { allowDelegation: true }
-        }
-      }
-    });
-    for (const arguments_ of [
-      { prompt: "auto must not hide a new thread", activityId },
-      { prompt: "exact continuation must reject", activityId, agentId, contextMode: "continue" }
-    ]) {
-      const rejected = await client.callTool({
-        name: "codex_task",
-        arguments: arguments_
-      });
-      expect(rejected).toMatchObject({
-        isError: true,
-        structuredContent: {
-          error: { code: "THREAD_OVERRIDE_UNSUPPORTED" }
-        }
-      });
-    }
-    expect(upstream.calls).toHaveLength(1);
-
-    await runTask(client, {
-      prompt: "explicit replacement thread",
-      activityId,
-      agentId,
-      contextMode: "fresh"
-    });
-    expect(upstream.calls).toHaveLength(2);
-    expect(upstream.calls[1].args).toMatchObject({
-      model: "gpt-5.6-terra",
-      config: { model_reasoning_effort: "high" }
-    });
-    await close();
-  });
 
   it("applies an App Server policy change on the same thread and updates execution state", async () => {
     const root = temporaryRoot();
@@ -10344,7 +10257,7 @@ describe("bridge tools", () => {
 
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "mcp-server" }
+      args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
     expect(jobs.get(parseToolJson(first).jobId)?.sessionDecision).toMatchObject({
       action: "start",
@@ -10667,7 +10580,7 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-1",
           prompt: "refine plan",
-          _bridgeBackendKind: "mcp-server"
+          _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       },
       {
@@ -10675,7 +10588,7 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-2",
           prompt: "continue build",
-          _bridgeBackendKind: "mcp-server"
+          _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       }
     ]);
@@ -11859,9 +11772,12 @@ describe("bridge tools", () => {
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
     settings.update({ completionHandoff: "auto-handoff" }, settings.current.revision);
+    class CompletedAppUpstream extends FakeUpstream {
+      async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> { return []; }
+    }
     const { client, rawCallTool, jobs, close } = await connectTestClient(
       config,
-      new FakeUpstream(),
+      new CompletedAppUpstream(),
       undefined,
       new FakeModelCatalog(),
       settings
@@ -13717,7 +13633,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "continue", _bridgeBackendKind: "mcp-server" }
+      args: { threadId: "thread-1", prompt: "continue", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
 
     const unknown = await client.callTool({
@@ -13741,8 +13657,10 @@ describe("bridge tools", () => {
         selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
       }
     });
-    expect(modelChange.isError).toBe(true);
-    expect(JSON.stringify(modelChange)).toContain("THREAD_OVERRIDE_UNSUPPORTED");
+    expect(modelChange.isError).not.toBe(true);
+    expect(upstream.calls.at(-1)).toMatchObject({ name: "codex-reply", args: {
+      threadId: "thread-1", model: "gpt-5.6-terra", config: { model_reasoning_effort: "high" }
+    } });
 
     await close();
   });

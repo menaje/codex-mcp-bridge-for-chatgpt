@@ -700,7 +700,7 @@ describe("macOS runtime helper RPC", () => {
       launcherPath: launcher, runtimeLockDirectory: path.join(root, "launcher.lock"), autoRestart: false, startTimeoutMs: 5000 });
     try {
       const started = await supervisor.start();
-      await expect(supervisor.applyConfiguration({ defaultBackend: "mcp-server", mode: "drain", timeoutMs: 5000 })).rejects.toThrow("CODEX_APPLY_PENDING");
+      await expect(supervisor.applyConfiguration({ defaultBackend: "app-server", maximumAccess: "workspace-write", mode: "drain", timeoutMs: 5000 })).rejects.toThrow("CODEX_APPLY_PENDING");
       expect(readFileSync(configFile, "utf8")).toBe(original);
       expect((await supervisor.snapshot()).pid).toBe(started.pid);
       expect(await request(bridgeSocket, { jsonrpc: "2.0", id: "check", method: "runtime.snapshot", params: {} })).toMatchObject({ result: { acceptingNewJobs: true } });
@@ -1011,7 +1011,8 @@ writeFileSync(${JSON.stringify(invocationFile)}, JSON.stringify({
 import {createInterface} from "node:readline";
 createInterface({input:process.stdin}).on("line", line => {
  const request=JSON.parse(line); if(request.id===undefined)return;
- const result=request.method==="account/read" ? {account:{type:"chatgpt",email:"user@example.com",planType:"plus"}} : {};
+ const result=request.method==="initialize" ? {userAgent:"fixture",platformFamily:"unix",platformOs:"macos"}
+   : request.method==="account/read" ? {account:{type:"chatgpt",email:"user@example.com",planType:"plus"}} : {};
  process.stdout.write(JSON.stringify({id:request.id,result})+"\\n");
 });
 `, { mode: 0o700 });
@@ -1040,7 +1041,7 @@ createInterface({input:process.stdin}).on("line", line => {
     });
     expect(JSON.stringify(status)).not.toContain("user@example.com");
     expect(JSON.parse(readFileSync(invocationFile, "utf8"))).toEqual({
-      args: ["app-server"],
+      args: ["app-server", "--listen", "stdio://"],
       codexHome
     });
     unlinkSync(invocationFile);
@@ -1180,7 +1181,7 @@ function helperStatus(phase: MacOSHelperStatus["phase"] = "running"): MacOSHelpe
       hasTunnelId: true,
       tunnelId: "tunnel_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
       operatorConfiguration: {
-        defaultBackend: "mcp-server",
+        defaultBackend: "app-server",
         maximumAccess: "read-only"
       },
       issue: null,

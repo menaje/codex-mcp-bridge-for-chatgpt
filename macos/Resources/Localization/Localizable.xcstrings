@@ -921,58 +921,6 @@
         }
       }
     },
-    "Codex 실행 백엔드": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex Backend"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex実行バックエンド"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 运行后端"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 執行後端"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Backend de ejecución de Codex"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Backend d’exécution Codex"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex-Ausführungsbackend"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Backend do Codex"
-          }
-        }
-      }
-    },
     "Codex 앱에서 이 Agent의 대화를 엽니다.": {
       "localizations": {
         "en": {
@@ -1177,58 +1125,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Recebendo conexões HTTPS"
-          }
-        }
-      }
-    },
-    "MCP Server": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Server"
           }
         }
       }
@@ -4870,58 +4766,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "A reinicialização automática foi interrompida após falhas repetidas."
-          }
-        }
-      }
-    },
-    "백엔드 전환 시 알아둘 점": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Before Switching Backends"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "バックエンド切り替え時の注意事項"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切换后端前须知"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切換後端前須知"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Antes de cambiar de backend"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Avant de changer de backend"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vor dem Backend-Wechsel"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Antes de alternar o backend"
           }
         }
       }
@@ -14515,59 +14359,6 @@
         }
       }
     },
-    "MCP Server에서는 이 설정으로 Codex 앱 연결 여부를 바꿀 수 없습니다. App Server로 전환한 뒤 만드는 새 작업과 새 컨텍스트부터 적용됩니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This setting cannot change Codex app availability for MCP Server tasks. It applies to new tasks and fresh contexts created after switching to App Server."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "MCP Serverでは、この設定でCodexアプリへの接続可否を変更できません。App Serverへ切り替えた後に作成する新規タスクと新規コンテキストから適用されます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在 MCP Server 中，此设置无法更改 Codex 应用的可用性。切换到 App Server 后，它仅应用于新建的任务和上下文。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在 MCP Server 中，此設定無法更改 Codex 應用的可用性。切換到 App Server 後，它僅應用於新建的任務和上下文。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Con MCP Server, esta opción no puede cambiar la disponibilidad de la app Codex. Se aplica a las tareas y los contextos nuevos creados después de cambiar a App Server."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Avec MCP Server, cette option ne peut pas modifier la disponibilité dans l’app Codex. Elle s’applique aux nouvelles tâches et aux nouveaux contextes créés après le passage à App Server."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bei MCP Server kann diese Einstellung die Verfügbarkeit in der Codex-App nicht ändern. Sie gilt für neue Aufgaben und Kontexte, die nach dem Wechsel zu App Server erstellt werden."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Esta configuração não pode alterar a disponibilidade do aplicativo Codex para tarefas do MCP Server. Ela se aplica a novas tarefas e novos contextos criados após a mudança para o App Server."
-          }
-        }
-      }
-    },
     "항상": {
       "extractionState": "manual",
       "localizations": {
@@ -15677,112 +15468,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Não foi possível encerrar o aplicativo e todos os processos relacionados: %@"
-          }
-        }
-      }
-    },
-    "실험적 방식입니다. 스레드와 백그라운드 프로세스를 더 세밀하게 제어하고 Codex 앱에 표시되지 않는 임시 스레드를 지원합니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Experimental. Provides richer thread and background-process controls and supports ephemeral threads hidden from the Codex app."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "実験的な方式です。スレッドとバックグラウンドプロセスをより細かく制御し、Codexアプリに表示されない一時スレッドをサポートします。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这是实验性方式，可更精细地控制线程和后台进程，并支持不在 Codex 应用中显示的临时线程。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這是實驗性方式，可更精細地控制執行緒和背景程序，並支援不在 Codex 應用中顯示的臨時執行緒。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Método experimental. Permite un control más preciso de los hilos y procesos en segundo plano, y admite hilos temporales que no aparecen en la app Codex."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Méthode expérimentale. Elle offre un contrôle plus précis des threads et des processus en arrière-plan, et prend en charge les threads temporaires qui n’apparaissent pas dans l’app Codex."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Experimentelle Methode. Sie bietet eine feinere Steuerung von Threads und Hintergrundprozessen und unterstützt temporäre Threads, die nicht in der Codex-App angezeigt werden."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Experimental. Oferece controle mais detalhado de threads e processos em segundo plano e permite threads temporárias ocultas no aplicativo Codex."
-          }
-        }
-      }
-    },
-    "안정적인 기본 방식입니다. 호환성과 복구 안정성을 우선하며 일부 스레드·백그라운드 프로세스 제어는 제한됩니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stable default. Prioritizes compatibility and recovery, with more limited thread and background-process controls."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安定した既定方式です。互換性と復旧の安定性を優先するため、一部のスレッドやバックグラウンドプロセスの制御は制限されます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这是稳定的默认方式，优先考虑兼容性和恢复稳定性，但部分线程和后台进程控制会受到限制。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這是穩定的預設方式，優先考慮相容性和恢復穩定性，但部分執行緒和背景程序控制會受到限制。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Método estable predeterminado. Prioriza la compatibilidad y una recuperación fiable, con un control más limitado de algunos hilos y procesos en segundo plano."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Méthode stable par défaut. Elle privilégie la compatibilité et la fiabilité de la récupération, avec un contrôle plus limité de certains threads et processus en arrière-plan."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stabile Standardmethode. Sie priorisiert Kompatibilität und zuverlässige Wiederherstellung, bietet jedoch eine eingeschränktere Steuerung einiger Threads und Hintergrundprozesse."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modo padrão estável. Prioriza a compatibilidade e a recuperação confiável, com controles mais limitados de threads e processos em segundo plano."
           }
         }
       }
@@ -24082,183 +23767,6 @@
         }
       }
     },
-    "API Key 저장하고 사용": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API Key 저장하고 사용"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save and use API key"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API キーを保存して使用"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存并使用 API 密钥"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "儲存並使用 API 金鑰"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardar y usar clave API"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrer et utiliser la clé API"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API-Schlüssel speichern und verwenden"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvar e usar chave de API"
-          }
-        }
-      }
-    },
-    "API 사용에 별도 과금 정책이 적용됨을 확인했습니다": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API 사용에 별도 과금 정책이 적용됨을 확인했습니다"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "I understand that API usage has separate billing"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API 利用には別の料金体系が適用されることを確認しました"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我已了解 API 使用适用独立计费政策"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "我已了解 API 使用適用獨立計費政策"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Entiendo que el uso de la API se factura por separado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Je comprends que l’API est facturée séparément"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ich verstehe, dass die API gesondert abgerechnet wird"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Entendo que o uso da API tem cobrança separada"
-          }
-        }
-      }
-    },
-    "ChatGPT 로그인 사용": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ChatGPT 로그인 사용"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use ChatGPT login"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ChatGPT ログインを使用"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 ChatGPT 登录"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 ChatGPT 登入"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usar inicio de sesión de ChatGPT"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Utiliser la connexion ChatGPT"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ChatGPT-Anmeldung verwenden"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usar login do ChatGPT"
-          }
-        }
-      }
-    },
     "ChatGPT 로그인은 해당 플랜·워크스페이스의 Codex 사용 정책을 따릅니다. API Key는 OpenAI Platform 과금 정책을 따릅니다.": {
       "extractionState": "manual",
       "localizations": {
@@ -24491,536 +23999,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "OpenAI API Key"
-          }
-        }
-      }
-    },
-    "Python SDK · 실험적": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · 실험적"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · Experimental"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · 実験的"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · 实验性"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · 實驗性"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · Experimental"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · Expérimental"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · Experimentell"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Python SDK · Experimental"
-          }
-        }
-      }
-    },
-    "SDK 실행환경 삭제": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 실행환경 삭제"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove SDK environment"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 環境を削除"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除 SDK 环境"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刪除 SDK 環境"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eliminar entorno del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Supprimer l’environnement SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Umgebung entfernen"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remover ambiente do SDK"
-          }
-        }
-      }
-    },
-    "SDK 실행환경 설치": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 실행환경 설치"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Install SDK environment"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 環境をインストール"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安装 SDK 环境"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安裝 SDK 環境"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalar entorno del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installer l’environnement SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Umgebung installieren"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalar ambiente do SDK"
-          }
-        }
-      }
-    },
-    "SDK 실행환경 설치 중…": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 실행환경 설치 중…"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installing SDK environment…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 環境をインストール中…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在安装 SDK 环境…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在安裝 SDK 環境…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalando entorno del SDK…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installation de l’environnement SDK…"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Umgebung wird installiert…"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalando ambiente do SDK…"
-          }
-        }
-      }
-    },
-    "SDK 실행환경 업데이트": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 실행환경 업데이트"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Update SDK environment"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 環境を更新"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更新 SDK 环境"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更新 SDK 環境"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Actualizar entorno del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mettre à jour l’environnement SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Umgebung aktualisieren"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Atualizar ambiente do SDK"
-          }
-        }
-      }
-    },
-    "SDK 업데이트 알림": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 업데이트 알림"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK update notifications"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 更新通知"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 更新通知"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 更新通知"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Avisos de actualización del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notifications de mise à jour du SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Updatebenachrichtigungen"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notificações de atualização do SDK"
-          }
-        }
-      }
-    },
-    "SDK 에이전트는 Codex 앱에 세션 표시 설정을 켠 상태에서 사용할 수 있습니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 에이전트는 Codex 앱에 세션 표시 설정을 켠 상태에서 사용할 수 있습니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK agents require the setting to show sessions in the Codex app to be enabled."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK エージェントを使用するには、Codex アプリでセッションを表示する設定を有効にしてください。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 SDK 智能体需要开启在 Codex 应用中显示会话的设置。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 SDK 代理需要開啟在 Codex 應用程式中顯示工作階段的設定。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Los agentes SDK requieren activar la opción de mostrar sesiones en la app Codex."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les agents SDK nécessitent d’activer l’affichage des sessions dans l’app Codex."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Für SDK-Agenten muss die Anzeige von Sitzungen in der Codex-App aktiviert sein."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Os agentes SDK exigem que a opção de mostrar sessões no app Codex esteja ativada."
-          }
-        }
-      }
-    },
-    "SDK 인증 변경": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 인증 변경"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Change SDK authentication"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK の認証を変更"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更改 SDK 身份验证"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "變更 SDK 驗證方式"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cambiar autenticación del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Modifier l’authentification du SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Authentifizierung ändern"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alterar autenticação do SDK"
-          }
-        }
-      }
-    },
-    "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다. 기존 CLI 선택은 유지됩니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다. 기존 CLI 선택은 유지됩니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installs the SDK with its own Python and Codex as one bundle. Your existing CLI choice is preserved."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK と専用の Python・Codex を一括でインストールします。既存の CLI 選択は維持されます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将 SDK 及其专用 Python 和 Codex 作为一个组合安装。保留现有 CLI 选择。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將 SDK 及其專用 Python 和 Codex 作為一個組合安裝。保留現有 CLI 選擇。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instala el SDK junto con su propio Python y Codex. Se conserva tu selección de CLI."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installe le SDK avec ses propres Python et Codex. Votre choix de CLI est conservé."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installiert das SDK mit eigenem Python und Codex als Paket. Ihre bisherige CLI-Auswahl bleibt erhalten."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instala o SDK com Python e Codex próprios em um único pacote. Sua escolha de CLI é mantida."
           }
         }
       }
@@ -25379,65 +24357,6 @@
         }
       }
     },
-    "백그라운드 터미널 목록 조회와 개별 종료는 이 SDK 버전에서 지원하지 않습니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "백그라운드 터미널 목록 조회와 개별 종료는 이 SDK 버전에서 지원하지 않습니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This SDK version cannot list or individually stop background terminals."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この SDK バージョンでは、バックグラウンド端末の一覧表示と個別停止はサポートされません。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此 SDK 版本不支持列出或单独停止后台终端。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此 SDK 版本不支援列出或個別停止背景終端機。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Esta versión del SDK no permite listar ni detener terminales en segundo plano de forma individual."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cette version du SDK ne peut pas lister ni arrêter individuellement les terminaux en arrière-plan."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diese SDK-Version kann Hintergrundterminals weder auflisten noch einzeln beenden."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Esta versão do SDK não permite listar nem encerrar terminais em segundo plano individualmente."
-          }
-        }
-      }
-    },
     "버전 관리": {
       "extractionState": "manual",
       "localizations": {
@@ -25729,65 +24648,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remover o Codex instalado pela ponte?"
-          }
-        }
-      }
-    },
-    "브리지가 설치한 SDK 실행환경을 삭제할까요?": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "브리지가 설치한 SDK 실행환경을 삭제할까요?"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove the SDK environment installed by the bridge?"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブリッジがインストールした SDK 環境を削除しますか？"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除由桥接程序安装的 SDK 环境？"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "要刪除由橋接程式安裝的 SDK 環境嗎？"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "¿Eliminar el entorno del SDK instalado por el puente?"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Supprimer l’environnement SDK installé par le pont ?"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die von der Bridge installierte SDK-Umgebung entfernen?"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remover o ambiente do SDK instalado pela ponte?"
           }
         }
       }
@@ -26142,124 +25002,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Detalhes"
-          }
-        }
-      }
-    },
-    "새 에이전트에 SDK 사용": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "새 에이전트에 SDK 사용"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use SDK for new agents"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新しいエージェントに SDK を使用"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "为新代理使用 SDK"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "為新代理使用 SDK"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usar SDK para nuevos agentes"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Utiliser le SDK pour les nouveaux agents"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK für neue Agenten verwenden"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usar SDK para novos agentes"
-          }
-        }
-      }
-    },
-    "서버를 안전하게 종료한 뒤 변경해 주세요. API Key는 브리지 전용 로그인 저장소에서 관리됩니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "서버를 안전하게 종료한 뒤 변경해 주세요. API Key는 브리지 전용 로그인 저장소에서 관리됩니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Safely stop the server before changing this. API keys use a separate bridge credential store."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "変更する前にサーバーを安全に停止してください。API キーはブリッジ専用の認証情報ストアで管理されます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更改前请先安全停止服务器。API 密钥由桥接程序专用的登录存储管理。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "變更前請先安全停止伺服器。API 金鑰由橋接程式專用的登入儲存區管理。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Detén el servidor de forma segura antes de cambiarlo. Las claves API se guardan en un almacén exclusivo del puente."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arrêtez le serveur en toute sécurité avant de modifier ce réglage. Les clés API utilisent un espace d’identifiants propre au pont."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Beenden Sie den Server vor der Änderung sicher. API-Schlüssel werden in einem eigenen Anmeldespeicher der Bridge verwaltet."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Encerre o servidor com segurança antes de alterar. As chaves de API usam um armazenamento de credenciais exclusivo da ponte."
           }
         }
       }
@@ -26971,65 +25713,6 @@
         }
       }
     },
-    "이 버전은 아직 호환성을 확인하지 않았습니다. 선택한 버전은 유지됩니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 버전은 아직 호환성을 확인하지 않았습니다. 선택한 버전은 유지됩니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Compatibility with this version has not been verified. Your version choice is preserved."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このバージョンの互換性はまだ確認されていません。選択したバージョンは保持されます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "尚未验证此版本的兼容性。保留您选择的版本。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "尚未驗證此版本的相容性。保留您選擇的版本。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aún no se ha verificado la compatibilidad de esta versión. Se conserva tu elección."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "La compatibilité de cette version n’a pas encore été vérifiée. Votre choix est conservé."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die Kompatibilität dieser Version wurde noch nicht bestätigt. Ihre Versionsauswahl bleibt erhalten."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A compatibilidade desta versão ainda não foi verificada. Sua escolha de versão é mantida."
-          }
-        }
-      }
-    },
     "이전 버전으로 복구": {
       "extractionState": "manual",
       "localizations": {
@@ -27203,65 +25886,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Método de autenticação"
-          }
-        }
-      }
-    },
-    "인증 확인 완료": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "인증 확인 완료"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Authentication verified"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "認証を確認しました"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "身份验证已确认"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "驗證已確認"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Autenticación verificada"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Authentification vérifiée"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Authentifizierung bestätigt"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Autenticação verificada"
           }
         }
       }
@@ -27502,65 +26126,6 @@
         }
       }
     },
-    "현재 SDK 버전 유지": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 SDK 버전 유지"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keep current SDK version"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在の SDK バージョンを維持"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保留当前 SDK 版本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保留目前 SDK 版本"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mantener versión actual del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conserver la version actuelle du SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktuelle SDK-Version beibehalten"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Manter versão atual do SDK"
-          }
-        }
-      }
-    },
     "현재 버전 유지": {
       "extractionState": "manual",
       "localizations": {
@@ -27679,64 +26244,6 @@
         }
       }
     },
-    "확인된 인증": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "확인된 인증"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Verified authentication"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "確認済みの認証"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已确认的身份验证"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已確認的驗證"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Autenticación verificada"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Authentification vérifiée"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bestätigte Authentifizierung"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Autenticação verificada"
-          }
-        }
-      }
-    },
     "환경 설정에서 지정한 Codex를 사용 중입니다. 여기서 변경하려면 지정된 경로를 먼저 해제해 주세요.": {
       "extractionState": "manual",
       "localizations": {
@@ -27792,65 +26299,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "O Codex foi selecionado por uma configuração de ambiente. Remova o caminho explícito antes de alterá-lo aqui."
-          }
-        }
-      }
-    },
-    "실행 중인 프로세스를 확인할 수 없으면 서버 재시작과 업데이트 적용이 보류될 수 있습니다.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "실행 중인 프로세스를 확인할 수 없으면 서버 재시작과 업데이트 적용이 보류될 수 있습니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Server restarts and update activation may be deferred when running processes cannot be verified."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "実行中のプロセスを確認できない場合、サーバーの再起動と更新の適用が保留されることがあります。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法确认正在运行的进程时，可能会推迟服务器重启和更新应用。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法確認執行中的程序時，可能會延後伺服器重新啟動與更新套用。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El reinicio del servidor y la aplicación de actualizaciones pueden posponerse si no se pueden verificar los procesos en ejecución."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le redémarrage du serveur et l’application des mises à jour peuvent être différés si les processus en cours ne peuvent pas être vérifiés."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Serverneustarts und die Aktivierung von Updates können aufgeschoben werden, wenn laufende Prozesse nicht überprüft werden können."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A reinicialização do servidor e a aplicação de atualizações podem ser adiadas quando não for possível verificar os processos em execução."
           }
         }
       }
@@ -27913,60 +26361,60 @@
         }
       }
     },
-    "같은 계정의 Codex 사용량은 앱·CLI·SDK에서 공유됩니다.": {
+    "같은 계정의 Codex 사용량은 앱과 CLI에서 공유됩니다.": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "같은 계정의 Codex 사용량은 앱·CLI·SDK에서 공유됩니다."
+            "value": "같은 계정의 Codex 사용량은 앱과 CLI에서 공유됩니다."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex usage is shared across the app, CLI and SDK for the same account."
+            "value": "Codex usage for the same account is shared across the app and CLI."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "同じアカウントのCodex使用量は、アプリ・CLI・SDKで共有されます。"
+            "value": "同じアカウントの Codex 使用量はアプリと CLI で共有されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "同一账户的 Codex 用量在应用、CLI 和 SDK 之间共享。"
+            "value": "同一账号的 Codex 用量在应用和 CLI 之间共享。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "同一帳戶的 Codex 用量由應用程式、CLI 和 SDK 共用。"
+            "value": "同一帳號的 Codex 用量在應用程式與 CLI 之間共用。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El uso de Codex se comparte entre la app, CLI y SDK de la misma cuenta."
+            "value": "El uso de Codex de una misma cuenta se comparte entre la aplicación y la CLI."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "L’utilisation de Codex est partagée entre l’app, la CLI et le SDK du même compte."
+            "value": "L’utilisation de Codex d’un même compte est partagée entre l’application et la CLI."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Die Codex-Nutzung wird für dasselbe Konto zwischen App, CLI und SDK geteilt."
+            "value": "Die Codex-Nutzung desselben Kontos wird zwischen App und CLI geteilt."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "O uso do Codex é compartilhado entre o app, a CLI e o SDK da mesma conta."
+            "value": "O uso do Codex da mesma conta é compartilhado entre o aplicativo e a CLI."
           }
         }
       }
@@ -28783,292 +27231,60 @@
         }
       }
     },
-    "확인된 버전 설치": {
+    "이 버전 설치": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "확인된 버전 설치"
+            "value": "이 버전 설치"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Install a verified version"
+            "value": "Install this version"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "確認済みバージョンをインストール"
+            "value": "このバージョンをインストール"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "安装已验证版本"
+            "value": "安装此版本"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "安裝已驗證版本"
+            "value": "安裝此版本"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Instalar una versión verificada"
+            "value": "Instalar esta versión"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Installer une version vérifiée"
+            "value": "Installer cette version"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Geprüfte Version installieren"
+            "value": "Diese Version installieren"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Instalar versão verificada"
-          }
-        }
-      }
-    },
-    "SDK ChatGPT 로그인": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK ChatGPT 로그인"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sign in to ChatGPT for SDK"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK用ChatGPTログイン"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "为 SDK 登录 ChatGPT"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "為 SDK 登入 ChatGPT"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Iniciar sesión de ChatGPT para el SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connexion ChatGPT pour le SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bei ChatGPT für das SDK anmelden"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Entrar no ChatGPT para o SDK"
-          }
-        }
-      }
-    },
-    "브리지 전용 저장소에는 별도 ChatGPT 로그인이 필요할 수 있습니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "브리지 전용 저장소에는 별도 ChatGPT 로그인이 필요할 수 있습니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bridge storage may require a separate ChatGPT sign-in."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブリッジ専用ストレージでは、ChatGPTへの別のログインが必要な場合があります。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "桥接专用存储可能需要单独登录 ChatGPT。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "橋接專用儲存空間可能需要另外登入 ChatGPT。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El almacenamiento del puente puede requerir otro inicio de sesión de ChatGPT."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le stockage du pont peut nécessiter une connexion ChatGPT distincte."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Der Bridge-Speicher kann eine separate ChatGPT-Anmeldung erfordern."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "O armazenamento da ponte pode exigir um login separado no ChatGPT."
-          }
-        }
-      }
-    },
-    "Codex 앱과 같은 저장소를 사용합니다. 목록 갱신 시점은 앱 동작을 따릅니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 앱과 같은 저장소를 사용합니다. 목록 갱신 시점은 앱 동작을 따릅니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Uses the same storage as the Codex app. The app controls when its list refreshes."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codexアプリと同じストレージを使用します。一覧の更新タイミングはアプリに依存します。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "与 Codex 应用使用相同存储。列表刷新时间由应用决定。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "與 Codex 應用程式使用相同儲存空間。清單更新時間由應用程式決定。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usa el mismo almacenamiento que la app Codex. La app decide cuándo actualizar la lista."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Utilise le même stockage que l’app Codex. L’app décide quand actualiser sa liste."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Verwendet denselben Speicher wie die Codex-App. Die App steuert die Aktualisierung der Liste."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usa o mesmo armazenamento do app Codex. O app controla quando atualizar a lista."
-          }
-        }
-      }
-    },
-    "세션은 브리지에 저장됩니다. Codex 앱에는 연결되지 않습니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "세션은 브리지에 저장됩니다. Codex 앱에는 연결되지 않습니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sessions are stored in the bridge and are not linked to the Codex app."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "セッションはブリッジに保存され、Codexアプリには連携されません。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "会话保存在桥接中，不关联到 Codex 应用。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作階段儲存在橋接中，不會連結至 Codex 應用程式。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Las sesiones se guardan en el puente y no se vinculan con la app Codex."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les sessions sont stockées dans le pont, sans lien avec l’app Codex."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sitzungen werden in der Bridge gespeichert und nicht mit der Codex-App verknüpft."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "As sessões são armazenadas na ponte e não são vinculadas ao app Codex."
+            "value": "Instalar esta versão"
           }
         }
       }
@@ -30349,64 +28565,6 @@
         }
       }
     },
-    "CLI 선택은 CLI 방식으로 돌아갈 때 사용합니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "CLI 선택은 CLI 방식으로 돌아갈 때 사용합니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This CLI selection is used when switching back to CLI execution."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "CLI実行に戻すと、このCLIの選択が使われます。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切换回 CLI 执行时会使用此 CLI 选择。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切換回 CLI 執行時會使用此 CLI 選擇。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Esta selección se usa al volver a ejecutar con la CLI."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cette sélection est utilisée lors du retour à l’exécution par CLI."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diese CLI-Auswahl wird bei der Rückkehr zur CLI-Ausführung verwendet."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Esta seleção é usada ao voltar à execução pela CLI."
-          }
-        }
-      }
-    },
     "설치 정보": {
       "localizations": {
         "ko": {
@@ -30581,64 +28739,6 @@
         }
       }
     },
-    "새 작업 실행 방식": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "새 작업 실행 방식"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Execution for new tasks"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新しいタスクの実行方法"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新任务执行方式"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新工作執行方式"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ejecución de nuevas tareas"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Exécution des nouvelles tâches"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ausführung neuer Aufgaben"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Execução de novas tarefas"
-          }
-        }
-      }
-    },
     "새 작업부터 선택한 방식으로 실행합니다. 기존 작업은 원래 실행 방식을 유지합니다.": {
       "localizations": {
         "ko": {
@@ -30751,64 +28851,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "As informações da conta estão indisponíveis."
-          }
-        }
-      }
-    },
-    "다른 실행환경의 계정": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다른 실행환경의 계정"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Account for the other runtime"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "別の実行環境のアカウント"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另一运行环境的账户"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另一執行環境的帳戶"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cuenta del otro entorno"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Compte de l’autre environnement"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Konto der anderen Laufzeit"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conta do outro ambiente"
           }
         }
       }
@@ -30929,238 +28971,6 @@
         }
       }
     },
-    "SDK 작업은 SDK에 포함된 전용 Codex로 실행합니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 작업은 SDK에 포함된 전용 Codex로 실행합니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK tasks run with the dedicated Codex included in the SDK."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDKのタスクは、SDKに含まれる専用のCodexで実行します。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 任务使用 SDK 内置的专用 Codex 执行。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 工作使用 SDK 內建的專用 Codex 執行。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Las tareas del SDK usan el Codex dedicado incluido en el SDK."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Les tâches du SDK utilisent le Codex dédié inclus dans le SDK."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Aufgaben verwenden das im SDK enthaltene eigene Codex."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "As tarefas do SDK usam o Codex dedicado incluído no SDK."
-          }
-        }
-      }
-    },
-    "SDK 안내": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 안내"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "About the SDK"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDKについて"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关于 SDK"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "關於 SDK"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Acerca del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "À propos du SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Über das SDK"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sobre o SDK"
-          }
-        }
-      }
-    },
-    "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다.": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK와 전용 Python·Codex를 한 묶음으로 설치합니다."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installs the SDK with its dedicated Python and Codex as one bundle."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDKと専用のPython・Codexをまとめてインストールします。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将 SDK 及其专用 Python、Codex 作为一个套件安装。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將 SDK 及其專用 Python、Codex 作為一個套件安裝。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instala el SDK con su Python y Codex dedicados en un solo paquete."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installe le SDK avec son Python et son Codex dédiés dans un seul ensemble."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installiert das SDK mit eigenem Python und Codex als ein Paket."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instala o SDK com seu Python e Codex dedicados em um único pacote."
-          }
-        }
-      }
-    },
-    "SDK 실행환경": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 실행환경"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK runtime"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK実行環境"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 运行环境"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK 執行環境"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Entorno del SDK"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Environnement du SDK"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "SDK-Laufzeit"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ambiente do SDK"
-          }
-        }
-      }
-    },
     "사용 중": {
       "localizations": {
         "ko": {
@@ -31215,64 +29025,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Em uso"
-          }
-        }
-      }
-    },
-    "설치됨 · 미사용": {
-      "localizations": {
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설치됨 · 미사용"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installed · Not in use"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "インストール済み・未使用"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已安装 · 未使用"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已安裝 · 未使用"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalado · Sin usar"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installé · Non utilisé"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Installiert · Nicht verwendet"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instalado · Sem uso"
           }
         }
       }
