@@ -14,6 +14,7 @@ rl.on("line", (line) => {
   omitted = message.jsonrpc === undefined;
   if (message.method === "echo") return send({ id: message.id, result: message.params });
   if (message.method === "hold") { heldId = message.id; return; }
+  if (message.method === "exit-now") return process.exit(0);
   if (message.method === "release") {
     send({ id: message.id, result: {} });
     if (heldId !== undefined) { send({ id: heldId, result: { released: true } }); heldId = undefined; }
@@ -161,6 +162,32 @@ describe("JsonRpcProcess", () => {
     await rpc.close();
     await rejected;
     expect(rpc.pendingRequestCount).toBe(0);
+  });
+
+  it.each([
+    ["resolve", "close"], ["reject", "close"], ["resolve", "exit"], ["reject", "exit"]
+  ] as const)("handles an approval that %ss after process %s", async (outcome, stop) => {
+    let finish!: () => void;
+    let requested!: () => void;
+    const arrived = new Promise<void>(resolve => { requested = resolve; });
+    const rpc = processFor({
+      onRequest: () => new Promise((resolve, reject) => {
+        finish = () => outcome === "resolve" ? resolve({ decision: "accept" }) : reject(new Error("Approval dismissed"));
+        requested();
+      })
+    });
+    const running = rpc.request("ask-client");
+    const rejected = expect(running).rejects.toThrow(stop === "close" ? "process was closed" : "exited");
+    await arrived;
+    if (stop === "close") await rpc.close();
+    else await expect(rpc.request("exit-now")).rejects.toThrow("exited");
+    finish();
+    await rejected;
+    // Let the detached inbound handler finish; Vitest also catches any
+    // unhandled rejection that would terminate the production bridge process.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(rpc.pendingRequestCount).toBe(0);
+    await rpc.close();
   });
 
   it("leaves no pending state when the child command cannot start", async () => {

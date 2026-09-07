@@ -29,8 +29,8 @@
 
 | 사례 | 기준 | 현재 인증 기록 |
 | --- | --- | --- |
-| 동일 대화 Desktop → iOS → Web → 재진입 → widget 호출 | opaque scope ID A와 source 비교 | 미실행 |
-| 새 대화 / 복사·분기 대화 | 각각 별도 scope B/C, 자동 병합 없음 | 미실행 |
+| 동일 대화 Desktop → iOS → Web → 재진입 → widget 호출 | opaque scope ID A와 source 비교 | 부분 확인: Web 새 작업·전체 카드·재진입 후 재시도 및 widget 갱신. 전체 surface 비교는 미완료 |
+| 새 대화 / 복사·분기 대화 | 각각 별도 scope B/C, 자동 병합 없음 | 부분 확인: 새 Web 대화의 host-metadata 조회에 기존 작업 미노출. B/C 식별자 비교는 미완료 |
 | Desktop inline / PiP / fullscreen | 지원 기능만 표시, 복원·갱신 가능 | 미실행 |
 | iOS background / iframe suspend / reopen | 오래된 제어 권한 재사용 없이 복원 | 미실행 |
 | 동일 대화의 여러 Activity 카드 | outbox lease 단일 소유, 중복 handoff 없음 | 미실행 |
@@ -39,6 +39,8 @@
 | optional metadata 차이 | 존재 여부와 opaque scope 결과만 기록 | 미실행 |
 
 현재 설치된 브리지의 읽기 전용 status가 성공했다는 사실만으로 이 매트릭스를 통과했다고 표시하지 않는다. 과거 실제 검사는 [기존 live smoke](audits/issue-38-chatgpt-live-smoke.md)에 해당 당시 범위로 보관한다. 자동화 가능한 기반 검사는 `npm run test:continuity`, `npm test`와 카드 브라우저 회귀 검사로 반복한다.
+
+[2026-09-07 실제 호스트·승인 검증](audits/2026-09-07-live-host-and-interactions.md)은 새 작업과 카드 복구, 새 대화 분리의 실행 증거를 기록한다. ChatGPT 자동 승인 검사에서 차단한 후속 실행과 컴퓨터 제어 도구가 접근을 거부한 네이티브 ChatGPT는 통과로 처리하지 않았다.
 
 ## 기록 양식
 

@@ -46,3 +46,9 @@ continuation after process restart, steering, confirmed interruption and archive
 with terminal CLI 0.153.3, app CLI 0.153.4 and a newly installed managed CLI
 0.153.4. Actual ChatGPT host smoke and live approval/input behavior remain
 separate from those verified stages; #60 is not closed by that follow-up.
+
+The subsequent [live host and interaction acceptance](2026-09-07-live-host-and-interactions.md)
+executes actual ChatGPT plugin discovery, project selection, a synthetic task and
+full-history card recovery, plus real approval/cancellation/input on all three CLI
+installations. It also records and fixes a late-approval shutdown crash. The broader
+host-surface matrix and the host-blocked follow-up remain tracked in #9.
