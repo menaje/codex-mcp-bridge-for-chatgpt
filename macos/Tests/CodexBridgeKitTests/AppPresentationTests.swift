@@ -393,6 +393,69 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testClosingDashboardDuringAReadKeepsHealthyMenuState() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-cancel-menu-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            switch method {
+            case "helper.health": return NativeFixtureReply(body: "{\"result\":\(status)}")
+            case "auth.status": return NativeFixtureReply(body: #"{"result":{"installed":true,"authenticated":true,"summary":"ready"}}"#)
+            default: return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+            }
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#,
+                delay: method == "dashboard.snapshot" ? 1 : 0)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.dashboard = try dashboardStatus(scope: "retained")
+        model.setDashboardVisible(true)
+        for _ in 0..<50 {
+            if bridge.count("dashboard.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        model.setDashboardVisible(false)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertNil(model.dashboardErrorMessage)
+        XCTAssertEqual(model.dashboard?.scope, "retained")
+        XCTAssertEqual(model.health, .healthy)
+    }
+
+    @MainActor
+    func testOlderDashboardFailureCannotReplaceANewerSuccessfulRead() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-stale-menu-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "latest")), as: UTF8.self)
+        let replies = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"older read failed"}}"#, delay: 0.4),
+            NativeFixtureReply(body: "{\"result\":\(snapshot)}")
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        let earlier = Task { await model.refreshDashboard(enrich: false) }
+        for _ in 0..<50 {
+            if bridge.count("dashboard.snapshot") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 1)
+        await model.refreshDashboard(enrich: false)
+        await earlier.value
+        XCTAssertEqual(model.dashboard?.scope, "latest")
+        XCTAssertNil(model.dashboardErrorMessage)
+        XCTAssertEqual(model.health, .healthy)
+    }
+
+    @MainActor
     func testChangesDuringAuthAndInstallationReadsGetATrailingRefresh() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-trailing-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
@@ -1452,6 +1515,17 @@ private enum TestLoginItemError: LocalizedError {
 
     var errorDescription: String? {
         "승인되지 않음"
+    }
+}
+
+private final class TestDashboardReplySequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var replies: [NativeFixtureReply]
+    init(_ replies: [NativeFixtureReply]) { self.replies = replies }
+    func next() -> NativeFixtureReply {
+        lock.withLock {
+            replies.isEmpty ? NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"unexpected request"}}"#) : replies.removeFirst()
+        }
     }
 }
 

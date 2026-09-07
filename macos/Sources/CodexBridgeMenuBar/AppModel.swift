@@ -1235,7 +1235,8 @@ final class AppModel: ObservableObject {
                 idleOffset: 0,
                 enrich: false
             )
-            guard connection == connectionGeneration, generation == dashboardRequestGeneration else { return }
+            guard !Task.isCancelled, connection == connectionGeneration,
+                  generation == dashboardRequestGeneration else { return }
             dashboard = next
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
@@ -1247,7 +1248,8 @@ final class AppModel: ObservableObject {
                 scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
             }
         } catch {
-            guard connection == connectionGeneration else { return }
+            guard !Task.isCancelled, connection == connectionGeneration,
+                  generation == dashboardRequestGeneration else { return }
             dashboardErrorMessage = localizedErrorDescription(error)
         }
     }
