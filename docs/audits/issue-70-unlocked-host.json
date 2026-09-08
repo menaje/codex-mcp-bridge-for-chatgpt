@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "issue": 70,
+  "date": "2026-09-08",
+  "host": "Authenticated ChatGPT Web through normal Codex in-app browser UI",
+  "lockResolved": true,
+  "candidateBuildId": "f5027b367309:21c885d97b57",
+  "candidateTemporarilyActivated": true,
+  "candidateTunnelConnected": true,
+  "discovery": {
+    "advertisedTools": 29,
+    "settingsDescription": "Open an interactive card for configuring this ChatGPT-to-Codex bridge.",
+    "modelsContractVersion2Present": true
+  },
+  "actualModelLookups": {
+    "newConversation": true,
+    "existingSchemaVerificationConversation": true,
+    "exactRequestAndResponseExpandedInHostUi": true,
+    "input": {
+      "contractVersion": "2"
+    },
+    "selectionMode": "automatic",
+    "source": "app-server",
+    "stale": false,
+    "warning": null,
+    "allowedModels": 4,
+    "settingsOrActivityCardsOpened": 0
+  },
+  "previouslyLoadedOldConversation": {
+    "checkedAfterConnectionRefreshAndFreshPageLoad": true,
+    "rediscoveryRequested": true,
+    "longSettingsDescriptionRetained": true,
+    "modelsContractVersion2Absent": true,
+    "statusProjectQueryAbsent": true,
+    "taskSandboxInputRetained": true,
+    "unsupportedCallAttempted": false,
+    "allExistingConversationsMigrated": false
+  },
+  "questionRoundTrip": {
+    "resource": "ui://codex-mcp-bridge/question/04852baeb268.html",
+    "expiresInMinutes": 10,
+    "gptResponseEndedBeforeSubmission": true,
+    "testAnswerEnteredOnlyInCard": true,
+    "hostFollowupStarted": true,
+    "gptReadStoredResponse": true,
+    "exactFinalAnswerMatched": true,
+    "status": "answered",
+    "notification": "requested",
+    "consumedAtPresent": true,
+    "codexExecutions": 0
+  },
+  "retainedCards": {
+    "settingsReopened": true,
+    "activityFreshDataObserved": true,
+    "activityUpdateObservedAtKst": "2026-09-08 13:01:13",
+    "globalOverviewControlsVerifiedInThisRun": false
+  },
+  "executionProbe": {
+    "projectLookupSucceeded": true,
+    "taskAttempts": 1,
+    "permissionInputsSupplied": false,
+    "hostReviewDenied": true,
+    "hostError": "OpenAI의 안전 검사에서 이 도구 요청을 차단했습니다. 전송하는 항목을 재차 확인하세요.",
+    "newJobs": 0,
+    "newActivities": 0,
+    "newAgents": 0,
+    "retried": false,
+    "alternateRouteUsed": false,
+    "activeWorkRestartAttempted": false
+  },
+  "state": {
+    "existingJobs": 476,
+    "existingActivities": 204,
+    "existingAgents": 235,
+    "existingRowsUnchanged": true,
+    "settingsAndProjectTablesUnchanged": true,
+    "productionDatabaseReplaced": false,
+    "forceUsed": false
+  },
+  "restoration": {
+    "runtimeBuildId": "54296e0f0010-dirty:9af435da30f3",
+    "phase": "running",
+    "tunnelConnected": true,
+    "restoredAt": "2026-09-08T04:03:23.495362+00:00",
+    "chatgptDiscoveryRestored": true,
+    "chatgptAdvertisedTools": 30
+  },
+  "remaining": [
+    "Current-candidate Job execution and active-work restart after host rejection.",
+    "Native and ChatGPT Job completion notifications and ended-response handoff.",
+    "Actual original approval/input/stop/process controls.",
+    "Final dev merge and operating rollout; existing loaded schemas require an observed current-contract conversation."
+  ],
+  "operatingRolloutComplete": false,
+  "omissions": "No conversation IDs, private project selectors, credentials, raw task prompts or actual question answer are published."
+}

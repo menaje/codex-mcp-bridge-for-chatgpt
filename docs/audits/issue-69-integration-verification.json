@@ -118,5 +118,6 @@
     "Original approval/input/stop/process controls",
     "Active-work restart"
   ],
-  "legacyDeletion": "Fourteen retained names require the previously agreed compatibility window and a separate later deletion decision."
+  "legacyDeletion": "Fourteen retained names require the previously agreed compatibility window and a separate later deletion decision.",
+  "actualHostFollowup": "issue-70-unlocked-host.json"
 }

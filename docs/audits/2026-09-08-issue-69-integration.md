@@ -1,9 +1,12 @@
 # Issue #69 integration and rollout preparation
 
 The code integration and local validation are complete. **The issue and operating
-rollout are not complete.** The current candidate has not replaced the running
-service, and the earlier actual-host evidence does not establish adoption of
-this integrated version.
+rollout are not complete.** After unlock, #70 temporarily activated this candidate
+and verified its descriptions, model catalog v2 and independent question flow on
+ChatGPT. The original service was restored after a separate execution probe was
+rejected before admission. See the
+[unlocked-host follow-up](2026-09-08-issue-70-unlocked-host.md); the earlier
+actual-host evidence alone did not establish adoption of this integrated version.
 
 ## Integration and conflict cause
 
@@ -97,16 +100,22 @@ outside Git. The machine-readable result is
 
 ## Actual-host boundary and remaining work
 
-The normal computer-use tool reported that the Mac is locked and could not
-unlock it. The user was asked to unlock it; no alternate route was used to
-operate the locked ChatGPT UI. The running service is still
-`54296e0f0010-dirty:9af435da30f3`, with no active Jobs. The integrated candidate
-has not been activated and plugin discovery has not been refreshed in this run.
+This preparation run stopped when normal computer use reported a locked Mac.
+The user subsequently unlocked it, and the sole #70 operator temporarily
+activated `f5027b367309:21c885d97b57` and refreshed ChatGPT discovery. Current
+descriptions, model catalog v2 and the question-answer round trip passed. An old
+conversation retained its previously loaded schemas despite Refresh and a fresh
+page load; new/currently discovered definitions worked in the other checks.
 
-The remaining actual-host checks are unchanged: adoption of current descriptions
-and model catalog v2, cached conversation schema transition, both native and
-ChatGPT notifications, the existing automatic handoff behavior, original
-approval/input/stop/process controls, and active-work restart. Prior host-denied
-Activity completion was not retried. A retained final result is not proof of a
-notification. Operational rollout and issue closure remain pending these
-checks; legacy deletion is a separate later decision.
+The new candidate's execution probe was rejected by ChatGPT's automatic review
+before any Job, Activity or Agent was created. It was not retried or submitted
+elsewhere. The planned active-work restart therefore did not run. The original
+operating service `54296e0f0010-dirty:9af435da30f3` was restored, with no active
+Jobs and unchanged existing work, settings and project tables.
+
+Both native and ChatGPT Job notifications, the existing automatic Job handoff,
+original approval/input/stop/process controls, and active-work restart remain
+unverified for this candidate. Question-answer follow-up after an ended GPT
+response is not Job-completion handoff evidence. Prior host-denied Activity
+completion was not retried. Operational rollout and issue closure remain
+pending these checks; legacy deletion is a separate later decision.

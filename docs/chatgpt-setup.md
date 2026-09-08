@@ -134,6 +134,15 @@ After Refresh:
 5. open a new conversation and run the smoke checklist below;
 6. test an existing conversation. Its supported cached URI must still render; ask it to rediscover tools or use a new conversation only to pick up the new descriptor. The bridge can signal a stateful tool-list change but cannot guarantee that an already cached conversation adopted and used the refreshed metadata.
 
+The integrated #69/#70 actual-host check confirmed that this cache can preserve
+already loaded tool definitions after both connection Refresh and a fresh page
+load. One old conversation retained the long Settings description, missing model
+catalog v2 and Task sandbox input, while a new conversation and newly discovered
+tools in another existing conversation used the current definitions. Explicit
+rediscovery did not replace the old bindings. Verify the actual schema; repeated
+Refresh or adding fields to an unsupported cached schema is not a migration.
+See the [unlocked-host evidence](audits/2026-09-08-issue-70-unlocked-host.md).
+
 See OpenAI's [Plugin Refresh guidance](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata) and [MCP App UI guidance](https://developers.openai.com/plugins/build/chatgpt-ui).
 
 ## 4. Configure the Settings card

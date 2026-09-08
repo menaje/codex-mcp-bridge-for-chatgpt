@@ -24,14 +24,18 @@
   },
   "developmentIncluded": true,
   "originalAuditFilesPreserved": true,
-  "liveRuntimeChangedByThisTask": false,
-  "actualChatGptAdoptionVerified": false,
-  "remaining": "Final integrated revision and actual host rollout coordinated with issue 69; do not equate local validation with operating completion.",
+  "liveRuntimeChangedByThisTask": true,
+  "actualChatGptAdoptionVerified": true,
+  "remaining": "Final dev merge and operating rollout remain pending issue 69 execution/notification/control gates; candidate runtime and discovery are restored after the host execution rejection.",
   "actualHostBlocker": {
-    "reason": "Mac locked during normal computer-use check",
-    "reportedBy": "issue 69 integration audit",
+    "reason": "ChatGPT automatic review rejected the single synthetic codex_task before admission",
+    "lockResolved": true,
     "candidateBuild": "f5027b367309:21c885d97b57",
-    "operatorUnlockRequestedInIssue69Task": true,
-    "operatingDeploymentClaimed": false
-  }
+    "newJobs": 0,
+    "retried": false,
+    "activeWorkRestartAttempted": false,
+    "operatingDeploymentClaimed": false,
+    "evidence": "issue-70-unlocked-host.json"
+  },
+  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed."
 }
