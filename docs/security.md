@@ -510,8 +510,9 @@ Nonblocking questions remain visible while the Job and Agent continue running.
   metadata is suitable for correlation, not authorization. Missing metadata
   falls back to an explicit caller-managed UUID; changes in the host identity
   tuple or loss/rotation of the locally persisted HMAC key produce a new scope.
-- Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
-  cannot independently prove that a particular call received fresh user approval.
+- Enabling mutation support permits the corresponding bridge-owned execution
+  mode; the caller cannot select a sandbox. The bridge cannot independently
+  prove that a particular call received fresh user approval from the host.
 - `codex_activity_update` is a non-idempotent state transition guarded by an
   exact Activity version. `codex_cancel` (`target.kind: "activity"`) is destructive and replay-safe
   by request UUID; it validates scope/lifecycle, Activity version, worker

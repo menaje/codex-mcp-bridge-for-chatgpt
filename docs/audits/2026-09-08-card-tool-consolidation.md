@@ -159,13 +159,13 @@ no active Jobs existed at the cutovers.
   **754 tests in 62 files**. Native packaging again passed 100 tests (2 skipped),
   an optimized build, isolated runtime installation and ad-hoc signature checks.
 
-## Remaining rollout evidence
+## Earlier blocked rollout probe (before permission ownership follow-up)
 
 The card-free completion probe was submitted, and the work conversation was
 left in favor of the separate overview. ChatGPT finished with an unread marker,
 but **admission was blocked before a new Job existed**. Its automatic safety
 check rejected project lookup and a full-access task call. The lower-risk
-read-only attempt reached bridge validation but correctly returned
+read-only attempt reached bridge validation but returned
 `SANDBOX_CONFLICT` against the saved `always-full` policy. No execution, setting
 change, new Activity, Agent, Job or Activity card resulted. This proves neither
 Codex completion nor completion notification delivery.
@@ -214,5 +214,45 @@ state copy preserved all 475 Jobs and settings through two restarts; its
 question table was empty after normal expiry. The original answered-question
 evidence above remains historical. See [follow-up restart evidence](issue-69-owned-permissions-restart.json).
 
-Actual ChatGPT execution and notifications require a new host check against
-this revision; earlier local/host passes do not establish full issue completion.
+### Actual host follow-up
+
+The packaged `af1a8f7e480b:f432d5aa40f4` revision was tested through the normal
+authenticated ChatGPT UI. Refresh again imported 29 tools (12 model-visible,
+17 app-only). Two existing conversations still reported their previously loaded
+status schema without the project query. A new conversation discovered the
+current project query and confirmed Task has no sandbox or approval-policy
+input, then successfully resolved an exact project through the read-only tool.
+Refresh updates plugin discovery but did not replace already loaded schemas in
+those existing conversations; no permission choice or execution retry was used
+to get around that mismatch.
+
+Exactly one new background Job ran with `gpt-6-astra` / `low` while the work
+conversation was left for the separate global overview. No Activity card was
+opened. The global view showed running work and, after manual refresh, its
+completed state. The retained result matched the probe exactly. Actual upstream
+evidence recorded `danger-full-access`, `on-request`, user review, and enabled
+network access from bridge-owned settings. GPT used input waits, read the exact
+terminal Job, and returned the exact result; its final was available on reentry.
+The task itself was not denied by host review.
+
+The subsequent Activity `complete` metadata operation was blocked by the host
+because it could not determine the request's security status. It was not
+retried through another tool or channel. The Job is completed; the test Activity
+remains open at version 4. These states are not conflated.
+
+All 475 existing Job payloads, the entire saved preferences row, and the project
+registry remained unchanged. The one new result brings the count to 476; a
+fresh read-only copy preserved all protected data through two restarts with
+zero Codex calls. See [post-run restart](issue-69-owned-permissions-post-run-restart.json).
+The native runtime and ChatGPT plugin discovery were restored to the original
+operating build after testing, without replacing the production database.
+
+Independent native and ChatGPT completion-notification delivery was not
+established. The native application's UI was unavailable to computer use under
+its safety restriction, and the captured ChatGPT sidebar did not establish a
+completion notification. A final answer on reentry proves result handling, not
+notification delivery. The ended-GPT-response handoff replacement, live original
+approval/input/stop/process controls, active-work restart, integration, deployment,
+and a later explicit legacy-deletion decision remain outstanding. Full issue
+completion is not claimed. Details are in
+[the follow-up host report](issue-69-owned-permissions-live-host.json).
