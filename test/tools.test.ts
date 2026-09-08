@@ -2267,6 +2267,145 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it.each([false, true])("keeps active Dashboard start order through progress and usage updates (tied starts: %s)", async (tiedStarts) => {
+    const root = temporaryRoot();
+    const { jobs, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root), new FakeUpstream()
+    );
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const progress = new Map<string, (value: CodexProgress) => void>();
+    const completions: Array<() => void> = [];
+    const runningJobs: Array<ReturnType<CodexJobRegistry["start"]>> = [];
+    try {
+      const shared = jobs.createActivity({ scopeId: SCOPE_A, title: "Shared work" });
+      const separate = jobs.createActivity({ scopeId: SCOPE_A, title: "Separate work" });
+      const names = ["First Agent", "Second Agent", "Third Agent"];
+      for (const [index, agentName] of names.entries()) {
+        if (index !== 1 || !tiedStarts) now += 100;
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName });
+        runningJobs.push(jobs.start({
+          activityId: index < 2 ? shared.activityId : separate.activityId,
+          agentId: agent.agentId,
+          operation: "start",
+          cwd: root,
+          sandbox: "read-only",
+          scopeId: SCOPE_A,
+          requestId: nextRequestId(),
+          requestHash: `dashboard-start-order-${index}`,
+          requestHashVersion: 7,
+          exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+        }, (onProgress, onAssigned) => {
+          onAssigned({ backendKind: "app-server", workerId: `order-${index}`, workerGeneration: 1 });
+          progress.set(agentName, onProgress);
+          return new Promise(resolve => {
+            completions.push(() => resolve(fakeCodexResult(`order-thread-${index}`)));
+          });
+        }));
+        await Promise.resolve();
+      }
+      const initial = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      const expectedNames = initial.activeRows.map(row => row.agentName);
+      if (tiedStarts) {
+        expect(expectedNames.slice(0, 2)).toEqual(expect.arrayContaining(names.slice(0, 2)));
+        expect(expectedNames[2]).toBe(names[2]);
+      } else {
+        expect(expectedNames).toEqual(names);
+      }
+      const expectedKeys = initial.activeRows.map(row => row.rowKey);
+      for (const [index, agentName] of [names[1]!, names[0]!, names[2]!, names[1]!].entries()) {
+        now += 100;
+        progress.get(agentName)!({
+          progress: index + 1,
+          message: "Still running",
+          ...(index % 2 === 1 ? { event: {
+            eventId: `dashboard-order-usage-${index}`,
+            type: "usage" as const,
+            phase: "updated" as const,
+            createdAt: now,
+            summary: "Codex token usage updated.",
+            details: { total: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, totalTokens: 15 } }
+          } } : {})
+        });
+        for (const enrich of [false, true]) {
+          const [{ view: card }, native] = await Promise.all([
+            freshDashboardSnapshot(rawCallTool, { enrich }),
+            applicationService.dashboardSnapshot({ inspectRuntime: enrich })
+          ]);
+          for (const view of [card, native]) {
+            const rows = view.activeRows as typeof initial.activeRows;
+            expect(rows.map(row => row.rowKey)).toEqual(expectedKeys);
+            expect(rows.every(row => row.status === "running")).toBe(true);
+            expect(rows.find(row => row.agentName === agentName)?.updatedAt)
+              .toBe(new Date(now).toISOString());
+          }
+        }
+      }
+      now += 100;
+      progress.get(names[2]!)!({
+        progress: 5,
+        event: {
+          eventId: "dashboard-order-approval",
+          type: "approval-required",
+          phase: "waiting",
+          createdAt: now,
+          summary: "Approval required",
+          details: { interaction: {
+            interactionId: "dashboard-order-interaction",
+            kind: "command-approval",
+            threadId: "order-thread-2",
+            turnId: "order-turn-2",
+            itemId: "order-item-2",
+            summary: "Approval required",
+            availableDecisions: ["accept", "decline"]
+          } }
+        }
+      });
+      const attention = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(attention.activeRows.map(row => row.agentName))
+        .toEqual([names[2], ...expectedNames.slice(0, 2)]);
+      expect(attention.activeRows[0]?.status).toBe("approval-required");
+    } finally {
+      for (const complete of completions) complete();
+      await Promise.all(runningJobs.map(job => job.promise));
+      clock.mockRestore();
+      await close();
+    }
+  });
+
+  it("keeps active Dashboard recovery rows in creation order when no turn start is retained", async () => {
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const first = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Earlier recovery" });
+      jobs.setAgentExecutionState(first.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      now += 100;
+      const second = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Later recovery" });
+      jobs.setAgentExecutionState(second.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      const initial = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(initial.activeRows.map(row => row.agentName))
+        .toEqual([first.agentName, second.agentName]);
+
+      now += 100;
+      jobs.setAgentExecutionState(first.agentId, "orphaned", { orphanedReason: "Runtime still unavailable" });
+      const updated = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(updated.activeRows.map(row => row.rowKey))
+        .toEqual(initial.activeRows.map(row => row.rowKey));
+      expect(updated.activeRows[0]).toMatchObject({
+        createdAt: new Date(first.createdAt).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+        latestTurn: null
+      });
+    } finally {
+      clock.mockRestore();
+      await close();
+    }
+  });
+
   it("keeps Dashboard token usage on running and completed rows", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();

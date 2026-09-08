@@ -12319,7 +12319,7 @@ async function buildDashboardView(
         ? { execution: currentExecution || latestTurn?.execution }
         : {}),
       status,
-      createdAt: latestTurn?.startedAt || new Date(changedAt).toISOString(),
+      createdAt: latestTurn?.startedAt || new Date(agent.createdAt).toISOString(),
       updatedAt: new Date(changedAt).toISOString(),
       elapsedMs: latestTurn?.durationMs ?? Math.max(0, now - changedAt),
       backgroundProcessCount: runtime?.backgroundProcessCount || 0,
@@ -12332,10 +12332,12 @@ async function buildDashboardView(
     activeRows.push(recoveryRow);
   }
 
+  // Progress and usage updates must not move active work within its status priority.
   activeRows.sort(
     (left, right) =>
       dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+      left.rowKey.localeCompare(right.rowKey)
   );
 
   const recoveryAgentIds = new Set(recoveryRows.map(({ agentId }) => agentId));
