@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "빠른 처리(Fast) 설정 명칭을 9개 언어로 통일하고 메뉴바와 카드에 실행 당시 처리 모드를 표시합니다.",
+  "breaking": false,
+  "migration": null
+}

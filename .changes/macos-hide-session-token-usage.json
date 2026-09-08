@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "macOS 메뉴바에서 세션 누적 토큰과 입력·캐시·출력 토큰 표시를 제거합니다.",
+  "breaking": false,
+  "migration": null
+}

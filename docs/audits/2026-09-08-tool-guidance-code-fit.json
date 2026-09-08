@@ -1,0 +1,1613 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-08",
+  "baseCommit": "54296e0f0010",
+  "worktree": "Includes pre-existing uncommitted work; no production implementation modified by this review.",
+  "earlierReview": "docs/audits/2026-09-08-tool-guidance-review.md",
+  "versions": {
+    "sdk": "1.29.0",
+    "zod": "4.4.3",
+    "vitest": "4.1.9"
+  },
+  "totals": {
+    "tools": 30,
+    "observations": 23,
+    "keep": 4,
+    "revise": 3,
+    "partiallyWithdraw": 1
+  },
+  "decisions": [
+    {
+      "id": "F01",
+      "decision": "keep",
+      "conclusionKo": "실행 resolver를 유지하고 조회 복구에서 원래 프로젝트를 보존한다."
+    },
+    {
+      "id": "F02",
+      "decision": "revise",
+      "conclusionKo": "현재 문자열 계약에서 안내를 먼저 교정하고 객체 action은 버전·소비자·전달 상태·크기 예산과 함께 도입한다."
+    },
+    {
+      "id": "F03",
+      "decision": "revise",
+      "conclusionKo": "기존 v2 lookup/run 교체보다 카드 없는 새 조회 도구와 구형 projectLookup 호환 경로를 권한다."
+    },
+    {
+      "id": "F04",
+      "decision": "keep",
+      "conclusionKo": "status와 cancel 모두 미존재 대상의 새 작업 지시를 고친다."
+    },
+    {
+      "id": "F05",
+      "decision": "keep",
+      "conclusionKo": "신규 선택 복구에서 미등록·보관·접근 불가·미선택을 구분하며 기존 맥락과 재시도는 유지한다."
+    },
+    {
+      "id": "F06",
+      "decision": "revise",
+      "conclusionKo": "최상위 Zod union 대신 객체 루트의 공개 조건 스키마와 기존 runtime 검증을 사용한다."
+    },
+    {
+      "id": "F07",
+      "decision": "partially-withdraw",
+      "conclusionKo": "필드 설명 보완은 유지한다. 100개 상한으로 인한 유효 과거 응답 누락 우려와 이를 위한 우선 커서 도입은 철회한다."
+    },
+    {
+      "id": "F08",
+      "decision": "keep",
+      "conclusionKo": "목적 중심 설명과 카드 없는 좁은 정책 정보가 적합하다. 실제 반복 카드 호출 원인으로 단정하지 않는다."
+    }
+  ],
+  "validation": {
+    "currentRepositoryTests": {
+      "files": 6,
+      "passed": 235,
+      "failed": 0,
+      "command": "npx vitest run test/tools.test.ts test/projectRegistry.test.ts test/questionStore.test.ts test/questionOrchestration.test.ts test/outputContracts.test.ts test/modelPolicyTransport.test.ts --exclude 'output/**' --maxWorkers=4 --reporter=dot",
+      "log": "output/tool-guidance-code-tests.log"
+    },
+    "earlierBroadFilterAttempt": {
+      "files": 14,
+      "passed": 668,
+      "failed": 2,
+      "classification": "Included old isolated test copies under output; not the current six-file result.",
+      "failures": [
+        "output/card-latency-investigation/isolated-build/test/outputContracts.test.ts",
+        "output/information-consistency-fix/build/test/outputContracts.test.ts"
+      ]
+    },
+    "realCliStarted": false,
+    "installedServiceChanged": false,
+    "productionHandlerUpstreamCalls": 0,
+    "productionHandlerAdmittedJobs": 0,
+    "newChatGptHostAcceptance": false
+  },
+  "limitations": [
+    "Observations combine actual isolated SDK/MCP calls, direct storage checks, a producer-shape comparison, and a schema-copy size experiment.",
+    "Syntactic handler traces are supporting data, not full execution proofs.",
+    "Old cached ChatGPT/card acceptance of the proposed new contracts remains untested."
+  ],
+  "tools": [
+    {
+      "tool": "codex_dashboard",
+      "file": "src/tools.ts",
+      "line": 4863,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "applicationService.dashboardSnapshot",
+        "dashboardViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "shared dashboardSnapshot → retained Job/Agent/thread와 bounded runtime 조회 → dashboardViewResult",
+      "fitKo": "여러 대화에 걸친 보관 데이터 범위 유지. GPT의 목표 완료 판단과 Codex 상태를 섞지 않음."
+    },
+    {
+      "tool": "codex_dashboard_snapshot",
+      "file": "src/tools.ts",
+      "line": 4898,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "mountedWidgetInstanceId",
+        "scopeResolver.resolve",
+        "applicationService.dashboardSnapshot",
+        "dashboardViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [
+        "MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex overview before retrying."
+      ],
+      "pathSummaryKo": "widget/scope 확인 → shared dashboardSnapshot → app projection",
+      "fitKo": "enrich의 생략 호환 의미·페이지 입력 유지. 공개 status와 합치지 않음."
+    },
+    {
+      "tool": "codex_status",
+      "file": "src/tools.ts",
+      "line": 5026,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.resolve",
+        "jobs.get",
+        "jobs.recordTransportObservation",
+        "correlationDigest",
+        "signal?.addEventListener",
+        "jobs.wait",
+        "signal?.removeEventListener",
+        "formatJobStatus",
+        "codexInputCursor",
+        "job.pendingInteractions.filter",
+        "ordinaryCodexQuestion",
+        "statusToolResult",
+        "compactStatusProjection",
+        "jobs.getActivity",
+        "jobs.listForActivity",
+        "formatActivitySummary",
+        "[...new Set( jobs.listActivityAgentAssignments(activity.activityId).map((assignment) => assignment.agentId) )].flatMap",
+        "jobs.listActivityAgentAssignments(activity.activityId).map",
+        "jobs.listActivityAgentAssignments",
+        "jobs.getAgent",
+        "formatAgentSummary",
+        "childJobs.map((job) => job.threadId).filter",
+        "childJobs.map",
+        "jobs.listActivityEvents(activity.activityId).slice",
+        "jobs.listActivityEvents",
+        "contractedToolResult",
+        "statusCompatibilityText",
+        "sessions.get",
+        "jobs.listForThread",
+        "[...new Set(relatedJobs.map((job) => job.activityId))] .map((activityId) => jobs.getActivity(activityId)) .filter",
+        "[...new Set(relatedJobs.map((job) => job.activityId))] .map",
+        "relatedJobs.map",
+        "Boolean",
+        "jobs.getAgentForThread",
+        "formatSessionSummary",
+        "upstream.canResumeThread",
+        "activities.map",
+        "jobs.listJobEvents(job.jobId).slice",
+        "jobs.listJobEvents",
+        "appServerTurnId",
+        "new Date(job.createdAt).toISOString",
+        "new Date(job.updatedAt).toISOString",
+        "decodePageCursor",
+        "Math.min",
+        "Math.max",
+        "sessions.list",
+        "sessions.listForScope",
+        "jobs.list",
+        "jobs.listForScope",
+        "jobs.listAllActivities",
+        "jobs.listActivities",
+        "jobs.listAgents",
+        "sessions.size",
+        "sessions.sizeForScope",
+        "jobs.sizeForScope",
+        "jobs.runningCount",
+        "jobs.activityCount",
+        "jobs.agentCount",
+        "jobs.orphanedAgentCount",
+        "pageSummary",
+        "visibleSessions.map",
+        "visibleJobs.map",
+        "formatJobSummary",
+        "visibleActivities.map",
+        "jobs.listForActivity(activity.activityId).map((job) => job.threadId).filter",
+        "jobs.listForActivity(activity.activityId).map",
+        "config.runtimeStatusResolver().catch",
+        "config.runtimeStatusResolver",
+        "visibleAgents.map",
+        "formatAgentThreadSummary",
+        "jobs.listAgentThreads(agent.agentId).find",
+        "jobs.listAgentThreads",
+        "jobs.listAgentThreads(agent.agentId).map"
+      ],
+      "literalErrors": [
+        "A ChatGPT conversation scope cannot request the bridge-wide audit view.",
+        "scopeId and includeAllScopes cannot be used together.",
+        "Status pagination requires ChatGPT conversation metadata, an explicit compatibility scopeId, or an admin all-scope audit.",
+        "waitMs requires waitFor='change' or waitFor='terminal'.",
+        "Job lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.",
+        "Unknown Codex job id. Start a job through codex_task first.",
+        "The requested Codex job belongs to another conversation scope.",
+        "Activity lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.",
+        "The requested Activity belongs to another conversation scope or does not exist.",
+        "Thread lookup requires ChatGPT conversation metadata or an explicit compatibility scopeId.",
+        "The requested Codex thread belongs to another conversation scope or does not exist."
+      ],
+      "pathSummaryKo": "scope/query → jobs.wait/상태 조회 → formatJobStatus → compactStatusProjection/statusToolResult",
+      "fitKo": "미존재 대상 안내 수정. 정확한 Job만 본문을 주는 계약과 waitFor 관계 유지."
+    },
+    {
+      "tool": "codex_diagnostics",
+      "file": "src/tools.ts",
+      "line": 5350,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "upstream.listTools",
+        "String",
+        "persistencePaths.every",
+        "cardPerformance.snapshot",
+        "contractedToolResult"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "operator용 upstream inventory·저장소·descriptor 관찰·카드 성능 → diagnostic contract",
+      "fitKo": "설명을 목적 중심으로 줄일 수 있음. 내부 진단 데이터를 공개 모델 도구로 확장하지 않음."
+    },
+    {
+      "tool": "codex_activity",
+      "file": "src/tools.ts",
+      "line": 5480,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "jobs.listActivities",
+        "Math.max",
+        "jobs.activityCount",
+        "jobs.getActivity",
+        "availableActivities.find",
+        "jobs.activityCardRenderHint",
+        "Date.now",
+        "buildActivityView",
+        "Boolean",
+        "recordActivityPerformance",
+        "activityViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [
+        "ACTIVITY_PRESENTATION_ID_REQUIRED: compact-monitor requires one UUID presentationId for this logical card presentation.",
+        "ACTIVITY_PRESENTATION_ID_UNEXPECTED: full-history does not accept presentationId.",
+        "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy disables automatic Activity-card presentation.",
+        "The requested Activity is unavailable in this conversation scope.",
+        "ACTIVITY_CARD_EMPTY: No Activity is available for a compact monitor presentation in this conversation.",
+        "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy permits automatic cards only for background work."
+      ],
+      "pathSummaryKo": "표시 정책 → Activity 선택 → 표시 예약 → buildActivityView → 카드",
+      "fitKo": "객체 루트의 모드 조건 표현. 기본값·자동 감시 소유권·never의 적용 범위 유지."
+    },
+    {
+      "tool": "codex_activity_rehydrate",
+      "file": "src/tools.ts",
+      "line": 5663,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "jobs.listActivities",
+        "Math.max",
+        "jobs.activityCount",
+        "jobs.getActivity",
+        "Boolean",
+        "jobs.get",
+        "jobs .listForScope(scope.scopeId, config.maxRetainedJobs, 0) .filter((candidate) => candidate.activityPresentationId === job.activityPresentationId && ( visibil",
+        "jobs .listForScope(scope.scopeId, config.maxRetainedJobs, 0) .filter",
+        "jobs .listForScope",
+        "right.jobId.localeCompare",
+        "Date.now",
+        "buildActivityView",
+        "recordActivityPerformance",
+        "activityViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [
+        "CARD_REHYDRATE_WIDGET_REQUIRED: Activity rehydration requires a mounted widget session.",
+        "ACTIVITY_REHYDRATE_UNAVAILABLE: The full-history Activity is unavailable in this conversation.",
+        "ACTIVITY_REHYDRATE_VERSION_INVALID: The supplied Activity version is newer than authoritative retained state.",
+        "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation.",
+        "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job.",
+        "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation.",
+        "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
+      ],
+      "pathSummaryKo": "widget·보관된 조회 근거 검증 → non-owning buildActivityView",
+      "fitKo": "입력 조건 설명은 보완 가능. 구형 Job/request 및 full-history 복구 형태 유지."
+    },
+    {
+      "tool": "codex_activity_snapshot",
+      "file": "src/tools.ts",
+      "line": 5807,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.touchActivityCardLease",
+        "jobs.recordTransportObservation",
+        "correlationDigest",
+        "recordPresentationSuperseded",
+        "jobs.releaseActivityCardLease",
+        "signal?.addEventListener",
+        "jobs.getScopeVersion",
+        "jobs.waitForScopeVersion",
+        "signal?.removeEventListener",
+        "Date.now",
+        "buildActivityView",
+        "recordActivityPerformance",
+        "activityViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [
+        "waitMs requires afterVersion from a previous Activity snapshot.",
+        "CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.",
+        "Activity history pagination is available only in an explicit full view."
+      ],
+      "pathSummaryKo": "exact proof → touch/release lease → scope wait → buildActivityView",
+      "fitKo": "기다림 입력 관계와 enrich 의미 보완. 중단된 관찰을 실제 Job 취소로 연결하지 않음."
+    },
+    {
+      "tool": "codex_activity_handoff",
+      "file": "src/tools.ts",
+      "line": 5962,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.requireActivityCardLease",
+        "jobs.canClaimCompletionHandoff",
+        "contractedToolResult",
+        "jobs.markCompletionOutboxBatchDelivered",
+        "records.map",
+        "jobs.releaseCompletionOutboxBatch",
+        "[...new Set(args.outboxIds)].sort",
+        "jobs.claimCompletionOutboxBatch",
+        "records .map((record) => `${record.outboxId}:${record.activityId}:${record.completionVersion}:${record.channel}`) .join",
+        "records .map",
+        "createHash(\"sha256\").update(scope.scopeId).update(\"\\0\").update(batchMaterial).digest(\"hex\").slice",
+        "createHash(\"sha256\").update(scope.scopeId).update(\"\\0\").update(batchMaterial).digest",
+        "createHash(\"sha256\").update(scope.scopeId).update(\"\\0\").update",
+        "createHash(\"sha256\").update(scope.scopeId).update",
+        "createHash(\"sha256\").update",
+        "createHash"
+      ],
+      "literalErrors": [
+        "Completion handoff requires a mounted widget session id."
+      ],
+      "pathSummaryKo": "current card lease → automatic owner 확인 → outbox claim/delivered/release",
+      "fitKo": "설명 축약 여지 적음. 전달 배치·소유권·재알림 방지 보존."
+    },
+    {
+      "tool": "codex_agent",
+      "file": "src/tools.ts",
+      "line": 6109,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "jobs.getAgent",
+        "createHash(\"sha256\") .update(JSON.stringify({ agentId: args.agentId, action, agentName: agentName || null })) .digest",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "jobs.getAgentMutation",
+        "mutationToolResult",
+        "formatAgentSummary",
+        "randomUUID",
+        "jobs.get",
+        "jobs.recordAgentMutation",
+        "jobs.listAgentThreads(agent.agentId).find",
+        "jobs.listAgentThreads",
+        "upstream.listBackgroundTerminals",
+        "String",
+        "backgroundTerminals.map",
+        "sessions.get",
+        "upstream.probeThread",
+        "upstream.canResumeThread",
+        "jobs.activityTransaction",
+        "jobs.archiveAgent",
+        "jobs.restoreAgent",
+        "jobs.setAgentExecutionState",
+        "jobs.renameAgent"
+      ],
+      "literalErrors": [
+        "The selected Agent belongs to another conversation scope or does not exist.",
+        "requestId was already used for a different Agent mutation in this scope."
+      ],
+      "pathSummaryKo": "범위·mutation replay → busy/process 검사 또는 probe → transaction 변경 → mutationToolResult",
+      "fitKo": "설명 축약. 보관 실패를 취소 허가로 바꾸지 않음. 내부 forceStop의 불완전함 수정 필요."
+    },
+    {
+      "tool": "codex_agent_recovery_detach",
+      "file": "src/tools.ts",
+      "line": 6242,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"recovery-detach\", agentId: args.agentId, activityId: args.activityId, expectedAgentVersion: args.expected",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "jobs.activityTransaction",
+        "jobs.getAgentMutation",
+        "jobs.getAgent",
+        "jobs.detachIdleAgentAssignment",
+        "formatAgentSummary",
+        "jobs.recordAgentMutation",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "RECOVERY_OPERATION_DISABLED: The operator must explicitly enable recovery tools before detaching an Agent assignment.",
+        "requestId was already used for a different Agent mutation in this scope.",
+        "The selected Agent belongs to another conversation scope or does not exist."
+      ],
+      "pathSummaryKo": "운영자 활성화 → scope/version → transaction 유휴 배정 해제 → replay 기록",
+      "fitKo": "비공개·기본 비활성·유휴 상태만 허용하는 구조 유지."
+    },
+    {
+      "tool": "codex_background_process_terminate",
+      "file": "src/tools.ts",
+      "line": 6321,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.requireActivityCardLease",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"terminate-background-process\", agentId: args.agentId, expectedAgentVersion: args.expectedAgentVersion, pr",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "jobs.getAgentMutation",
+        "mutationToolResult",
+        "terminateAgentBackgroundProcess",
+        "invalidateCardRuntimeCache",
+        "jobs.recordAgentMutation"
+      ],
+      "literalErrors": [
+        "CARD_LEASE_REQUIRED: Background process termination requires a mounted Activity card.",
+        "requestId was already used for a different Agent mutation in this scope."
+      ],
+      "pathSummaryKo": "card lease → 유휴 Agent·thread → process 목록 → 소유권 재확인 → 정확한 종료",
+      "fitKo": "서버 재검증 유지. 비동기 조회 뒤 소유권을 다시 확인하는 부분을 제거하지 않음."
+    },
+    {
+      "tool": "codex_cancel",
+      "file": "src/tools.ts",
+      "line": 6423,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"cancel-job\", jobId: args.jobId, expectedVersion: args.expectedVersion, reason: args.reason, acknowledgeAf",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "[...(args.acknowledgeAffectedJobIds || [])].sort",
+        "runCancellationMutation",
+        "jobs.get",
+        "jobs.beginCancellationOperation",
+        "cancellationTargetForJob",
+        "callerPresentationFromMetadata",
+        "correlationDigest",
+        "jobs.cancel",
+        "formatJobStatus",
+        "jobs.completeCancellationOperation",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "Unknown Codex job id. Start a job through codex_task first.",
+        "The requested Codex job belongs to another conversation scope."
+      ],
+      "pathSummaryKo": "cancellation replay → 정확한 대상·version → durable intent → cancel 확인 → 결과 저장",
+      "fitKo": "미존재 대상의 새 작업 지시 수정. 이유·공유 worker 영향 확인·확인된 취소·부분 변경 잔존 유지."
+    },
+    {
+      "tool": "codex_activity_job_cancel",
+      "file": "src/tools.ts",
+      "line": 6507,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.requireActivityCardLease",
+        "correlationDigest",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"cancel-card-job\", jobId: args.jobId, expectedJobVersion: args.expectedJobVersion, card: args.card, widget",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "[...(args.acknowledgeAffectedJobIds || [])].sort",
+        "runCancellationMutation",
+        "jobs.get",
+        "jobs.beginCancellationOperation",
+        "cancellationTargetForJob",
+        "jobs.cancel",
+        "formatJobStatus",
+        "jobs.completeCancellationOperation",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "CARD_LEASE_REQUIRED: Job cancellation requires a mounted Activity card.",
+        "The requested Codex job is unavailable in this card's exact Activity scope."
+      ],
+      "pathSummaryKo": "card proof/lease → cancellation intent·replay → 실제 취소",
+      "fitKo": "공개 취소와 목적은 유사해도 카드의 제어 근거가 다르므로 별도 경로 유지."
+    },
+    {
+      "tool": "codex_interaction_respond",
+      "file": "src/tools.ts",
+      "line": 6634,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "Object.keys",
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.requireActivityCardLease",
+        "createHash(\"sha256\") .update(JSON.stringify(args.response)) .digest",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"respond-interaction\", jobId: args.jobId, expectedJobVersion: args.expectedJobVersion, interactionId: args",
+        "runIdempotentMutation",
+        "jobs.get",
+        "jobs.getActivity",
+        "jobs.getAgent",
+        "job.pendingInteractions.find",
+        "ordinaryCodexQuestion",
+        "[...new Set( (interaction.questions || []).map((question) => question.id) )].sort",
+        "(interaction.questions || []).map",
+        "Object.keys(args.response.answers).sort",
+        "isInputInteraction",
+        "jobs.respondToInteraction",
+        "formatJobStatus",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "CARD_LEASE_REQUIRED: Interaction responses require a mounted Activity card.",
+        "The requested Codex interaction is unavailable in this card's conversation scope.",
+        "Unknown or already resolved Codex interaction id for this job.",
+        "GPT_RESPONSE_REQUIRED: GPT handles this ordinary question through codex_input and codex_answer.",
+        "This Codex approval interaction requires a decision.",
+        "Answers must match the exact question ids in the pending interaction.",
+        "This interaction is not an MCP elicitation.",
+        "This Codex interaction requires answers."
+      ],
+      "pathSummaryKo": "card proof/lease → 질문/승인 응답 형태·정확한 요청 확인 → respondToInteraction",
+      "fitKo": "공개 일반 질문 도구와 합치지 않음. transient 응답·카드의 실제 승인 근거 보존."
+    },
+    {
+      "tool": "codex_steer",
+      "file": "src/tools.ts",
+      "line": 6794,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "createHash(\"sha256\").update(args.prompt).digest",
+        "createHash(\"sha256\").update",
+        "createHash",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"steer\", jobId: args.jobId, expectedJobVersion: args.expectedJobVersion, promptHash })) .digest",
+        "createHash(\"sha256\") .update",
+        "JSON.stringify",
+        "jobs.get",
+        "jobs.runSteeringMutation",
+        "steeringFailureResult",
+        "safeCurrentJob",
+        "validatePublicSteeringTarget",
+        "jobs.markSteeringDeliveryDispatching",
+        "jobs.steer",
+        "steeringSuccessResult",
+        "steeringToolResult"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "정확한 Job/version → prepared 기록 → active-turn 검사 → dispatch 기록 → steer → 결과 저장·재시도",
+      "fitKo": "현재 턴 의미·전송 불확실성 유지. 종료 후 절차는 이미 실패 응답에 있으므로 루트 중복을 줄일 수 있음."
+    },
+    {
+      "tool": "codex_job_steer",
+      "file": "src/tools.ts",
+      "line": 6919,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "mountedWidgetInstanceId",
+        "presentationFromActivityCardProof",
+        "jobs.requireActivityCardLease",
+        "createHash(\"sha256\").update(args.prompt).digest",
+        "createHash(\"sha256\").update",
+        "createHash",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"steer\", jobId: args.jobId, expectedJobVersion: args.expectedJobVersion, promptHash, card: args.card })) .",
+        "createHash(\"sha256\") .update",
+        "JSON.stringify",
+        "runIdempotentMutation",
+        "jobs.get",
+        "jobs.getActivity",
+        "jobs.getAgent",
+        "jobs.steer",
+        "formatJobStatus",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "CARD_LEASE_REQUIRED: Job steering requires a mounted Activity card.",
+        "The requested Codex job is unavailable in this card's conversation scope."
+      ],
+      "pathSummaryKo": "card proof/lease → idempotent mutation → 현재 turn steer",
+      "fitKo": "공개 steer의 대화 위임과 카드의 소유권을 혼동하지 않음."
+    },
+    {
+      "tool": "codex_activity_update",
+      "file": "src/tools.ts",
+      "line": 7108,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "[\"kind\", \"executionMode\", \"handoff\", \"completion\"].some",
+        "Object.prototype.hasOwnProperty.call",
+        "scopeResolver.require",
+        "jobs.getActivity",
+        "jobs.activityTransaction",
+        "jobs.sealActivity",
+        "jobs.completeActivity",
+        "jobs.abandonActivity",
+        "jobs.startActivityVerification",
+        "jobs.passActivityVerification",
+        "jobs.failActivityVerification",
+        "jobs.setActivityPolicy",
+        "mutationToolResult",
+        "formatActivitySummary"
+      ],
+      "literalErrors": [
+        "set-policy requires at least one Activity policy field.",
+        "Unknown Activity id in this conversation scope.",
+        "The requested Activity belongs to another conversation scope.",
+        "The requested Activity is no longer available in this conversation scope."
+      ],
+      "pathSummaryKo": "scope/version transaction → lifecycle/verification/policy 메서드 → mutationToolResult",
+      "fitKo": "기존 operation 분기는 유지. 서버 상태별 허용 전환을 응답에서 설명. 무조건 requestId를 추가하지 않음."
+    },
+    {
+      "tool": "codex_activity_cancel",
+      "file": "src/tools.ts",
+      "line": 7202,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "scopeResolver.require",
+        "createHash(\"sha256\") .update(JSON.stringify({ action: \"cancel-activity\", activityId: args.activityId, expectedVersion: args.expectedVersion, reason: args.reason",
+        "createHash(\"sha256\") .update",
+        "createHash",
+        "JSON.stringify",
+        "[...(args.acknowledgeAffectedJobIds || [])].sort",
+        "runCancellationMutation",
+        "jobs.getActivity",
+        "jobs .listForActivity(args.activityId) .filter",
+        "jobs .listForActivity",
+        "isActiveActivityJobStatus",
+        "impacts.push",
+        "jobs.terminationImpact",
+        "[...new Set(impacts.flatMap((impact) => impact.affectedJobIds))].sort",
+        "impacts.flatMap",
+        "activeJobs.map",
+        "allAffected.filter",
+        "activityJobIds.has",
+        "callerPresentationFromMetadata",
+        "jobs.beginCancellationOperation",
+        "correlationDigest",
+        "jobs.setCancellationIntentStatus",
+        "jobs.beginActivityTermination",
+        "jobs.createCancellationIntent",
+        "cancellationTargetForJob",
+        "childIntentByJobId.set",
+        "backendSupports",
+        "cancellationTargets.push",
+        "impact.affectedJobIds.slice().sort().join",
+        "impact.affectedJobIds.slice().sort",
+        "impact.affectedJobIds.slice",
+        "groupedMcpWorkers.has",
+        "groupedMcpWorkers.add",
+        "jobs.get",
+        "childIntentByJobId.get",
+        "isTerminalActivityJobStatus",
+        "jobs.getCancellationIntent",
+        "currentImpact.affectedJobIds .map((jobId) => childIntentByJobId.get(jobId)) .filter",
+        "currentImpact.affectedJobIds .map",
+        "Boolean",
+        "jobs.cancel",
+        "jobs .listForActivity(args.activityId) .some",
+        "jobs.cancelActivity",
+        "formatActivitySummary",
+        "jobs.completeCancellationOperation",
+        "mutationToolResult"
+      ],
+      "literalErrors": [
+        "Unknown Activity id in this conversation scope.",
+        "The requested Activity belongs to another conversation scope.",
+        "CANCELLATION_PROVENANCE_REQUIRED: Activity child cancellation has no durable intent.",
+        "An Activity child job disappeared during cancellation."
+      ],
+      "pathSummaryKo": "버전·전체 영향 집합 → 부모/자식 intent → 작업 중단 → Activity 종료 상태",
+      "fitKo": "전체 범위와 부분 실패 의미 유지. 단일 작업 취소와 합치지 않음."
+    },
+    {
+      "tool": "codex_models",
+      "file": "src/tools.ts",
+      "line": 7381,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "modelCatalog.getCatalog",
+        "publishTaskProjection",
+        "listAllowedModelSelections",
+        "effectiveModelCeiling",
+        "allowedEffortsByModel.get",
+        "efforts.add",
+        "allowedEffortsByModel.set",
+        "catalog.models .filter((model) => allowedEffortsByModel.has(model.id)) .sort((left, right) => left.id.localeCompare(right.id)) .map",
+        "catalog.models .filter((model) => allowedEffortsByModel.has(model.id)) .sort",
+        "catalog.models .filter",
+        "allowedEffortsByModel.has",
+        "left.id.localeCompare",
+        "modelQuestionCapabilities",
+        "[...(allowedEffortsByModel.get(model.id) || [])] .sort() .map",
+        "[...(allowedEffortsByModel.get(model.id) || [])] .sort",
+        "model.supportedReasoningEfforts.find",
+        "[...model.serviceTiers] .sort((left, right) => left.id.localeCompare(right.id)) .map",
+        "[...model.serviceTiers] .sort",
+        "contractedToolResult"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "getCatalog → publishTaskProjection → listAllowedModelSelections → 공개 모델 목록",
+      "fitKo": "호출 절차 나열 축약. 현재 정책 모드 정보는 새 출력 계약에서 보완."
+    },
+    {
+      "tool": "codex_settings",
+      "file": "src/tools.ts",
+      "line": 7469,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "applicationService.settingsSnapshot",
+        "settingsViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "shared settingsSnapshot → model용 compact view → 별도 카드의 초기 조회",
+      "fitKo": "설명만 목적 중심으로 축약 가능. 등록·모델 상세 항목을 설명에서 제거해도 저장·출력 코드는 유지."
+    },
+    {
+      "tool": "codex_settings_snapshot",
+      "file": "src/tools.ts",
+      "line": 7510,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "applicationService.settingsSnapshot",
+        "settingsViewResult",
+        "metadataString"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "shared settingsSnapshot → 전체 editor view → 현재/이전 Settings 카드",
+      "fitKo": "private view·enrich/모델 새로고침·locale 호환 유지. 일반 GPT 조회 도구로 공개하지 않음."
+    },
+    {
+      "tool": "codex_update_settings",
+      "file": "src/tools.ts",
+      "line": 7805,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "settingsViewResult",
+        "applicationService.updateSettings",
+        "metadataString"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "shared settingsInput.parse → 두 종류 revision 사전검사 → 정책 준비 → transaction → 앱/네이티브 결과",
+      "fitKo": "설명 축약 가능. 변경 종류별 revision을 구분하고 native 호출 호환 유지."
+    },
+    {
+      "tool": "codex_task",
+      "file": "src/tools.ts",
+      "line": 7842,
+      "sourceSha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6",
+      "handlerCalls": [
+        "normalizeCodexTaskInput",
+        "scopeResolver.require",
+        "jobs.peekRequest",
+        "jobs.recordTransportObservation",
+        "correlationDigest",
+        "signal?.addEventListener",
+        "signal?.removeEventListener",
+        "resolveImplicitTaskAgent",
+        "resolveTaskReplayRoutingV5",
+        "resolveTaskReplayRoutingV4",
+        "jobs.findRequest",
+        "resultForJob",
+        "admitTaskContractForNewCall",
+        "taskExecutionEnvelopeRef",
+        "currentTaskAdmissionRef",
+        "projectLookupResult",
+        "validateActivityTaskRequest",
+        "resolveAgentForTask",
+        "validateTaskSelectionInput",
+        "userSettings.resolveProject",
+        "resolveTaskProjectAdmission",
+        "resolveTaskExecutionMode",
+        "acquireRuntimeAdmission",
+        "resolveBackendHandoff",
+        "resolveAllowedCwd",
+        "resolveTaskSandbox",
+        "upstream.prepareExecution",
+        "resolveExecutionDecision",
+        "refreshStableTaskAdmissionRef",
+        "assertExecutionPolicyAdmission",
+        "taskAdmissionPolicyRef",
+        "assertCurrentTaskProjectAdmission",
+        "enforceSensitiveFilePreflight",
+        "resolveTaskRoutingV4",
+        "startNewSession",
+        "releaseRuntimeAdmission",
+        "requireAgentSession",
+        "admissionFingerprintForCatalog",
+        "modelCatalog.getCachedCatalog",
+        "forkTrackedSession",
+        "continueTrackedSession",
+        "executionPolicyChangedResult",
+        "executionEnvelopeChangedResult",
+        "agentThreadResumeErrorResult",
+        "backendHandoffContractErrorResult",
+        "modelPolicyErrorResult",
+        "error.message.startsWith",
+        "projectSetupRequiredResult",
+        "projectSelectionChangedResult",
+        "projectSelectionRequiredResult",
+        "taskPreflightErrorResult",
+        "errorFromException",
+        "removeTaskAbortObserver"
+      ],
+      "literalErrors": [
+        "Persisted Codex task replay registration disappeared.",
+        "PROJECT_LOOKUP_CONFLICT: projectLookup is a no-work discovery request and cannot be combined with project.",
+        "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Use a new requestId and the current descriptor.",
+        "The legacy scope cannot create a fresh bridge Agent thread.",
+        "PROJECT_REQUIRED: Select an exact registered project for a fresh Agent context.",
+        "AGENT_CONTEXT_UNAVAILABLE: A new Agent has no thread to continue or fork. Use contextMode='fresh'."
+      ],
+      "pathSummaryKo": "normalize → scope → 저장된 request hash → envelope → 조회 분기 또는 정책·프로젝트 접수 → Codex → taskProjectionForJob/projectToolResult",
+      "fitKo": "목적 설명 축약, 복구 안내 교정. 기존 v2/hash v7·접수 순서를 유지하고 새 조회 도구 분리."
+    },
+    {
+      "tool": "codex_input",
+      "file": "src/questionTools.ts",
+      "line": 62,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "scope",
+        "ownedJob",
+        "jobs.waitForInput",
+        "resultOf"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "ownedJob → waitForInput → codexInputSnapshot → resultOf",
+      "fitKo": "cursor·wait·질문 출처의 필드 설명 보완. runtime 대화 소유권·질문 분류 유지."
+    },
+    {
+      "tool": "codex_answer",
+      "file": "src/questionTools.ts",
+      "line": 74,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "scope",
+        "ownedJob",
+        "questionHash",
+        "inFlight.get",
+        "inFlight.set",
+        "operations.get",
+        "resultOf",
+        "store.delivery",
+        "answerResult",
+        "(async () => { const job = ownedJob(scopeId, args.jobId); if (job.status !== \"running\" || job.trackingState !== \"connected\" || !job.workerId || job.workerGenera",
+        "job.pendingInteractions.find",
+        "questionReference",
+        "ordinaryCodexQuestion",
+        "validateAnswers",
+        "store.beginDelivery",
+        "jobs.respondToInteraction",
+        "store.finishDelivery",
+        "operations.set",
+        "operations.delete"
+      ],
+      "literalErrors": [
+        "ANSWER_REQUEST_CONFLICT: A different answer is already being dispatched.",
+        "QUESTION_UNAVAILABLE: The original worker and turn are no longer active.",
+        "QUESTION_UNAVAILABLE: This is not a current ordinary question. Refresh codex_input."
+      ],
+      "pathSummaryKo": "정확한 질문 확인 → validateAnswers → beginDelivery → respondToInteraction → delivered/uncertain",
+      "fitKo": "일반 질문 의미를 명확히 표현. 질문 참조·중복 전송 방지·승인 분리 유지."
+    },
+    {
+      "tool": "codex_ask_user",
+      "file": "src/questionTools.ts",
+      "line": 115,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "args.questions.map",
+        "q.options.map",
+        "jobs.admissionStateStore.transaction",
+        "store.create",
+        "scope",
+        "resultOf",
+        "proofOf",
+        "uiLocale"
+      ],
+      "literalErrors": [
+        "QUESTION_IDS_INVALID: Question IDs must be unique.",
+        "QUESTION_OPTIONS_INVALID: Option labels must be unique."
+      ],
+      "pathSummaryKo": "유일성 검사 → QuestionStore.create transaction → 카드 metadata → 사용자 제출",
+      "fitKo": "목적 설명 축약 및 필드 의미 추가. Job과의 독립성·상한·기한·동일 카드 재시도 유지."
+    },
+    {
+      "tool": "codex_user_answer",
+      "file": "src/questionTools.ts",
+      "line": 129,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "resultOf",
+        "jobs.admissionStateStore.transaction",
+        "store.readResponses(scope(extra._meta), args.responseRef).map",
+        "store.readResponses",
+        "scope",
+        "Object.entries(record.answers).map",
+        "Object.entries"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "readResponses transaction → 참조 목록 또는 본문·consumedAt → GPT",
+      "fitKo": "responseRef 생략 의미 명확화. 읽음 효과와 알림 연계 유지. 새 커서·operation은 우선 제외."
+    },
+    {
+      "tool": "codex_question_card",
+      "file": "src/questionTools.ts",
+      "line": 138,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "cardResult",
+        "store.requireCard",
+        "cardScope",
+        "uiLocale"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "cardScope·proof → requireCard/get → private 카드 데이터",
+      "fitKo": "짧은 설명 유지. revision·presentationToken·scope 및 만료 검증 보존."
+    },
+    {
+      "tool": "codex_question_submit",
+      "file": "src/questionTools.ts",
+      "line": 143,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "jobs.admissionStateStore.transaction",
+        "store.requireCard",
+        "cardScope",
+        "store.cancel",
+        "validateAnswers",
+        "store.submit",
+        "cardResult",
+        "uiLocale"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "정확한 proof → immutable submit/cancel transaction → 카드 데이터",
+      "fitKo": "답변 저장과 Codex 응답을 분리한 구조 유지. 실제 입력 검증 삭제 금지."
+    },
+    {
+      "tool": "codex_question_notify",
+      "file": "src/questionTools.ts",
+      "line": 157,
+      "sourceSha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8",
+      "handlerCalls": [
+        "jobs.admissionStateStore.transaction",
+        "store.requireCard",
+        "cardScope",
+        "store.claimNotification",
+        "store.acknowledgeNotification",
+        "resultOf"
+      ],
+      "literalErrors": [],
+      "pathSummaryKo": "proof → claim/ack transaction → host ui/message → 별도 GPT 읽기",
+      "fitKo": "알림 요청·호스트 확인·GPT 읽음을 하나의 성공으로 합치지 않음."
+    }
+  ],
+  "observations": [
+    {
+      "id": "sdk-root-union-input-erased",
+      "layer": "actual SDK tools/list",
+      "result": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "id": "sdk-root-union-output-unpublished",
+      "layer": "actual SDK tools/list and call",
+      "result": {
+        "outputSchemaPresent": false,
+        "call": {
+          "isError": true,
+          "structured": null,
+          "content": [
+            {
+              "type": "text",
+              "text": "Cannot read properties of undefined (reading '_zod')"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sdk-error-structured-content-still-validated",
+      "layer": "actual SDK client",
+      "result": {
+        "clientRejected": "McpError: MCP error -32602: Structured content does not match the tool's output schema: data must have required property 'ok', data must NOT have additional properties"
+      }
+    },
+    {
+      "id": "sdk-old-client-rejects-cached_actions",
+      "layer": "actual SDK cached output validator",
+      "result": {
+        "clientRejected": "McpError: MCP error -32602: Structured content does not match the tool's output schema: data/nextActions/0 must be string"
+      }
+    },
+    {
+      "id": "sdk-old-client-rejects-cached_additive",
+      "layer": "actual SDK cached output validator",
+      "result": {
+        "clientRejected": "McpError: MCP error -32602: Structured content does not match the tool's output schema: data must NOT have additional properties"
+      }
+    },
+    {
+      "id": "sdk-object-root-condition-alternative",
+      "layer": "actual SDK plus published JSON Schema validation",
+      "result": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "compact-monitor",
+                "full-history"
+              ]
+            },
+            "presentationId": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "compact-monitor"
+                }
+              },
+              "required": [
+                "mode",
+                "presentationId"
+              ]
+            },
+            {
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "const": "full-history"
+                }
+              },
+              "not": {
+                "required": [
+                  "presentationId"
+                ]
+              }
+            }
+          ]
+        },
+        "cases": [
+          {
+            "input": {},
+            "valid": true,
+            "runtimeIsError": false
+          },
+          {
+            "input": {
+              "mode": "full-history"
+            },
+            "valid": true,
+            "runtimeIsError": false
+          },
+          {
+            "input": {
+              "mode": "compact-monitor",
+              "presentationId": "0947e5bd-3ffb-4e45-a689-e9d8580773f9"
+            },
+            "valid": true,
+            "runtimeIsError": false
+          },
+          {
+            "input": {
+              "mode": "compact-monitor"
+            },
+            "valid": false,
+            "runtimeIsError": true
+          },
+          {
+            "input": {
+              "mode": "full-history",
+              "presentationId": "ed818902-a93a-407d-a57e-3d9fe60732c1"
+            },
+            "valid": false,
+            "runtimeIsError": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "direct-project-admission-unavailable",
+      "layer": "production MCP handler and project resolver",
+      "result": {
+        "isError": true,
+        "structured": {
+          "contractVersion": "1",
+          "kind": "task",
+          "state": "failed",
+          "terminal": true,
+          "delivery": "none",
+          "replay": false,
+          "jobId": null,
+          "activityId": null,
+          "agentId": null,
+          "threadId": null,
+          "projectName": null,
+          "requestId": null,
+          "jobVersion": null,
+          "activityVersion": null,
+          "executionMode": null,
+          "backend": null,
+          "sandbox": null,
+          "requestedModel": null,
+          "requestedReasoningEffort": null,
+          "actualModel": null,
+          "actualReasoningEffort": null,
+          "rerouted": false,
+          "rerouteReason": null,
+          "resultAvailability": "unavailable",
+          "resultOmitted": false,
+          "answer": null,
+          "error": {
+            "code": "PROJECT_UNAVAILABLE",
+            "message": "The selected project folder is unavailable. Check it in Codex settings.",
+            "retryable": null,
+            "missingFields": null,
+            "contextContinuity": null
+          },
+          "warnings": [],
+          "nextActions": []
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "PROJECT_UNAVAILABLE: The selected project folder is unavailable. Check it in Codex settings."
+          }
+        ]
+      }
+    },
+    {
+      "id": "lookup-project-unavailable",
+      "layer": "production MCP lookup recovery",
+      "result": {
+        "isError": true,
+        "structured": {
+          "contractVersion": "1",
+          "kind": "task",
+          "state": "failed",
+          "terminal": true,
+          "delivery": "none",
+          "replay": false,
+          "jobId": null,
+          "activityId": null,
+          "agentId": null,
+          "threadId": null,
+          "projectName": null,
+          "requestId": null,
+          "jobVersion": null,
+          "activityVersion": null,
+          "executionMode": null,
+          "backend": null,
+          "sandbox": null,
+          "requestedModel": null,
+          "requestedReasoningEffort": null,
+          "actualModel": null,
+          "actualReasoningEffort": null,
+          "rerouted": false,
+          "rerouteReason": null,
+          "resultAvailability": "unavailable",
+          "resultOmitted": false,
+          "answer": null,
+          "error": {
+            "code": "PROJECT_UNAVAILABLE",
+            "message": "Project \"Alpha\" is archived or its folder is unavailable; no work was admitted.",
+            "retryable": true,
+            "missingFields": null,
+            "contextContinuity": null
+          },
+          "warnings": [],
+          "nextActions": [
+            "Retry this same codex_task with project={\"name\":\"Beta\",\"projectRef\":\"prj_KmsZMhhLP_P9ZmtF5gz6gQ\",\"projectRevision\":1} and a new requestId. No connection Refresh is required."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "PROJECT_UNAVAILABLE: Project \"Alpha\" is archived or its folder is unavailable; no work was admitted. Next: Retry this same codex_task with project={\"name\":\"Beta\",\"projectRef\":\"prj_KmsZMhhLP_P9ZmtF5gz6gQ\",\"projectRevision\":1} and a new requestId. No connection Refresh is required."
+          }
+        ]
+      }
+    },
+    {
+      "id": "lookup-existing-is-preflight-error",
+      "layer": "production MCP lookup success representation",
+      "result": {
+        "isError": true,
+        "structured": {
+          "contractVersion": "1",
+          "kind": "task",
+          "state": "failed",
+          "terminal": true,
+          "delivery": "none",
+          "replay": false,
+          "jobId": null,
+          "activityId": null,
+          "agentId": null,
+          "threadId": null,
+          "projectName": null,
+          "requestId": null,
+          "jobVersion": null,
+          "activityVersion": null,
+          "executionMode": null,
+          "backend": null,
+          "sandbox": null,
+          "requestedModel": null,
+          "requestedReasoningEffort": null,
+          "actualModel": null,
+          "actualReasoningEffort": null,
+          "rerouted": false,
+          "rerouteReason": null,
+          "resultAvailability": "unavailable",
+          "resultOmitted": false,
+          "answer": null,
+          "error": {
+            "code": "PROJECT_SELECTION_REQUIRED",
+            "message": "Project discovery completed without creating an Activity, Agent, Job, filesystem mutation, or upstream Codex turn.",
+            "retryable": true,
+            "missingFields": null,
+            "contextContinuity": null
+          },
+          "warnings": [],
+          "nextActions": [
+            "Retry this same codex_task with project={\"name\":\"Beta\",\"projectRef\":\"prj_KmsZMhhLP_P9ZmtF5gz6gQ\",\"projectRevision\":1} and a new requestId. No connection Refresh is required."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "PROJECT_SELECTION_REQUIRED: Project discovery completed without creating an Activity, Agent, Job, filesystem mutation, or upstream Codex turn. Next: Retry this same codex_task with project={\"name\":\"Beta\",\"projectRef\":\"prj_KmsZMhhLP_P9ZmtF5gz6gQ\",\"projectRevision\":1} and a new requestId. No connection Refresh is required."
+          }
+        ]
+      }
+    },
+    {
+      "id": "cancel-missing-job-also-suggests-new-work",
+      "layer": "production MCP cancellation admission",
+      "result": {
+        "isError": true,
+        "structured": null,
+        "content": [
+          {
+            "type": "text",
+            "text": "Unknown Codex job id. Start a job through codex_task first."
+          }
+        ]
+      }
+    },
+    {
+      "id": "input-syntax-error",
+      "layer": "SDK before handler",
+      "result": {
+        "isError": true,
+        "structured": null,
+        "content": [
+          {
+            "type": "text",
+            "text": "MCP error -32602: Input validation error: Invalid arguments for tool codex_input: [\n  {\n    \"origin\": \"string\",\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"inclusive\": true,\n    \"path\": [\n      \"jobId\"\n    ],\n    \"message\": \"Too small: expected string to have >=1 characters\"\n  }\n]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "input-domain-error",
+      "layer": "production handler after parser",
+      "result": {
+        "isError": true,
+        "structured": null,
+        "content": [
+          {
+            "type": "text",
+            "text": "INPUT_JOB_UNAVAILABLE: The Job is unavailable in this conversation."
+          }
+        ]
+      }
+    },
+    {
+      "id": "policy-mode-changes-with-identical-model-query-and-task-descriptor",
+      "layer": "production policy projection",
+      "result": {
+        "beforeMode": "automatic",
+        "afterMode": "fixed",
+        "models": {
+          "isError": false,
+          "structured": {
+            "source": "app-server",
+            "stale": false,
+            "warning": null,
+            "models": [
+              {
+                "questions": {
+                  "structuredAsync": "unknown",
+                  "asyncMessage": "unknown",
+                  "runtimeVerification": "required"
+                },
+                "id": "gpt-5.6-sol",
+                "name": "Fixture",
+                "description": "Offline fixture",
+                "efforts": [
+                  {
+                    "id": "max",
+                    "description": "Fixture"
+                  }
+                ],
+                "serviceTiers": []
+              }
+            ]
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "1 policy-allowed Codex model(s) available from app-server; catalog is current."
+            }
+          ]
+        },
+        "taskDescriptorUnchanged": true
+      }
+    },
+    {
+      "id": "fixed-policy-selection-rejected",
+      "layer": "production runtime policy validation",
+      "result": {
+        "isError": true,
+        "structured": {
+          "contractVersion": "1",
+          "kind": "task",
+          "state": "failed",
+          "terminal": true,
+          "delivery": "none",
+          "replay": false,
+          "jobId": null,
+          "activityId": null,
+          "agentId": null,
+          "threadId": null,
+          "projectName": null,
+          "requestId": null,
+          "jobVersion": null,
+          "activityVersion": null,
+          "executionMode": null,
+          "backend": null,
+          "sandbox": null,
+          "requestedModel": null,
+          "requestedReasoningEffort": null,
+          "actualModel": null,
+          "actualReasoningEffort": null,
+          "rerouted": false,
+          "rerouteReason": null,
+          "resultAvailability": "unavailable",
+          "resultOmitted": false,
+          "answer": null,
+          "error": {
+            "code": "MODEL_SELECTION_FORBIDDEN",
+            "message": "This bridge is in fixed model mode and does not accept a per-call model selection. (policy revision 1)",
+            "retryable": null,
+            "missingFields": null,
+            "contextContinuity": null
+          },
+          "warnings": [],
+          "nextActions": [
+            "Omit selection and retry; the saved fixed selection will be applied."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "MODEL_SELECTION_FORBIDDEN: This bridge is in fixed model mode and does not accept a per-call model selection. (policy revision 1) Next: Omit selection and retry; the saved fixed selection will be applied."
+          }
+        ]
+      }
+    },
+    {
+      "id": "compact-card-never-policy-rejected",
+      "layer": "production card presentation",
+      "result": {
+        "isError": true,
+        "structured": null,
+        "content": [
+          {
+            "type": "text",
+            "text": "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy disables automatic Activity-card presentation."
+          }
+        ]
+      }
+    },
+    {
+      "id": "explicit-history-survives-never-policy",
+      "layer": "production card presentation",
+      "result": {
+        "isError": false,
+        "structured": {
+          "kind": "activity",
+          "mode": "full-history",
+          "scopeVersion": 0,
+          "counts": {
+            "activities": 0,
+            "agents": 0,
+            "active": 0,
+            "needsAttention": 0
+          }
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Activity view opened at scope version 0: 0 active, 0 needing attention."
+          }
+        ]
+      }
+    },
+    {
+      "id": "internal-forceStop-is-not-a-complete-call",
+      "layer": "current producer shape versus published target schema",
+      "result": {
+        "producer": "src/tools.ts AGENT_BUSY forceStop",
+        "arguments": {
+          "requestId": "9f04e437-8a0c-4d3c-ac91-2ae5f70fdb96",
+          "jobId": "fixture-active-job",
+          "expectedVersion": 1
+        },
+        "validation": {
+          "valid": false,
+          "errorMessage": "data must have required property 'reason'"
+        }
+      }
+    },
+    {
+      "id": "project-only-settings-save-needs-only-registry-revision",
+      "layer": "production settings service and alternative schema",
+      "result": {
+        "suppliedRevision": "expectedRegistryRevision",
+        "success": true,
+        "alternativeRequiringBothValid": false
+      }
+    },
+    {
+      "id": "settings-reset-needs-only-settings-revision",
+      "layer": "production settings service and alternative schema",
+      "result": {
+        "suppliedRevision": "expectedSettingsRevision",
+        "success": true,
+        "alternativeRequiringBothValid": false,
+        "retainedProjects": 2
+      }
+    },
+    {
+      "id": "production-probes-have-no-admitted-jobs",
+      "layer": "isolated state and upstream boundary",
+      "result": {
+        "upstreamCalls": 0,
+        "jobs": 0
+      }
+    },
+    {
+      "id": "question-discovery-does-not-consume",
+      "layer": "actual QuestionStore",
+      "result": {
+        "pageLength": 20,
+        "stableRepeatedRead": true,
+        "consumed": false
+      }
+    },
+    {
+      "id": "question-cap-prevents-older-live-row-loss",
+      "layer": "actual QuestionStore admission and recovery",
+      "result": {
+        "admitted": 100,
+        "admission101": "QUESTION_LIMIT",
+        "pagesDrained": 5,
+        "recovered": 100,
+        "oldestRecovered": true,
+        "unreadRemaining": 0,
+        "notificationAfterConsumption": false
+      }
+    },
+    {
+      "id": "inline-action-object-schema-budget",
+      "layer": "schema copies only; deliberately incomplete two-tool size experiment",
+      "result": {
+        "currentOutputBytes": 18719,
+        "regressionLimitBytes": 19500,
+        "replacedActions": 11,
+        "minimalExpandedBytes": 21106,
+        "note": "Not a proposed complete action schema. Real typed actions need more branches and validation."
+      }
+    }
+  ],
+  "sources": [
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/tools.ts",
+      "sha256": "2b71d2e4e33f158a5ec412e5987c6d400ed4d3830a674fd5669f04a3edb5cdb6"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/toolResultContracts.ts",
+      "sha256": "3d208752ddfa981a70d164c48376b92d4776c8ac6f585914bc6a1a13dbfee0d3"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
+      "sha256": "a5caaddfa0f6aadea64604aa57136bab6540298b846bbe861a80bf7392ae5aad"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js",
+      "sha256": "a5e17addde5d50e0b2a4ac5961d0f59fd044ff47b01b69e715c3b7ab23075bbd"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/modelPolicyTransport.ts",
+      "sha256": "4754813183d1616f1fca01f5260d429e506dc64bdb170a14eca95f40606aa7ab"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/test/modelPolicyTransport.test.ts",
+      "sha256": "a5bb07a60ac31832435e574cfbead623cb68cf0ea3cca52dc500a4b96a88a528"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/test/outputContracts.test.ts",
+      "sha256": "e75bf7c185b9777a8205f97779122b851be11029cd1d382796fb1a18f0fb52ab"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/test/tools.test.ts",
+      "sha256": "8f30ad2547f3634eb213ab545a3f18c9fcb00a69ae077c358cd4646687df584d"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/questionStore.ts",
+      "sha256": "fb4926e0357b1053eb735d7cfea034ba5e07828ad15b7445a2310847fc294b90"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/activityCard.ts",
+      "sha256": "72060912494172454e613c51ad475fe7ed9034df3d60a0b687288d71f81b0105"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/settingsCard.ts",
+      "sha256": "c3d01f7ef2bb10b45361e1a133b35fa885559ae3bb497c296c347263afbadfc4"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/userSettings.ts",
+      "sha256": "1a16d4555172fc327030b882a333081e1be81ad6105f693a5c85940c7f7b6056"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/codexInputs.ts",
+      "sha256": "04b4dad8f2312192d2d3aa9cd6d845070afc3cf7e75a980f0c65d7452704a75c"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/questionTools.ts",
+      "sha256": "ac47a1468df170160c884700a0fcb53a4eee393432851239326dbe5bd99827a8"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/questionCardUi.ts",
+      "sha256": "f0ce6fc9eceb75b74dab401705b9edf9a008d0452f87c3192f448f3bb2ac3b87"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/questionRouting.ts",
+      "sha256": "6d6b37506759556a36bdc95d21e1bef5f9ec0afb21621ae4e32e61000dcc2ad3"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/src/companionServer.ts",
+      "sha256": "414abe167fbb3c0944fa276eab9777aed7af7871709cddcd4aeb76336e64434d"
+    },
+    {
+      "file": "/Volumes/Data/Dev/codex-mcp-bridge/scripts/probe-tool-guidance-code-paths.ts",
+      "sha256": "5958b2fa0111b4a8fa9d3b5f19802e30dc329e8f717d0fe6b1a37dded8bef590"
+    }
+  ]
+}

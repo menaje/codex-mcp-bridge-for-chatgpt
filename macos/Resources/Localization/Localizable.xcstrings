@@ -11576,54 +11576,118 @@
         }
       }
     },
-    "빠른 처리 우선 사용" : {
+    "빠른 처리" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Schnelle Verarbeitung bevorzugen"
+            "value" : "Schnell"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Prefer Fast Processing"
+            "value" : "Fast"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Preferir procesamiento rápido"
+            "value" : "Rápido"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Privilégier le traitement rapide"
+            "value" : "Rapide"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "高速処理を優先"
+            "value" : "高速処理"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빠른 처리"
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Preferir processamento rápido"
+            "value" : "Rápido"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "优先快速处理"
+            "value" : "快速处理"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "優先快速處理"
+            "value" : "快速處理"
+          }
+        }
+      }
+    },
+    "빠른 처리 (Fast)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schnellmodus (Fast)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fast mode"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modo rápido (Fast)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mode rapide (Fast)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高速処理 (Fast)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "빠른 처리 (Fast)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modo rápido (Fast)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速处理 (Fast)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快速處理 (Fast)"
           }
         }
       }
@@ -15522,64 +15586,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法完成安裝。保留現有安裝。"
-          }
-        }
-      }
-    },
-    "세션 누적 토큰" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kumulierte Sitzungstoken"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cumulative session tokens"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens acumulados de la sesión"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jetons cumulés de la session"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "セッション累計トークン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "세션 누적 토큰"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens acumulados da sessão"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "会话累计令牌"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "工作階段累計權杖"
           }
         }
       }
@@ -21886,64 +21892,6 @@
         }
       }
     },
-    "입력 토큰" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Eingabetoken"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Input tokens"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens de entrada"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jetons d’entrée"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "入力トークン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "입력 토큰"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens de entrada"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输入令牌"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "輸入權杖"
-          }
-        }
-      }
-    },
     "입력 필요" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25802,54 +25750,60 @@
         }
       }
     },
-    "지원되는 모델에서 Priority/Fast 처리 계층을 요청합니다." : {
+    "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fordert für unterstützte Modelle die Verarbeitungsstufe Priority/Fast an."
+            "value" : "Führt unterstützte Modelle schneller aus. Modell und Denkstufe bleiben gleich; Verbrauch oder Kosten können steigen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Requests the Priority/Fast service tier on supported models."
+            "value" : "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Solicita el nivel de procesamiento Priority/Fast en los modelos compatibles."
+            "value" : "Ejecuta más rápido los modelos compatibles. El modelo y el nivel de razonamiento se mantienen; el consumo o el coste pueden aumentar."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Demande le niveau de traitement Priority/Fast pour les modèles compatibles."
+            "value" : "Accélère les modèles compatibles. Le modèle et le niveau de raisonnement restent identiques ; la consommation ou les coûts peuvent augmenter."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "対応モデルでPriority/Fast処理階層を要求します。"
+            "value" : "対応モデルをより速く実行します。モデルと推論レベルは維持されますが、使用量や料金が増える場合があります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Solicita a camada de processamento Priority/Fast nos modelos compatíveis."
+            "value" : "Executa os modelos compatíveis mais rapidamente. O modelo e o nível de raciocínio permanecem iguais; o consumo ou o custo podem aumentar."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为支持的模型请求 Priority/Fast 处理层级。"
+            "value" : "更快地运行支持的模型。模型和推理强度保持不变，用量或费用可能增加。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "為支援的模型請求 Priority/Fast 處理層級。"
+            "value" : "更快地執行支援的模型。模型與推理強度保持不變，用量或費用可能增加。"
           }
         }
       }
@@ -27243,64 +27197,6 @@
         }
       }
     },
-    "출력 토큰" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausgabetoken"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Output tokens"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens de salida"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jetons de sortie"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "出力トークン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "출력 토큰"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens de saída"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "输出令牌"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "輸出權杖"
-          }
-        }
-      }
-    },
     "취소" : {
       "localizations" : {
         "de" : {
@@ -27401,64 +27297,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消原因"
-          }
-        }
-      }
-    },
-    "캐시 토큰" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cache-Token"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cached tokens"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens en caché"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Jetons en cache"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "キャッシュ済みトークン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "캐시 토큰"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tokens em cache"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "缓存令牌"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "快取權杖"
           }
         }
       }

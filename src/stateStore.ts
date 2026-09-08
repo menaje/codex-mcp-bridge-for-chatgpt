@@ -133,6 +133,7 @@ export type DashboardRetainedJobSummary = {
   execution?: {
     model: string;
     reasoningEffort: string;
+    serviceTier?: string;
     reroutedModel?: string;
   };
 };
@@ -5581,6 +5582,7 @@ function readDashboardRetainedExecution(
   const model = selection && normalizeOptionalString(selection.model);
   const reasoningEffort = selection && normalizeOptionalString(selection.reasoningEffort);
   if (!model || !reasoningEffort) return undefined;
+  const serviceTier = selection && normalizeOptionalString(selection.serviceTier);
 
   let reroutedModel = retainedExecution && normalizeOptionalString(retainedExecution.reroutedModel);
   if (!reroutedModel && Array.isArray(payload.publicEvents)) {
@@ -5596,6 +5598,7 @@ function readDashboardRetainedExecution(
   return {
     model,
     reasoningEffort,
+    ...(serviceTier ? { serviceTier } : {}),
     ...(reroutedModel ? { reroutedModel } : {})
   };
 }
