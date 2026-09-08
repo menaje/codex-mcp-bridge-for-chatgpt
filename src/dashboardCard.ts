@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { usesFastProcessing } from "./executionPresentation.js";
 import { resolveHostUiLocaleTag, serializedUiTranslations } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -16,7 +17,7 @@ import {
 } from "./uiToolCallFallback.js";
 
 export const DASHBOARD_CARD_URI = currentUiResourceUri("dashboard");
-export const DASHBOARD_CARD_CONTRACT_GENERATION = 20;
+export const DASHBOARD_CARD_CONTRACT_GENERATION = 21;
 export const DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION = 1;
 export const DASHBOARD_VIEW_METADATA_KEY = "codex/dashboardView@1";
 export const DASHBOARD_CARD_MIME_TYPE = "text/html;profile=mcp-app";
@@ -25,6 +26,7 @@ export const DASHBOARD_CARD_HTML_MAX_BYTES = 112 * 1_024;
 type DashboardExecutionComparable = {
   model?: unknown;
   reasoningEffort?: unknown;
+  serviceTier?: unknown;
   reroutedModel?: unknown;
   isCurrent?: unknown;
 };
@@ -48,9 +50,16 @@ export function dashboardExecutionsEqual(
   const rightRerouted = typeof right.reroutedModel === "string"
     ? right.reroutedModel.trim().toLowerCase()
     : "";
+  const leftTier = typeof left.serviceTier === "string"
+    ? left.serviceTier.trim().toLowerCase() || "default"
+    : "default";
+  const rightTier = typeof right.serviceTier === "string"
+    ? right.serviceTier.trim().toLowerCase() || "default"
+    : "default";
   return Boolean(leftModel && rightModel && leftEffort && rightEffort) &&
     leftModel === rightModel &&
     leftEffort === rightEffort &&
+    (leftTier === rightTier || /^(priority|fast)$/.test(leftTier) && /^(priority|fast)$/.test(rightTier)) &&
     leftRerouted === rightRerouted;
 }
 
@@ -317,6 +326,7 @@ export const DASHBOARD_CARD_HTML = String.raw`<!doctype html>
     @media(max-width:560px){.card{padding:12px}.counts{grid-template-columns:repeat(2,minmax(0,1fr))}.row-head{display:block}.status{display:block;margin-top:2px}.footer{display:grid}.updated{white-space:normal}}
     .weekly-usage{margin-top:10px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--faint)}.weekly-usage-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px}.weekly-usage-label{color:var(--muted);font-weight:650}.weekly-usage-value{font-size:14px}.weekly-usage-track{height:5px;margin-top:7px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,CanvasText 12%,transparent)}.weekly-usage-fill{display:block;height:100%;border-radius:inherit;background:var(--active);transition:width .2s ease}.weekly-usage-reset{margin-top:5px;color:var(--muted);font-size:10px}
     .cancellation{margin-top:8px}.cancellation-toggle{display:flex;align-items:center;gap:7px;width:max-content;max-width:100%;color:var(--muted);font-size:11px;font-weight:650;cursor:pointer;list-style:none}.cancellation-toggle::-webkit-details-marker{display:none}.cancellation-chevron{display:inline-block;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .12s ease}.cancellation[open] .cancellation-chevron{transform:rotate(45deg)}.cancellation-body{margin-top:6px;padding-left:11px;border-left:2px solid color-mix(in srgb,var(--danger) 32%,var(--border))}.cancellation-meta{color:var(--muted);font-size:10px;line-height:1.35}.cancellation-reason{margin-top:2px;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+  .fast-mode{display:inline-flex;align-items:center;margin-left:6px;padding:1px 5px;border-radius:5px;background:color-mix(in srgb,#497ec8 14%,transparent);color:CanvasText;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:10px;font-weight:650;white-space:nowrap}
   </style>
 </head>
 <body>
@@ -406,8 +416,9 @@ export const DASHBOARD_CARD_HTML = String.raw`<!doctype html>
     function openConversation(event,url){dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)}
     function appendRowContext(parent,row,mode="row"){const context=node("div","row-context"),conversationUrl=safeConversationUrl(row.conversationUrl);if(mode!=="agent")context.appendChild(node("span","project-label",row.projectName||t["dashboard.unknownProject"]));if(mode!=="agent"&&conversationUrl){const link=node("a","conversation-link",t["dashboard.openConversation"]+" ↗");link.href=conversationUrl;link.target="_blank";link.rel="noopener noreferrer";link.addEventListener("click",(event)=>openConversation(event,conversationUrl));context.appendChild(link)}if(context.childElementCount)parent.appendChild(context)}
     function rowMeta(row){const values=[];if(Number(row.backgroundProcessCount)>0)values.push(t["dashboard.backgroundProcessCount"].replace("{count}",formatNumber(row.backgroundProcessCount)));return values.join(" · ")}
+    ${usesFastProcessing.toString()}
     function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,model=rerouted?selected+" → "+rerouted:selected;return model+" · "+execution.reasoningEffort}
-    function appendExecution(parent,execution,next=false,required=false){if(!execution&&!required)return;const value=execution?executionText(execution):t["dashboard.execution.unavailable"],text=next?t["dashboard.execution.next"].replace("{execution}",value):value,badge=node("div","execution",text);badge.title=text;parent.appendChild(badge)}
+    function appendExecution(parent,execution,next=false,required=false){if(!execution&&!required)return;const value=execution?executionText(execution):t["dashboard.execution.unavailable"],text=next?t["dashboard.execution.next"].replace("{execution}",value):value,badge=node("div","execution",text);badge.title=text;if(usesFastProcessing(execution))badge.appendChild(node("span","fast-mode","⚡ "+t["dashboard.execution.fast"]));parent.appendChild(badge)}
     function cancellationHeading(cancellation){if(cancellation.status==="requested")return t["cancellation.requestReason"];if(cancellation.status==="failed")return t["cancellation.attemptReason"];return t["cancellation.reason"]}
     function appendCancellation(parent,cancellation,key){if(!cancellation||typeof cancellation.reason!=="string"||!cancellation.reason.trim())return;const details=node("details","cancellation"),summary=node("summary","cancellation-toggle"),chevron=node("span","cancellation-chevron"),body=node("div","cancellation-body"),meta=[t["cancellation.target."+cancellation.targetKind]||String(cancellation.targetKind||"")],requestedAt=new Date(cancellation.requestedAt);chevron.setAttribute("aria-hidden","true");summary.append(chevron,node("span","",cancellationHeading(cancellation)));if(Number.isFinite(requestedAt.getTime()))meta.push(new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(requestedAt));body.append(node("div","cancellation-meta",meta.filter(Boolean).join(" · ")),node("div","cancellation-reason",cancellation.reason));details.append(summary,body);details.open=expandedCancellations.has(key);details.addEventListener("toggle",()=>{if(details.open)expandedCancellations.add(key);else expandedCancellations.delete(key);scheduleSizeChanged(true)});parent.appendChild(details)}
     function historyKey(row){return String(row.rowKey||[row.conversationKey||row.sessionAlias,row.projectKey||row.projectName,row.agentName].join("\u0000"))}

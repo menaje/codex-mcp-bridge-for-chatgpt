@@ -72,8 +72,9 @@ const ENGLISH = {
   "effort.ultra.label": "Ultra", "effort.ultra.description": "Extended reasoning and delegation for the most demanding work.",
   "settings.serviceTier": "Service tier",
   "settings.serviceTier.default": "Backend default tier",
-  "settings.usePriority": "Use Priority (Fast processing)",
-  "settings.usePriorityHint": "Applied privately by the bridge when Codex is called. GPT selects only the model and reasoning effort.",
+  "settings.usePriority": "Fast mode",
+  "settings.usePriorityHint": "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase.",
+  "dashboard.execution.fast": "Fast",
   "settings.fixedNotice": "This exact selection is enforced for Codex turns admitted after saving. An already active turn keeps its admission-time decision.",
   "settings.allowedScope": "GPT selection range",
   "settings.allowedScope.catalog": "All available models and efforts",
@@ -89,7 +90,7 @@ const ENGLISH = {
   "settings.preferredModel": "Default model when GPT does not choose",
   "settings.preferredEffort": "Default reasoning effort when GPT does not choose",
   "settings.preferred.none": "Use the Codex default when GPT does not choose",
-  "settings.automaticNotice": "GPT must explicitly choose one exact model and reasoning effort from this range for every new Activity, new Agent, or fresh context. Continue and fork inherit the retained thread when selection is omitted. Priority is applied separately by the bridge. Choosing all available models and efforts automatically includes newly added options.",
+  "settings.automaticNotice": "GPT must explicitly choose one exact model and reasoning effort from this range for every new Activity, new Agent, or fresh context. Continue and fork inherit the retained thread when selection is omitted. Fast mode is applied separately by the bridge. Choosing all available models and efforts automatically includes newly added options.",
   "settings.catalogStatus.valid": "Model catalog valid",
   "settings.catalogStatus.lastKnownGood": "Model catalog using last known good data",
   "settings.catalogStatus.invalid": "Model catalog unavailable",
@@ -169,7 +170,7 @@ const ENGLISH = {
   "settings.warning.fullAccessDowngraded": "The saved full-access mode is retained but inactive because bridge security policy disables danger-full-access. Read-only is enforced until full access is enabled in runtime settings.",
   "settings.warning.concurrentLimitReduced": "The saved concurrent-job limit was reduced to the current bridge maximum.",
   "settings.warning.projectUnavailable": "Saved project “{project}” is unavailable and cannot accept new work.",
-  "settings.warning.legacyModel": "The legacy model-only preference “{model}” is still active. Its exact default effort comes from the backend catalog, while Priority remains a separate preference.",
+  "settings.warning.legacyModel": "The legacy model-only preference “{model}” is still active. Its exact default effort comes from the backend catalog, while Fast mode remains a separate preference.",
   "settings.warning.legacyAutomatic": "The legacy automatic model policy has no exact saved fallback. The backend catalog default remains in use until a default model and reasoning effort are saved in Settings.",
   "settings.warning.modelPolicy": "The saved model policy is incompatible with the current catalog or constraints. Review it and save a valid selection{codeSuffix}.",
   "settings.warning.generic": "A bridge warning requires attention. Review the bridge diagnostics for details.",
@@ -1123,7 +1124,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "일부 에포트가 선택되어 있습니다.",
     "settings.additionalServiceTiers": "추가 서비스 티어 조합",
     "settings.selectionCount": "정확한 selection {count}개",
-    "settings.automaticNotice": "GPT는 이 범위에서 모델과 추론 에포트만 선택합니다. Priority는 GPT 선택지에 노출하지 않고 브리지가 내부적으로 적용합니다. 카탈로그 전체 모드는 새 모델·에포트 선택지를 자동 반영합니다.",
+    "settings.automaticNotice": "GPT는 이 범위에서 모델과 추론 에포트만 선택합니다. 빠른 처리는 GPT 선택지에 노출하지 않고 브리지가 내부적으로 적용합니다. 카탈로그 전체 모드는 새 모델·에포트 선택지를 자동 반영합니다.",
     "settings.modelEffortRequired": "{model} 모델의 추론 에포트를 하나 이상 선택하세요.",
     "settings.refreshModels": "모델 불러오기 재시도",
     "settings.refreshing": "모델을 다시 불러오는 중…",
@@ -1139,7 +1140,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "一部のエフォートが選択されています。",
     "settings.additionalServiceTiers": "追加のサービスティア構成",
     "settings.selectionCount": "完全一致の選択: {count} 件",
-    "settings.automaticNotice": "GPT はこの範囲のモデルと推論エフォートのみ選択します。Priority は GPT の選択肢に公開せず、ブリッジが内部適用します。",
+    "settings.automaticNotice": "GPT はこの範囲のモデルと推論エフォートのみ選択します。高速処理 は GPT の選択肢に公開せず、ブリッジが内部適用します。",
     "settings.modelEffortRequired": "{model} の推論エフォートを 1 つ以上選択してください。",
     "settings.refreshModels": "モデル読み込みを再試行",
     "settings.refreshing": "モデルを再読み込み中…",
@@ -1155,7 +1156,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "已选择部分推理强度。",
     "settings.additionalServiceTiers": "其他服务层级组合",
     "settings.selectionCount": "{count} 个精确选择",
-    "settings.automaticNotice": "GPT 只选择此范围内的模型和推理强度。Priority 不会作为 GPT 选项公开，而由桥接内部应用。",
+    "settings.automaticNotice": "GPT 只选择此范围内的模型和推理强度。快速处理 不会作为 GPT 选项公开，而由桥接内部应用。",
     "settings.modelEffortRequired": "请为 {model} 至少选择一个推理强度。",
     "settings.refreshModels": "重试加载模型",
     "settings.refreshing": "正在重新加载模型…",
@@ -1171,7 +1172,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "已選擇部分推理強度。",
     "settings.additionalServiceTiers": "其他服務層級組合",
     "settings.selectionCount": "{count} 個精確選擇",
-    "settings.automaticNotice": "GPT 只選擇此範圍內的模型與推理強度。Priority 不會作為 GPT 選項公開，而由橋接於內部套用。",
+    "settings.automaticNotice": "GPT 只選擇此範圍內的模型與推理強度。快速處理 不會作為 GPT 選項公開，而由橋接於內部套用。",
     "settings.modelEffortRequired": "請為 {model} 至少選擇一個推理強度。",
     "settings.refreshModels": "重試載入模型",
     "settings.refreshing": "正在重新載入模型…",
@@ -1187,7 +1188,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "Hay algunos niveles seleccionados.",
     "settings.additionalServiceTiers": "Variantes adicionales de nivel de servicio",
     "settings.selectionCount": "{count} selecciones exactas",
-    "settings.automaticNotice": "GPT solo elige el modelo y el nivel de razonamiento de este intervalo. Priority no se expone como opción de GPT; el puente lo aplica internamente.",
+    "settings.automaticNotice": "GPT solo elige el modelo y el nivel de razonamiento de este intervalo. el modo rápido no se expone como opción de GPT; el puente lo aplica internamente.",
     "settings.modelEffortRequired": "Selecciona al menos un nivel de razonamiento para {model}.",
     "settings.refreshModels": "Reintentar la carga de modelos",
     "settings.refreshing": "Reintentando la carga de modelos…",
@@ -1203,7 +1204,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "Certains niveaux sont sélectionnés.",
     "settings.additionalServiceTiers": "Variantes supplémentaires de niveau de service",
     "settings.selectionCount": "{count} sélections exactes",
-    "settings.automaticNotice": "GPT choisit uniquement le modèle et l’effort de raisonnement de cette plage. Priority n’est pas exposé comme choix GPT ; le pont l’applique en interne.",
+    "settings.automaticNotice": "GPT choisit uniquement le modèle et l’effort de raisonnement de cette plage. le mode rapide n’est pas exposé comme choix GPT ; le pont l’applique en interne.",
     "settings.modelEffortRequired": "Sélectionnez au moins un niveau de raisonnement pour {model}.",
     "settings.refreshModels": "Réessayer de charger les modèles",
     "settings.refreshing": "Nouvelle tentative de chargement des modèles…",
@@ -1219,7 +1220,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "Einige Reasoning-Stufen sind ausgewählt.",
     "settings.additionalServiceTiers": "Zusätzliche Service-Tier-Varianten",
     "settings.selectionCount": "{count} exakte Auswahlen",
-    "settings.automaticNotice": "GPT wählt nur Modell und Reasoning-Stufe aus diesem Bereich. Priority wird nicht als GPT-Auswahl offengelegt, sondern intern von der Bridge angewendet.",
+    "settings.automaticNotice": "GPT wählt nur Modell und Reasoning-Stufe aus diesem Bereich. Schnellmodus wird nicht als GPT-Auswahl offengelegt, sondern intern von der Bridge angewendet.",
     "settings.modelEffortRequired": "Wählen Sie mindestens eine Reasoning-Stufe für {model} aus.",
     "settings.refreshModels": "Laden der Modelle erneut versuchen",
     "settings.refreshing": "Modelle werden erneut geladen…",
@@ -1235,7 +1236,7 @@ const ISSUE21_OVERRIDES: Partial<
     "settings.partialEffortsSelected": "Alguns níveis estão selecionados.",
     "settings.additionalServiceTiers": "Variantes adicionais de nível de serviço",
     "settings.selectionCount": "{count} seleções exatas",
-    "settings.automaticNotice": "O GPT escolhe apenas o modelo e o nível de raciocínio deste intervalo. Priority não é exposto como opção do GPT; a ponte aplica internamente.",
+    "settings.automaticNotice": "O GPT escolhe apenas o modelo e o nível de raciocínio deste intervalo. o modo rápido não é exposto como opção do GPT; a ponte aplica internamente.",
     "settings.modelEffortRequired": "Selecione pelo menos um nível de raciocínio para {model}.",
     "settings.refreshModels": "Tentar carregar os modelos novamente",
     "settings.refreshing": "Tentando carregar os modelos novamente…",
@@ -1255,7 +1256,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "GPT 미지정 시 기본 추론 수준",
     "settings.preferred.none": "GPT 미지정 시 Codex 기본값 사용",
     "settings.selectionCount": "허용한 모델·에포트 조합 {count}개",
-    "settings.automaticNotice": "새 Activity, 새 Agent 또는 fresh context에서는 GPT가 이 범위의 정확한 모델과 추론 수준을 반드시 명시해야 합니다. 기존 작업의 continue/fork에서 생략하면 해당 스레드의 선택을 그대로 상속합니다. Priority는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다.",
+    "settings.automaticNotice": "새 Activity, 새 Agent 또는 fresh context에서는 GPT가 이 범위의 정확한 모델과 추론 수준을 반드시 명시해야 합니다. 기존 작업의 continue/fork에서 생략하면 해당 스레드의 선택을 그대로 상속합니다. 빠른 처리는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다.",
     "settings.warning.automaticFallbackRemoved": "폐기된 자동 모델 기본값을 제거했습니다. 이제 새 작업에는 GPT가 정확한 모델과 추론 수준을 선택해야 합니다.",
     "settings.catalogStatus.valid": "모델 카탈로그 정상",
     "settings.catalogStatus.lastKnownGood": "모델 카탈로그: 마지막 정상 데이터 사용 중",
@@ -1270,7 +1271,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "GPT 未指定時の既定推論エフォート",
     "settings.preferred.none": "GPT 未指定時は Codex の既定値を使用",
     "settings.selectionCount": "許可したモデル・エフォートの組み合わせ: {count} 件",
-    "settings.automaticNotice": "新しい Activity、Agent、または fresh context では、GPT がこの範囲から正確なモデルと推論エフォートを明示する必要があります。continue/fork で省略した場合は保持中のスレッド設定を継承します。Priority は別途適用されます。",
+    "settings.automaticNotice": "新しい Activity、Agent、または fresh context では、GPT がこの範囲から正確なモデルと推論エフォートを明示する必要があります。continue/fork で省略した場合は保持中のスレッド設定を継承します。高速処理 は別途適用されます。",
     "settings.warning.automaticFallbackRemoved": "廃止された自動モデルの既定値を削除しました。新しい作業では GPT が正確なモデルと推論エフォートを選択する必要があります。",
     "settings.catalogStatus.valid": "モデルカタログは有効です",
     "settings.catalogStatus.lastKnownGood": "モデルカタログは最後の正常データを使用中です",
@@ -1285,7 +1286,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "GPT 未指定时的默认推理强度",
     "settings.preferred.none": "GPT 未指定时使用 Codex 默认值",
     "settings.selectionCount": "已允许 {count} 个模型与推理强度组合",
-    "settings.automaticNotice": "新建 Activity、Agent 或 fresh context 时，GPT 必须从此范围明确选择准确的模型和推理强度。continue/fork 省略选择时继承保留线程的设置。Priority 由桥接单独应用。",
+    "settings.automaticNotice": "新建 Activity、Agent 或 fresh context 时，GPT 必须从此范围明确选择准确的模型和推理强度。continue/fork 省略选择时继承保留线程的设置。快速处理 由桥接单独应用。",
     "settings.warning.automaticFallbackRemoved": "已移除停用的自动模型默认值。现在新任务必须由 GPT 选择准确的模型和推理强度。",
     "settings.catalogStatus.valid": "模型目录有效",
     "settings.catalogStatus.lastKnownGood": "模型目录正在使用最近的有效数据",
@@ -1300,7 +1301,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "GPT 未指定時的預設推理強度",
     "settings.preferred.none": "GPT 未指定時使用 Codex 預設值",
     "settings.selectionCount": "已允許 {count} 個模型與推理強度組合",
-    "settings.automaticNotice": "建立 Activity、Agent 或 fresh context 時，GPT 必須從此範圍明確選擇精確的模型與推理強度。continue/fork 省略選擇時會繼承保留執行緒的設定。Priority 由橋接另外套用。",
+    "settings.automaticNotice": "建立 Activity、Agent 或 fresh context 時，GPT 必須從此範圍明確選擇精確的模型與推理強度。continue/fork 省略選擇時會繼承保留執行緒的設定。快速處理 由橋接另外套用。",
     "settings.warning.automaticFallbackRemoved": "已移除停用的自動模型預設值。現在新工作必須由 GPT 選擇精確的模型與推理強度。",
     "settings.catalogStatus.valid": "模型目錄有效",
     "settings.catalogStatus.lastKnownGood": "模型目錄正使用最近的有效資料",
@@ -1315,7 +1316,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "Nivel predeterminado si GPT no elige",
     "settings.preferred.none": "Usar el valor predeterminado de Codex si GPT no elige",
     "settings.selectionCount": "Combinaciones permitidas: {count}",
-    "settings.automaticNotice": "GPT debe indicar un modelo y nivel de razonamiento exactos de este intervalo para cada Activity, Agent o contexto nuevo. continue/fork hereda el hilo conservado si se omite la selección. El puente aplica Priority por separado.",
+    "settings.automaticNotice": "GPT debe indicar un modelo y nivel de razonamiento exactos de este intervalo para cada Activity, Agent o contexto nuevo. continue/fork hereda el hilo conservado si se omite la selección. El puente aplica el modo rápido por separado.",
     "settings.warning.automaticFallbackRemoved": "Se eliminó el valor predeterminado retirado del modelo automático. Ahora GPT debe elegir un modelo y un nivel de razonamiento exactos para el trabajo nuevo.",
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
     "settings.catalogStatus.lastKnownGood": "El catálogo usa los últimos datos válidos",
@@ -1330,7 +1331,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "Effort par défaut si GPT ne choisit pas",
     "settings.preferred.none": "Utiliser la valeur par défaut de Codex si GPT ne choisit pas",
     "settings.selectionCount": "Combinaisons autorisées : {count}",
-    "settings.automaticNotice": "GPT doit indiquer un modèle et un effort de raisonnement exacts de cette plage pour toute nouvelle Activity, tout nouvel Agent ou contexte fresh. continue/fork hérite du thread conservé si le choix est omis. Le pont applique Priority séparément.",
+    "settings.automaticNotice": "GPT doit indiquer un modèle et un effort de raisonnement exacts de cette plage pour toute nouvelle Activity, tout nouvel Agent ou contexte fresh. continue/fork hérite du thread conservé si le choix est omis. Le pont applique le mode rapide séparément.",
     "settings.warning.automaticFallbackRemoved": "La valeur par défaut retirée du modèle automatique a été supprimée. GPT doit désormais choisir un modèle et un effort de raisonnement exacts pour tout nouveau travail.",
     "settings.catalogStatus.valid": "Catalogue de modèles valide",
     "settings.catalogStatus.lastKnownGood": "Le catalogue utilise les dernières données valides",
@@ -1345,7 +1346,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "Standard-Reasoning-Stufe, wenn GPT nicht auswählt",
     "settings.preferred.none": "Codex-Standard verwenden, wenn GPT nicht auswählt",
     "settings.selectionCount": "Zulässige Kombinationen: {count}",
-    "settings.automaticNotice": "GPT muss für jede neue Activity, jeden neuen Agent oder fresh context ein exaktes Modell und eine Reasoning-Stufe aus diesem Bereich angeben. continue/fork übernimmt bei Auslassung den beibehaltenen Thread. Priority wird separat angewendet.",
+    "settings.automaticNotice": "GPT muss für jede neue Activity, jeden neuen Agent oder fresh context ein exaktes Modell und eine Reasoning-Stufe aus diesem Bereich angeben. continue/fork übernimmt bei Auslassung den beibehaltenen Thread. Schnellmodus wird separat angewendet.",
     "settings.warning.automaticFallbackRemoved": "Der eingestellte Standard für die automatische Modellauswahl wurde entfernt. GPT muss für neue Arbeit nun ein exaktes Modell und eine Reasoning-Stufe wählen.",
     "settings.catalogStatus.valid": "Modellkatalog gültig",
     "settings.catalogStatus.lastKnownGood": "Modellkatalog verwendet die letzten gültigen Daten",
@@ -1360,7 +1361,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredEffort": "Nível padrão quando o GPT não escolher",
     "settings.preferred.none": "Usar o padrão do Codex quando o GPT não escolher",
     "settings.selectionCount": "Combinações permitidas: {count}",
-    "settings.automaticNotice": "O GPT deve indicar um modelo e um nível de raciocínio exatos deste intervalo para cada Activity, Agent ou contexto novo. continue/fork herda o thread retido quando a seleção é omitida. A ponte aplica Priority separadamente.",
+    "settings.automaticNotice": "O GPT deve indicar um modelo e um nível de raciocínio exatos deste intervalo para cada Activity, Agent ou contexto novo. continue/fork herda o thread retido quando a seleção é omitida. A ponte aplica o modo rápido separadamente.",
     "settings.warning.automaticFallbackRemoved": "O padrão descontinuado do modelo automático foi removido. Agora o GPT deve escolher um modelo e um nível de raciocínio exatos para novos trabalhos.",
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
     "settings.catalogStatus.lastKnownGood": "O catálogo usa os últimos dados válidos",
@@ -2149,14 +2150,57 @@ const DASHBOARD_OVERRIDES: Partial<
   }
 };
 
+const FAST_MODE_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTranslationBundle>> = {
+  "ko": {
+    "settings.usePriority": "빠른 처리 (Fast)",
+    "settings.usePriorityHint": "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.",
+    "dashboard.execution.fast": "빠른 처리"
+  },
+  "ja": {
+    "settings.usePriority": "高速処理 (Fast)",
+    "settings.usePriorityHint": "対応モデルをより速く実行します。モデルと推論レベルは維持されますが、使用量や料金が増える場合があります。",
+    "dashboard.execution.fast": "高速処理"
+  },
+  "zh-Hans": {
+    "settings.usePriority": "快速处理 (Fast)",
+    "settings.usePriorityHint": "更快地运行支持的模型。模型和推理强度保持不变，用量或费用可能增加。",
+    "dashboard.execution.fast": "快速处理"
+  },
+  "zh-Hant": {
+    "settings.usePriority": "快速處理 (Fast)",
+    "settings.usePriorityHint": "更快地執行支援的模型。模型與推理強度保持不變，用量或費用可能增加。",
+    "dashboard.execution.fast": "快速處理"
+  },
+  "es": {
+    "settings.usePriority": "Modo rápido (Fast)",
+    "settings.usePriorityHint": "Ejecuta más rápido los modelos compatibles. El modelo y el nivel de razonamiento se mantienen; el consumo o el coste pueden aumentar.",
+    "dashboard.execution.fast": "Rápido"
+  },
+  "fr": {
+    "settings.usePriority": "Mode rapide (Fast)",
+    "settings.usePriorityHint": "Accélère les modèles compatibles. Le modèle et le niveau de raisonnement restent identiques ; la consommation ou les coûts peuvent augmenter.",
+    "dashboard.execution.fast": "Rapide"
+  },
+  "de": {
+    "settings.usePriority": "Schnellmodus (Fast)",
+    "settings.usePriorityHint": "Führt unterstützte Modelle schneller aus. Modell und Denkstufe bleiben gleich; Verbrauch oder Kosten können steigen.",
+    "dashboard.execution.fast": "Schnell"
+  },
+  "pt": {
+    "settings.usePriority": "Modo rápido (Fast)",
+    "settings.usePriorityHint": "Executa os modelos compatíveis mais rapidamente. O modelo e o nível de raciocínio permanecem iguais; o consumo ou o custo podem aumentar.",
+    "dashboard.execution.fast": "Rápido"
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 

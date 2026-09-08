@@ -997,8 +997,8 @@ private struct GeneralSettingsPane: View {
                 Text("끄면 Ultra 추론이 모델 목록에서 제외되고 하위 에이전트 위임이 차단됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("빠른 처리 우선 사용", isOn: $draft.usePriorityServiceTier)
-                Text("지원되는 모델에서 Priority/Fast 처리 계층을 요청합니다.")
+                Toggle("빠른 처리 (Fast)", isOn: $draft.usePriorityServiceTier)
+                Text("지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if snapshot.catalog.stale {

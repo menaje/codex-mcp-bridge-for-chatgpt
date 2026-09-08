@@ -6517,6 +6517,68 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("keeps Fast mode on its original runs while previewing changed next-run settings", async () => {
+    const upstream = new DeferredUpstream();
+    const { client, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), upstream, undefined, new TieredModelCatalog()
+    );
+    const dashboard = () => applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+    const activityExecutions = async () => {
+      const view = privateActivityView(await client.callTool({ name: "codex_activity", arguments: {} }));
+      return view.feed.active.flatMap((activity: any) => activity.agents.map((agent: any) => ({
+        title: activity.title, execution: agent.execution
+      })));
+    };
+    try {
+      const standard = parseToolJson(await runTask(client, {
+        prompt: "standard run", activityTitle: "Standard display", sessionMode: "new",
+        executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+      }));
+      const enabled = await client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedRevision: 0, usePriorityServiceTier: true }
+      });
+      expect(enabled.isError).not.toBe(true);
+      expect((await dashboard()).activeRows[0].latestTurn?.execution).not.toHaveProperty("serviceTier");
+      expect((await activityExecutions()).find((row: any) => row.title === "Standard display").execution)
+        .not.toHaveProperty("serviceTier");
+      upstream.resolveNext(fakeCodexResult("standard-display-thread"));
+      await waitForJobStatus(client, standard.jobId, "completed");
+      const standardRow = (await dashboard()).terminalRows.find(row => row.activityTitle === "Standard display")!;
+      expect(standardRow.latestTurn?.execution).not.toHaveProperty("serviceTier");
+      expect(standardRow.execution).toMatchObject({ serviceTier: "priority", isCurrent: true });
+
+      const fast = parseToolJson(await runTask(client, {
+        prompt: "fast run", activityTitle: "Fast display", sessionMode: "new",
+        executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+      }));
+      expect((await dashboard()).activeRows[0].latestTurn?.execution)
+        .toMatchObject({ serviceTier: "priority", isCurrent: true });
+      expect((await activityExecutions()).find((row: any) => row.title === "Fast display").execution)
+        .toMatchObject({ serviceTier: "priority" });
+      const disabled = await client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedRevision: 1, usePriorityServiceTier: false }
+      });
+      expect(disabled.isError).not.toBe(true);
+      expect((await dashboard()).activeRows[0].latestTurn?.execution)
+        .toMatchObject({ serviceTier: "priority" });
+      upstream.resolveNext(fakeCodexResult("fast-display-thread"));
+      await waitForJobStatus(client, fast.jobId, "completed");
+      const final = await dashboard();
+      const completedFast = final.terminalRows.find(row => row.activityTitle === "Fast display")!;
+      expect(completedFast.latestTurn?.execution).toMatchObject({ serviceTier: "priority", isCurrent: false });
+      expect(completedFast.execution).toMatchObject({ isCurrent: true });
+      expect(completedFast.execution).not.toHaveProperty("serviceTier");
+      expect(final.terminalRows.find(row => row.activityTitle === "Standard display")?.latestTurn?.execution)
+        .not.toHaveProperty("serviceTier");
+      expect((await activityExecutions()).find((row: any) => row.title === "Fast display").execution)
+        .toMatchObject({ serviceTier: "priority", isCurrent: false });
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps Priority private from GPT and injects it only into Codex calls", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();

@@ -2,8 +2,8 @@
 
 이슈: [#68](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/68)
 
-이 문서는 최초 구현 시점의 기록이다. 이후 서버형 질문·승인 분리와 실제 CLI
-검증 결과는 [후속 검증](2026-09-08-gpt-question-followup.md)을 참조한다.
+이 문서는 최초 구현 시점의 기록이다. 이후 서버형 질문·승인 분리, 실제 CLI와
+ChatGPT 검증 결과는 [후속 검증](2026-09-08-gpt-question-followup.md)을 참조한다.
 
 2026-09-08 로컬 작업 트리에서 메시지형 Codex 질문의 GPT 응답 경로와 GPT가
 사용자에게 질문하는 카드 흐름을 구현했다. 실제 ChatGPT에서 카드 제출 후 모델이

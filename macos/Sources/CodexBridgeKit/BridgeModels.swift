@@ -162,6 +162,7 @@ public struct DashboardExecution: Codable, Sendable {
     public let model: String
     public let modelDisplayName: String?
     public let reasoningEffort: String
+    public let serviceTier: String?
     public let reroutedModel: String?
     public let reroutedModelDisplayName: String?
     public let isCurrent: Bool

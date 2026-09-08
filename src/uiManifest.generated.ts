@@ -14,8 +14,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "72b8134e24abb28a87e357d69c8fe86c8224eca57bc9abe09ff496b8ba606c9f",
-      "uri": "ui://codex-mcp-bridge/settings/72b8134e24ab.html",
+      "digest": "e78b6b1e4cb51d62c3b0b890b3ade4932457ee6d3688c0d9fe0d4429a818f1ea",
+      "uri": "ui://codex-mcp-bridge/settings/e78b6b1e4cb5.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -31,17 +31,75 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": true,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 15
+          "codex/uiContractGeneration": 16
         }
       },
       "previous": [
+        {
+          "digest": "fbc2549e32bd1c7651cfccf815133c6eb844593ef6115bf140a6b5ba9dd2e39a",
+          "uri": "ui://codex-mcp-bridge/settings/fbc2549e32bd.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 16
+            }
+          }
+        },
+        {
+          "digest": "72b8134e24abb28a87e357d69c8fe86c8224eca57bc9abe09ff496b8ba606c9f",
+          "uri": "ui://codex-mcp-bridge/settings/72b8134e24ab.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 15
+            }
+          }
+        },
         {
           "digest": "143a4ac4435821be99f64bb42c0204a27c84b9e4444fd6a5d0a2fe224df464fd",
           "uri": "ui://codex-mcp-bridge/settings/143a4ac44358.html",
@@ -1089,8 +1147,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "activity": {
-      "digest": "832e3623de207d955a5540990f9d1c51827c357a4e8f7e9b7a925616a024a385",
-      "uri": "ui://codex-mcp-bridge/activity/832e3623de20.html",
+      "digest": "76661a79a6cffbe1b994ccc821639d821533cbf5129918888ce2595fa2b076ab",
+      "uri": "ui://codex-mcp-bridge/activity/76661a79a6cf.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Activity Feed",
@@ -1113,10 +1171,68 @@ export const UI_RESOURCE_MANIFEST = {
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 28
+          "codex/uiContractGeneration": 29
         }
       },
       "previous": [
+        {
+          "digest": "008f9bf6ed9a260642485a5d0b2e69b7ea4e06e74f93ceff976123b04f17411e",
+          "uri": "ui://codex-mcp-bridge/activity/008f9bf6ed9a.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+              "description": "Localized compact current-work summary with an explicit paginated Activity history view.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows current Codex work compactly and opens paginated scoped Activity history on explicit request.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 29
+            }
+          }
+        },
+        {
+          "digest": "832e3623de207d955a5540990f9d1c51827c357a4e8f7e9b7a925616a024a385",
+          "uri": "ui://codex-mcp-bridge/activity/832e3623de20.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+              "description": "Localized compact current-work summary with an explicit paginated Activity history view.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows current Codex work compactly and opens paginated scoped Activity history on explicit request.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 28
+            }
+          }
+        },
         {
           "digest": "897b6b9342a6a9229f2164b38a1218e61bd43f36df26e4c8eb2ff1144d3b74f3",
           "uri": "ui://codex-mcp-bridge/activity/897b6b9342a6.html",
@@ -2802,8 +2918,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "dashboard": {
-      "digest": "45a73a430ba9740634bcdd8b506286098418750bb75c9a8eaf3366632fc0a0a2",
-      "uri": "ui://codex-mcp-bridge/dashboard/45a73a430ba9.html",
+      "digest": "e0e135eb598caede7ae8c01ed8359be712c24911d4c759a8784ef682c39cd8a9",
+      "uri": "ui://codex-mcp-bridge/dashboard/e0e135eb598c.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Overview",
@@ -2829,10 +2945,74 @@ export const UI_RESOURCE_MANIFEST = {
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 20
+          "codex/uiContractGeneration": 21
         }
       },
       "previous": [
+        {
+          "digest": "e7e8827cef7f6646a162e03b2fc4e219399d0b6c369ae6be26d785da8adbea0e",
+          "uri": "ui://codex-mcp-bridge/dashboard/e7e8827cef7f.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Overview",
+              "description": "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, setting-independent GPT conversation links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows one read-only, Activity-first Codex overview with nested Agents, derived from retained Codex Jobs, threads, interaction state, model/effort selection, and bounded App Server runtime evidence.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 21
+            }
+          }
+        },
+        {
+          "digest": "45a73a430ba9740634bcdd8b506286098418750bb75c9a8eaf3366632fc0a0a2",
+          "uri": "ui://codex-mcp-bridge/dashboard/45a73a430ba9.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Overview",
+              "description": "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, setting-independent GPT conversation links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows one read-only, Activity-first Codex overview with nested Agents, derived from retained Codex Jobs, threads, interaction state, model/effort selection, and bounded App Server runtime evidence.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 20
+            }
+          }
+        },
         {
           "digest": "08876d6d9fc0c8d6dfa631da58a6d997f88d20a471da7a40b1412d7d729fd09b",
           "uri": "ui://codex-mcp-bridge/dashboard/08876d6d9fc0.html",

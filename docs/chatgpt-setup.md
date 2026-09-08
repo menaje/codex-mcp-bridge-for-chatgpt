@@ -104,8 +104,8 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify discovery of eleven model-visible tools: `codex_dashboard`, `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
-6. The app-private `codex_dashboard_snapshot`, `codex_settings_snapshot`, `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, and `codex_update_settings` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
+5. Verify discovery of fifteen model-visible tools: `codex_dashboard`, `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, `codex_task`, `codex_input`, `codex_answer`, `codex_ask_user`, and `codex_user_answer`.
+6. The app-private `codex_dashboard_snapshot`, `codex_settings_snapshot`, `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, `codex_update_settings`, `codex_question_card`, `codex_question_submit`, and `codex_question_notify` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
 
 ### Refresh after a bridge/UI change
 
@@ -120,6 +120,8 @@ npm run check
 Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves the newly advertised current URI and every retained URI whose UI contract generation is still supported.
 
 Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
+
+Installing GPT question orchestration adds four public tools and three card-only tools, so its first installation requires Refresh. Confirm `codex_ask_user` and `codex_user_answer` appear in ChatGPT's connection metadata before testing a card. A live server `tools/list` result proves publication only; it does not prove that ChatGPT's cached tool list adopted the new tools.
 
 After Refresh:
 
@@ -138,7 +140,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 
 - access strategy;
 - fixed or automatic exact model policy;
-- independent Priority/Fast processing for Codex calls;
+- independent Fast mode for Codex calls;
 - named projects with explicit per-task selection;
 - UI language;
 - concurrent-job limit;
@@ -160,7 +162,7 @@ object with `model` and `reasoningEffort` strings. Use `codex_models` and curren
 runtime errors to obtain allowed pairs. The bridge does not add a task mapping,
 ranking, recommendation, or its own reasoning-effort glossary.
 
-The Priority checkbox is intentionally separate. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Priority, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it.
+The **Fast mode** checkbox is separate from model and reasoning level. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Fast mode, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it. Native and card Settings share localized names, and execution badges reflect each run's captured mode rather than the latest global preference.
 
 The public Settings call returns only a compact path-free summary. Generation 14 starts with its editor hidden and calls the app-private `codex_settings_snapshot`; only that fresh response is rendered, so reopening an old conversation cannot paint the original settings metadata. The model catalog uses the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails and uses the same snapshot path with `refreshModels: true`.
 

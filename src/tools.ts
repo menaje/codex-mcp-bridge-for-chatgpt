@@ -500,6 +500,7 @@ const dashboardExecutionOutputSchema = z.strictObject({
   model: z.string(),
   modelDisplayName: z.string().optional(),
   reasoningEffort: z.string(),
+  serviceTier: z.string().optional(),
   reroutedModel: z.string().optional(),
   reroutedModelDisplayName: z.string().optional(),
   isCurrent: z.boolean()
@@ -12019,8 +12020,23 @@ async function buildDashboardView(
   ): ActivityCardExecution | undefined => {
     const session = currentSessionFor(agentId);
     if (!session?.selection) return undefined;
+    let selection = session.selection;
+    if (backendCapabilities(upstream, session.backendKind).supportsServiceTierOverrideOnContinue) {
+      const catalog = modelCatalog.getCachedCatalog?.({ backendKind: session.backendKind });
+      const serviceTier = preferences.usePriorityServiceTier && catalog
+        ? priorityServiceTierForModel(catalog, selection.model)
+        : undefined;
+      // Only preview a supported next-run override; retained turns keep their
+      // admission-time selection even when the saved preference changes.
+      if (preferences.usePriorityServiceTier && !serviceTier) return undefined;
+      selection = {
+        model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+        ...(serviceTier ? { serviceTier } : {})
+      };
+    }
     return dashboardExecutionForSelection(
-      session.selection,
+      selection,
       session.backendKind,
       modelCatalog,
       true
@@ -12069,6 +12085,11 @@ async function buildDashboardView(
       ? runtimeByAgent.get(job.agentId || "")?.backgroundProcessCount || 0
       : 0;
     const latestTurn = turnForJob(job);
+    const currentExecution = bucket === "recent" ? currentExecutionForAgent(job.agentId) : undefined;
+    const nextExecution = currentExecution &&
+      currentExecution.serviceTier !== latestTurn.execution?.serviceTier
+      ? currentExecution
+      : undefined;
     const observed = [...job.publicEvents].reverse().find(event => event.type === "usage")?.details?.total;
     const tokenUsage = isRecord(observed) && ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"].every(key => typeof observed[key] === "number" && Number.isSafeInteger(observed[key]) && observed[key] >= 0)
       ? { inputTokens: observed.inputTokens as number, cachedInputTokens: observed.cachedInputTokens as number, outputTokens: observed.outputTokens as number, totalTokens: observed.totalTokens as number } : undefined;
@@ -12090,7 +12111,7 @@ async function buildDashboardView(
       agentName: dashboardAgentName(agent?.agentName),
       ...(tokenUsage ? { tokenUsage } : {}),
       activityTitle: latestTurn.activityTitle,
-      ...(latestTurn.execution ? { execution: latestTurn.execution } : {}),
+      ...(nextExecution || latestTurn.execution ? { execution: nextExecution || latestTurn.execution } : {}),
       status: latestTurn.status,
       createdAt: latestTurn.startedAt || latestTurn.updatedAt,
       updatedAt: latestTurn.updatedAt,
@@ -12799,6 +12820,7 @@ type ActivityCardExecution = {
   model: string;
   modelDisplayName?: string;
   reasoningEffort: string;
+  serviceTier?: string;
   reroutedModel?: string;
   reroutedModelDisplayName?: string;
   isCurrent: boolean;
@@ -12826,7 +12848,7 @@ function activityCardExecution(
 }
 
 function dashboardExecutionForSelection(
-  selection: Pick<ModelSelection, "model" | "reasoningEffort">,
+  selection: Pick<ModelSelection, "model" | "reasoningEffort" | "serviceTier">,
   backendKind: string | undefined,
   modelCatalog: CodexModelCatalogProvider,
   isCurrent: boolean,
@@ -12849,6 +12871,7 @@ function dashboardExecutionForSelection(
     model: selection.model,
     ...(modelDisplayName !== selection.model ? { modelDisplayName } : {}),
     reasoningEffort: selection.reasoningEffort,
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
     ...(normalizedReroutedModel ? { reroutedModel: normalizedReroutedModel } : {}),
     ...(reroutedModelDisplayName && reroutedModelDisplayName !== normalizedReroutedModel
       ? { reroutedModelDisplayName }
