@@ -204,7 +204,7 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("executionEnvelopeRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("do not require a ChatGPT developer-mode Refresh");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("Refresh only after EXECUTION_ENVELOPE_CHANGED");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectLookup in the same conversation");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("query kind=project in the same conversation");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("mandatory even when only one project is registered");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never infer a first, sole, default, slug");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
@@ -217,14 +217,14 @@ describe("http server", () => {
       "admits no Activity, Agent, Job, session, or upstream work"
     );
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exposes no Activity-card UI");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("A changed or stale selector uses the same projectLookup recovery");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("A changed or stale selector uses the same read-only project recovery");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("opens Settings only as its returned recovery action");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("opaque projectRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectRevision");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("private project identity and cwd snapshot");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("pre-v2 cached executionPolicyRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("same v2 contract with a new requestId and without Refresh");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("stable v2 descriptor always exposes generic bounded selection");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("stable v2 descriptor always exposes generic bounded model selection");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("exact saved fallback");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("based on the task requirements");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(

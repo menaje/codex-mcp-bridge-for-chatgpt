@@ -21,20 +21,20 @@ in [after](issue-69-card-tools-after.json) and
 | Operator descriptors | — | 0 | 2 |
 | Total app-only descriptors | 15 | 17 | 19 |
 | Total advertised descriptors | 30 | 29 | 31 |
-| Serialized descriptor bytes, summed per tool | 179,781 | 237,404 | 248,559 |
-| Model-only descriptor bytes | 50,860 | 44,515 | 44,515 |
+| Serialized descriptor bytes, summed per tool | 179,781 | 238,260 | 249,415 |
+| Model-only descriptor bytes | 50,860 | 45,371 | 45,371 |
 | Unadvertised compatibility names | 0 | 2 | 2 |
 | Total accepted names during migration | 30 | 31 | 33 |
 
-The current contract is 17 tools (12 model and 5 app-only), totaling 137,589
+The current contract is 17 tools (12 model and 5 app-only), totaling 138,445
 serialized bytes, but that is a subset of actual migration discovery. Real
 ChatGPT testing invalidated the original 17-descriptor rollout: saved cards
 require both their original presenter and their app-call descriptors. Twelve
 retained app-only registrations now carry `codex/registrationTier: compatibility`;
 only `codex_input` and `codex_activity_cancel` remain unadvertised aliases.
 
-GPT discovery shrinks by three names and 6,345 bytes (12.5%). Total discovery
-shrinks by only one name during migration, and its bytes increase by 57,623
+GPT discovery shrinks by three names and 5,489 bytes (10.8%). Total discovery
+shrinks by only one name during migration, and its bytes increase by 58,479
 because current and old app contracts coexist. Do not report the 17-tool subset
 as the live inventory or claim all descriptor duplication has already gone.
 After a separately recorded deletion decision, the retired 14 names can be
@@ -189,3 +189,30 @@ that change. Other saved preferences and the project registry matched the
 pre-test backup. The #69 code remains in the isolated implementation worktree;
 no integration, push or production rollout is claimed. Machine-readable host
 observations are in [the live-host report](issue-69-live-host.json).
+
+## Follow-up: permission ownership and completion re-audit
+
+The user explicitly required that GPT never choose execution permissions.
+Current task input therefore has no sandbox or approval-policy field. The bridge
+applies saved access strategy and operator limits. There is no current
+requested-permission-versus-setting conflict check. The retained adaptive value
+now means Bridge default; all nine card and native UI languages were updated.
+Task envelope generation changed to prevent silently reinterpreting an old
+restricted call. Exact admitted replay remains supported. Existing-thread
+policy checks and verification of actual upstream permissions remain intact.
+
+Project resolution moved to the existing read-only status tool, with no new
+registration. Previously it shared the potentially destructive/open-world Task
+tool annotations even when performing only a lookup. This design defect is
+verified in the descriptor; ChatGPT did not expose its internal safety-review
+rationale, so it is not proof of the exact host classifier decision. The stale
+Task description instructing GPT to show an Activity card was also removed.
+
+The follow-up full build/release check passed **760 tests in 62 files**, and
+macOS passed **100 tests, 2 skipped, zero failures**. A new read-only production
+state copy preserved all 475 Jobs and settings through two restarts; its
+question table was empty after normal expiry. The original answered-question
+evidence above remains historical. See [follow-up restart evidence](issue-69-owned-permissions-restart.json).
+
+Actual ChatGPT execution and notifications require a new host check against
+this revision; earlier local/host passes do not establish full issue completion.

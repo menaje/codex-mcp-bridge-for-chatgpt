@@ -4495,7 +4495,7 @@ describe("bridge tools", () => {
     });
     expect(unavailableSchema).not.toHaveProperty("allOf");
     expect(unavailableDescriptor._meta).toBeUndefined();
-    expect(unavailableDescriptor.description).toContain("projectLookup.name");
+    expect(unavailableDescriptor.description).toContain("codex_status query");
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
     const unavailableStatus = parseToolJson(
@@ -6019,12 +6019,12 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("exposes only policy-permitted sandbox values", async () => {
+  it("does not expose permission inputs for any operator profile", async () => {
     const root = temporaryRoot();
     const readClient = await connectTestClient(configFor(root), new FakeUpstream());
     let schema = (await readClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual(["read-only"]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await readClient.close();
 
     const writeClient = await connectTestClient(
@@ -6033,7 +6033,7 @@ describe("bridge tools", () => {
     );
     schema = (await writeClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual(["read-only", "workspace-write"]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await writeClient.close();
 
     const fullClient = await connectTestClient(
@@ -6045,15 +6045,11 @@ describe("bridge tools", () => {
     );
     schema = (await fullClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual([
-      "read-only",
-      "workspace-write",
-      "danger-full-access"
-    ]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await fullClient.close();
   });
 
-  it("accepts matching sandbox intent and rejects conflicts in fixed access modes", async () => {
+  it("applies saved fixed access modes and refuses retired permission inputs", async () => {
     const root = temporaryRoot();
     const readConfig = configFor(root);
     const readSettings = new UserSettingsStore(readConfig);
@@ -6067,14 +6063,14 @@ describe("bridge tools", () => {
       readSettings
     );
     let task = (await readClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
-    expect(task.inputSchema.properties?.sandbox).toMatchObject({ enum: ["read-only"] });
+    expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
     expect(task.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: false
     });
     const explicitRead = await runTask(readClient.client, {
-      prompt: "fixed read", agentName: "Read Agent", contextMode: "fresh", sandbox: "read-only"
+      prompt: "fixed read", agentName: "Read Agent", contextMode: "fresh"
     });
     expect(explicitRead.isError).not.toBe(true);
     expect(readUpstream.calls[0]?.args.sandbox).toBe("read-only");
@@ -6092,9 +6088,7 @@ describe("bridge tools", () => {
       fullSettings
     );
     task = (await fullClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
-    expect(task.inputSchema.properties?.sandbox).toMatchObject({
-      enum: ["read-only", "danger-full-access"]
-    });
+    expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
     expect(task.inputSchema.properties).not.toHaveProperty("cwd");
     expect(task.annotations).toMatchObject({
       readOnlyHint: false,
@@ -6105,11 +6099,10 @@ describe("bridge tools", () => {
       prompt: "must be read-only", agentName: "Read intent", contextMode: "fresh", sandbox: "read-only"
     });
     expect(conflictingRead.isError).toBe(true);
-    expect(JSON.stringify(conflictingRead)).toContain("SANDBOX_CONFLICT");
+    expect(JSON.stringify(conflictingRead)).toContain("TASK_PERMISSION_INPUT_RETIRED");
     expect(fullUpstream.calls).toHaveLength(0);
     await runTask(fullClient.client, {
       prompt: "fixed full",
-      sandbox: "danger-full-access",
       agentName: "Full Agent",
       contextMode: "fresh"
     });
@@ -8927,43 +8920,45 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("permits an explicit workspace-write session only in an enabled profile", async () => {
+  it("applies an enabled bridge default of workspace-write without a caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write" }),
       upstream
     );
 
     await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "implement", sessionMode: "new", sandbox: "workspace-write" }
+      arguments: { prompt: "implement", sessionMode: "new" }
     });
     expect(upstream.calls[0]).toMatchObject({ name: "codex", args: { sandbox: "workspace-write" } });
 
     await close();
   });
 
-  it("permits danger-full-access while retaining read-only as the omitted default", async () => {
+  it("applies changed bridge access settings without changing task inputs", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, settings, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
-        CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never"
+        CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never",
+        CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "always-full"
       }),
       upstream
     );
 
     await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "full task", sessionMode: "new", sandbox: "danger-full-access" }
+      arguments: { prompt: "full task", sessionMode: "new" }
     });
     expect(upstream.calls[0]).toMatchObject({
       name: "codex",
       args: { sandbox: "danger-full-access", "approval-policy": "never" }
     });
 
+    settings.update({ accessStrategy: "read-only" }, settings.current.revision);
     await client.callTool({ name: "codex_task", arguments: { prompt: "inspect", sessionMode: "new" } });
     expect(upstream.calls[1]).toMatchObject({ args: { sandbox: "read-only" } });
     await close();
@@ -11025,7 +11020,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("pins new Agent contexts to explicit projects while allowing adaptive sandbox and exact selections", async () => {
+  it("pins new Agent contexts to explicit projects with bridge-owned sandbox and exact model selections", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -11033,6 +11028,7 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`,
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write",
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
@@ -11069,8 +11065,7 @@ describe("bridge tools", () => {
       prompt: "write",
       projectId: "second",
       agentName: "Writer",
-      contextMode: "fresh",
-      sandbox: "workspace-write"
+      contextMode: "fresh"
     });
     await runTask(client, {
       prompt: "other model",
@@ -11575,7 +11570,7 @@ describe("bridge tools", () => {
     });
     expect(removedFresh.isError).toBe(true);
     expect(JSON.stringify(removedFresh)).toContain("PROJECT_REGISTRY_CHANGED");
-    expect(JSON.stringify(removedFresh)).toContain("projectLookup");
+    expect(JSON.stringify(removedFresh)).toContain("codex_status");
     expect(JSON.stringify(removedFresh)).not.toContain("Refresh the tool descriptor");
     expect(upstream.calls).toHaveLength(4);
     const removed = await client.callTool({
@@ -12729,18 +12724,17 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("reuses the pinned write sandbox and rejects a conflicting adaptive override", async () => {
+  it("reuses the pinned write sandbox and rejects a retired caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write" }),
       upstream
     );
     const started = await runTask(client, {
       prompt: "write",
       agentName: "Writer",
-      contextMode: "fresh",
-      sandbox: "workspace-write"
+      contextMode: "fresh"
     });
     const agentId = parseToolJson(started).agentId;
 
@@ -12756,23 +12750,22 @@ describe("bridge tools", () => {
       arguments: { prompt: "conflicting read", agentId, contextMode: "continue", sandbox: "read-only" }
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("requires sandbox='workspace-write'");
+    expect(JSON.stringify(denied)).toContain("TASK_PERMISSION_INPUT_RETIRED");
 
     await close();
   });
 
-  it("reuses the pinned full-access sandbox and rejects a conflicting adaptive override", async () => {
+  it("reuses the pinned full-access sandbox and rejects a retired caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" }),
       upstream
     );
     const started = await runTask(client, {
       prompt: "full task",
       agentName: "Full Agent",
-      contextMode: "fresh",
-      sandbox: "danger-full-access"
+      contextMode: "fresh"
     });
     const agentId = parseToolJson(started).agentId;
 
@@ -12788,7 +12781,7 @@ describe("bridge tools", () => {
       arguments: { prompt: "conflicting read", agentId, contextMode: "continue", sandbox: "read-only" }
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("requires sandbox='danger-full-access'");
+    expect(JSON.stringify(denied)).toContain("TASK_PERMISSION_INPUT_RETIRED");
 
     await close();
   });
@@ -13538,11 +13531,8 @@ describe("bridge tools", () => {
       required: ["name", "projectRef", "projectRevision"],
       additionalProperties: false
     });
-    expect(initialSchema.properties.projectLookup).toMatchObject({
-      type: "object",
-      required: ["name"],
-      additionalProperties: false
-    });
+    expect(initialSchema.properties).not.toHaveProperty("projectLookup");
+    expect(initialSchema.properties).not.toHaveProperty("sandbox");
     expect(initialSchema).not.toHaveProperty("allOf");
     expect(JSON.stringify(initialSchema)).not.toContain('"not":{}');
     expect(initialTask?._meta).toBeUndefined();
@@ -13553,7 +13543,7 @@ describe("bridge tools", () => {
       "Never open it merely because a conversation starts or this plugin is attached"
     );
     expect(settingsTool?.description).toContain(
-      "projectLookup reports that the explicitly requested project needs recovery"
+      "codex_status project lookup reports that the explicitly requested project needs recovery"
     );
 
     const setupProbe = await client.callTool({
@@ -13919,6 +13909,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -13929,8 +13920,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "first write",
-          sessionMode: "new",
-          sandbox: "workspace-write"
+          sessionMode: "new"
         }
       })
     );
@@ -13939,8 +13929,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "second write",
-          sessionMode: "new",
-          sandbox: "workspace-write"
+          sessionMode: "new"
         }
       })
     );
@@ -13963,6 +13952,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -13973,8 +13963,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "first full",
-          sessionMode: "new",
-          sandbox: "danger-full-access"
+          sessionMode: "new"
         }
       })
     );
@@ -13983,8 +13972,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "second full",
-          sessionMode: "new",
-          sandbox: "danger-full-access"
+          sessionMode: "new"
         }
       })
     );
@@ -15106,23 +15094,96 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
 }
 
 
+describe("bridge-owned task permissions and read-only project discovery", () => {
+  it.each([
+    { strategy: "read-only", defaultSandbox: "workspace-write", expected: "read-only" },
+    { strategy: "always-full", defaultSandbox: "read-only", expected: "danger-full-access" },
+    { strategy: "adaptive", defaultSandbox: "workspace-write", expected: "workspace-write" },
+    { strategy: "adaptive", defaultSandbox: "read-only", expected: "read-only" }
+  ] as const)("uses saved $strategy settings without GPT permission input", async ({ strategy, defaultSandbox, expected }) => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: defaultSandbox
+    });
+    const settings = new UserSettingsStore(config);
+    settings.update({ accessStrategy: strategy, usePriorityServiceTier: false }, settings.current.revision);
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(config, upstream, undefined, new FakeModelCatalog(), settings);
+    try {
+      const task = (await c.client.listTools()).tools.find(t => t.name === "codex_task")!;
+      expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
+      expect(task.inputSchema.properties).not.toHaveProperty("approval-policy");
+      expect(task.inputSchema.properties).not.toHaveProperty("projectLookup");
+      expect(task.description).not.toContain("render at most one compact Activity card");
+      const result = await runTask(c.client, { prompt: "permission fixture", agentName: "Owned policy", contextMode: "fresh" });
+      expect(result.isError).not.toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]?.args).toMatchObject({ sandbox: expected, "approval-policy": config.defaultApprovalPolicy });
+      expect(settings.current.usePriorityServiceTier).toBe(false);
+    } finally { await c.close(); }
+  });
+
+  it("never reinterprets a cached permission-bearing request under saved full access", async () => {
+    const config = configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const settings = new UserSettingsStore(config);
+    settings.update({ accessStrategy: "always-full" }, settings.current.revision);
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(config, upstream, undefined, new FakeModelCatalog(), settings);
+    try {
+      for (const sandbox of ["read-only", "danger-full-access"] as const) {
+        const result = await runTask(c.client, { prompt: "cached request", sandbox });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result)).toContain("TASK_PERMISSION_INPUT_RETIRED");
+      }
+      expect(upstream.calls).toEqual([]);
+      expect(c.jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(c.jobs.listActivities(SCOPE_A)).toEqual([]);
+    } finally { await c.close(); }
+  });
+
+  it("resolves exact projects through a read-only tool without task admission or card metadata", async () => {
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const descriptor = (await c.client.listTools()).tools.find(t => t.name === "codex_status")!;
+      expect(descriptor.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+      const project = c.settings.current.projects[0]!;
+      const result = await c.client.callTool({ name: "codex_status", arguments: { query: { kind: "project", name: project.name } } });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ kind: "project", project: {
+        name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision
+      } });
+      expect(JSON.stringify(result)).not.toContain(project.cwd);
+      expect(result._meta || {}).not.toHaveProperty("openai/outputTemplate");
+      const missing = await c.client.callTool({ name: "codex_status", arguments: { query: { kind: "project", name: "Missing project" } } });
+      expect(missing.isError).toBe(true);
+      expect(missing.structuredContent).toMatchObject({ kind: "project", project: null, error: { code: "PROJECT_NOT_FOUND" } });
+      expect(upstream.calls).toEqual([]);
+      expect(c.jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(c.jobs.listActivities(SCOPE_A)).toEqual([]);
+      expect(c.sessions.listForScope(SCOPE_A)).toEqual([]);
+    } finally { await c.close(); }
+  });
+});
+
 describe("session permission admission", () => {
-  it("rejects an unapplied read-only to workspace-write continuation override", async () => {
+  it("rejects a retired permission input on continuation", async () => {
     const root = temporaryRoot(), upstream = new FakeUpstream();
     const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }), upstream);
     try {
-      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "read-only" }));
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
       const result = await runTask(c.client, { prompt: "audit continue", agentId: first.agentId, contextMode: "continue", sandbox: "workspace-write" }) as ToolResult;
       expect(result.isError).toBe(true);
       expect(upstream.calls).toHaveLength(1);
       expect(parseToolJson(result).jobId).toBeNull();
     } finally { await c.close(); }
   });
-  it("rejects a fork that would ignore an explicit read-only sandbox", async () => {
+  it("rejects a retired restricted fork request without escalating it", async () => {
     const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
-    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }), upstream);
+    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" }), upstream);
     try {
-      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
       const result = await runTask(c.client, { prompt: "audit fork", agentId: first.agentId, contextMode: "fork", sandbox: "read-only" }) as ToolResult;
       expect(result.isError).toBe(true);
       expect(upstream.calls).toHaveLength(1);
@@ -15132,9 +15193,9 @@ describe("session permission admission", () => {
   it.each(["continue", "fork"])("rechecks a reduced operator ceiling on %s", async (contextMode) => {
     const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
     const state = new BridgeStateStore({ file: ":memory:" });
-    const initialConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const initialConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" });
     const initial = await connectTestClient(initialConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(initialConfig, { stateStore: state }));
-    const first = parseToolJson(await runTask(initial.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
+    const first = parseToolJson(await runTask(initial.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
     await initial.close();
     const reducedConfig = configFor(root);
     const reduced = await connectTestClient(reducedConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(reducedConfig, { stateStore: state }));
@@ -15151,13 +15212,13 @@ describe("session permission admission", () => {
 describe("public v2 permission admission", () => {
   it("rejects a full-access fork with an explicit read-only v2 request before admission", async () => {
     const root=temporaryRoot(), upstream=new ForkLifecycleUpstream();
-    const c=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS:"1"}),upstream);
+    const c=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS:"1",CODEX_MCP_BRIDGE_DEFAULT_SANDBOX:"danger-full-access"}),upstream);
     try {
       const tool=(await c.client.listTools()).tools.find(t=>t.name==="codex_task")!;
       const p=c.settings.current.projects[0]!;
       const envelope=(tool.inputSchema.properties!.executionEnvelopeRef as {const:string}).const;
       const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"2",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
-      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"},sandbox:"danger-full-access"});
+      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"}});
 
       expect(first.isError).not.toBe(true);
       const id=parseToolJson(first).agentId;

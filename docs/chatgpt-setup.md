@@ -91,7 +91,7 @@ initialization again; no external session store or separate service is required.
 Persistent stdio instead has one tunnel-owned MCP process/connection and does
 not use the HTTP session registry.
 
-The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
+The default capability profile is read-only. To enable additional bridge-owned access strategies without changing the saved default:
 
 ```bash
 npm run bridge:secure -- --allow-write
@@ -224,7 +224,7 @@ entries are preserved. Retained generation-9 and newer resources keep this
 mutation boundary; earlier ID/default and single-revision contracts are incompatible.
 
 On a fresh install the project registry contains no entries. The stable public
-`codex_task` descriptor still exposes generic `project` and `projectLookup`
+`codex_task` descriptor exposes a generic `project` selector; `codex_status` exposes project lookup
 shapes. `codex_task` is always execution-only and never has an Activity-card UI
 binding; project registration does not change its descriptor. Do not open Settings merely because a conversation
 starts or the plugin is attached. After the user explicitly requests new or
@@ -233,7 +233,7 @@ Agent, Job, session, or upstream work and returns `PROJECT_SETUP_REQUIRED` with
 `codex_settings` as the next action. Only then should GPT show the card and
 explain what must be registered.
 
-After registration, use `projectLookup: { name }` on the same Task contract when
+After registration, use `codex_status` with `query: { kind: "project", name }` when
 the exact selector is unknown. That call returns the exact `{ name, projectRef,
 projectRevision }` in `nextActions`, admits no work, and is retried with a new
 `requestId`. The serialized admission boundary remains authoritative: new
@@ -248,14 +248,17 @@ change tunnel credentials, operator capabilities, or the Codex approval policy.
 
 Project selection and access strategy are independent:
 
-- fixed `read-only` accepts omitted or matching `sandbox: "read-only"`;
-- fixed `always-full` accepts omitted or matching `sandbox: "danger-full-access"`;
-- `adaptive` accepts only operator-enabled per-turn sandbox choices.
+- `read-only` applies read-only access to new work;
+- `always-full` applies full access within the operator ceiling;
+- the retained `adaptive` value is shown as **Bridge default** and uses the
+  operator-configured default for new work. GPT no longer chooses permissions.
 
-Conflicting fixed-mode requests return `SANDBOX_CONFLICT`. Keep the requested
-intent and adjust the saved strategy; removing `sandbox` could grant broader
-access. Continue/fork recheck the current operator ceiling and keep the existing
-thread sandbox. A sandbox change requires a fresh context.
+`codex_task` has no permission fields. The bridge alone resolves sandbox and
+approval policy; no GPT-request-versus-setting conflict is needed. Cached calls
+containing the retired field cannot admit new work: refresh discovery. Exact
+already-admitted retries still retrieve their original result. Continue/fork
+recheck operator limits and preserve thread policy; incompatible saved settings
+require fresh context. Host approval review remains an independent boundary.
 
 The public `codex_task` descriptor never contains `cwd`, internal UUID, registry
 inventory, or catalog inventory. Generic `project` remains optional so
@@ -264,7 +267,7 @@ Activity or fresh Agent context, even with one project. The global
 `registryRevision` is Settings CAS only and does not invalidate an unchanged
 selector. Missing selection with an active registry fails `PROJECT_REQUIRED`; a
 truly empty registry returns `PROJECT_SETUP_REQUIRED`. Stale or unavailable
-selectors return same-tool lookup/recovery guidance with no connection Refresh.
+selectors return read-only `codex_status` project lookup/recovery guidance with no connection Refresh.
 Activity, Agent creation/assignment, replay, and Job admission recheck the
 selected project atomically and pin its private UUID/cwd; a backend-assigned
 resumable thread receives the same pin before reuse. Exact admitted v7 replay
@@ -299,7 +302,7 @@ Inspect `tools/list`:
 
 - `codex_task` has no UI metadata, caller `scopeId`, presentation field, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
 - `codex_activity` exposes `compact-monitor` with required `presentationId` and default `full-history` without one;
-- `project` is one generic closed `{ name, projectRef, projectRevision }` object and `projectLookup` is one generic closed `{ name }` no-work operation; neither contains registry values;
+- `project` is one generic closed `{ name, projectRef, projectRevision }` object; read-only `codex_status` project lookup supplies its current values;
 - `taskContractVersion` is exact `"2"` and `executionEnvelopeRef` is one required exact 64-hex const;
 - `selection` is one generic closed model/effort object and `sandbox` lists only the operator-enabled maximum;
 - fixed access/model modes are enforced at runtime and reject incompatible explicit overrides;
@@ -530,7 +533,7 @@ In a new ChatGPT conversation:
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
 7. confirm `codex_task` has no `cwd`/UUID/registry/catalog inventory, requires exact contract v2 plus `executionEnvelopeRef`, and publishes generic closed project/lookup/selection/operator-bounded sandbox shapes;
-8. keep the same conversation and cached v2 descriptor, add project B, resolve it through `projectLookup`, and run there with a new `requestId`; then rename/relocate/archive/restore it and confirm the stale selector fails before Activity, Agent, Job, filesystem, or Codex work and recovers through the same tool without Refresh;
+8. keep the same conversation and cached v2 descriptor, add project B, resolve it through `codex_status` project lookup, and run there with a new `requestId`; then rename/relocate/archive/restore it and confirm the stale selector fails before Activity, Agent, Job, filesystem, or Codex work and recovers through read-only project lookup without Refresh;
 9. in that same conversation, change read-only to another operator-enabled access strategy, change model policy, Priority, thread visibility, card visibility, and locale; confirm no `tools/list_changed`, the descriptor remains byte-identical, a new call uses current settings, and an exact prior v7 retry returns its retained original admission;
 10. make several Task/Agent calls in one response, confirm none has Task UI metadata, then call one compact-monitor presenter and verify exactly one Activity card shows current/action-needed rows plus one exact past-record summary;
 11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm the single presenter card covers both without per-Agent shells;
@@ -621,7 +624,7 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Runtime dotenv rejected: use a regular non-symlink file owned by the current user with mode `0600`; do not put it in a registered project.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: first confirm its URI is present in `dist/ui-manifest.json`. Supported cached URIs must render; deploy current server, use plugin **Refresh**, then start a new conversation only when new metadata is required.
-- `PROJECT_REQUIRED`: call the same v2 `codex_task` with `projectLookup.name`, then retry with its exact returned selector and a new `requestId`.
+- `PROJECT_REQUIRED`: call `codex_status` with `query: { kind: "project", name: "<exact name>" }`, then retry with its exact returned selector and a new `requestId`.
 - `PROJECT_REGISTRY_CHANGED`: the selected project is stale; use the same-tool lookup recovery and a new `requestId`. No work was admitted and no connection Refresh is required. A cached pre-v2 legacy selector must migrate once.
 - `PROJECT_NAME_CONFLICT` / `PROJECT_CWD_CONFLICT`: choose a unique active normalized name/canonical folder.
 - `PROJECT_UNAVAILABLE`: restore the exact pinned folder, or fix/archive the **Needs recovery** project. The bridge does not fall back elsewhere.
@@ -639,7 +642,7 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
   generation changed; Refresh the developer-mode connection and retry with the
   new exact contract/envelope constants.
 - Unrecognized Task `cwd`: refresh the plugin/tool list; select an exact registered `{ name, projectRef, projectRevision }` object instead.
-- `SANDBOX_CONFLICT`: the requested sandbox conflicts with the saved fixed strategy. Adjust the saved strategy to permit the requested sandbox; do not remove a restriction merely to retry.
+- `TASK_PERMISSION_INPUT_RETIRED`: a cached task request still contains a retired permission field. Refresh discovery. Current GPT calls contain no permission settings; the bridge applies saved policy. Do not silently reinterpret a previously denied restricted request.
 - `SANDBOX_CONTEXT_CONFLICT`: continue/fork cannot change the existing sandbox. Use fresh context with the intended permissions.
 - `EXECUTION_ACCESS_MISMATCH`: the CLI returned a different policy or omitted required evidence. No model turn was started; inspect the selected CLI/configuration.
 - `CODEX_PROTOCOL_UNSUPPORTED` / `CODEX_PROTOCOL_UNVERIFIED`: the selected installation cannot confirm the required App Server contract. Repair it or explicitly select a compatible CLI.

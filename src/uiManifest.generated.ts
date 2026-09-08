@@ -15,8 +15,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "5b285e7f26e44808bb06fee4b542206fffa01e544aae265fc18666abd92aa1ec",
-      "uri": "ui://codex-mcp-bridge/settings/5b285e7f26e4.html",
+      "digest": "ec60c590172432ed41593b3f9f0b407188bac30c4b91f0fdaccb8b8af96abe44",
+      "uri": "ui://codex-mcp-bridge/settings/ec60c5901724.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -43,6 +43,35 @@ export const UI_RESOURCE_MANIFEST = {
         }
       },
       "previous": [
+        {
+          "digest": "5b285e7f26e44808bb06fee4b542206fffa01e544aae265fc18666abd92aa1ec",
+          "uri": "ui://codex-mcp-bridge/settings/5b285e7f26e4.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 16
+            }
+          }
+        },
         {
           "digest": "72b8134e24abb28a87e357d69c8fe86c8224eca57bc9abe09ff496b8ba606c9f",
           "uri": "ui://codex-mcp-bridge/settings/72b8134e24ab.html",

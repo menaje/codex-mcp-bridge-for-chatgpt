@@ -34,8 +34,8 @@ export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
 export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
-const EXECUTION_POLICY_REF_CONTRACT_VERSION = 4;
-const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 1;
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 2;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -285,13 +285,13 @@ export class UserSettingsStore {
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
   }
 
-  resolveSandbox(requested?: SandboxMode): SandboxMode {
+  resolveSandbox(): SandboxMode {
     if (this.settings.accessStrategy === "read-only") return "read-only";
     if (this.settings.accessStrategy === "always-full") {
       if (!this.config.allowDangerFullAccess) return "read-only";
       return enforceSandbox(this.config, "danger-full-access");
     }
-    return enforceSandbox(this.config, requested);
+    return enforceSandbox(this.config);
   }
 
   /** Keep registry verification and Activity/Agent/Job admission in one sync boundary. */

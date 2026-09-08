@@ -170,11 +170,11 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   uses generation 15 and never paints cached initial editor metadata; retained
   generation-9 and newer resources keep the compatible mutation boundary.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
-  Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
-  sandbox has one stable operator-bounded shape; fixed access modes accept the
-  same value and reject conflicting intent, while adaptive mode accepts
-  only owner-enabled capabilities. Its exact model/effort decision is resolved
-  again at runtime.
+  Agent ID. It exposes neither per-call cwd nor permission fields. The bridge
+  resolves sandbox and approval policy from saved settings within operator
+  limits. GPT cannot select or override them. The retained adaptive setting
+  uses the bridge default for fresh work. Its exact model/effort decision is
+  resolved again at runtime.
   The user's independent Priority preference is then applied privately by the
   bridge and the effective downstream selection is retained with the job. The
   v2 descriptor requires `taskContractVersion: "2"` and an exact 64-hex,
@@ -212,7 +212,7 @@ the network as the current macOS user.
   normalized Unicode names, and canonical existing folders. A normal fresh
   install starts with no project; no first/sole/default/slug/alias fallback is
   created. `codex_task` advertises a generic closed `{ name, projectRef,
-  projectRevision }` selector plus a same-tool no-work `projectLookup`, never a
+  projectRevision }` selector, resolved through read-only `codex_status`, never a
   registry inventory. The global `registryRevision` remains a Settings CAS
   generation. Every new Activity or fresh Agent context requires the exact
   current object; only existing Activity continue/fork calls omit it and inherit
@@ -450,12 +450,12 @@ ChatGPT's four plugin-permission choices control host-side confirmation before
 an MCP tool call. They do not change the Codex sandbox. A private deployment may
 set Codex approval policy to `never` so the plugin permission is the single
 approval boundary, but doing so removes Codex's independent command prompt.
-With the default `adaptive` strategy, omission uses the operator-configured
-default (read-only by default), while ChatGPT may send only an owner-enabled
-mutation sandbox for an authorized task. Fixed `read-only` and `always-full`
-keep the stable per-call field: an identical value is accepted, while a
-conflicting value returns `SANDBOX_CONFLICT`. Removing a conflicting request
-would change its meaning and must not be suggested as a generic retry. A bridge
+The retained `adaptive` strategy uses the operator-configured default for new
+work (read-only by default). Fixed read-only and full-access settings remain
+authoritative. Current task input has no permission fields; cached inputs that
+contain the retired sandbox field are rejected before new admission and must
+refresh discovery. They are never silently upgraded. Previously admitted exact
+replays return their retained result without execution. A bridge
 user can select only owner-enabled strategies. Preferences are shared by the
 bridge instance because the private no-auth tunnel does not supply per-user
 identity.

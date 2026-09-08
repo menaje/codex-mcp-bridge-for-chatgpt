@@ -1745,7 +1745,7 @@ private func accessLabel(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
     case "read-only": key = "읽기 전용"
-    case "adaptive": key = "작업별 선택"
+    case "adaptive": key = "브리지 기본값"
     case "always-full": key = "항상 전체 접근"
     default: return value
     }
@@ -1756,7 +1756,7 @@ private func accessDescription(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
     case "read-only": key = "모든 새 작업을 읽기 전용으로 제한합니다."
-    case "adaptive": key = "허용된 범위 안에서 작업마다 필요한 접근 수준을 선택합니다."
+    case "adaptive": key = "브리지에 저장된 기본 접근 권한으로 새 작업을 실행합니다."
     case "always-full": key = "모든 새 작업에 전체 접근을 적용합니다."
     default: return value
     }

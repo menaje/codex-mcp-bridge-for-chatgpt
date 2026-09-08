@@ -1234,6 +1234,13 @@ const codexStatusOutputSchema = z.strictObject({
   warnings: z.array(z.string())
 });
 
+const projectStatusOutputSchema = z.strictObject({
+  kind: z.literal("project"),
+  project: currentProjectSelectionZod().nullable(),
+  error: structuredErrorOutputSchema.optional(),
+  nextActions: z.array(z.string())
+});
+
 const mutationOutputSchema = z.strictObject({
   kind: z.literal("mutation"),
   ok: z.boolean(),
@@ -1529,6 +1536,10 @@ const statusResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_status,
   "documented-support-level"
 );
+const projectStatusResultContract = toolOutputContract(
+  "codex_status", "model-orchestrator-semantic", projectStatusOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_status, "documented-support-level"
+);
 const dashboardModelResultContract = toolOutputContract(
   "codex_dashboard",
   "model-orchestrator-semantic",
@@ -1660,7 +1671,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_dashboard: dashboardModelOutputSchema,
   codex_models: codexModelsOutputSchema,
   codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
-  codex_status: objectSchemaUnion([codexStatusOutputSchema, legacyInputOutputSchema]),
+  codex_status: objectSchemaUnion([codexStatusOutputSchema, legacyInputOutputSchema, projectStatusOutputSchema]),
   codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
@@ -1697,6 +1708,7 @@ export function validateModelVisibleStructuredOutput(
   if (toolName === "codex_task") return validateTaskOutput(value);
   if (toolName === "codex_status") {
     if ((value as { kind?: unknown })?.kind === "codex-input") return QUESTION_MODEL_OUTPUT_SCHEMAS.codex_input.parse(value);
+    if ((value as { kind?: unknown })?.kind === "project") return projectStatusOutputSchema.parse(value);
     return validateStatusOutput(value);
   }
   if (toolName === "codex_steer") return validateSteerOutput(value);
@@ -5001,12 +5013,17 @@ export function registerBridgeTools(
     waitFor: statusJobWaitForInput.optional(),
     waitMs: statusJobWaitMsInput
   });
+  const statusProjectQueryInput = z.strictObject({
+    kind: z.literal("project"),
+    name: projectNameInput().describe("Exact user-visible project name. Reads its current selector without executing Codex or opening a card.")
+  });
   const codexStatusQueryInput = z.discriminatedUnion("kind", [
     statusJobRuntimeQueryInput,
     z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape }),
     statusActivityQueryInput,
     statusThreadQueryInput,
-    statusPageQueryInput
+    statusPageQueryInput,
+    statusProjectQueryInput
   ]);
   const statusPublicQueryInput = withJsonSchemaProjection(
     codexStatusQueryInput,
@@ -5025,7 +5042,8 @@ export function registerBridgeTools(
         jsonSchemaBody(z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape })),
         jsonSchemaBody(statusActivityQueryInput),
         jsonSchemaBody(statusThreadQueryInput),
-        jsonSchemaBody(statusPageQueryInput)
+        jsonSchemaBody(statusPageQueryInput),
+        jsonSchemaBody(statusProjectQueryInput)
       ]
     }
   );
@@ -5043,7 +5061,7 @@ export function registerBridgeTools(
   });
   const codexStatusPublicInput = z.strictObject({
     query: statusPublicQueryInput.optional().describe(
-      "Exact detail, bounded job wait, or one cursor-paginated collection. Omit for the current scoped overview."
+      "Exact detail, read-only project lookup, bounded input/job wait, or one cursor-paginated collection. Omit for the current scoped overview."
     )
   });
 
@@ -5052,7 +5070,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. Only an exact completed Job query returns its bounded model-authoritative answer; overview, Activity, thread, and page results expose Job IDs and retrieval actions but never Job answer bodies. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Use query kind=input with an exact jobId, input-only afterCursor and bounded waitMs for ordinary questions and public interim messages; unrelated progress does not wake this wait. Cards use app-only reads.",
+        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. Only an exact completed Job query returns its bounded model-authoritative answer; overview, Activity, thread, and page results expose Job IDs and retrieval actions but never Job answer bodies. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Use query kind=input with an exact jobId, input-only afterCursor and bounded waitMs for ordinary questions and public interim messages; unrelated progress does not wake this wait. Use query kind=project with the exact user-visible name to resolve a project selector without executing Codex or opening a card. This does not grant or configure execution permissions. Cards use app-only reads.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
@@ -5081,6 +5099,10 @@ export function registerBridgeTools(
       }
       if (scopeId && args.includeAllScopes) {
         throw new Error("scopeId and includeAllScopes cannot be used together.");
+      }
+      if (query?.kind === "project") {
+        if (!scopeId) throw new Error("Project lookup requires conversation metadata or an explicit compatibility scopeId.");
+        return projectStatusResult(query.name, userSettings);
       }
       if (pageQuery && !scopeId && !args.includeAllScopes) {
         throw new Error(
@@ -7487,7 +7509,7 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open the settings card. Its app-only read loads the saved preferences, projects, and model catalog without duplicating that work in this opener. Use this when the user explicitly asks where or how to configure this ChatGPT-to-Codex bridge, after an actual codex_task response returns PROJECT_SETUP_REQUIRED, or after projectLookup reports that the explicitly requested project needs recovery. Never open it merely because a conversation starts or this plugin is attached.",
+        "Open the settings card. Its app-only read loads the saved preferences, projects, and model catalog without duplicating that work in this opener. Use this when the user explicitly asks where or how to configure this ChatGPT-to-Codex bridge, after an actual codex_task response returns PROJECT_SETUP_REQUIRED, or after codex_status project lookup reports that the explicitly requested project needs recovery. Never open it merely because a conversation starts or this plugin is attached.",
       inputSchema: z.strictObject({
         refreshModels: z
           .boolean()
@@ -7864,7 +7886,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. New work uses Codex App Server. Threads from retired execution paths require context='fresh' with handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
+        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. New work uses Codex App Server. Threads from retired execution paths require context='fresh' with handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. Resolve an unknown exact selector with codex_status query={kind:'project',name:<exact name>}. That read-only response returns the current selector without execution or a card. Permissions are determined entirely by saved bridge settings and operator limits; task input has no sandbox or approval-policy fields. Do not choose, override, or negotiate permissions, including after host review denial. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions, keep background input waits active until exact Job results are retrieved, and do not open Activity cards.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -7915,6 +7937,14 @@ export function registerBridgeTools(
             return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
           }
           throw new Error("Persisted Codex task replay registration disappeared.");
+        }
+        // Only exact already-admitted retries above may carry the retired
+        // permission field. Never reinterpret a cached restricted request as
+        // a new task under a more permissive bridge setting.
+        if (args.sandbox !== undefined) {
+          throw new Error(
+            "TASK_PERMISSION_INPUT_RETIRED: Task permissions are owned by the bridge settings. This cached request contains a retired sandbox field and admitted no work. Refresh tool discovery; new task calls contain no permission fields. Do not automatically strip a denied request's restriction to retry."
+          );
         }
         admitTaskContractForNewCall({
           args,
@@ -7994,7 +8024,7 @@ export function registerBridgeTools(
               `${PROJECT_UNAVAILABLE}: The selected Activity project no longer resolves to its admission-time folder.`
             );
           }
-          const sandbox = resolveTaskSandbox(config, preferences, args.sandbox);
+          const sandbox = resolveTaskSandbox(config, preferences);
           await upstream.prepareExecution?.({ backendKind: config.defaultBackend, contextMode: "fresh" });
           const executionResolution = await resolveExecutionDecision({
             config,
@@ -8108,7 +8138,7 @@ export function registerBridgeTools(
             });
           }
         );
-        resolveTaskSandbox(config, preferences, args.sandbox, session.sandbox);
+        resolveTaskSandbox(config, preferences, session.sandbox);
         await upstream.prepareExecution?.({ backendKind: session.backendKind, contextMode: agentResolution.contextMode });
         const executionResolution = await resolveExecutionDecision({
           config,
@@ -8175,7 +8205,6 @@ export function registerBridgeTools(
         if (agentResolution.contextMode === "fork") {
           return await forkTrackedSession({
             prompt: args.prompt,
-            requestedSandbox: args.sandbox,
             session,
             routing,
             executionMode,
@@ -8210,7 +8239,6 @@ export function registerBridgeTools(
           upstream,
           sessions,
           jobs,
-          requestedSandbox: args.sandbox,
           preferences,
           activityRequest,
           executionDecision,
@@ -9290,7 +9318,6 @@ async function continueTrackedSession(input: {
   upstream: CodexUpstream;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
-  requestedSandbox?: SandboxMode;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
   adoptOnComplete?: boolean;
@@ -9307,7 +9334,7 @@ async function continueTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.requestedSandbox, input.session.sandbox);
+  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
   const currentCwd = resolvePinnedAgentCwd(input);
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
@@ -9436,7 +9463,6 @@ async function continueTrackedSession(input: {
 
 async function forkTrackedSession(input: {
   prompt: string;
-  requestedSandbox?: SandboxMode;
   session: TrackedCodexSession;
   routing: CodexRouting;
   executionMode: ActivityExecutionMode;
@@ -9456,7 +9482,7 @@ async function forkTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.requestedSandbox, input.session.sandbox);
+  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
@@ -13893,7 +13919,7 @@ function codexTaskInputSchema(
       "Exact user-visible project name to resolve without admitting work."
     )
   }).optional().describe(
-    "No-work discovery through this same tool. Use only when the exact projectRef/projectRevision is unknown, then retry with the returned exact selector and a new requestId."
+    "Retained no-work lookup for cached callers. Current callers use codex_status query kind=project."
   );
   const runtimeCommon = {
     scopeId: scopeIdSchema()
@@ -13918,13 +13944,9 @@ function codexTaskInputSchema(
     requestId,
     prompt,
     project,
-    projectLookup,
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode,
-    sandbox: sandboxSchema(config).optional().describe(
-      "Optional requested sandbox. Fixed access modes accept the same sandbox and reject conflicting requests. Continue/fork retain the thread sandbox and must satisfy current operator limits; use fresh context to change sandbox."
-    ),
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -14724,22 +14746,16 @@ function settingsViewResult(
 function resolveTaskSandbox(
   config: BridgeConfig,
   preferences: BridgeUserSettings,
-  requested?: SandboxMode,
   existing?: SandboxMode
 ): SandboxMode {
   const forced = forcedSandboxForStrategy(config, preferences);
-  if (forced && requested && requested !== forced) {
-    throw new Error(
-      `SANDBOX_CONFLICT: Requested sandbox='${requested}' conflicts with the saved ${preferences.accessStrategy} access strategy (sandbox='${forced}'). Change the saved access strategy to allow the requested sandbox; removing the request would use '${forced}'.`
-    );
-  }
   // A saved thread never grants authority that the current operator envelope
   // no longer permits. This applies equally to omission, continue, and fork.
   if (existing) enforceSandbox(config, existing);
-  const resolved = enforceSandbox(config, forced ?? requested ?? existing);
+  const resolved = enforceSandbox(config, forced ?? existing);
   if (existing && resolved !== existing) {
     throw new Error(
-      `SANDBOX_CONTEXT_CONFLICT: This thread requires sandbox='${existing}', but the requested or saved sandbox is '${resolved}'. Use contextMode='fresh' to run with '${resolved}'.`
+      `SANDBOX_CONTEXT_CONFLICT: This existing thread uses '${existing}', but the saved bridge setting requires '${resolved}'. Start a fresh context under the saved setting; task calls cannot change permissions.`
     );
   }
   return resolved;
@@ -16696,7 +16712,7 @@ function contractedToolResult<Schema extends z.ZodType>(
   } = {}
 ): ToolResult {
   if (contract.toolName === "codex_task") validateTaskOutput(structured);
-  if (contract.toolName === "codex_status") validateStatusOutput(structured);
+  if (contract.toolName === "codex_status") validateModelVisibleStructuredOutput("codex_status", structured);
   if (contract.toolName === "codex_steer") validateSteerOutput(structured);
   return projectToolResult(contract, {
     canonical,
@@ -16806,7 +16822,7 @@ function projectSelectionChangedResult(
   return taskPreflightErrorResult({
     code: PROJECT_REGISTRY_CHANGED,
     message: stableContract
-      ? "The selected project changed before admission. No work was admitted; resolve it through projectLookup on this same stable task contract and retry."
+      ? "The selected project changed before admission. No work was admitted; resolve it through codex_status query kind=project and retry."
       : message.replace(`${PROJECT_REGISTRY_CHANGED}: `, ""),
     retryable: true,
     nextActions: stableContract
@@ -16831,6 +16847,28 @@ function projectSelectionRequiredResult(
       ? projectRecoveryActions(userSettings)
       : ["Refresh the Codex developer-mode connection and choose an exact advertised project selector."]
   });
+}
+
+function projectStatusResult(name: string, userSettings: UserSettingsStore): ToolResult {
+  const normalized = normalizeProjectName(name);
+  const key = projectNameKey(normalized);
+  const project = userSettings.projectRegistry.selectableProjects.find(candidate => candidate.nameKey === key);
+  const registered = userSettings.current.projects.find(candidate => candidate.nameKey === key);
+  const code = userSettings.current.projects.length === 0 ? PROJECT_SETUP_REQUIRED
+    : registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND";
+  const result = {
+    kind: "project" as const,
+    project: project ? { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision } : null,
+    ...(!project ? { error: {
+      code, message: `The requested project ${JSON.stringify(normalized)} is not available. No work was admitted.`, retryable: true
+    } } : {}),
+    nextActions: project
+      ? [projectSelectorRetryAction(project), "Task permissions are determined by the bridge settings; do not send permission fields."]
+      : ["Open codex_settings to register or restore the explicitly requested project, then repeat this read-only project query."]
+  };
+  return contractedToolResult(projectStatusResultContract, result, result,
+    { text: project ? "Project selector resolved. No work was admitted." : result.error!.message },
+    { isError: !project });
 }
 
 function projectLookupResult(name: string, userSettings: UserSettingsStore): ToolResult {
@@ -16880,7 +16918,7 @@ function projectRecoveryActions(
     ? ` (${selectable.length - names.length} more are available in Settings)`
     : "";
   return [
-    `Use this same codex_task with projectLookup={"name":<exact name>} and a new requestId. Selectable names include ${JSON.stringify(names)}${suffix}; the lookup admits no work and returns the exact selector. No connection Refresh is required.`
+    `Use codex_status with query={"kind":"project","name":<exact name>}. Selectable names include ${JSON.stringify(names)}${suffix}; the lookup admits no work and returns the exact selector. No connection Refresh is required.`
   ];
 }
 

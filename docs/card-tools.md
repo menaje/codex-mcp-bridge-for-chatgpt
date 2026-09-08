@@ -160,3 +160,18 @@ implicitly included as a separate feature in #69.
 
 See the [implementation audit](audits/2026-09-08-card-tool-consolidation.md) for
 measured discovery/call changes, tests and remaining host evidence.
+
+## Bridge-owned execution permissions
+
+GPT task input has no sandbox or approval-policy field. The bridge applies saved
+access settings within operator limits; the retained adaptive option means
+Bridge default. Current execution has no GPT-permission-versus-setting conflict
+check. Existing thread and actual upstream-policy checks remain. The execution
+envelope changed, so refresh discovery before admitting new work. Cached calls
+with permission input are refused; exact previously admitted replays retain
+their result and never execute again.
+
+Project resolution uses the existing read-only `codex_status` query
+`{kind: "project", name: "<exact name>"}`, without a card, permission input or
+Codex execution. The former lookup branch is runtime-only compatibility.
+The registered tool count remains 29 during migration (12 GPT, 17 app-only).

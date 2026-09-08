@@ -5,12 +5,12 @@
   "registered": 31,
   "model": 12,
   "app": 19,
-  "descriptorBytes": 248559,
+  "descriptorBytes": 249415,
   "current": {
     "registered": 17,
     "model": 12,
     "app": 5,
-    "descriptorBytes": 137589
+    "descriptorBytes": 138445
   },
   "compatibilityDescriptors": 12,
   "unadvertisedCompatibilityNames": [
@@ -155,7 +155,7 @@
       "name": "codex_settings",
       "audience": "model",
       "tier": "current",
-      "descriptorBytes": 1448
+      "descriptorBytes": 1462
     },
     {
       "name": "codex_settings_snapshot",
@@ -167,7 +167,7 @@
       "name": "codex_status",
       "audience": "model",
       "tier": "current",
-      "descriptorBytes": 8899
+      "descriptorBytes": 10217
     },
     {
       "name": "codex_steer",
@@ -179,7 +179,7 @@
       "name": "codex_task",
       "audience": "model",
       "tier": "current",
-      "descriptorBytes": 10657
+      "descriptorBytes": 10181
     },
     {
       "name": "codex_ui_read",

@@ -43,12 +43,10 @@ unique requestId, exact expectedVersion, reason and optional impact acknowledgme
 The old Job shape remains runtime-only compatibility.
 
 Contract v2 publishes one generic closed `project: { name, projectRef,
-projectRevision }` shape and one generic `projectLookup: { name }` shape. It
-does not embed project names, refs, revisions, private UUIDs, paths, or registry
-generations. `projectLookup` is a same-tool no-work operation: it returns the
-exact current selector in `nextActions`, creates no Activity, Agent, Job,
-session, filesystem mutation, or upstream turn, and is then retried with a new
-`requestId`. `projectRef` is opaque public identity and `projectRevision`
+projectRevision }` shape. It does not embed registry values, private UUIDs or
+paths. Resolve unknown selectors with read-only `codex_status` query
+`{ kind: "project", name }`. This creates no Activity, Agent, Job, session,
+filesystem mutation, or upstream turn. `projectRef` is opaque public identity and `projectRevision`
 changes on effective rename, relocate, archive, or restore transactions for
 that project. External availability is rechecked separately. The global
 `registryRevision` remains a Settings CAS generation, not a Task selector. The
@@ -136,13 +134,13 @@ where it must return an authoritative, recoverable error:
   before execution state or side effects. Existing continue/fork calls may omit
   selection and inherit their admission-time thread choice unless they
   deliberately request a runtime-policy-supported model override. If an exact
-  current project selector is unknown, `projectLookup` resolves it through the
-  same stable Task contract without requiring a model selection.
+  current project selector is unknown, `codex_status` query kind=project resolves
+  it without model selection, execution, or permission input.
 - The selected project's ref/revision/name, active/available state, canonical
   root, model catalog, and execution policy are checked again during serialized
   admission even if the client retained a cached descriptor. An unrelated
   project mutation does not invalidate an unchanged selector, while a changed
-  selector returns same-tool lookup recovery rather than requiring rediscovery.
+  selector returns read-only project lookup recovery rather than requiring rediscovery.
 - A cross-backend fresh Agent requires an explicit bounded `handoffSummary`;
   same-backend fresh context forbids it.
 - Cancellation impact sets, optimistic versions, mounted-card leases, and exact
@@ -178,7 +176,7 @@ host metadata plus the four published fields, then proves that another host
 session cannot address that Job.
 Stable descriptor equality across settings/catalog/project changes,
 unavailable-project recovery, fixed and automatic runtime model policies, and
-adaptive/fixed sandbox enforcement remain in the discovery suite.
+bridge-owned sandbox enforcement remain in the discovery suite.
 
 The focused issue-40 discovery delta is checked in at
 `docs/audits/issue-40-tool-schema-delta.json`; the executable full inventory
@@ -189,3 +187,22 @@ snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
 `codex_status` (`query.kind: "input"`) accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
 
 `codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_ui_read` (`view: "question"`) and `codex_question_action` require the scoped question ID, revision, and private presentation token. The action's closed `submit`, `claim`, and `ack` branches preserve separate storage and delivery states. The previous `codex_question_card`, `codex_question_submit`, and `codex_question_notify` names are retained compatibility calls. See [the complete lifecycle](gpt-questions.md).
+
+### Bridge-owned permissions and project reads (#69 follow-up)
+
+Current `codex_task` has no `sandbox` or approval-policy input. The bridge
+uses saved access settings and operator limits; the retained adaptive value
+means the configured bridge default for fresh work. Continue/fork preserve the
+thread policy and recheck operator limits. The execution-envelope generation
+was advanced so unadmitted cached calls cannot silently acquire new authority.
+The runtime accepts the retired field only to identify old calls: exact admitted
+replays remain available, while new admissions return
+`TASK_PERMISSION_INPUT_RETIRED`. No requested-versus-saved conflict exists in
+the current execution path.
+
+Resolve a project using `codex_status` with
+`query: {kind: "project", name: "<exact user-visible name>"}`. It returns the
+opaque current selector without admitting work, loading a model, configuring
+permissions, or opening a card. The previous `codex_task.projectLookup` stays
+runtime-only for cached clients. Invalid or unavailable names do not select a
+fallback. No new tool is registered.

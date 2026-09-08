@@ -674,7 +674,7 @@ describe("user settings and project registry", () => {
       maxConcurrentJobs: 2,
       updatedAt: "2026-08-26T00:00:00.000Z"
     });
-    expect(narrowed.resolveSandbox("danger-full-access")).toBe("read-only");
+    expect(narrowed.resolveSandbox()).toBe("read-only");
     expect(narrowed.loadWarnings.join(" ")).toContain("retained but inactive");
     expect(narrowed.loadWarnings.join(" ")).toContain("concurrent-job limit");
   });

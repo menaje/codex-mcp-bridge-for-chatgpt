@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Remove GPT permission inputs; the bridge applies saved access settings. Resolve project selectors through the existing read-only status tool.",
+  "breaking": true,
+  "migration": "Refresh ChatGPT discovery for the new execution envelope. New codex_task calls omit sandbox and projectLookup. Use codex_status query kind=project for selectors. Retained adaptive settings use the bridge default; read-only/full-access and Priority preferences remain. Cached permission-bearing calls cannot admit new work; exact admitted retries still retrieve results. Host review and operator limits remain independent."
+}
