@@ -186,3 +186,9 @@ adaptive/fixed sandbox enforcement remain in the discovery suite.
 The focused issue-40 discovery delta is checked in at
 `docs/audits/issue-40-tool-schema-delta.json`; the executable full inventory
 snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
+
+## GPT question orchestration (#68)
+
+`codex_input` accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
+
+`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_question_card`, `codex_question_submit`, and `codex_question_notify` require the scoped question ID, revision, and private presentation token. Submission and notification are separate contracts. See [the complete lifecycle](gpt-questions.md).

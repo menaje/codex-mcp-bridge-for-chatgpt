@@ -2,9 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
+import { inspectCliProtocol, requireCliProtocol } from "./cliProtocol.js";
 
 /** Diagnostic evidence of the installation check, never a version or schema allowlist. */
-export const CLI_INSTALL_VALIDATION_ID = "app-server-initialize-v1";
+export const CLI_INSTALL_VALIDATION_ID = "app-server-contract-and-initialize-v2";
 
 export function normalizeProtocolSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalizeProtocolSchema);
@@ -16,6 +17,7 @@ export function normalizeProtocolSchema(value: unknown): unknown {
 
 /** Check the public connection contract without authentication, model execution, or schema hashes. */
 export async function verifyCliConnection(command: string, environment: NodeJS.ProcessEnv): Promise<void> {
+  requireCliProtocol(await inspectCliProtocol(command, environment), "fresh");
   const home = await mkdtemp(path.join(tmpdir(), "codex-connection-"));
   const rpc = new JsonRpcProcess({ command, args: ["app-server", "--listen", "stdio://"],
     env: { ...environment, CODEX_HOME: home }, omitJsonRpcHeader: true, debugLabel: "Codex connection check" });

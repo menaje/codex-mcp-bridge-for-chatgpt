@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import "./app-server-schema-fixture.mjs";
 import { readFileSync } from "node:fs";
 import readline from "node:readline";
+import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
 const manifest = JSON.parse(
   readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8")
@@ -47,12 +49,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   }
   if (message.method === "thread/start") {
     response(message.id, {
+      ...threadPolicyResponse(message.method, message.params, THREAD_ID),
       thread: { id: THREAD_ID, sessionId: SESSION_ID, forkedFromId: null }
     });
     return;
   }
   if (message.method === "thread/resume") {
     response(message.id, {
+      ...threadPolicyResponse(message.method, message.params, message.params.threadId),
       thread: { id: message.params.threadId, sessionId: SESSION_ID, forkedFromId: null }
     });
     return;
@@ -92,6 +96,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    assertTurnPolicy(message.params);
     const turnId = `durable-turn-${++turnSequence}`;
     const prompt = message.params.input?.[0]?.text || "";
     response(message.id, {

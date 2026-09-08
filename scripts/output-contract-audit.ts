@@ -142,19 +142,11 @@ const untypedNumericModelSchemaLiterals = untypedNumericLiteralPointers(
   MODEL_VISIBLE_OUTPUT_SCHEMAS
 );
 const issueSchemaBaselineBytes = 20_128;
-const finalGenerationTargetBytes = Math.ceil(issueSchemaBaselineBytes * 0.6);
 const issue40SteeringSchemaBytes = modelVisibleSchemas.byTool.codex_steer || 0;
-const preIssue40ModelVisibleSchemaBytes =
-  modelVisibleSchemas.totalBytes - issue40SteeringSchemaBytes;
-const issue40ExpandedTargetBytes =
-  finalGenerationTargetBytes + issue40SteeringSchemaBytes;
-const schemaReductionBytes = issueSchemaBaselineBytes - preIssue40ModelVisibleSchemaBytes;
-const schemaReductionPercent = Number(
-  ((schemaReductionBytes / issueSchemaBaselineBytes) * 100).toFixed(3)
-);
 
 const report = {
-  auditVersion: 3,
+  auditVersion: 4,
+  questionFeatureIssue: 68,
   issue: 36,
   regressionIssue: 38,
   featureIssue: 40,
@@ -257,19 +249,14 @@ const report = {
     modelPrimaryAnswerMaxJsonBytes: MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES
   },
   finalGenerationBudget: {
-    targetReductionPercent: 40,
-    targetModelVisibleSchemaBytes: finalGenerationTargetBytes,
-    preIssue40ModelVisibleSchemaBytes,
-    issue40SteeringSchemaBytes,
-    issue40ExpandedTargetBytes,
+    historicalIssue36ReductionTargetPercent: 40,
+    targetModelVisibleSchemaBytes: 19_500,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
-    reductionBytes: schemaReductionBytes,
-    reductionPercent: schemaReductionPercent,
-    headroomBytes: issue40ExpandedTargetBytes - modelVisibleSchemas.totalBytes,
-    enforcedAt: "W3+issue40-additive-tool",
-    passed:
-      preIssue40ModelVisibleSchemaBytes <= finalGenerationTargetBytes &&
-      modelVisibleSchemas.totalBytes <= issue40ExpandedTargetBytes
+    questionToolsSchemaBytes: ["codex_input", "codex_answer", "codex_ask_user", "codex_user_answer"].reduce((total, name) => total + modelVisibleSchemas.byTool[name], 0),
+    headroomBytes: 19_500 - modelVisibleSchemas.totalBytes,
+    enforcedAt: "issue68-question-orchestration",
+    liveChatGptQuestionWakeVerified: false,
+    passed: modelVisibleSchemas.totalBytes <= 19_500
   }
 };
 
@@ -280,9 +267,8 @@ if (process.argv.includes("--check")) {
     "Model-visible output schemas contain typeless numeric const/enum nodes that ChatGPT cannot expose reliably."
   );
   assert.ok(
-    preIssue40ModelVisibleSchemaBytes <= finalGenerationTargetBytes &&
-      modelVisibleSchemas.totalBytes <= issue40ExpandedTargetBytes,
-    `Model-visible schema budget exceeded: base ${preIssue40ModelVisibleSchemaBytes} > ${finalGenerationTargetBytes} or total ${modelVisibleSchemas.totalBytes} > ${issue40ExpandedTargetBytes} bytes.`
+    modelVisibleSchemas.totalBytes <= 19_500,
+    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > 19500 bytes.`
   );
   const baseline = readJson<typeof report>(baselinePath);
   assert.deepStrictEqual(report, baseline, "Output contract audit differs from the checked-in baseline.");

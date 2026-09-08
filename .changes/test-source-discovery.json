@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Limit default test discovery to repository tests and allow the contextual-metadata integration fixture to finish under load without weakening its read-count assertions.",
+  "breaking": false,
+  "migration": null
+}

@@ -134,6 +134,64 @@ afterEach(async () => {
 });
 
 describe("http server", () => {
+  it.each(["stateless", "stateful"])("shares native settings and drain admission with %s HTTP requests", async (mode) => {
+    const baseUrl = await start({ CODEX_GPT_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: mode }, new ThreadUpstream());
+    const service = servers.at(-1)!.applicationService;
+    const client = new Client({ name: "native-http-parity", version: "0.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    try {
+      await registerProject(client, mkdtempSync(path.join(tmpdir(), "native-http-project-")));
+      const settings = await service.settingsSnapshot();
+      await service.updateSettings({ expectedSettingsRevision: settings.settings.settingsRevision,
+        operation: { kind: "patch", settings: { uiLocalePreference: "ja" } } });
+      expect(parseToolJson(await client.callTool({ name: "codex_settings_snapshot", arguments: {} })).settings.uiLocalePreference).toBe("ja");
+      const contract = await currentTaskContract(client);
+      expect(await service.beginDrain()).toMatchObject({ acceptingNewJobs: false, activeJobs: 0, pendingAdmissions: 0 });
+      const denied = await client.callTool({ name: "codex_task", arguments: {
+        scopeId: SCOPE_A, requestId: randomUUID(), prompt: "must wait for native restart", ...contract
+      } });
+      expect(denied.isError).toBe(true);
+      expect(JSON.stringify(denied)).toContain("BRIDGE_DRAINING");
+      expect(await service.runtimeSnapshot()).toMatchObject({ activeJobs: 0, pendingAdmissions: 0 });
+      await service.cancelDrain();
+      const admitted = await client.callTool({ name: "codex_task", arguments: {
+        scopeId: SCOPE_A, requestId: randomUUID(), prompt: "native restart recovered", ...contract
+      } });
+      expect(admitted.isError).not.toBe(true);
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+    } finally { await client.close(); }
+  });
+
+  it("serves cards during an HTTP Activity watch and closes that watch during native shutdown", async () => {
+    const baseUrl = await start({ CODEX_GPT_BRIDGE_NO_AUTH: "1" }, new ThreadUpstream());
+    const server = servers.at(-1)!;
+    const client = new Client({ name: "native-http-watch", version: "0.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    try {
+      await registerProject(client, mkdtempSync(path.join(tmpdir(), "native-watch-project-")));
+      const contract = await currentTaskContract(client);
+      const task = parseToolJson(await client.callTool({ name: "codex_task", arguments: {
+        scopeId: SCOPE_A, requestId: randomUUID(), prompt: "prepare an observed Activity", ...contract
+      } }));
+      const view = privateActivityView(await client.callTool({ name: "codex_activity", arguments: { scopeId: SCOPE_A, activityId: task.activityId } }));
+      let completed = false;
+      const watching = client.callTool({ name: "codex_activity_snapshot", arguments: {
+        scopeId: SCOPE_A, widgetInstanceId: randomUUID(), enrich: false,
+        card: { activityId: task.activityId, generation: view.mountedActivity.cardGeneration, presentation: { kind: "explicit" } },
+        afterVersion: view.scopeVersion, waitMs: 55000
+      } }).finally(() => { completed = true; }).catch(() => undefined);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const resource = (await client.listResources()).resources[0];
+      expect((await client.readResource({ uri: resource.uri })).contents.length).toBeGreaterThan(0);
+      expect((await server.applicationService.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+      expect(completed).toBe(false);
+      await stopLastServer();
+      await client.close();
+      await watching;
+      expect(completed).toBe(true);
+    } finally { await client.close(); }
+  }, 10000);
+
   it("publishes the Agent-first public routing contract in server instructions", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS.slice(0, 512)).toContain("scope-owned Activity and Agent");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("nested discriminated inputs");
@@ -815,7 +873,7 @@ describe("http server", () => {
     expect(diagnostics.storage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 12,
+      schemaVersion: 13,
       activityPersistent: true,
       sessionPersistent: true,
       settingsPersistent: true

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { QuestionStore, QUESTION_STORE_SCHEMA } from "./questionStore.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
   ACTIVITY_EXECUTION_MODES,
@@ -79,7 +80,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "12";
+const CURRENT_SCHEMA_VERSION = "13";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -419,6 +420,7 @@ export type BridgeStateStoreOptions = {
  * transaction, one scope version, and an idempotent completion outbox.
  */
 export class BridgeStateStore {
+  readonly questions: QuestionStore;
   private readonly database: Database.Database;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
@@ -454,6 +456,7 @@ export class BridgeStateStore {
       existingVersion !== "9" &&
       existingVersion !== "10" &&
       existingVersion !== "11" &&
+      existingVersion !== "12" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -474,6 +477,13 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "9") this.migrateV9ToV10();
       if (this.getMeta("schema_version") === "10") this.migrateV10ToV11();
       if (this.getMeta("schema_version") === "11") this.migrateV11ToV12();
+      if (this.getMeta("schema_version") === "12") {
+        this.transaction(() => {
+          this.database.exec(QUESTION_STORE_SCHEMA);
+          this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        });
+      }
+      this.questions = new QuestionStore(this.database);
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -943,6 +953,12 @@ export class BridgeStateStore {
       parameters.push(normalizeUuid(scopeId, "agent scopeId"));
     }
     return Number((this.database.prepare(sql).get(...parameters) as CountRow).count);
+  }
+
+  listCurrentAgentThreads(): BridgeAgentThread[] {
+    return (this.database
+      .prepare("SELECT * FROM agent_threads WHERE is_current = 1 ORDER BY linked_at ASC")
+      .all() as AgentThreadStorageRow[]).map(readAgentThreadRow);
   }
 
   listAgentThreads(agentId: string): BridgeAgentThread[] {
@@ -3815,7 +3831,7 @@ export class BridgeStateStore {
         `);
       }
       const now = Date.now();
-      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_version", "12");
       this.setMeta("schema_v12_migrated_at", new Date(now).toISOString());
     });
   }
@@ -4225,7 +4241,7 @@ export class BridgeStateStore {
     let assignmentReleased = false;
     if (isActiveActivityJobStatus(job.status)) {
       const pending = (job as JobRowInput & { pendingInteractions?: unknown }).pendingInteractions;
-      lifecycle = Array.isArray(pending) && pending.length > 0 ? "waiting-input" : "active";
+      lifecycle = hasBlockingInteraction(pending) ? "waiting-input" : "active";
       currentJobId = job.jobId;
     } else {
       const active = this.database
@@ -4238,7 +4254,7 @@ export class BridgeStateStore {
         .get(agentId) as { job_id: string; payload: string } | undefined;
       if (active) {
         const payload = parsePayload({ payload: active.payload }, "active Agent job") as Record<string, unknown>;
-        lifecycle = Array.isArray(payload.pendingInteractions) && payload.pendingInteractions.length > 0
+        lifecycle = hasBlockingInteraction(payload.pendingInteractions)
           ? "waiting-input"
           : "active";
         currentJobId = active.job_id;
@@ -5624,4 +5640,8 @@ function parsePayload(row: JsonRow, label: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasBlockingInteraction(value: unknown): boolean {
+  return Array.isArray(value) && value.some(entry => !entry || typeof entry !== "object" || entry.isBlocking !== false);
 }

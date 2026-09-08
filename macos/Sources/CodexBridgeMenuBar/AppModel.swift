@@ -285,6 +285,7 @@ final class AppModel: ObservableObject {
     @Published var startupErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var statusErrorMessage: String? { didSet { scheduleOperationalObservation() } }
     @Published var dashboardErrorMessage: String?
+    @Published var dashboardEnrichmentFailed = false
     @Published var settingsLoadErrorMessage: String?
     @Published var settingsErrorMessage: String?
     @Published var runtimeErrorMessage: String?
@@ -345,6 +346,7 @@ final class AppModel: ObservableObject {
     private var settingsAutosaveInProgress = false
     private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
+    private var settingsRequestGeneration = 0
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
@@ -1239,8 +1241,8 @@ final class AppModel: ObservableObject {
     ) {
         dashboardEnrichmentTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            let connection = self.connectionGeneration
             do {
-                let connection = self.connectionGeneration
                 let client = try await self.bridgeClient()
                 let enriched = try await client.dashboard(
                     limit: self.pageLimit,
@@ -1263,14 +1265,19 @@ final class AppModel: ObservableObject {
                     self.dashboard = enriched
                 }
                 self.lastDashboardRefresh = Date()
+                self.dashboardEnrichmentFailed = enriched.enrichment?.isIncomplete == true
             } catch {
-                // Structural state stays usable when optional runtime probes or
-                // account usage enrichment is unavailable.
+                guard !Task.isCancelled,
+                      generation == self.dashboardRequestGeneration,
+                      connection == self.connectionGeneration else { return }
+                self.dashboardEnrichmentFailed = true
             }
         }
     }
 
     func refreshSettings(refreshModels: Bool = false) async {
+        settingsRequestGeneration += 1
+        let request = settingsRequestGeneration
         guard bridgeConnected else {
             if isBridgeConnectionChecking { return }
             settings = nil
@@ -1284,16 +1291,25 @@ final class AppModel: ObservableObject {
                 refreshModels: refreshModels,
                 locale: interfaceLocaleIdentifier
             )
-            guard generation == connectionGeneration else { return }
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == settingsRequestGeneration,
+                  settingsSnapshotIsCurrent(next) else { return }
             settings = next
             if !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.settings.uiLocalePreference
             }
             settingsLoadErrorMessage = nil
         } catch {
-            guard generation == connectionGeneration else { return }
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == settingsRequestGeneration else { return }
             settingsLoadErrorMessage = localizedErrorDescription(error)
         }
+    }
+
+    private func settingsSnapshotIsCurrent(_ next: SettingsSnapshot) -> Bool {
+        guard let current = settings else { return true }
+        return next.settings.settingsRevision >= current.settings.settingsRevision &&
+            next.settings.registryRevision >= current.settings.registryRevision
     }
 
     func refreshRuntimeImpact() async {
@@ -2034,11 +2050,15 @@ final class AppModel: ObservableObject {
             if tracksGlobalBusyState { isBusy = false }
         }
         settingsErrorMessage = nil
+        // A saved response must not be replaced by a read started before save.
+        settingsRequestGeneration += 1
         let generation = connectionGeneration
         do {
             let client = try await bridgeClient()
             let updated = try await client.updateSettings(mutation)
             guard generation == connectionGeneration else { return false }
+            guard settingsSnapshotIsCurrent(updated) else { return true }
+            settingsRequestGeneration += 1
             if let autosavedDraft {
                 lastAutosavedSettingsRevision = updated.settings.settingsRevision
                 lastAutosavedDraft = autosavedDraft

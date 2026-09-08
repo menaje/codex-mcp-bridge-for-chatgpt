@@ -29208,6 +29208,238 @@
         "de": {"stringUnit": {"state": "translated", "value": "Die Komponenten sind nicht kompatibel. Prüfe Aktualisierungs- oder Wiederherstellungsoptionen in den Verbindungseinstellungen."}},
         "pt": {"stringUnit": {"state": "translated", "value": "Os componentes são incompatíveis. Veja opções de atualização ou recuperação nos ajustes de conexão."}}
       }
+    },
+    "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 %lld개 있습니다.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Laufzeit- oder Prozessstatus von %lld Agents konnte nicht bestätigt werden."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime or process status could not be confirmed for %lld Agents."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo confirmar el estado de ejecución o de los procesos de %lld Agents."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état d’exécution ou des processus de %lld Agents n’a pas pu être confirmé."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件の Agent のランタイムまたはプロセス状態を確認できませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 %lld개 있습니다."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível confirmar o estado de execução ou dos processos de %lld Agents."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认 %lld 个 Agent 的运行时或进程状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認 %lld 個 Agent 的執行階段或程序狀態。"
+          }
+        }
+      }
+    },
+    "사용량 확인: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nutzung zuletzt geprüft: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage last checked: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso comprobado por última vez: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dernière vérification de l’utilisation : %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用量の最終確認: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용량 확인: %@"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso verificado pela última vez: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量最后确认时间：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量最後確認時間：%@"
+          }
+        }
+      }
+    },
+    "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einige Details konnten nicht aktualisiert werden. Möglicherweise werden die zuletzt geprüften Werte angezeigt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some details could not be refreshed. Last checked values may be shown."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudieron actualizar algunos datos. Pueden mostrarse los últimos valores comprobados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certains détails n’ont pas pu être actualisés. Les dernières valeurs vérifiées peuvent être affichées."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部の詳細を更新できませんでした。最後に確認した値が表示される場合があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível atualizar alguns detalhes. Os últimos valores verificados podem ser exibidos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分详情未能刷新，可能显示上次确认的值。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分詳細資料未能更新，可能顯示上次確認的值。"
+          }
+        }
+      }
+    },
+    "프로세스 상태를 아직 확인하지 않은 Agent가 %lld개 있습니다.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Prozessstatus von %lld Agents wurde noch nicht geprüft."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Process status has not yet been checked for %lld Agents."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aún no se ha comprobado el estado de los procesos de %lld Agents."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état des processus de %lld Agents n’a pas encore été vérifié."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件の Agent のプロセス状態はまだ確認されていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로세스 상태를 아직 확인하지 않은 Agent가 %lld개 있습니다."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O estado dos processos de %lld Agents ainda não foi verificado."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未检查 %lld 个 Agent 的进程状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未檢查 %lld 個 Agent 的程序狀態。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

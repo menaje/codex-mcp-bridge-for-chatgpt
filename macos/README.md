@@ -35,7 +35,7 @@ alive when the popover or Settings window closes. Explicit **Quit App** stops th
 runtime and boots that helper out for the current login session before the menu
 bar process exits. It also stops an in-progress Codex browser-login process, and
 the app remains open if pending Settings changes cannot be saved. The helper owns the existing bridge launcher,
-the persistent-stdio Secure MCP Tunnel profile, crash backoff, and the versioned
+the loopback HTTP Secure MCP Tunnel profile, crash backoff, and the versioned
 private Unix sockets.
 It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical
 per-user launcher lock. A restarted helper can safely adopt a still-healthy
@@ -121,6 +121,10 @@ only in the client Keychain. Profiles in UserDefaults contain no credential.
 ./macos/build-app.sh
 open "macos/build/Codex MCP Bridge for ChatGPT.app"
 ```
+
+Set `MACOS_BUILD_OUTPUT_DIRECTORY` to an absolute staging directory when the
+default bundle is running. This lets the complete replacement build and pass
+verification before the running app is stopped and replaced.
 
 `Resources/Localization/Localizable.xcstrings` is the native translation source.
 Run `npm run macos:localizations:sync` after adding SwiftUI text, fill every new

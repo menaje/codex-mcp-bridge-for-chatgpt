@@ -498,6 +498,7 @@ describe("CodexAppServerUpstreamPool", () => {
         backendKind: "app-server",
         threadId: "durable-crash-thread",
         prompt: "resume after bridge restart",
+        cwd: process.cwd(), sandbox: "read-only", approvalPolicy: "on-request",
         selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       })).resolves.toMatchObject({
         content: [{ type: "text", text: "RESUMED AFTER CRASH" }],
@@ -789,6 +790,84 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("refreshes capability evidence after a worker restart at the same CLI path and version", async () => {
+    const environment = { ...process.env };
+    const pool = new CodexAppServerUpstreamPool(protocolFixture("crash-resume"), 1, { environment });
+    try {
+      await expect(pool.callTool("codex", task("crash worker"))).rejects.toThrow("CODEX_WORKER_LOST");
+      expect(pool.capabilities().supportsFork).toBe(true);
+      environment.CODEX_TEST_MISSING_METHOD = "thread/fork";
+      await expect(pool.prepareExecution({ contextMode: "fork" })).rejects.toThrow("thread/fork");
+      expect(pool.capabilities().supportsFork).toBe(false);
+    } finally { await pool.close(); }
+  });
+
+  it.each(["form", "url"])("round-trips MCP %s elicitation without exposing private input in events", async mode => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const interactions: CodexPendingInteraction[] = [];
+    const events: CodexPublicEvent[] = [];
+    try {
+      const running = pool.callTool("codex", task(`elicitation ${mode}`), progress => {
+        if (progress.event) events.push(progress.event);
+        if (isInteraction(progress.event?.details?.interaction)) interactions.push(progress.event!.details!.interaction as CodexPendingInteraction);
+      });
+      const pending = await nextInteraction(interactions, "mcp-elicitation");
+      expect(pending).toMatchObject({ elicitation: { mode, serverName: "fixture-mcp" }, isBlocking: true });
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_ELICITATION_URL");
+      expect(JSON.stringify(events)).not.toContain("requestedSchema");
+      if (mode === "form") {
+        await expect(pool.respondToInteraction(pending.interactionId, { elicitation: { action: "accept", content: { color: "green" } } }))
+          .rejects.toThrow("schema");
+        expect(pool.interactionInput(pending.interactionId)).toHaveProperty("requestedSchema");
+      } else expect(pool.interactionInput(pending.interactionId)?.url).toContain("PRIVATE_ELICITATION_URL");
+      await pool.respondToInteraction(pending.interactionId, { elicitation: { action: "accept", content: mode === "url" ? null : {
+        color: "blue", count: 2, enabled: false, tags: ["b"]
+      } } });
+      await expect(running).resolves.toMatchObject({ content: [{ text: "ELICITATION COMPLETE" }] });
+      expect(pool.interactionInput(pending.interactionId)).toBeUndefined();
+    } finally { await pool.close(); }
+  });
+
+  it("keeps nonblocking questions and closed choices distinct from blocking input", async () => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
+    const interactions: CodexPendingInteraction[] = [], events: CodexPublicEvent[] = [];
+    try {
+      const running = pool.callTool("codex", task("nonblocking input"), progress => {
+        if (progress.event) events.push(progress.event);
+        if (isInteraction(progress.event?.details?.interaction)) interactions.push(progress.event!.details!.interaction as CodexPendingInteraction);
+      });
+      const pending = await nextInteraction(interactions, "user-input");
+      expect(pending).toMatchObject({ origin: "codex-question", isBlocking: false, questions: [{ isOther: false }] });
+      expect(events.find(event => event.type === "input-required")?.phase).toBe("updated");
+      await expect(pool.respondToInteraction(pending.interactionId, { answers: { color: ["invented"] } })).rejects.toThrow("not available");
+      await pool.respondToInteraction(pending.interactionId, { answers: { color: ["blue"] } });
+      await expect(running).resolves.toMatchObject({ content: [{ text: "OPTIONAL INPUT COMPLETE" }] });
+    } finally { await pool.close(); }
+  });
+
+  it.each([
+    { prompt: "blocking input", routing: "enabled", origin: "codex-question" },
+    { prompt: "nonblocking input", routing: "disabled", origin: "unknown" },
+    { prompt: "nonblocking input", routing: "unsupported", origin: "unknown" },
+    { prompt: "dynamic input", routing: "enabled", origin: "unknown" },
+    { prompt: "legacy app input", routing: "enabled", origin: "app-approval" }
+  ])("classifies $prompt as $origin with $routing routing evidence", async ({ prompt, routing, origin }) => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: { ...process.env, CODEX_TEST_QUESTION_ROUTING: routing } });
+    const interactions: CodexPendingInteraction[] = [], events: CodexPublicEvent[] = [];
+    try {
+      const running = pool.callTool("codex", task(prompt), progress => {
+        if (progress.event) events.push(progress.event);
+        if (isInteraction(progress.event?.details?.interaction)) interactions.push(progress.event!.details!.interaction as CodexPendingInteraction);
+      });
+      const pending = await nextInteraction(interactions, "user-input");
+      expect(pending.origin).toBe(origin);
+      expect(events.find(event => event.type === "turn" && event.phase === "started")?.details?.questionRouting)
+        .toBe(routing === "enabled" ? "verified-mcp-elicitation" : "unverified");
+      await pool.respondToInteraction(pending.interactionId, { answers: { [pending.questions![0].id]: ["blue"] } });
+      await expect(running).resolves.toMatchObject({ content: [{ text: "OPTIONAL INPUT COMPLETE" }] });
+    } finally { await pool.close(); }
+  });
+
   it("round-trips command, file, input, and permission requests by exact request ID", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const interactions: CodexPendingInteraction[] = [];
@@ -859,10 +938,8 @@ describe("CodexAppServerUpstreamPool", () => {
         if (isInteraction(interaction)) interactions.push(interaction);
       });
       const input = await nextInteraction(interactions, "user-input");
-      expect(input).toMatchObject({
-        autoResolutionMs: 100,
-        expiresAt: expect.any(Number)
-      });
+      expect(input.autoResolutionMs).toBeUndefined();
+      expect(input.expiresAt).toBeUndefined();
       await expect(running).resolves.toMatchObject({
         content: [{ type: "text", text: "AUTO INPUT RESOLVED" }],
         structuredContent: { turnStatus: "completed" }
@@ -885,7 +962,7 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
-  it("expires a timed user-input request locally when the resolved notification is absent", async () => {
+  it("does not expire a user-input request from deprecated autoResolutionMs", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const interactions: CodexPendingInteraction[] = [];
     const events: CodexPublicEvent[] = [];
@@ -896,21 +973,13 @@ describe("CodexAppServerUpstreamPool", () => {
         if (isInteraction(interaction)) interactions.push(interaction);
       });
       const input = await nextInteraction(interactions, "user-input");
-      expect(input.autoResolutionMs).toBe(20);
+      expect(input.autoResolutionMs).toBeUndefined();
+      expect(input.expiresAt).toBeUndefined();
       await expect(running).resolves.toMatchObject({
         content: [{ type: "text", text: "LOCAL INPUT EXPIRED" }],
         structuredContent: { turnStatus: "completed" }
       });
-      expect(events).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          type: "input-required",
-          phase: "completed",
-          details: {
-            resolvedInteractionId: input.interactionId,
-            resolution: "expired"
-          }
-        })
-      ]));
+      expect(events.some(event => event.details?.resolution === "expired")).toBe(false);
     } finally {
       await pool.close();
     }

@@ -104,8 +104,8 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify discovery of eleven model-visible tools: `codex_dashboard`, `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, and `codex_task`.
-6. The app-private `codex_dashboard_snapshot`, `codex_settings_snapshot`, `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, and `codex_update_settings` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
+5. Verify discovery of fifteen model-visible tools: `codex_dashboard`, `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, `codex_task`, `codex_input`, `codex_answer`, `codex_ask_user`, and `codex_user_answer`.
+6. The app-private `codex_dashboard_snapshot`, `codex_settings_snapshot`, `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, `codex_update_settings`, `codex_question_card`, `codex_question_submit`, and `codex_question_notify` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
 
 ### Refresh after a bridge/UI change
 
@@ -120,6 +120,8 @@ npm run check
 Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves the newly advertised current URI and every retained URI whose UI contract generation is still supported.
 
 Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
+
+Installing GPT question orchestration adds four public tools and three card-only tools, so its first installation requires Refresh. Confirm `codex_ask_user` and `codex_user_answer` appear in ChatGPT's connection metadata before testing a card. A live server `tools/list` result proves publication only; it does not prove that ChatGPT's cached tool list adopted the new tools.
 
 After Refresh:
 
@@ -244,9 +246,14 @@ change tunnel credentials, operator capabilities, or the Codex approval policy.
 
 Project selection and access strategy are independent:
 
-- fixed `read-only` forces read-only and rejects an explicit per-call `sandbox`;
-- fixed `always-full` forces `danger-full-access` and rejects an explicit override;
+- fixed `read-only` accepts omitted or matching `sandbox: "read-only"`;
+- fixed `always-full` accepts omitted or matching `sandbox: "danger-full-access"`;
 - `adaptive` accepts only operator-enabled per-turn sandbox choices.
+
+Conflicting fixed-mode requests return `SANDBOX_CONFLICT`. Keep the requested
+intent and adjust the saved strategy; removing `sandbox` could grant broader
+access. Continue/fork recheck the current operator ceiling and keep the existing
+thread sandbox. A sandbox change requires a fresh context.
 
 The public `codex_task` descriptor never contains `cwd`, internal UUID, registry
 inventory, or catalog inventory. Generic `project` remains optional so
@@ -263,8 +270,8 @@ remains valid after later registry or settings changes. Continue/fork omits
 `project` and keeps the admission-time snapshot; an unavailable pinned folder
 returns `PROJECT_UNAVAILABLE` without fallback. Legacy `{ name,
 registryRevision }` remains cached pre-v2 runtime migration input. A caller that
-sends `cwd` fails strict parsing; any fixed access mode that receives `sandbox`
-returns `SANDBOX_OVERRIDE_UNAVAILABLE`.
+sends `cwd` fails strict parsing; a fixed mode accepts matching sandbox intent
+and rejects a conflicting value before task creation.
 
 The ref/revision tuple prevents stale project mappings. A different complete, currently valid selector is still a valid transport-level choice; the bridge cannot infer contrary natural-language intent. Multi-project write/full-access fresh confirmation remains a separate app-private follow-up rather than a model-visible `confirmed` field.
 
@@ -463,7 +470,7 @@ An explicit user request for all work calls `codex_activity` and opens the full 
 
 When the user explicitly asks for a Codex overview across all ChatGPT conversations, call `codex_dashboard` once in the conversation they want to keep as the overview location. This is an unconditional read-only feature of the personal, single-user bridge; there is no Dashboard operator flag to enable. “All” means scopes currently known from live Jobs, result-free archived Job summaries, non-archived Agents, or tracked threads—not the account's complete ChatGPT history. The default result-bearing Job window is six hours/100 Jobs, the Dashboard reads at most 10,000 archived summaries, and the tracked-thread registry defaults to 1,000 entries. The public result is a redacted aggregate fallback so a non-UI host still receives useful status, but it carries only locale app metadata and no full Dashboard view. The generation-17 UI starts cold in loading state, renders a fresh structural app-only `codex_dashboard_snapshot` without waiting for runtime or usage probes, and then applies a bounded enriched snapshot; it does not consume the conversation's cached initial tool result or later host replays of that result. The snapshot supplies active, recent-Agent, and idle pages and computes the larger project/conversation compatibility pages only when an immutable older card supplies those offsets. A mounted recovery call may omit conversation metadata, while any supplied host or compatibility scope is still validated.
 
-The Dashboard refreshes on initial mount, page re-entry, stale visibility return, and the refresh button. Until the first fresh structural snapshot succeeds it shows loading rather than cached or empty counts; an initial failure shows a retryable restore error and never falls back to the original tool response. A page re-entry older than one second or visibility return older than thirty seconds first discards the mounted view, so a failed fresh request cannot redraw those stale rows. During cold startup, generation 18 uses `window.openai.callTool` immediately when the ChatGPT compatibility bridge exists instead of waiting for the standard MCP Apps initialization timeout. Structural data is requested with `enrich: false`; a second `enrich: true` request is optional and cannot hide or invalidate the structural result when it fails. Enrichment is limited to active/attention/currently visible Agent rows, at most eight in-flight workers, 400 ms per probe, a 1.2-second runtime budget, and an independent 800-ms usage budget. It reads only already loaded background-terminal state and never calls `thread/resume` to populate a card. Generation 18 retains the fixed `active → recent terminal → idle` order and groups every section by opaque Activity identity with Agents nested below. The idle heading is explicitly **Recent Activity**, because an idle Agent has released its current assignment; Agents with no retained Activity are grouped under **No recent Activity**. All three pages preserve whole Activity groups, so the nominal Agent-row limit may be exceeded when one Activity contains more Agents. Project and GPT conversation context appear once on the Activity; every Agent keeps the actual model/reasoning effort for its latest turn, and a different current selection remains separately labelled as next-run settings. Up to 12 older turns suppress the enclosing Activity title, retain distinct Activity-ID boundaries even when visible titles match, and always show their own execution evidence or an unavailable label. Recent and idle sections append later pages in place through **Show more**, with no previous/next replacement navigation. A stable opaque row key and requested-offset check evict moved rows and rebase a clamped page. The idle section starts collapsed on each fresh card. Older retained turns also start collapsed under each Agent. Ordinary refreshes preserve the idle and history disclosures in the current mounted iframe without `localStorage`.
+The Dashboard refreshes on initial mount, page re-entry, stale visibility return, and the refresh button. Until the first fresh structural snapshot succeeds it shows loading rather than cached or empty counts; an initial failure asks the user to retry with the same card’s Refresh button and never falls back to the original tool response. Generation 19 preserves the last successfully loaded mounted view and its timestamp on page re-entry older than one second or visibility return older than thirty seconds. A failed refresh leaves that view visible with a localized warning; Refresh or the next visibility/online return can retry the same card. Obsolete in-flight responses still cannot replace a newer view. Cold mounts continue to require a fresh snapshot and do not render a cached conversation tool result. During cold startup, generation 18 uses `window.openai.callTool` immediately when the ChatGPT compatibility bridge exists instead of waiting for the standard MCP Apps initialization timeout. Structural data is requested with `enrich: false`; a second `enrich: true` request is optional and cannot hide or invalidate the structural result when it fails. Enrichment is limited to active/attention/currently visible Agent rows, at most eight in-flight workers, 400 ms per probe, a 1.2-second runtime budget, and an independent 800-ms usage budget. It reads only already loaded background-terminal state and never calls `thread/resume` to populate a card. Generation 18 retains the fixed `active → recent terminal → idle` order and groups every section by opaque Activity identity with Agents nested below. The idle heading is explicitly **Recent Activity**, because an idle Agent has released its current assignment; Agents with no retained Activity are grouped under **No recent Activity**. All three pages preserve whole Activity groups, so the nominal Agent-row limit may be exceeded when one Activity contains more Agents. Project and GPT conversation context appear once on the Activity; every Agent keeps the actual model/reasoning effort for its latest turn, and a different current selection remains separately labelled as next-run settings. Up to 12 older turns suppress the enclosing Activity title, retain distinct Activity-ID boundaries even when visible titles match, and always show their own execution evidence or an unavailable label. Recent and idle sections append later pages in place through **Show more**, with no previous/next replacement navigation. A stable opaque row key and requested-offset check evict moved rows and rebase a clamped page. The idle section starts collapsed on each fresh card. Older retained turns also start collapsed under each Agent. Ordinary refreshes preserve the idle and history disclosures in the current mounted iframe without `localStorage`.
 
 The mounted snapshot performs bounded read-only App Server checks for at most 100 recently updated Agents, with a 1.5-second per-Agent timeout and a nine-second overall budget. Agents without a retained latest Job are included only when the upstream provides a non-loading thread probe; otherwise they are reported as skipped. Timed-out and deadline-deferred probes are also skipped/unknown, and the snapshot does not load a `notLoaded` historical thread merely for the overview. **Tracked projects** counts active, non-deleted project registrations rather than distinct project keys on the visible rows. An active but temporarily unavailable registration remains counted; archived/deleted registrations and the unassigned bucket do not. Historical rows admitted under an archived or deleted registration remain visible. The snapshot does not long-poll, consume Activity watcher admission, own completion handoff, or acquire a control lease. ChatGPT cannot update a dormant historical card while the host has not mounted it, so reopening that overview conversation is the expected refresh path. Refresh is a retained-state snapshot rather than a live health check of every historical thread.
 
@@ -650,7 +657,10 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
   generation changed; Refresh the developer-mode connection and retry with the
   new exact contract/envelope constants.
 - Unrecognized Task `cwd`: refresh the plugin/tool list; select an exact registered `{ name, projectRef, projectRevision }` object instead.
-- `SANDBOX_OVERRIDE_UNAVAILABLE`: omit `sandbox`; the current fixed saved access strategy is authoritative and no Refresh is required.
+- `SANDBOX_CONFLICT`: the requested sandbox conflicts with the saved fixed strategy. Adjust the saved strategy to permit the requested sandbox; do not remove a restriction merely to retry.
+- `SANDBOX_CONTEXT_CONFLICT`: continue/fork cannot change the existing sandbox. Use fresh context with the intended permissions.
+- `EXECUTION_ACCESS_MISMATCH`: the CLI returned a different policy or omitted required evidence. No model turn was started; inspect the selected CLI/configuration.
+- `CODEX_PROTOCOL_UNSUPPORTED` / `CODEX_PROTOCOL_UNVERIFIED`: the selected installation cannot confirm the required App Server contract. Repair it or explicitly select a compatible CLI.
 - Repository refused: remove common secret files from the exposed copy or use a sanitized staging copy.
 - Write/full access refused: start the bridge with the needed operator capability, then Refresh the plugin.
 - `AGENT_ID_REQUIRED`: inspect current Activity Agents and retry with the exact intended ID.
@@ -669,3 +679,7 @@ Official guidance:
 - [MCP Apps and ChatGPT extensions](https://developers.openai.com/plugins/reference)
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)
 - [Multi-agent orchestration](https://developers.openai.com/api/docs/guides/responses-multi-agent)
+
+## GPT가 질문을 처리하는 방식
+
+일반 Codex 질문은 GPT가 먼저 읽고 답합니다. 사용자 의견이 필요할 때 GPT가 질문 카드를 호출하며, 카드의 답변은 GPT가 회수해 다음 행동을 판단합니다. 질문과 승인 요청은 구분합니다. 새 도구 메타데이터를 반영한 뒤 실제 ChatGPT에서 후속 처리가 재개되는지 확인해야 합니다. 자세한 내용은 [질문 처리 흐름](gpt-questions.md)을 참고하세요.

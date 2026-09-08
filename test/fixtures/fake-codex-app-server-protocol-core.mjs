@@ -1,5 +1,7 @@
+import "./app-server-schema-fixture.mjs";
 import { readFileSync } from "node:fs";
 import readline from "node:readline";
+import { threadPolicyResponse } from "./app-server-policy-fixture.mjs";
 
 const mode = process.env.CODEX_TEST_APP_SERVER_MODE;
 const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
@@ -59,7 +61,7 @@ lines.on("line", (line) => {
       return;
     }
     if (message.method === "thread/resume") {
-      respond(message.id, { thread: { id: message.params.threadId } });
+      respond(message.id, { ...threadPolicyResponse(message.method, message.params, message.params.threadId), thread: { id: message.params.threadId } });
       return;
     }
     if (message.method === "turn/start") {

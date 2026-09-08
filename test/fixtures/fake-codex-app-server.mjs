@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import "./app-server-schema-fixture.mjs";
 import { readFileSync } from "node:fs";
 import readline from "node:readline";
+import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
 const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
 
@@ -161,6 +163,16 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "experimentalFeature/list") {
+    if (process.env.CODEX_TEST_QUESTION_ROUTING === "unsupported") {
+      send({ id: message.id, error: { code: -32601, message: "unsupported feature inspection" } }); return;
+    }
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32602, message: "feature inspection requires a loaded thread" } }); return;
+    }
+    response(message.id, { data: [{ name: "tool_call_mcp_elicitation", stage: "stable", enabled: process.env.CODEX_TEST_QUESTION_ROUTING !== "disabled", defaultEnabled: true }], nextCursor: null });
+    return;
+  }
   if (message.method === "thread/start") {
     if (message.params.experimentalRawEvents !== false) {
       send({ id: message.id, error: { code: -32602, message: "raw events must be disabled" } });
@@ -171,7 +183,7 @@ lines.on("line", (line) => {
     threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { thread: { id, ...threadLineages.get(id) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -181,7 +193,7 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    response(message.id, { thread: { id: threadId, ...threadLineages.get(threadId) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ...threadLineages.get(threadId) } });
     return;
   }
   if (message.method === "thread/read") {
@@ -217,7 +229,7 @@ lines.on("line", (line) => {
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { thread: { id, ...threadLineages.get(id) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/archive") {
@@ -265,6 +277,7 @@ lines.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    assertTurnPolicy(message.params);
     if (!loadedThreads.has(message.params.threadId)) {
       send({ id: message.id, error: { code: -32000, message: "thread not found" } });
       return;
@@ -398,6 +411,37 @@ function beginTurn(context) {
     return;
   }
   notification("turn/started", { threadId, turn: { id: turnId } });
+  if (prompt.startsWith("elicitation ")) {
+    const urlMode = prompt.includes("url");
+    serverRequest("mcp-request-41", "mcpServer/elicitation/request", {
+      threadId, turnId: urlMode ? null : turnId, serverName: "fixture-mcp", mode: urlMode ? "url" : "form",
+      message: "Complete the fixture request.",
+      ...(urlMode ? { elicitationId: "external-1", url: "https://example.test/verify?state=PRIVATE_ELICITATION_URL" }
+        : { requestedSchema: { type: "object", properties: {
+          color: { type: "string", enum: ["red", "blue"], title: "Color" },
+          count: { type: "integer", minimum: 1, maximum: 3 },
+          enabled: { type: "boolean" },
+          tags: { type: "array", items: { type: "string", enum: ["a", "b"] } }
+        }, required: ["color", "count", "enabled", "tags"] } })
+    }, result => {
+      const valid = result.action === "accept" && (urlMode ? result.content === null
+        : result.content?.color === "blue" && result.content?.count === 2 && result.content?.enabled === false && result.content?.tags?.[0] === "b");
+      notification("serverRequest/resolved", { threadId, requestId: "mcp-request-41" });
+      finishTurn(context, valid ? "completed" : "failed", valid ? "ELICITATION COMPLETE" : "INVALID ELICITATION RESPONSE");
+    });
+    return;
+  }
+  if (["nonblocking input", "blocking input", "dynamic input", "legacy app input"].includes(prompt)) {
+    if (prompt === "dynamic input") notification("item/started", { threadId, turnId, item: { type: "dynamicToolCall", id: "question-1", namespace: "functions", tool: "request_user_input" } });
+    const questionId = prompt === "legacy app input" ? "mcp_tool_call_approval_1" : "color";
+    serverRequest("optional-question-1", "item/tool/requestUserInput", {
+      threadId, turnId, itemId: "question-1", isBlocking: prompt === "blocking input",
+      questions: [{ id: questionId, header: "Color", question: "Choose a color", isSecret: false, isOther: false, options: [{ label: "blue", description: "Blue" }] }]
+    }, result => finishTurn(context, "completed", result.answers?.[questionId]?.answers?.[0] === "blue" ? "OPTIONAL INPUT COMPLETE" : "INVALID ANSWER"));
+    notification("item/agentMessage/delta", { threadId, turnId, itemId: "continued-1", delta: "Work continues" });
+    return;
+  }
+
   notification("item/reasoning/textDelta", {
     threadId,
     turnId,

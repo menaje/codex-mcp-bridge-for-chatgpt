@@ -66,6 +66,9 @@ const PROCESS_TABLE_MAX_BYTES = 4 * 1_024 * 1_024;
 const CRASH_WINDOW_MS = 5 * 60_000;
 const MAX_AUTOMATIC_RESTARTS = 3;
 const MACOS_MANAGED_TUNNEL_PROFILE = "codex-mcp-bridge-macos";
+// Tunnel's persistent stdio path (tunnel-client 0.0.12) queues behind Activity watches.
+// HTTP keeps those long polls independent of card reads and new work admission.
+const MACOS_MANAGED_TUNNEL_TRANSPORT = "http";
 const MAX_RUNTIME_LOG_LINE_BYTES = 64 * 1_024;
 
 type RuntimeOutputStream = "stdout" | "stderr";
@@ -923,8 +926,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!existsSync(this.launcherPath)) {
       throw new Error(`BRIDGE_RUNTIME_MISSING: Launcher not found at ${this.launcherPath}`);
     }
-    if (!existsSync(path.join(this.bridgeRoot, "dist", "stdio.js"))) {
-      throw new Error("BRIDGE_RUNTIME_MISSING: Built persistent-stdio runtime is not installed.");
+    if (!existsSync(path.join(this.bridgeRoot, "dist", "cli.js"))) {
+      throw new Error("BRIDGE_RUNTIME_MISSING: Built HTTP runtime is not installed.");
     }
 
     this.manualStop = false;
@@ -936,7 +939,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       "--mode",
       "secure",
       "--transport",
-      "stdio",
+      MACOS_MANAGED_TUNNEL_TRANSPORT,
       "--env-file",
       this.envFile,
       "--require-built",
@@ -1211,7 +1214,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       runtime.runtimeBuildId === BRIDGE_BUILD_INFO.id &&
       runtime.phase === "running" &&
       runtime.tunnel.profile === MACOS_MANAGED_TUNNEL_PROFILE &&
-      runtime.tunnel.transport === "stdio" &&
+      runtime.tunnel.transport === MACOS_MANAGED_TUNNEL_TRANSPORT &&
       companion &&
       companion.protocol.name === COMPANION_PROTOCOL_NAME &&
       companion.protocol.version === COMPANION_PROTOCOL_VERSION &&
@@ -1570,7 +1573,7 @@ function normalizeTunnelStatus(
   const buildMatches = runtime.runtimeBuildId === expectedBuildId;
   const tunnel = runtime.tunnel as ManagedTunnelStatus;
   const identityMatches = tunnel.profile === MACOS_MANAGED_TUNNEL_PROFILE &&
-    tunnel.transport === "stdio";
+    tunnel.transport === MACOS_MANAGED_TUNNEL_TRANSPORT;
   const current = belongsToChild && buildMatches && identityMatches && !runtime.stale;
   return {
     phase: current ? tunnel.phase : childPid === null ? "stopped" : "stale",

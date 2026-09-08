@@ -137,7 +137,7 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
     expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
     expect(UI_TRANSLATIONS.ko["dashboard.title"]).toBe("Codex 전체 현황");
-    expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("다시 열어");
+    expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("새로고침");
     expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("Codex turn 완료");
     expect(UI_TRANSLATIONS.ko["dashboard.status.background-process-running"])
       .toBe("백그라운드 프로세스 실행 중");
@@ -344,14 +344,13 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(
       serializedUiTranslations(["common", "settings", "effort"])
     );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      serializedUiTranslations([
-        "common", "usage", "cancellation", "activity", "agent", "job",
-        "lifecycle", "verification", "kind", "dashboard.status", "dashboard.time",
-        "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity",
-        "dashboard.execution"
-      ])
-    );
+    const activityBundles = JSON.parse(ACTIVITY_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
+    const referencedActivityKeys = [...ACTIVITY_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
+    for (const bundle of Object.values(activityBundles) as Record<string, string>[]) {
+      for (const key of referencedActivityKeys) expect(bundle[key], key).toBeTruthy();
+      expect(bundle).not.toHaveProperty("settings.title");
+    }
+
     expect(DASHBOARD_CARD_HTML).toContain(
       serializedUiTranslations([
         "common", "usage", "cancellation", "dashboard", "activity.lastChanged"
@@ -599,8 +598,7 @@ describe("human-facing UI localization", () => {
       'standardBridgeReady=beginStandardBridge();setLocale(localeTag,false);if(typeof ResizeObserver'
     );
     expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pageshow"');
-    expect(DASHBOARD_CARD_HTML).toContain("function invalidateDashboardView()");
-    expect(DASHBOARD_CARD_HTML).toContain("if(view&&requiresFresh)invalidateDashboardView()");
+    expect(DASHBOARD_CARD_HTML).not.toContain("invalidateDashboardView");
     expect(DASHBOARD_CARD_HTML).toContain(
       "if(requiresFresh){automaticRefreshDisabled=false;void reload()}"
     );

@@ -88,6 +88,7 @@ describe("AppServerLateResponseJournal", () => {
         backendKind: "app-server",
         threadId: "late-turn-thread",
         prompt: "late turn identifier",
+        cwd: process.cwd(), sandbox: "read-only", approvalPolicy: "on-request",
         selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
       })).rejects.toMatchObject({ code: -32001, method: "turn/start" });
 

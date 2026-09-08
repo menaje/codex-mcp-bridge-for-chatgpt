@@ -10,6 +10,8 @@ import type {
   CodexBackgroundTerminal,
   CodexPendingInteraction,
   CodexInteractionDecision,
+  CodexInteractionResponse,
+  CodexInteractionInput,
   CodexProgress,
   CodexThreadResumeProbe,
   CodexUpstream,
@@ -55,6 +57,10 @@ export class CodexBackendRouter implements CodexUpstream {
 
   capabilities(backendKind = this.defaultBackend): BackendCapabilities {
     return backendKind === "app-server" ? this.backend(backendKind).capabilities?.(backendKind) || defaultCapabilities(backendKind) : defaultCapabilities(backendKind);
+  }
+
+  async prepareExecution(input: { backendKind: CodexBackendKind; contextMode: "fresh" | "continue" | "fork" }): Promise<void> {
+    await this.backend(input.backendKind).prepareExecution?.(input);
   }
 
   async listModels(backendKind = this.defaultBackend): Promise<unknown> {
@@ -109,6 +115,9 @@ export class CodexBackendRouter implements CodexUpstream {
       {
         threadId: input.threadId,
         prompt: input.prompt,
+        cwd: input.cwd,
+        sandbox: input.sandbox,
+        "approval-policy": input.approvalPolicy,
         ...(input.selection ? selectionArguments(input.selection, input.backendKind) : {}),
         ...backendRoutingArgument(input.backendKind)
       },
@@ -277,7 +286,7 @@ export class CodexBackendRouter implements CodexUpstream {
 
   async respondToInteraction(
     interactionId: string,
-    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+    response: CodexInteractionResponse
   ): Promise<void> {
     const workerId = interactionId.split(":")[0];
     const kind = this.workerBackends.get(workerId);
@@ -285,6 +294,14 @@ export class CodexBackendRouter implements CodexUpstream {
     const backend = this.backend(kind);
     if (!backend.respondToInteraction) throw new Error("Interaction handling is unavailable for this backend.");
     await backend.respondToInteraction(interactionId, response);
+  }
+
+  interactionInput(interactionId: string): CodexInteractionInput | undefined {
+    for (const backend of this.backends.values()) {
+      const input = backend.interactionInput?.(interactionId);
+      if (input) return input;
+    }
+    return undefined;
   }
 
   async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {

@@ -1,4 +1,5 @@
 import { CLI_INSTALL_VALIDATION_ID, verifyCliConnection } from "./runtimeCompatibility.js";
+import { inspectCliProtocol, type CliProtocolSupport } from "./cliProtocol.js";
 import { constants } from "node:fs";
 import { access, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -41,7 +42,7 @@ export type CliSelection = z.infer<typeof selectionSchema>;
 type ManagedInstall = z.infer<typeof managedSchema>;
 type RuntimeState = z.infer<typeof stateSchema>;
 export type RuntimePreferences = z.infer<typeof preferencesSchema>;
-export type CliCandidate = CliSelection & { available: boolean; compatible: boolean };
+export type CliCandidate = CliSelection & { available: boolean; compatible: boolean; protocol?: CliProtocolSupport; protocolError?: string };
 export type CliRuntimeSnapshot = {
   selectionRevision?: number;
   knownVersions?: string[];
@@ -64,6 +65,7 @@ export type RuntimeInstaller = (options: {
 export type RuntimeManagerOptions = {
   root?: string; environment?: NodeJS.ProcessEnv; appPaths?: string[];
   probe?: (command: string) => Promise<string | null>; installer?: RuntimeInstaller;
+  protocolProbe?: typeof inspectCliProtocol;
   latestVersion?: () => Promise<string>;
   defaultVersion?: string; discoverExternal?: boolean;
   explicitCommand?: string;
@@ -84,6 +86,7 @@ export class CodexRuntimeManager {
   private readonly options: RuntimeManagerOptions;
   private probeCache = new Map<string, { stamp: string; version: string | null; checkedAt: number }>();
   private digestCache = new Map<string, { stamp: string; digest: string }>();
+  private protocolCache = new Map<string, { stamp: string; result: Promise<CliProtocolSupport> }>();
 
   constructor(options: RuntimeManagerOptions = {}) {
     this.options = options;
@@ -194,7 +197,7 @@ export class CodexRuntimeManager {
     return {
       selectionRevision: state.selectionRevision,
       knownVersions: [...new Set([...state.managed.map(item => item.version), ...(state.latestVersion ? [state.latestVersion] : [])])],
-      selection, candidates, selectionRequired: !selection || !selection.available,
+      selection, candidates, selectionRequired: !selection || !selection.available || !selection.compatible,
       ...(configuredCommand ? { configuredCommand } : {}),
       pendingSelection: state.pendingSelection, installedVersion: selection?.version ?? null,
       runningVersions: [...new Set(leases.map(item => item.selection.version).filter((value): value is string => value !== null))],
@@ -219,6 +222,7 @@ export class CodexRuntimeManager {
     if (this.configuredCommand()) throw new Error("CODEX_EXPLICIT_OVERRIDE: Remove the explicit Codex path from the runtime environment before changing the saved selection.");
     const candidate = (await this.discover()).find(item => item.id === id);
     if (!candidate || !candidate.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: Refresh the available installations.");
+    assertCompatibleSelection(candidate);
     const selection = selectionSchema.parse(candidate);
     await this.changeState(async state => {
       state.selectionRevision++;
@@ -239,12 +243,14 @@ export class CodexRuntimeManager {
       const state = await this.readState();
       const selection = await this.inspectConfigured(explicitCommand, state, await this.discover(state));
       if (!selection.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: The configured Codex executable is missing or damaged.");
+      assertCompatibleSelection(selection);
       return selectionSchema.parse(selection);
     }
     await this.applyPending();
     const snapshot = await this.snapshot();
     if (!snapshot.selection) throw new Error("CODEX_SELECTION_REQUIRED: Choose or install Codex in the bridge settings.");
     if (!snapshot.selection.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: Restore the selected installation or explicitly choose another one.");
+    assertCompatibleSelection(snapshot.selection);
     return selectionSchema.parse(snapshot.selection);
   }
 
@@ -264,7 +270,9 @@ export class CodexRuntimeManager {
       if (!explicitCommand && state.selection?.command !== selection.command) {
         throw new Error("CODEX_SELECTION_CHANGED: The user changed the selected installation. Retry with the saved choice.");
       }
-      if (!(await this.inspectSelection(selection)).available) throw new Error("CODEX_SELECTION_UNAVAILABLE: The selected installation needs recovery.");
+      const inspected = await this.inspectSelection(selection);
+      if (!inspected.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: The selected installation needs recovery.");
+      assertCompatibleSelection(inspected);
       return { selection, release: await this.lease(selection) };
     });
   }
@@ -505,7 +513,20 @@ export class CodexRuntimeManager {
         intact = !!installed && installed.sha256 === cached.digest;
       } catch { intact = false; }
     }
-    return { ...selection, version: version ?? selection.version, available: version !== null && intact, compatible };
+    let protocol: CliProtocolSupport | undefined;
+    let protocolError: string | undefined;
+    if (compatible && intact) {
+      const stamp = this.probeCache.get(selection.command)?.stamp || String(version);
+      let check = this.protocolCache.get(selection.command);
+      if (!check || check.stamp !== stamp) {
+        check = { stamp, result: (this.options.protocolProbe || inspectCliProtocol)(selection.command, this.environment) };
+        this.protocolCache.set(selection.command, check);
+      }
+      try { protocol = await check.result; compatible = protocol.compatible; }
+      catch { compatible = false; protocolError = "CODEX_PROTOCOL_UNVERIFIED"; this.protocolCache.delete(selection.command); }
+    } else compatible = false;
+    return { ...selection, version: version ?? selection.version, available: version !== null && intact, compatible,
+      ...(protocol ? { protocol } : {}), ...(protocolError ? { protocolError } : {}) };
   }
   private async probe(command: string): Promise<string | null> {
     try {
@@ -653,4 +674,10 @@ async function physicalCodexPath(command: string): Promise<string> {
     } catch { /* standalone executable */ }
   }
   return resolved;
+}
+
+function assertCompatibleSelection(candidate: CliCandidate): void {
+  if (!candidate.compatible) throw new Error(
+    `CODEX_PROTOCOL_UNSUPPORTED: The selected CLI does not provide the required App Server contract (${candidate.protocol?.missingCore.join(", ") || candidate.protocolError || "unverified"}). Choose or repair an installation before starting work.`
+  );
 }

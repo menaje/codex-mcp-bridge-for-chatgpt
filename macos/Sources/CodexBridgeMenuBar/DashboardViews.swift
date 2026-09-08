@@ -306,6 +306,30 @@ struct DashboardPopoverView: View {
                     WeeklyUsageView(usage: usage)
                 }
                 CountsGrid(counts: dashboard.counts)
+                if model.dashboardEnrichmentFailed || dashboard.enrichment?.isIncomplete == true {
+                    Label(
+                        "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
+                        systemImage: "clock.badge.exclamationmark"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                if dashboard.counts.runtimeUnknownAgents > 0 {
+                    Label(
+                        "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
+                        systemImage: "questionmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                if dashboard.counts.runtimeProbeSkippedAgents > 0 {
+                    Label(
+                        "프로세스 상태를 아직 확인하지 않은 Agent가 \(dashboard.counts.runtimeProbeSkippedAgents)개 있습니다.",
+                        systemImage: "ellipsis.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
                 DashboardSection(
                     title: "활성",
                     emptyText: "현재 활성 Agent가 없습니다.",
@@ -639,6 +663,9 @@ private struct WeeklyUsageView: View {
                     .font(.caption.monospacedDigit())
             }
             ProgressView(value: remainingPercent, total: 100)
+            Text("사용량 확인: \(DisplayFormat.dateTime(usage.observedAt, locale: locale))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let resetsAt = usage.resetsAt {
                 Text("초기화: \(DisplayFormat.dateTime(resetsAt, locale: locale))")
                     .font(.caption)

@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 repository_root="$(cd "$script_directory/.." && pwd)"
-output_directory="$script_directory/build"
+output_directory="${MACOS_BUILD_OUTPUT_DIRECTORY:-$script_directory/build}"
 app_bundle="$output_directory/Codex MCP Bridge for ChatGPT.app"
 contents_directory="$app_bundle/Contents"
 resources_directory="$contents_directory/Resources"

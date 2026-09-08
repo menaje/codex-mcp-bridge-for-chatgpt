@@ -3,6 +3,7 @@ import type { ApprovalPolicy, CodexBackendKind, SandboxMode } from "./config.js"
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
+import type { ExecutionAccessRequest } from "./executionAccess.js";
 
 export const MAX_CODEX_INTERACTION_QUESTIONS = 3;
 
@@ -39,13 +40,29 @@ export type CodexInteractionDecision =
   | "decline"
   | "cancel";
 
+export type CodexInteractionResponse = {
+  decision?: CodexInteractionDecision;
+  answers?: Record<string, string[]>;
+  elicitation?: {
+    action: "accept" | "decline" | "cancel";
+    content?: Record<string, string | number | boolean | string[]> | null;
+  };
+};
+
+/** Only read into app-private hydration; URLs and form defaults are transient. */
+export type CodexInteractionInput = { url?: string; requestedSchema?: Record<string, unknown> };
+
 export type CodexPendingInteraction = {
+  /** Positive correlation with the source tool item; unknown stays on the approval path. */
+  origin?: "codex-question" | "app-approval" | "unknown";
   interactionId: string;
-  kind: "command-approval" | "file-approval" | "permission-approval" | "user-input";
+  kind: "command-approval" | "file-approval" | "permission-approval" | "user-input" | "mcp-elicitation";
   threadId: string;
   turnId: string;
   itemId: string;
   summary: string;
+  isBlocking?: boolean;
+  elicitation?: { mode: "form" | "url"; serverName: string };
   reason?: string;
   cwdLabel?: string;
   grantRootLabel?: string;
@@ -78,6 +95,7 @@ export type CodexPendingInteraction = {
     header: string;
     question: string;
     isSecret: boolean;
+    isOther?: boolean;
     options?: Array<{ label: string; description: string }>;
   }>;
 };
@@ -153,14 +171,14 @@ export type CodexThreadStartRequest = {
   ephemeral?: boolean;
 };
 
-export type CodexThreadContinueRequest = {
+export type CodexThreadContinueRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
   selection?: ModelSelection;
 };
 
-export type CodexThreadForkRequest = {
+export type CodexThreadForkRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   threadId: string;
   prompt: string;
@@ -185,6 +203,8 @@ export type CodexWeeklyUsage = {
 
 export type CodexUpstream = {
   listTools(): Promise<unknown>;
+  /** Read-only contract check, before durable task admission. */
+  prepareExecution?(input: { backendKind: CodexBackendKind; contextMode: "fresh" | "continue" | "fork" }): Promise<void>;
   capabilities?(backendKind?: CodexBackendKind): BackendCapabilities;
   listModels?(backendKind?: CodexBackendKind): Promise<unknown>;
   /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
@@ -244,8 +264,9 @@ export type CodexUpstream = {
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,
-    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+    response: CodexInteractionResponse
   ): Promise<void>;
+  interactionInput?(interactionId: string): CodexInteractionInput | undefined;
   /** Positive local evidence that this exact App Server thread has an in-flight turn. */
   canSteerThread?(threadId: string): boolean;
   steerThread?(threadId: string, prompt: string): Promise<{ turnId: string }>;
