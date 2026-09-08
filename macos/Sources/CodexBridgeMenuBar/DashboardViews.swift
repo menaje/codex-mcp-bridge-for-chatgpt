@@ -1010,6 +1010,28 @@ private struct CancellationDisclosure: View {
     }
 }
 
+private struct DashboardExecutionLabel: View {
+    let text: String
+    let execution: DashboardExecution?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(text)
+                .lineLimit(2)
+            if DashboardExecutionPresentation.usesFastProcessing(execution) {
+                Label("빠른 처리", systemImage: "bolt.fill")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+                    .fixedSize()
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct DashboardRowView: View {
     @EnvironmentObject private var model: AppModel
     let row: DashboardRow
@@ -1044,7 +1066,7 @@ private struct DashboardRowView: View {
                 }
             }
             if row.latestTurn != nil {
-                Text(BridgeAppLocalization.format(
+                DashboardExecutionLabel(text: BridgeAppLocalization.format(
                     "%@: %@",
                     locale: model.interfaceLocale,
                     BridgeAppLocalization.string(
@@ -1055,24 +1077,17 @@ private struct DashboardRowView: View {
                         row.latestTurn?.execution,
                         locale: model.interfaceLocale
                     )
-                ))
+                ), execution: row.latestTurn?.execution)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if let tokens = row.tokenUsage {
-                DisclosureGroup("세션 누적 토큰") {
-                    LabeledContent("입력 토큰", value: tokens.inputTokens.formatted())
-                    LabeledContent("캐시 토큰", value: tokens.cachedInputTokens.formatted())
-                    LabeledContent("출력 토큰", value: tokens.outputTokens.formatted())
-                }
-            }
             if let next = nextExecution {
-                Text(BridgeAppLocalization.format(
+                DashboardExecutionLabel(text: BridgeAppLocalization.format(
                     "다음 실행 설정: %@",
                     locale: model.interfaceLocale,
                     executionText(next)
-                ))
+                ), execution: next)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -1153,10 +1168,10 @@ private struct DashboardRowView: View {
                                     }
                                     Text(turnTimeText(item.turn))
                                         .foregroundStyle(.secondary)
-                                    Text(DashboardExecutionPresentation.turnText(
+                                    DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
                                         item.turn.execution,
                                         locale: model.interfaceLocale
-                                    ))
+                                    ), execution: item.turn.execution)
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.secondary)
                                     if let cancellation = item.turn.cancellation {
@@ -1856,7 +1871,18 @@ enum DashboardExecutionPresentation {
             !normalized(left.model).isEmpty &&
             normalized(left.reasoningEffort) == normalized(right.reasoningEffort) &&
             !normalized(left.reasoningEffort).isEmpty &&
+            normalizedServiceTier(left.serviceTier) == normalizedServiceTier(right.serviceTier) &&
             normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
+    }
+
+    static func usesFastProcessing(_ execution: DashboardExecution?) -> Bool {
+        normalizedServiceTier(execution?.serviceTier) == "fast"
+    }
+
+    private static func normalizedServiceTier(_ value: String?) -> String {
+        let tier = normalized(value ?? "")
+        if tier == "priority" { return "fast" }
+        return tier.isEmpty ? "default" : tier
     }
 
     static func text(

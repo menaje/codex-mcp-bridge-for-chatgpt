@@ -26,7 +26,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency for ${PRODUCT_INFO.displayName}.`,
+    `Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": true,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
