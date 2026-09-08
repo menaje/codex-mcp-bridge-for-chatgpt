@@ -1,0 +1,101 @@
+{
+  "issue": 69,
+  "testedAt": "2026-09-08T02:41:44.064182+00:00",
+  "host": "Authenticated ChatGPT Web in Safari through normal UI",
+  "candidateCommit": "af1a8f7",
+  "candidateRuntimeBuildId": "af1a8f7e480b:f432d5aa40f4",
+  "discovery": {
+    "registered": 29,
+    "model": 12,
+    "app": 17,
+    "currentContract": 17,
+    "retainedAppDescriptors": 12
+  },
+  "schemaRefresh": {
+    "existingConversationsRetainedLoadedOldSchemas": 2,
+    "existingConversationProjectQueryAbsent": true,
+    "newConversationLoadedCurrentSchema": true,
+    "newTaskPermissionInputFields": [],
+    "readOnlyProjectLookupSucceeded": true,
+    "executionRetriedToBypassSchemaOrHostDenial": false
+  },
+  "cardFreeCompletion": {
+    "newJobs": 1,
+    "newActivities": 1,
+    "newAgents": 1,
+    "executionMode": "background",
+    "model": "gpt-6-astra",
+    "reasoningEffort": "low",
+    "permissionsSuppliedByGpt": false,
+    "jobStatus": "completed",
+    "exactResultRetained": true,
+    "gptInputWaitUsed": true,
+    "gptExactJobResultRetrieved": true,
+    "gptReturnedExactProbeResult": true,
+    "newActivityCard": false,
+    "workConversationLeftDuringExecution": true,
+    "globalOverviewShowedRunning": true,
+    "globalOverviewRefreshShowedCompleted": true,
+    "gptFinalAvailableOnReentry": true,
+    "hostTaskReviewDenied": false,
+    "createdAt": "2026-09-08T02:31:02.780000+00:00",
+    "completedAt": "2026-09-08T02:31:32.022000+00:00",
+    "actualAccess": {
+      "sandbox": "danger-full-access",
+      "approvalPolicy": "on-request",
+      "approvalsReviewer": "user",
+      "activePermissionProfile": null,
+      "networkAccess": true,
+      "writableRootCount": 0,
+      "excludeSlashTmp": null,
+      "excludeTmpdirEnvVar": null,
+      "evidence": "thread-policy-confirmed-and-turn-policy-sent"
+    }
+  },
+  "activityCompletion": {
+    "hostReviewDenied": true,
+    "hostReason": "The request security status could not be determined.",
+    "retried": false,
+    "lifecycle": "open",
+    "version": 4,
+    "jobRemainsCompleted": true
+  },
+  "notifications": {
+    "nativeCompletionDeliveryVerified": false,
+    "chatgptCompletionDeliveryVerified": false,
+    "nativeInspection": "Native application UI unavailable to computer use under its safety restriction.",
+    "chatgptObservation": "Exact final answer was available on reentry; no independently verified completion banner or unread marker was captured.",
+    "endedGptResponseHandoffReplacementVerified": false
+  },
+  "state": {
+    "jobsBefore": 475,
+    "jobsAfter": 476,
+    "oldJobPayloadsUnchanged": true,
+    "settingsAndProjectTablesUnchanged": {
+      "user_settings": true,
+      "projects": true,
+      "project_registry": true
+    },
+    "savedAccessStrategy": "always-full",
+    "savedPriorityEnabled": false,
+    "postRunCopiedStateRestartsPassed": 2,
+    "productionDatabaseReplaced": false
+  },
+  "runtimeRestore": {
+    "runtimeBuildId": "54296e0f0010-dirty:9af435da30f3",
+    "phase": "running",
+    "tunnelConnected": true,
+    "chatgptRestoredDiscoveryCount": 30
+  },
+  "remaining": [
+    "Independent native and ChatGPT completion notifications.",
+    "Replacement for the existing handoff when the GPT response has already ended.",
+    "Actual original approvals, inputs, active stop, and idle process controls.",
+    "Active-work transition and restart.",
+    "Integration, publication, and deployment."
+  ],
+  "omissions": [
+    "No raw identifiers, paths, question answers, credentials or task prompts are included.",
+    "The host-denied Activity lifecycle mutation was not retried through another route."
+  ]
+}
