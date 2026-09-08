@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "issue": 69,
+  "date": "2026-09-08",
+  "testedProductCommit": "f5027b367309088d2e68782d99e13aa0e46b7033",
+  "sourceSha256": "73a0f0c880b815c4b1bf099438f83175026df11dbb7b6e6d0fbbaa6d957652e9",
+  "documentationIntegrationCommit": "da41ba02790a340020e8df1e6e34f60961ac4c54",
+  "modelRecoveryFix": "52607c9f85d0ffb893a009340c534d3d1fec9f25",
+  "mergeCommit": "ee9bd3539e1d6cd3a255b6435244339e9cd45d33",
+  "conflictsResolved": [
+    "docs/chatgpt-evaluation.md",
+    "docs/chatgpt-setup.md",
+    "docs/gpt-questions.md",
+    "src/activityCard.ts",
+    "src/dashboardCard.ts",
+    "src/settingsCard.ts",
+    "src/uiManifest.generated.ts",
+    "ui-manifest.lock.json"
+  ],
+  "originalWorkspace": {
+    "sourceHead": "323d55c725acfa82e81a0e3d350adf16f53468e7",
+    "snapshotCommit": "2c3658b8e0996cf287d577262e198bb7ef5f5bc7",
+    "snapshotTree": "2501de7c902f14eaec6bb7568f6ff70a3eee9203",
+    "currentTree": "2501de7c902f14eaec6bb7568f6ff70a3eee9203",
+    "matchesIntegratedSnapshot": true,
+    "statusUnchangedSinceSnapshot": true,
+    "auditLeftStatusUnchanged": true,
+    "auditLeftIndexUnchanged": true
+  },
+  "buildPassed": true,
+  "releaseChecksPassed": true,
+  "cliContract": {
+    "version": "0.153.3",
+    "jsonSchemas": 416,
+    "typeScriptSchemas": 827,
+    "passed": true
+  },
+  "tests": {
+    "filesPassed": 63,
+    "passed": 780,
+    "failed": 0,
+    "maxWorkers": 4,
+    "precedingRun": {
+      "passed": 779,
+      "failed": 1,
+      "cause": "Existing 24-Job projection fixture exceeded its 5-second timeout with concurrent browser tests."
+    },
+    "isolatedFailureRecheckPassed": true,
+    "timeoutIncreased": false,
+    "finalRunLog": "issue-69-integrated-tests-recheck.log"
+  },
+  "macos": {
+    "executed": 101,
+    "passed": 99,
+    "skipped": 2,
+    "failed": 0,
+    "strictConcurrency": true,
+    "localizationPassed": true
+  },
+  "browser": {
+    "host": "isolated fixtures; not actual ChatGPT",
+    "fastModeRenderers": 3,
+    "languagesPerRenderer": 9,
+    "originalInputControls": 4,
+    "progressiveReportGroups": 5,
+    "questions": {
+      "scenarios": 7,
+      "codexCalls": 0,
+      "builtRenderer": true
+    },
+    "resilience": {
+      "scenarios": 29,
+      "builtRenderer": true,
+      "staleAssertionCorrected": "GPT chooses per task -> Bridge default"
+    },
+    "visualScreenshotsInspected": true
+  },
+  "stateRestart": {
+    "evidence": "issue-69-integrated-restart.json",
+    "passes": 2,
+    "jobsRetained": 476,
+    "codexCalls": 0,
+    "productionDatabaseModified": false,
+    "activeJobsExercised": false
+  },
+  "package": {
+    "builtFilesCompared": 230,
+    "differentFiles": [],
+    "packagedBuild": {
+      "version": "0.3.0",
+      "commit": "f5027b367309088d2e68782d99e13aa0e46b7033",
+      "dirty": false,
+      "sourceHash": "21c885d97b5786da2590f19bb1a3b3b9d6d2f521dff02a3afaf435b33c2a618c",
+      "builtAt": "2026-09-08T03:21:05.170Z",
+      "id": "f5027b367309:21c885d97b57"
+    },
+    "signatureVerified": true,
+    "activated": false
+  },
+  "live": {
+    "runtimeBuildId": "54296e0f0010-dirty:9af435da30f3",
+    "runtimeModified": false,
+    "pluginDiscoveryModified": false,
+    "accessStrategy": "always-full",
+    "usePriorityServiceTier": false,
+    "activeJobs": 0,
+    "actualChatGptAdoptionVerified": false,
+    "blockingObservation": "Computer-use tool twice reported that the Mac is locked and automatic unlock failed. Manual unlock was requested."
+  },
+  "codeIntegrationComplete": true,
+  "operatingRolloutComplete": false,
+  "issueComplete": false,
+  "remainingActualHostChecks": [
+    "Current descriptors and codex_models contract v2 adoption",
+    "Existing conversation schema transition",
+    "Native and ChatGPT completion notification observation",
+    "Existing automatic handoff behavior",
+    "Original approval/input/stop/process controls",
+    "Active-work restart"
+  ],
+  "legacyDeletion": "Fourteen retained names require the previously agreed compatibility window and a separate later deletion decision."
+}

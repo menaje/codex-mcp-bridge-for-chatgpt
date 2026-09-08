@@ -1,5 +1,9 @@
 # Issue #69 implementation and validation
 
+For the latest integrated source, updated measurements and remaining rollout
+conditions, see [integration and rollout preparation](2026-09-08-issue-69-integration.md).
+The revision-specific measurements below are retained as historical evidence.
+
 2026-09-08. Implementation is based on local snapshot `6d84d4d`, which includes
 the pre-existing pending #68 work. Review #69 relative to that snapshot; it is
 not a claim that the baseline or this change is deployed. The original working
