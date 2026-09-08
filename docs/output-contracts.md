@@ -34,7 +34,7 @@ The channels are independent consumer contracts. Private `_meta` is presentation
 | `codex_status` | One compact closed envelope containing query kind, scope mode/source, counts, optional page data, strict typed items, wait outcome, result/error availability, warnings, and next actions. Only an exact completed Job item carries `answer`; summary queries expose an exact-Job retrieval action instead of bodies | Activity components refresh through `codex_activity_snapshot`; routine status is not a hydration or diagnostic API |
 | `codex_dashboard` | Closed five-field aggregate summary: bridge-wide, read-only, Codex-runtime-only status source, and a static opening acknowledgment. No cross-scope rows enter model-visible structured content | The public result contains locale metadata but no Dashboard view. App-only `codex_ui_read` (`view: "dashboard"`) is the sole current source of `_meta["codex/dashboardView@1"]` and active/recent/idle pages with hashed row/project/conversation keys and optional validated navigation candidates. Larger project/conversation pages are emitted only for older cards that send compatibility offsets. Project/Job/Activity/Agent/thread/worker/process IDs, paths, prompts, results, GPT judgments, controls, watchers, and handoff state remain absent |
 | `codex_activity` (retained alias only) | Presentation mode, optional Activity identity/version, and exact scoped aggregate counts only | `mode: compact-monitor` returns one automatic `_meta["codex/activityView@11"]` presentation after Task fan-out; the default `full-history` mode returns the explicit paginated view. Automatic snapshots use compact current rows plus exact history counts. `codex_activity_rehydrate` reconstructs either an older retained Task shell from exact Job/request hints or a cold full-history card from its public mode and optional Activity identity/version |
-| `codex_models` | Neutral descriptors for only the current policy-allowed models, efforts, and service-tier support, including upstream descriptions and source/freshness; no policy summary, Priority state, recommendation, rank, default, or fallback | None |
+| `codex_models` | Current policy-allowed models, efforts, service-tier support, descriptions and freshness. Explicit input `contractVersion: "2"` also returns that version and `selectionMode` from the same settings snapshot; omitted version preserves the exact legacy shape. No Priority preference, ranking or fallback selection | None |
 | `codex_status` (`query.kind: "input"`) | Exact Job/version, input cursor, one pending ordinary question request, up to 12 bounded public messages, approval-path indicators, wait outcome, and retrieval limits | No worker, process or raw request routing identity |
 | `codex_answer` | Exact Job/question reference, delivered or uncertain outcome, no-persist assertion, next actions | No raw submitted Codex answer |
 | `codex_ask_user` | Question ID, state, expiry, next actions | `codex/userQuestion@1` contains the scoped presentation proof for the reused Activity resource |
@@ -179,6 +179,20 @@ still enforces the read-only, non-owning view contract.
 Every Dashboard and Activity view carries `enrichment: { state, runtimeRequests, cacheHits, timeouts, durationMs, usageTimedOut }`. `codex_diagnostics.performance` reports bounded recent samples for structural projection, enrichment, and serialization with count, p50, p95, max, requests, timeouts, and cache hits. It also reports measured self-contained HTML bytes against fixed caps: Dashboard 112 KiB, Activity 152 KiB, and Settings 192 KiB. The existing hydration limits remain runtime-enforced and regression-tested: Dashboard private view 512 KiB, Activity private view 768 KiB, and app-only structured hydration 1 MiB. Sizes are UTF-8 bytes of `JSON.stringify(value)` for data and raw UTF-8 bytes for HTML.
 
 ## Opaque-leaf policy
+
+Recovery `nextActions` retain the existing string-array contract. Known safe
+read actions preserve the tool name and validated JSON arguments, even when
+there is accompanying human guidance. Retained incomplete cancellation actions
+become exact-target inspection guidance; recovery is not cancellation authority.
+Project recovery distinguishes an empty registry, archived registrations,
+unavailable folders and an unknown requested identity. A known project reference
+never falls back to another registration with the same name or to a sole project.
+
+The model-catalog v2 transition uses two closed output branches under an object
+root. Only explicit v2 input emits the new branch. An old cached SDK output
+validator continues accepting every version-omitted call, including after policy
+changes; clients discover the new input before opting in. This is not a live
+replacement of a running Task validator or an unconditional additive field.
 
 Model-visible schemas have no opaque/open object leaves. A public object must have a named, closed schema with `additionalProperties: false`; arbitrary upstream, component, protocol, or forensic objects cannot be copied into it.
 

@@ -30,7 +30,7 @@ remains 12; current cards use the five consolidated contracts below.
 | `codex_answer` | Answer a verified ordinary Codex question |
 | `codex_ask_user`, `codex_user_answer` | Create a user question and retrieve its response |
 | `codex_dashboard`, `codex_settings` | Thin UI openers |
-| `codex_models` | Current permitted model/effort catalog |
+| `codex_models` | Current permitted model/effort catalog; explicit contract v2 also identifies fixed/automatic selection policy without a card |
 | `codex_agent`, `codex_activity_update` | Agent management and non-cancelling Activity transitions |
 
 | App-only tools | Closed operations |

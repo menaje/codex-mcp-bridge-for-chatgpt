@@ -42,6 +42,19 @@ query. Its input cursor and wait remain separate from ordinary Job progress.
 unique requestId, exact expectedVersion, reason and optional impact acknowledgment.
 The old Job shape remains runtime-only compatibility.
 
+`codex_models` accepts optional `contractVersion: "2"`. This explicitly requests
+the closed v2 catalog result with `selectionMode: "fixed" | "automatic"` from
+the same settings snapshot as the allowed model/effort list. Omission keeps the
+exact legacy catalog-only result for cached clients. Fixed mode requires omitting
+Task `selection`; automatic mode requires a permitted pair for fresh work.
+One returned model does not identify the policy mode. This read does not open a
+card or change policy; admission still rechecks current settings.
+
+`codex_user_answer.responseRef` distinguishes two existing operations: omission
+lists up to 20 unread references without bodies or consumption, while an exact
+reference returns the body and marks that response seen. Neither sends an answer
+to Codex. GPT owns that separate decision.
+
 Contract v2 publishes one generic closed `project: { name, projectRef,
 projectRevision }` shape. It does not embed registry values, private UUIDs or
 paths. Resolve unknown selectors with read-only `codex_status` query

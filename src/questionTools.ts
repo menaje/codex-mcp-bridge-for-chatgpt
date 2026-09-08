@@ -78,8 +78,8 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
   }, readInput);
 
   server.registerTool("codex_answer", {
-    title: "Answer a Codex Question", description: "Answer an ordinary structured Codex question obtained from codex_status query kind=input. Use the exact current questionRef and exact question IDs. GPT decides the answer within the user's delegation, or asks with codex_ask_user. This cannot grant approval, supply secrets, change permissions, or start a future turn. Unrelated Job progress does not invalidate the question. Reuse requestId only for identical retries; uncertain delivery must never be automatically resent.",
-    inputSchema: z.strictObject({ requestId: z.string().uuid(), jobId: identifier, questionRef: z.string().regex(/^[a-f0-9]{64}$/), answers: answersSchema }),
+    title: "Answer a Codex Question", description: "Answer a current ordinary Codex question in this conversation. This cannot grant approvals, supply authentication secrets, or start another turn.",
+    inputSchema: z.strictObject({ requestId: z.string().uuid().describe("Idempotency UUID for this exact answer. Uncertain delivery must never be automatically resent."), jobId: identifier, questionRef: z.string().regex(/^[a-f0-9]{64}$/).describe("Exact current ordinary question reference. Unrelated Job progress does not invalidate it."), answers: answersSchema.describe("Answers keyed by the exact question IDs; preserve allowed option labels.") }),
     outputSchema: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_answer, annotations: { ...writeAnnotations, destructiveHint: true }
   }, async (args, extra) => {
     const scopeId = scope(extra._meta);
@@ -119,8 +119,8 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
   });
 
   server.registerTool("codex_ask_user", {
-    title: "Ask the User", description: "Open a question card only when GPT judges that the user's opinion is needed. Write the questions and choices yourself; combine relevant Codex questions when useful. The card returns answers to GPT, which decides how to respond to Codex. It never directly answers or approves a Codex request. Do not ask for credentials or authentication secrets. Questions and answers expire within 24 hours. Reuse requestId only for the identical card.",
-    inputSchema: z.strictObject({ requestId: z.string().uuid(), title: z.string().trim().min(1).max(160), questions: z.array(questionField).min(1).max(3), expiresInMinutes: z.number().int().min(1).max(1440).optional() }),
+    title: "Ask the User", description: "Open a question card for the user and store their response for GPT. GPT decides how to use the answer; submission does not directly answer or approve Codex.",
+    inputSchema: z.strictObject({ requestId: z.string().uuid().describe("Idempotency UUID for one question card. Reuse only for the identical questions."), title: z.string().trim().min(1).max(160), questions: z.array(questionField).min(1).max(3), expiresInMinutes: z.number().int().min(1).max(1440).optional().describe("Question and answer lifetime in minutes, at most 24 hours.") }),
     outputSchema: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_ask_user, annotations: writeAnnotations,
     _meta: { ui: { resourceUri: QUESTION_CARD_URI, visibility: ["model"] }, "openai/outputTemplate": QUESTION_CARD_URI }
   }, async (args, extra) => {
@@ -133,8 +133,8 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
   });
 
   server.registerTool("codex_user_answer", {
-    title: "Read the User's Answer", description: "Read a scoped responseRef received from a GPT question card. Without responseRef, recover up to 20 unread submitted or cancelled cards in this conversation. Reading marks the response as seen but never responds to Codex. Decide the next action yourself and recheck the original Codex question/turn. Card answers expire with the question, at most 24 hours after creation.",
-    inputSchema: z.strictObject({ responseRef: z.string().uuid().optional() }), outputSchema: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_user_answer, annotations: readAnnotations
+    title: "Read the User's Answer", description: "Read responses to GPT's question cards in this conversation. Reading a specific response marks it as seen.",
+    inputSchema: z.strictObject({ responseRef: z.string().uuid().optional().describe("Exact response reference: returns its body and marks it seen. Omit to list up to 20 unread references without bodies or marking them seen.") }), outputSchema: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_user_answer, annotations: readAnnotations
   }, async (args, extra) => resultOf({ kind: "user-answers", responses: jobs.admissionStateStore.transaction(() =>
     store.readResponses(scope(extra._meta), args.responseRef).map(record => ({ questionId: record.questionId,
       responseRef: record.responseRef, status: record.status, title: record.title,
@@ -188,7 +188,7 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     z.strictObject({ kind: z.literal("ack"), attempt: z.string().uuid(), state: z.enum(["requested", "failed", "uncertain"]) })
   ]) });
   server.registerTool("codex_question_action", {
-    title: "Update Question Card", description: "App-only question answer submission and follow-up delivery state. Submission stores an answer for GPT; claim and acknowledgment remain separate from host delivery and GPT consumption. Returns current private card state to avoid another read.",
+    title: "Update Question Card", description: "App-only user answer submission and follow-up delivery tracking. Answer storage, notification claim, host acknowledgment, and GPT consumption are separate states.",
     inputSchema: questionActionInput,
     outputSchema: objectSchemaUnion([cardOutput, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_notify]),
     annotations: writeAnnotations, _meta: appMeta

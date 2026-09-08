@@ -4495,7 +4495,7 @@ describe("bridge tools", () => {
     });
     expect(unavailableSchema).not.toHaveProperty("allOf");
     expect(unavailableDescriptor._meta).toBeUndefined();
-    expect(unavailableDescriptor.description).toContain("codex_status query");
+    expect(unavailableDescriptor.description).not.toContain("codex_status query");
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
     expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
     const unavailableStatus = parseToolJson(
@@ -6899,7 +6899,7 @@ describe("bridge tools", () => {
     expect(busy).toMatchObject({
       ok: false,
       code: "AGENT_BUSY",
-      nextActions: [`codex_cancel(${started.jobId})`],
+      nextActions: [expect.stringContaining(`codex_status({"query":{"kind":"job","id":"${started.jobId}"}})`)],
       warnings: [expect.stringContaining("does not roll back filesystem changes")]
     });
 
@@ -13536,15 +13536,9 @@ describe("bridge tools", () => {
     expect(initialSchema).not.toHaveProperty("allOf");
     expect(JSON.stringify(initialSchema)).not.toContain('"not":{}');
     expect(initialTask?._meta).toBeUndefined();
-    expect(initialTask?.description).toContain("An empty registry returns PROJECT_SETUP_REQUIRED");
+    expect(initialTask?.description).not.toContain("PROJECT_SETUP_REQUIRED");
     const settingsTool = initialTools.tools.find((tool) => tool.name === "codex_settings");
-    expect(settingsTool?.description).toContain("after an actual codex_task response");
-    expect(settingsTool?.description).toContain(
-      "Never open it merely because a conversation starts or this plugin is attached"
-    );
-    expect(settingsTool?.description).toContain(
-      "codex_status project lookup reports that the explicitly requested project needs recovery"
-    );
+    expect(settingsTool?.description).toBe("Open an interactive card for configuring this ChatGPT-to-Codex bridge.");
 
     const setupProbe = await client.callTool({
       name: "codex_task",
@@ -13563,7 +13557,7 @@ describe("bridge tools", () => {
         error: {
           code: "PROJECT_SETUP_REQUIRED"
         },
-        nextActions: [expect.stringContaining("Open settings")]
+        nextActions: [expect.stringContaining("codex_settings({})")]
       }
     });
     const setupContent = (setupProbe as { structuredContent?: Record<string, unknown> })
@@ -13655,7 +13649,7 @@ describe("bridge tools", () => {
         error: {
           code: "PROJECT_SETUP_REQUIRED"
         },
-        nextActions: [expect.stringContaining("Open settings")]
+        nextActions: [expect.stringContaining("codex_settings({})")]
       }
     });
     expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
