@@ -1,3 +1,5 @@
+import { DASHBOARD_STOP_BUTTONS, DASHBOARD_STOP_CONFIRMATION_SCRIPT } from "./dashboardStopConfirmation.js";
+
 /** Detail controls are opened deliberately; overview refreshes never overwrite
  * their form or dispatch an action. Domain mutations are never auto-retried. */
 export const DASHBOARD_CONTROL_SCRIPT = String.raw`
@@ -27,11 +29,11 @@ function controlInteraction(interaction){
  if(interaction.kind==="user-input"){const fields=questionFields(panel,interaction.questions||[]);panel.appendChild(actionButton(t["activity.answer"],()=>{if(fields.every(field=>field.valid()))void answerInteraction(interaction,{answers:Object.fromEntries(fields.map(field=>[field.id,[field.read()]]))})}));return panel}
  const actions=node("div","actions");for(const decision of interaction.availableDecisions||[])actions.appendChild(actionButton(controlDecisionLabel(decision),()=>void answerInteraction(interaction,{decision})));panel.appendChild(actions);return panel;
 }
+${DASHBOARD_STOP_CONFIRMATION_SCRIPT}
 function renderWorkDetails(){
  const detail=controlDetail;if(!detail)return;controlHeading.textContent=[detail.projectName,detail.activityTitle,detail.agentName].filter(Boolean).join(" · ");controlMessage.textContent=statusLabel(detail.status);controlMessage.classList.remove("error");controlBody.replaceChildren();
  for(const interaction of detail.pendingInteractions||[])controlBody.appendChild(controlInteraction(interaction));
- if(detail.canStop)controlBody.appendChild(actionButton(t["activity.forceStop"],()=>{const target=[detail.projectName,detail.activityTitle,detail.agentName].filter(Boolean).join(" · ");if(confirm(target+"\n\n"+t["activity.forceConfirmTitle"]+"\n"+t["activity.partialChanges"]+((detail.affectedJobIds||[]).length>1?"\n"+t["activity.forceConfirm"]:"")))void controlAction("codex_ui_stop",{kind:"job",jobId:detail.jobId,expectedJobVersion:detail.jobVersion,acknowledgeAffectedJobIds:detail.affectedJobIds})}));
- for(const process of detail.backgroundProcesses||[]){const row=node("div","actions");row.append(node("span","meta",process.processId),actionButton(t["activity.forceStop"],()=>{if(confirm(detail.agentName+" · "+process.processId+"\n\n"+t["activity.partialChanges"]))void controlAction("codex_ui_stop",{kind:"process",agentId:detail.agentId,expectedAgentVersion:detail.agentVersion,processId:process.processId})}));controlBody.appendChild(row)}
+${DASHBOARD_STOP_BUTTONS}
  if(detail.backgroundUnavailable)controlBody.appendChild(node("p","message",t["activity.backgroundUnavailable"]));scheduleSizeChanged(true);
 }
 controlRefresh.addEventListener("click",()=>void refreshWorkDetails());controlClose.addEventListener("click",()=>{if(controlBusy)return;selectedControlRow=null;controlDetail=null;++controlEpoch;controlPanel.hidden=true;controlBody.replaceChildren();scheduleSizeChanged(true)});

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { repairRetainedDashboardStops } from "./dashboardStopConfirmation.js";
 import { UI_RESOURCE_MANIFEST, type UiResourceName } from "./uiManifest.generated.js";
 
 const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -136,6 +137,7 @@ export function htmlForUiResource(
 }
 
 function retainedUiRuntime(html: string): string {
+  html = repairRetainedDashboardStops(html);
   // Some retained source-rendered helpers captured esbuild's keepNames call
   // without its runtime. Preserve the immutable files and their contracts;
   // supply only the missing name decorator when serving those older cards.

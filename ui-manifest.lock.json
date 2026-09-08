@@ -3060,8 +3060,8 @@
       ]
     },
     "dashboard": {
-      "digest": "942a289cb6917555324dabde8c63dc7b9856fa74a72981a411ed35f9493c5881",
-      "uri": "ui://codex-mcp-bridge/dashboard/942a289cb691.html",
+      "digest": "8fa4d968a57b836449c771db72fb9a77b1ad962429f1c4a4bb09511a994bb6af",
+      "uri": "ui://codex-mcp-bridge/dashboard/8fa4d968a57b.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Overview",
@@ -3091,6 +3091,38 @@
         }
       },
       "previous": [
+        {
+          "digest": "942a289cb6917555324dabde8c63dc7b9856fa74a72981a411ed35f9493c5881",
+          "uri": "ui://codex-mcp-bridge/dashboard/942a289cb691.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Overview",
+              "description": "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, setting-independent GPT conversation links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows one read-only, Activity-first Codex overview with nested Agents, derived from retained Codex Jobs, threads, interaction state, model/effort selection, and bounded App Server runtime evidence.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 21
+            }
+          }
+        },
         {
           "digest": "07b8cdf45ca3e9b20bb75d1ff50a42657da598fba0075cdd2dd5b0fa802775a3",
           "uri": "ui://codex-mcp-bridge/dashboard/07b8cdf45ca3.html",
