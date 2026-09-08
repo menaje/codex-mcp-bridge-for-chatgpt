@@ -4,6 +4,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
 import { DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
+import { repairRetainedDashboardStops } from "../src/dashboardStopConfirmation.js";
 import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js";
 import { htmlForUiResource, uiResourceRevisions } from "../src/uiResources.js";
 
@@ -36,13 +37,14 @@ describe("serialized card runtime compatibility", () => {
       let exercised = 0;
       for (const revision of uiResourceRevisions(name).slice(1)) {
         const snapshot = readFileSync(new URL(`../ui-resources/${name}/${revision.digest}.html`, import.meta.url), "utf8");
+        const compatibleSnapshot = repairRetainedDashboardStops(snapshot);
         const html = htmlForUiResource(name, revision.uri, currentHtml);
-        if (!snapshot.includes("__name(")) expect(html).toBe(snapshot);
+        if (!snapshot.includes("__name(")) expect(html).toBe(compatibleSnapshot);
         const functions = functionsIn(html);
         const helper = functions.get("__name") || "";
         if (snapshot.includes("__name(")) {
           expect(helper, revision.uri).not.toBe("");
-          expect(html.replace(`\n${helper}\n`, ""), revision.uri).toBe(snapshot);
+          expect(html.replace(`\n${helper}\n`, ""), revision.uri).toBe(compatibleSnapshot);
         }
         const errorFormatter = functions.get("uiBridgeErrorMessage");
         if (errorFormatter) {

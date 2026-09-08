@@ -79,7 +79,8 @@ Dashboard retains its structural-first render, bounded enrichment, pagination,
 refresh error recovery and disclosure state. A user deliberately opens **View
 details** on one row to see its project, Activity, Agent and original requests.
 Overview refreshes do not replace that form. Details are reread on refresh and
-page restoration. Stop confirmation shows the selected target and preserves
+page restoration. Stop confirmation appears inside the card (ChatGPT's sandbox
+does not allow native JavaScript dialogs), shows the selected target and preserves
 the impact warning. Idle background processes are separate from active turns.
 
 The detail response exposes only `{kind: control, ready: true}` publicly. Exact
@@ -124,8 +125,11 @@ The 14 retained names are `codex_activity`, `codex_activity_cancel`,
 original scope/widget checks. Only `codex_activity_cancel` and `codex_input` are
 unadvertised; the other 12 are app-only compatibility descriptors needed by
 retained cards. Current renderer code and model instructions use the consolidated
-contracts. Immutable old resources, including the overview, remain served during
-this window. No execution is restarted to rebuild a result.
+contracts. Immutable old resource files, including the overview, remain retained
+during this window. A narrow serve-time compatibility repair supplies a missing
+name helper and replaces the two #71 overview stop handlers that depended on
+blocked native dialogs; resource identities, metadata and domain checks remain
+intact. No execution is restarted to rebuild a result.
 
 Current ChatGPT and macOS Settings hide Activity display and card-handoff
 controls. Persisted values and the legacy default remain intact for mounted
@@ -140,9 +144,13 @@ verified the current active-response path: background execution, leaving the
 work conversation, exact result retrieval, GPT final response and ChatGPT's
 unread completion indication. The retained global overview and graceful restart
 with active work also passed. The user authorized dev integration and local
-operating rollout on this evidence. Issue #69 remains open for independent
-native banners, already-ended-response Job wake and the remaining original
-control scenarios; these are not claimed by that development rollout.
+operating rollout on this evidence. The [subsequent control acceptance run](audits/2026-09-08-issue-69-final-acceptance.md)
+fixed the sandboxed confirmation defect and verified actual overview Job stop,
+original approval rejection and idle process termination. One additional original
+form-input Job was blocked by ChatGPT's safety check before admission; #69 stays
+open for that actual-host gate. Native banner tests belong to #15, and a new
+unsupported already-ended-response wake is explicitly outside #69's mandatory
+scope. Earlier residual lists that made those unconditional #69 gates were too broad.
 
 The user reports using both native Codex/macOS and ChatGPT notifications.
 The inspected saved policy is `background-only` plus `auto-handoff`, so removing
