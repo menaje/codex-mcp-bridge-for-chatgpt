@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Retire new Activity screens, separate user questions, consolidate GPT status/cancellation and app-only card tools, and move validated user controls into deliberately opened overview details.",
+  "breaking": true,
+  "migration": "Refresh discovery: 12 model + 5 current app tools, plus 12 app-only legacy descriptors (29 total); 2 model aliases stay unlisted. Retain old cards/settings for at least 60 days and two stable releases after first release. Removal requires a separate deletion decision and verified client/completion migration; time alone never deletes them. New work creates no Activity cards. Verify actual ChatGPT completion notifications before rollout. See docs/card-tools.md."
+}

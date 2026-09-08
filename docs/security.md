@@ -1,5 +1,7 @@
 # Codex MCP Bridge for ChatGPT security model
 
+Issue #69 current contract: [Card tools and migration](card-tools.md). Current discovery has 12 model tools and 5 app-only tools. Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+
 ## Trust boundary
 
 The bridge is designed for a single trusted operator connecting ChatGPT to explicitly registered local project folders through OpenAI Secure MCP Tunnel. It binds to loopback and does not create a public ingress endpoint.
@@ -62,7 +64,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   a 1.5-second per-Agent timeout and nine-second total budget. It
   reports unknown and skipped counts and does not load a `notLoaded` historical
   thread merely for the overview. App-only
-  `codex_dashboard_snapshot` requires a mounted widget correlation ID but grants
+  `codex_ui_read` (`view: "dashboard"`) requires a mounted widget correlation ID but grants
   no watcher, completion-handoff, or control lease and exposes no mutation.
   Web and desktop hosts can omit `openai/session` on an app-initiated remount;
   because this projection is already bridge-wide and limited to the single-user
@@ -103,7 +105,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   for non-cancelling lifecycle, policy, and evidence-backed verification
   transitions. It is not annotated destructive. Expired flat lifecycle and
   cancellation fields are rejected.
-- `codex_activity_cancel` is the separately annotated destructive whole-Activity
+- `codex_cancel` (`target.kind: "activity"`) is the separately annotated destructive whole-Activity
   force-stop. It requires a replay UUID, exact Activity version, scope ownership,
   and the complete affected-job acknowledgement when workers are shared. Its
   parent Activity intent is recorded before `activity-terminating`; every child
@@ -151,7 +153,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_settings` returns bridge limits and a model-visible list containing only
   project names plus availability/archive state. Internal UUIDs and local paths
   are absent from its structured content and metadata. The mounted card obtains
-  them from the app-private, read-only `codex_settings_snapshot`, which reads the
+  them from the app-private, read-only `codex_ui_read` (`view: "settings"`), which reads the
   current persisted settings and registry on every call.
 - `codex_update_settings` is app-only and exposes one discriminated reset/patch
   operation. Ordinary preferences use `expectedSettingsRevision`; project
@@ -168,11 +170,11 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   uses generation 15 and never paints cached initial editor metadata; retained
   generation-9 and newer resources keep the compatible mutation boundary.
 - `codex_task` starts, resumes, or forks only through a scope-owned canonical
-  Agent ID. It never exposes per-call cwd or arbitrary thread routing. Per-call
-  sandbox has one stable operator-bounded shape; fixed access modes accept the
-  same value and reject conflicting intent, while adaptive mode accepts
-  only owner-enabled capabilities. Its exact model/effort decision is resolved
-  again at runtime.
+  Agent ID. It exposes neither per-call cwd nor permission fields. The bridge
+  resolves sandbox and approval policy from saved settings within operator
+  limits. GPT cannot select or override them. The retained adaptive setting
+  uses the bridge default for fresh work. Its exact model/effort decision is
+  resolved again at runtime.
   The user's independent Priority preference is then applied privately by the
   bridge and the effective downstream selection is retained with the job. The
   v2 descriptor requires `taskContractVersion: "2"` and an exact 64-hex,
@@ -210,7 +212,7 @@ the network as the current macOS user.
   normalized Unicode names, and canonical existing folders. A normal fresh
   install starts with no project; no first/sole/default/slug/alias fallback is
   created. `codex_task` advertises a generic closed `{ name, projectRef,
-  projectRevision }` selector plus a same-tool no-work `projectLookup`, never a
+  projectRevision }` selector, resolved through read-only `codex_status`, never a
   registry inventory. The global `registryRevision` remains a Settings CAS
   generation. Every new Activity or fresh Agent context requires the exact
   current object; only existing Activity continue/fork calls omit it and inherit
@@ -448,12 +450,12 @@ ChatGPT's four plugin-permission choices control host-side confirmation before
 an MCP tool call. They do not change the Codex sandbox. A private deployment may
 set Codex approval policy to `never` so the plugin permission is the single
 approval boundary, but doing so removes Codex's independent command prompt.
-With the default `adaptive` strategy, omission uses the operator-configured
-default (read-only by default), while ChatGPT may send only an owner-enabled
-mutation sandbox for an authorized task. Fixed `read-only` and `always-full`
-keep the stable per-call field: an identical value is accepted, while a
-conflicting value returns `SANDBOX_CONFLICT`. Removing a conflicting request
-would change its meaning and must not be suggested as a generic retry. A bridge
+The retained `adaptive` strategy uses the operator-configured default for new
+work (read-only by default). Fixed read-only and full-access settings remain
+authoritative. Current task input has no permission fields; cached inputs that
+contain the retired sandbox field are rejected before new admission and must
+refresh discovery. They are never silently upgraded. Previously admitted exact
+replays return their retained result without execution. A bridge
 user can select only owner-enabled strategies. Preferences are shared by the
 bridge instance because the private no-auth tunnel does not supply per-user
 identity.
@@ -508,10 +510,11 @@ Nonblocking questions remain visible while the Job and Agent continue running.
   metadata is suitable for correlation, not authorization. Missing metadata
   falls back to an explicit caller-managed UUID; changes in the host identity
   tuple or loss/rotation of the locally persisted HMAC key produce a new scope.
-- Enabling mutation support exposes the corresponding sandbox to the MCP caller; the bridge
-  cannot independently prove that a particular call received fresh user approval.
+- Enabling mutation support permits the corresponding bridge-owned execution
+  mode; the caller cannot select a sandbox. The bridge cannot independently
+  prove that a particular call received fresh user approval from the host.
 - `codex_activity_update` is a non-idempotent state transition guarded by an
-  exact Activity version. `codex_activity_cancel` is destructive and replay-safe
+  exact Activity version. `codex_cancel` (`target.kind: "activity"`) is destructive and replay-safe
   by request UUID; it validates scope/lifecycle, Activity version, worker
   generations, and collateral acknowledgement, but cannot undo commands or file
   edits already performed. Verification evidence is bounded metadata supplied by

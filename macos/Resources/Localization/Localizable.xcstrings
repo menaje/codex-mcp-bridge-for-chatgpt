@@ -23606,183 +23606,743 @@
     "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The Secure MCP Tunnel process is not running." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnelプロセスが実行されていません。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnel 进程未运行。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnel 程序未執行。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "El proceso de Secure MCP Tunnel no se está ejecutando." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Le processus Secure MCP Tunnel n’est pas en cours d’exécution." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Der Secure MCP Tunnel-Prozess wird nicht ausgeführt." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O processo do Secure MCP Tunnel não está em execução." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Secure MCP Tunnel process is not running."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnelプロセスが実行されていません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnel 进程未运行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnel 程序未執行。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proceso de Secure MCP Tunnel no se está ejecutando."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le processus Secure MCP Tunnel n’est pas en cours d’exécution."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Secure MCP Tunnel-Prozess wird nicht ausgeführt."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O processo do Secure MCP Tunnel não está em execução."
+          }
+        }
       }
     },
     "Secure MCP Tunnel 연결을 확인할 수 없습니다. 다시 연결하는 중일 수 있습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Unable to verify the Secure MCP Tunnel connection. It may be reconnecting." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnelの接続を確認できません。再接続中の可能性があります。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法确认 Secure MCP Tunnel 连接，可能正在重新连接。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法確認 Secure MCP Tunnel 連線，可能正在重新連線。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "No se puede verificar la conexión de Secure MCP Tunnel. Puede que se esté reconectando." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de vérifier la connexion Secure MCP Tunnel. Une reconnexion est peut-être en cours." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Die Secure MCP Tunnel-Verbindung kann nicht überprüft werden. Möglicherweise wird sie gerade wiederhergestellt." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Não foi possível verificar a conexão do Secure MCP Tunnel. Pode estar se reconectando." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unable to verify the Secure MCP Tunnel connection. It may be reconnecting."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnelの接続を確認できません。再接続中の可能性があります。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认 Secure MCP Tunnel 连接，可能正在重新连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認 Secure MCP Tunnel 連線，可能正在重新連線。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede verificar la conexión de Secure MCP Tunnel. Puede que se esté reconectando."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de vérifier la connexion Secure MCP Tunnel. Une reconnexion est peut-être en cours."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Secure MCP Tunnel-Verbindung kann nicht überprüft werden. Möglicherweise wird sie gerade wiederhergestellt."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível verificar a conexão do Secure MCP Tunnel. Pode estar se reconectando."
+          }
+        }
       }
     },
     "Secure MCP Tunnel 상태가 현재 서버 실행과 일치하지 않습니다. 서버를 다시 시작해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The Secure MCP Tunnel status does not match the current server run. Restart the server." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnelの状態が現在のサーバー実行と一致しません。サーバーを再起動してください。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnel 状态与当前服务器运行不一致。请重启服务器。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Secure MCP Tunnel 狀態與目前伺服器執行不一致。請重新啟動伺服器。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "El estado de Secure MCP Tunnel no coincide con la ejecución actual del servidor. Reinicie el servidor." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "L’état de Secure MCP Tunnel ne correspond pas à l’exécution actuelle du serveur. Redémarrez le serveur." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Der Secure MCP Tunnel-Status stimmt nicht mit dem aktuellen Serverlauf überein. Starten Sie den Server neu." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O status do Secure MCP Tunnel não corresponde à execução atual do servidor. Reinicie o servidor." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Secure MCP Tunnel status does not match the current server run. Restart the server."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnelの状態が現在のサーバー実行と一致しません。サーバーを再起動してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnel 状态与当前服务器运行不一致。请重启服务器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Secure MCP Tunnel 狀態與目前伺服器執行不一致。請重新啟動伺服器。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El estado de Secure MCP Tunnel no coincide con la ejecución actual del servidor. Reinicie el servidor."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état de Secure MCP Tunnel ne correspond pas à l’exécution actuelle du serveur. Redémarrez le serveur."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Secure MCP Tunnel-Status stimmt nicht mit dem aktuellen Serverlauf überein. Starten Sie den Server neu."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O status do Secure MCP Tunnel não corresponde à execução atual do servidor. Reinicie o servidor."
+          }
+        }
       }
     },
     "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The connection file or folder is not owned by the current user." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "接続情報のファイルまたはフォルダは現在のユーザーが所有していません。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接信息文件或文件夹不属于当前用户。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "連線資訊檔案或資料夾不屬於目前使用者。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "El archivo o la carpeta de conexión no pertenece al usuario actual." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Le fichier ou dossier de connexion n’appartient pas à l’utilisateur actuel." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Die Verbindungsdatei oder der Ordner gehört nicht dem aktuellen Benutzer." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O arquivo ou a pasta de conexão não pertence ao usuário atual." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The connection file or folder is not owned by the current user."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続情報のファイルまたはフォルダは現在のユーザーが所有していません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接信息文件或文件夹不属于当前用户。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線資訊檔案或資料夾不屬於目前使用者。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El archivo o la carpeta de conexión no pertenece al usuario actual."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier ou dossier de connexion n’appartient pas à l’utilisateur actuel."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Verbindungsdatei oder der Ordner gehört nicht dem aktuellen Benutzer."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O arquivo ou a pasta de conexão não pertence ao usuário atual."
+          }
+        }
       }
     },
     "연결 정보 파일의 내용이 올바르지 않습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The connection file contents are invalid." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "接続情報ファイルの内容が正しくありません。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接信息文件内容无效。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "連線資訊檔案內容無效。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "El contenido del archivo de conexión no es válido." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Le contenu du fichier de connexion n’est pas valide." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Der Inhalt der Verbindungsdatei ist ungültig." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O conteúdo do arquivo de conexão é inválido." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The connection file contents are invalid."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続情報ファイルの内容が正しくありません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接信息文件内容无效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線資訊檔案內容無效。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El contenido del archivo de conexión no es válido."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le contenu du fichier de connexion n’est pas valide."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Inhalt der Verbindungsdatei ist ungültig."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O conteúdo do arquivo de conexão é inválido."
+          }
+        }
       }
     },
     "연결 정보 파일을 등록된 프로젝트 폴더 밖으로 이동해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Move the connection file outside all registered project folders." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "接続情報ファイルを登録済みのすべてのプロジェクトフォルダの外へ移動してください。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "请将连接信息文件移到所有已注册项目文件夹之外。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "請將連線資訊檔案移到所有已註冊專案資料夾之外。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Mueva el archivo de conexión fuera de todas las carpetas de proyectos registradas." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Déplacez le fichier de connexion en dehors de tous les dossiers de projets enregistrés." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Verschieben Sie die Verbindungsdatei aus allen registrierten Projektordnern." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Mova o arquivo de conexão para fora de todas as pastas de projetos registradas." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move the connection file outside all registered project folders."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続情報ファイルを登録済みのすべてのプロジェクトフォルダの外へ移動してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请将连接信息文件移到所有已注册项目文件夹之外。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請將連線資訊檔案移到所有已註冊專案資料夾之外。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mueva el archivo de conexión fuera de todas las carpetas de proyectos registradas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplacez le fichier de connexion en dehors de tous les dossiers de projets enregistrés."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verschieben Sie die Verbindungsdatei aus allen registrierten Projektordnern."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mova o arquivo de conexão para fora de todas as pastas de projetos registradas."
+          }
+        }
       }
     },
     "원격 관리 서버 주소가 설정되지 않았습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The remote management server address is not configured." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "リモート管理サーバーのアドレスが設定されていません。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "未配置远程管理服务器地址。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "尚未設定遠端管理伺服器位址。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "La dirección del servidor de administración remota no está configurada." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "L’adresse du serveur de gestion à distance n’est pas configurée." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Die Adresse des Remoteverwaltungsservers ist nicht konfiguriert." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O endereço do servidor de gerenciamento remoto não está configurado." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The remote management server address is not configured."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモート管理サーバーのアドレスが設定されていません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未配置远程管理服务器地址。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未設定遠端管理伺服器位址。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La dirección del servidor de administración remota no está configurada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’adresse du serveur de gestion à distance n’est pas configurée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Adresse des Remoteverwaltungsservers ist nicht konfiguriert."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O endereço do servidor de gerenciamento remoto não está configurado."
+          }
+        }
       }
     },
     "지정한 주소 또는 포트를 다른 프로그램이 사용 중입니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Another application is using the specified address or port." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "指定したアドレスまたはポートは別のアプリケーションが使用しています。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "指定的地址或端口正被其他应用程序使用。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "指定的位址或連接埠正由其他應用程式使用。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Otra aplicación está usando la dirección o el puerto especificados." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Une autre application utilise l’adresse ou le port indiqué." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Eine andere Anwendung verwendet die angegebene Adresse oder den Port." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Outro aplicativo está usando o endereço ou a porta especificados." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Another application is using the specified address or port."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指定したアドレスまたはポートは別のアプリケーションが使用しています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指定的地址或端口正被其他应用程序使用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指定的位址或連接埠正由其他應用程式使用。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otra aplicación está usando la dirección o el puerto especificados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une autre application utilise l’adresse ou le port indiqué."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine andere Anwendung verwendet die angegebene Adresse oder den Port."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Outro aplicativo está usando o endereço ou a porta especificados."
+          }
+        }
       }
     },
     "원격 관리 서버를 시작할 권한이 없습니다. 주소와 포트를 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The remote management server cannot start with the current permissions. Check the address and port." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "現在の権限ではリモート管理サーバーを起動できません。アドレスとポートを確認してください。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "当前权限无法启动远程管理服务器。请检查地址和端口。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "目前權限無法啟動遠端管理伺服器。請檢查位址與連接埠。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "El servidor de administración remota no puede iniciarse con los permisos actuales. Compruebe la dirección y el puerto." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Le serveur de gestion à distance ne peut pas démarrer avec les autorisations actuelles. Vérifiez l’adresse et le port." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Der Remoteverwaltungsserver kann mit den aktuellen Berechtigungen nicht gestartet werden. Prüfen Sie Adresse und Port." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "O servidor de gerenciamento remoto não pode iniciar com as permissões atuais. Verifique o endereço e a porta." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The remote management server cannot start with the current permissions. Check the address and port."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の権限ではリモート管理サーバーを起動できません。アドレスとポートを確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前权限无法启动远程管理服务器。请检查地址和端口。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前權限無法啟動遠端管理伺服器。請檢查位址與連接埠。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El servidor de administración remota no puede iniciarse con los permisos actuales. Compruebe la dirección y el puerto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le serveur de gestion à distance ne peut pas démarrer avec les autorisations actuelles. Vérifiez l’adresse et le port."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Remoteverwaltungsserver kann mit den aktuellen Berechtigungen nicht gestartet werden. Prüfen Sie Adresse und Port."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O servidor de gerenciamento remoto não pode iniciar com as permissões atuais. Verifique o endereço e a porta."
+          }
+        }
       }
     },
     "원격 관리용 보안 인증서를 준비하지 못했습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The security certificate for remote management could not be prepared." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "リモート管理用のセキュリティ証明書を準備できませんでした。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法准备远程管理所需的安全证书。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法準備遠端管理所需的安全憑證。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "No se pudo preparar el certificado de seguridad para la administración remota." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Le certificat de sécurité pour la gestion à distance n’a pas pu être préparé." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Das Sicherheitszertifikat für die Remoteverwaltung konnte nicht vorbereitet werden." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Não foi possível preparar o certificado de segurança para o gerenciamento remoto." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The security certificate for remote management could not be prepared."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモート管理用のセキュリティ証明書を準備できませんでした。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法准备远程管理所需的安全证书。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法準備遠端管理所需的安全憑證。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo preparar el certificado de seguridad para la administración remota."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le certificat de sécurité pour la gestion à distance n’a pas pu être préparé."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Sicherheitszertifikat für die Remoteverwaltung konnte nicht vorbereitet werden."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível preparar o certificado de segurança para o gerenciamento remoto."
+          }
+        }
       }
     },
     "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "The request could not be completed. Check the diagnostic logs for details." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "リクエストを処理できませんでした。詳細は診断ログを確認してください。" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法完成请求。请查看诊断日志了解详情。" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法完成要求。請查看診斷記錄以取得詳細資訊。" } },
-        "es": { "stringUnit": { "state": "translated", "value": "No se pudo completar la solicitud. Consulte los registros de diagnóstico para obtener detalles." } },
-        "fr": { "stringUnit": { "state": "translated", "value": "La demande n’a pas pu être traitée. Consultez les journaux de diagnostic pour plus de détails." } },
-        "de": { "stringUnit": { "state": "translated", "value": "Die Anfrage konnte nicht abgeschlossen werden. Details finden Sie in den Diagnoseprotokollen." } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Não foi possível concluir a solicitação. Consulte os logs de diagnóstico para obter detalhes." } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The request could not be completed. Check the diagnostic logs for details."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リクエストを処理できませんでした。詳細は診断ログを確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法完成请求。请查看诊断日志了解详情。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法完成要求。請查看診斷記錄以取得詳細資訊。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo completar la solicitud. Consulte los registros de diagnóstico para obtener detalles."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La demande n’a pas pu être traitée. Consultez les journaux de diagnostic pour plus de détails."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Anfrage konnte nicht abgeschlossen werden. Details finden Sie in den Diagnoseprotokollen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível concluir a solicitação. Consulte os logs de diagnóstico para obter detalhes."
+          }
+        }
       }
     },
     "다른 Mac 연결 켜기": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Turn On Connections from Other Macs" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "他のMacからの接続をオン" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "开启其他 Mac 的连接" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟其他 Mac 的連線" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Activar conexiones desde otros Mac" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Activer les connexions depuis d’autres Mac" } },
-        "de": { "stringUnit": { "state": "translated", "value": "Verbindungen von anderen Macs aktivieren" } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Ativar conexões de outros Macs" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn On Connections from Other Macs"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "他のMacからの接続をオン"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启其他 Mac 的连接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟其他 Mac 的連線"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activar conexiones desde otros Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer les connexions depuis d’autres Mac"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbindungen von anderen Macs aktivieren"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ativar conexões de outros Macs"
+          }
+        }
       }
     },
     "다시 시작": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Restart" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "再起動" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "重新启动" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "重新啟動" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Reiniciar" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Redémarrer" } },
-        "de": { "stringUnit": { "state": "translated", "value": "Neu starten" } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Reiniciar" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restart"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再起動"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新启动"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新啟動"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redémarrer"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neu starten"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar"
+          }
+        }
       }
     },
     "설정 저장": {
       "extractionState": "manual",
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Save Settings" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "設定を保存" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "保存设置" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "儲存設定" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Guardar configuración" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Enregistrer les réglages" } },
-        "de": { "stringUnit": { "state": "translated", "value": "Einstellungen speichern" } },
-        "pt": { "stringUnit": { "state": "translated", "value": "Salvar configurações" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save Settings"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定を保存"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存設定"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardar configuración"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer les réglages"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen speichern"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salvar configurações"
+          }
+        }
       }
     },
     "환경 변수": {
@@ -29044,169 +29604,709 @@
     "브리지 문제 발생 시 알림": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "브리지 문제 발생 시 알림"}},
-        "en": {"stringUnit": {"state": "translated", "value": "Notify about bridge problems"}},
-        "ja": {"stringUnit": {"state": "translated", "value": "ブリッジの問題を通知"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "桥接出现问题时通知"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "橋接發生問題時通知"}},
-        "es": {"stringUnit": {"state": "translated", "value": "Notificar problemas del puente"}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Notifier les problèmes du pont"}},
-        "de": {"stringUnit": {"state": "translated", "value": "Bei Bridge-Problemen benachrichtigen"}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Notificar problemas da ponte"}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 문제 발생 시 알림"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notify about bridge problems"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジの問題を通知"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "桥接出现问题时通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "橋接發生問題時通知"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notificar problemas del puente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifier les problèmes du pont"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bei Bridge-Problemen benachrichtigen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notificar problemas da ponte"
+          }
+        }
       }
     },
     "보안 및 연결 승인 알림": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "보안 및 연결 승인 알림"}},
-        "en": {"stringUnit": {"state": "translated", "value": "Security and connection approval notifications"}},
-        "ja": {"stringUnit": {"state": "translated", "value": "セキュリティと接続承認の通知"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "安全与连接审批通知"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "安全與連線核准通知"}},
-        "es": {"stringUnit": {"state": "translated", "value": "Avisos de seguridad y autorización de conexiones"}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Notifications de sécurité et d’autorisation des connexions"}},
-        "de": {"stringUnit": {"state": "translated", "value": "Sicherheits- und Verbindungsfreigaben melden"}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Notificações de segurança e aprovação de conexão"}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보안 및 연결 승인 알림"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Security and connection approval notifications"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "セキュリティと接続承認の通知"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安全与连接审批通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安全與連線核准通知"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avisos de seguridad y autorización de conexiones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications de sécurité et d’autorisation des connexions"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sicherheits- und Verbindungsfreigaben melden"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notificações de segurança e aprovação de conexão"
+          }
+        }
       }
     },
     "macOS 알림 허용 확인": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "macOS 알림 허용 확인"}},
-        "en": {"stringUnit": {"state": "translated", "value": "Check macOS notification permission"}},
-        "ja": {"stringUnit": {"state": "translated", "value": "macOSの通知権限を確認"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "检查 macOS 通知权限"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "檢查 macOS 通知權限"}},
-        "es": {"stringUnit": {"state": "translated", "value": "Comprobar permiso de notificaciones de macOS"}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Vérifier l’autorisation des notifications macOS"}},
-        "de": {"stringUnit": {"state": "translated", "value": "macOS-Mitteilungsberechtigung prüfen"}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Verificar permissão de notificações do macOS"}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS 알림 허용 확인"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check macOS notification permission"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOSの通知権限を確認"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查 macOS 通知权限"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查 macOS 通知權限"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobar permiso de notificaciones de macOS"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifier l’autorisation des notifications macOS"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS-Mitteilungsberechtigung prüfen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificar permissão de notificações do macOS"
+          }
+        }
       }
     },
     "알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다."}},
-        "en": {"stringUnit": {"state": "translated", "value": "Notifications follow macOS settings and Focus. Connection problems remain visible in the menu bar when notifications are off."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "通知はmacOSの設定と集中モードに従います。通知をオフにしても、接続の問題はメニューバーで確認できます。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "通知遵循 macOS 设置和专注模式。关闭通知后，仍可在菜单栏查看连接问题。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "通知遵循 macOS 設定和專注模式。關閉通知後，仍可在選單列查看連線問題。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "Las notificaciones respetan los ajustes y el modo de concentración de macOS. Los problemas de conexión siguen visibles en la barra de menús aunque se desactiven."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Les notifications respectent les réglages macOS et les modes de concentration. Les problèmes de connexion restent visibles dans la barre des menus même sans notifications."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Mitteilungen beachten macOS-Einstellungen und Fokus. Verbindungsprobleme bleiben bei deaktivierten Mitteilungen in der Menüleiste sichtbar."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "As notificações seguem os ajustes do macOS e o Foco. Problemas de conexão continuam visíveis na barra de menus quando as notificações estão desativadas."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications follow macOS settings and Focus. Connection problems remain visible in the menu bar when notifications are off."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知はmacOSの設定と集中モードに従います。通知をオフにしても、接続の問題はメニューバーで確認できます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知遵循 macOS 设置和专注模式。关闭通知后，仍可在菜单栏查看连接问题。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知遵循 macOS 設定和專注模式。關閉通知後，仍可在選單列查看連線問題。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las notificaciones respetan los ajustes y el modo de concentración de macOS. Los problemas de conexión siguen visibles en la barra de menús aunque se desactiven."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les notifications respectent les réglages macOS et les modes de concentration. Les problèmes de connexion restent visibles dans la barre des menus même sans notifications."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mitteilungen beachten macOS-Einstellungen und Fokus. Verbindungsprobleme bleiben bei deaktivierten Mitteilungen in der Menüleiste sichtbar."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As notificações seguem os ajustes do macOS e o Foco. Problemas de conexão continuam visíveis na barra de menus quando as notificações estão desativadas."
+          }
+        }
       }
     },
     "브리지를 사용할 수 없습니다. 연결 설정에서 상태와 복구 방법을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "브리지를 사용할 수 없습니다. 연결 설정에서 상태와 복구 방법을 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "The bridge is unavailable. Open connection settings to check its status and recovery options."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "ブリッジを使用できません。接続設定で状態と復旧方法を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "桥接不可用。请打开连接设置，查看状态和恢复方式。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "橋接無法使用。請開啟連線設定，查看狀態與復原方式。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "El puente no está disponible. Abre los ajustes de conexión para ver su estado y las opciones de recuperación."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Le pont est indisponible. Ouvrez les réglages de connexion pour consulter son état et les options de récupération."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die Bridge ist nicht verfügbar. Prüfe Status und Wiederherstellung in den Verbindungseinstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "A ponte está indisponível. Abra os ajustes de conexão para verificar o estado e as opções de recuperação."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지를 사용할 수 없습니다. 연결 설정에서 상태와 복구 방법을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bridge is unavailable. Open connection settings to check its status and recovery options."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジを使用できません。接続設定で状態と復旧方法を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "桥接不可用。请打开连接设置，查看状态和恢复方式。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "橋接無法使用。請開啟連線設定，查看狀態與復原方式。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El puente no está disponible. Abre los ajustes de conexión para ver su estado y las opciones de recuperación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le pont est indisponible. Ouvrez les réglages de connexion pour consulter son état et les options de récupération."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Bridge ist nicht verfügbar. Prüfe Status und Wiederherstellung in den Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A ponte está indisponível. Abra os ajustes de conexão para verificar o estado e as opções de recuperação."
+          }
+        }
       }
     },
     "ChatGPT 연결을 복구하지 못했습니다. 연결 설정에서 터널을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "ChatGPT 연결을 복구하지 못했습니다. 연결 설정에서 터널을 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "The ChatGPT connection could not be restored. Check the tunnel in connection settings."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "ChatGPTへの接続を復旧できませんでした。接続設定でトンネルを確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "未能恢复 ChatGPT 连接。请在连接设置中检查隧道。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "無法復原 ChatGPT 連線。請在連線設定中檢查通道。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "No se pudo restablecer la conexión con ChatGPT. Revisa el túnel en los ajustes de conexión."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "La connexion à ChatGPT n’a pas pu être rétablie. Vérifiez le tunnel dans les réglages de connexion."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die ChatGPT-Verbindung konnte nicht wiederhergestellt werden. Prüfe den Tunnel in den Verbindungseinstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Não foi possível restaurar a conexão com o ChatGPT. Verifique o túnel nos ajustes de conexão."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ChatGPT 연결을 복구하지 못했습니다. 연결 설정에서 터널을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The ChatGPT connection could not be restored. Check the tunnel in connection settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ChatGPTへの接続を復旧できませんでした。接続設定でトンネルを確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能恢复 ChatGPT 连接。请在连接设置中检查隧道。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法復原 ChatGPT 連線。請在連線設定中檢查通道。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo restablecer la conexión con ChatGPT. Revisa el túnel en los ajustes de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connexion à ChatGPT n’a pas pu être rétablie. Vérifiez le tunnel dans les réglages de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die ChatGPT-Verbindung konnte nicht wiederhergestellt werden. Prüfe den Tunnel in den Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível restaurar a conexão com o ChatGPT. Verifique o túnel nos ajustes de conexão."
+          }
+        }
       }
     },
     "브리지 설정을 확인해야 합니다. 연결 설정을 열어 필수 항목을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "브리지 설정을 확인해야 합니다. 연결 설정을 열어 필수 항목을 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "Bridge configuration needs attention. Open connection settings to review the required fields."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "ブリッジの設定に確認が必要です。接続設定で必須項目を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "桥接配置需要检查。请打开连接设置，查看必填项。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "橋接設定需要檢查。請開啟連線設定，查看必填項目。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "La configuración del puente requiere atención. Revisa los campos obligatorios en los ajustes de conexión."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "La configuration du pont nécessite une vérification. Consultez les champs requis dans les réglages de connexion."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die Bridge-Konfiguration muss geprüft werden. Öffne die Verbindungseinstellungen und prüfe die Pflichtfelder."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "A configuração da ponte precisa de atenção. Confira os campos obrigatórios nos ajustes de conexão."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 설정을 확인해야 합니다. 연결 설정을 열어 필수 항목을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge configuration needs attention. Open connection settings to review the required fields."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジの設定に確認が必要です。接続設定で必須項目を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "桥接配置需要检查。请打开连接设置，查看必填项。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "橋接設定需要檢查。請開啟連線設定，查看必填項目。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuración del puente requiere atención. Revisa los campos obligatorios en los ajustes de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuration du pont nécessite une vérification. Consultez les champs requis dans les réglages de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Bridge-Konfiguration muss geprüft werden. Öffne die Verbindungseinstellungen und prüfe die Pflichtfelder."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A configuração da ponte precisa de atenção. Confira os campos obrigatórios nos ajustes de conexão."
+          }
+        }
       }
     },
     "Codex 인증을 확인해야 합니다. Codex 설정에서 로그인 상태를 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "Codex 인증을 확인해야 합니다. Codex 설정에서 로그인 상태를 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "Codex authentication needs attention. Check your sign-in status in Codex settings."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "Codexの認証に確認が必要です。Codex設定でログイン状態を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "Codex 身份验证需要检查。请在 Codex 设置中查看登录状态。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "Codex 驗證需要檢查。請在 Codex 設定中查看登入狀態。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "La autenticación de Codex requiere atención. Comprueba el inicio de sesión en los ajustes de Codex."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "L’authentification Codex nécessite une vérification. Consultez l’état de connexion dans les réglages Codex."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die Codex-Authentifizierung muss geprüft werden. Prüfe deinen Anmeldestatus in den Codex-Einstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "A autenticação do Codex precisa de atenção. Verifique o estado do login nos ajustes do Codex."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 인증을 확인해야 합니다. Codex 설정에서 로그인 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex authentication needs attention. Check your sign-in status in Codex settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexの認証に確認が必要です。Codex設定でログイン状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 身份验证需要检查。请在 Codex 设置中查看登录状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 驗證需要檢查。請在 Codex 設定中查看登入狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La autenticación de Codex requiere atención. Comprueba el inicio de sesión en los ajustes de Codex."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’authentification Codex nécessite une vérification. Consultez l’état de connexion dans les réglages Codex."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Codex-Authentifizierung muss geprüft werden. Prüfe deinen Anmeldestatus in den Codex-Einstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A autenticação do Codex precisa de atenção. Verifique o estado do login nos ajustes do Codex."
+          }
+        }
       }
     },
     "사용할 Codex를 찾지 못했습니다. Codex 설정에서 설치 또는 선택해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "사용할 Codex를 찾지 못했습니다. Codex 설정에서 설치 또는 선택해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "No usable Codex was found. Install or select one in Codex settings."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "使用可能なCodexが見つかりません。Codex設定でインストールまたは選択してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "未找到可用的 Codex。请在 Codex 设置中安装或选择。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "找不到可用的 Codex。請在 Codex 設定中安裝或選擇。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "No se encontró un Codex utilizable. Instala o selecciona uno en los ajustes de Codex."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Aucun Codex utilisable n’a été trouvé. Installez-en ou sélectionnez-en un dans les réglages Codex."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Kein nutzbares Codex gefunden. Installiere oder wähle eines in den Codex-Einstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Nenhum Codex utilizável foi encontrado. Instale ou selecione um nos ajustes do Codex."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용할 Codex를 찾지 못했습니다. Codex 설정에서 설치 또는 선택해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No usable Codex was found. Install or select one in Codex settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用可能なCodexが見つかりません。Codex設定でインストールまたは選択してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到可用的 Codex。请在 Codex 设置中安装或选择。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到可用的 Codex。請在 Codex 設定中安裝或選擇。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se encontró un Codex utilizable. Instala o selecciona uno en los ajustes de Codex."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun Codex utilisable n’a été trouvé. Installez-en ou sélectionnez-en un dans les réglages Codex."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein nutzbares Codex gefunden. Installiere oder wähle eines in den Codex-Einstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhum Codex utilizável foi encontrado. Instale ou selecione um nos ajustes do Codex."
+          }
+        }
       }
     },
     "원격 서버에 연결하지 못했습니다. 연결 설정에서 서버 상태를 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "원격 서버에 연결하지 못했습니다. 연결 설정에서 서버 상태를 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "The remote server could not be reached. Check its status in connection settings."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "リモートサーバーに接続できません。接続設定でサーバーの状態を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "无法连接远程服务器。请在连接设置中查看服务器状态。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "無法連線至遠端伺服器。請在連線設定中查看伺服器狀態。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "No se pudo conectar con el servidor remoto. Comprueba su estado en los ajustes de conexión."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Le serveur distant est inaccessible. Vérifiez son état dans les réglages de connexion."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Der entfernte Server ist nicht erreichbar. Prüfe seinen Status in den Verbindungseinstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Não foi possível acessar o servidor remoto. Verifique seu estado nos ajustes de conexão."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 서버에 연결하지 못했습니다. 연결 설정에서 서버 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The remote server could not be reached. Check its status in connection settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモートサーバーに接続できません。接続設定でサーバーの状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接远程服务器。请在连接设置中查看服务器状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法連線至遠端伺服器。請在連線設定中查看伺服器狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo conectar con el servidor remoto. Comprueba su estado en los ajustes de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le serveur distant est inaccessible. Vérifiez son état dans les réglages de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der entfernte Server ist nicht erreichbar. Prüfe seinen Status in den Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível acessar o servidor remoto. Verifique seu estado nos ajustes de conexão."
+          }
+        }
       }
     },
     "원격 연결의 보안 확인이 필요합니다. 연결 설정에서 서버와 기기 등록을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "원격 연결의 보안 확인이 필요합니다. 연결 설정에서 서버와 기기 등록을 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "The remote connection needs a security check. Review the server and device registration in connection settings."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "リモート接続のセキュリティ確認が必要です。接続設定でサーバーとデバイス登録を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "远程连接需要安全检查。请在连接设置中查看服务器和设备注册信息。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "遠端連線需要安全檢查。請在連線設定中查看伺服器和裝置註冊資訊。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "La conexión remota requiere una comprobación de seguridad. Revisa el servidor y el registro del dispositivo en los ajustes de conexión."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "La connexion distante nécessite une vérification de sécurité. Consultez le serveur et l’enregistrement de l’appareil dans les réglages de connexion."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die entfernte Verbindung benötigt eine Sicherheitsprüfung. Prüfe Server und Geräteregistrierung in den Verbindungseinstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "A conexão remota precisa de uma verificação de segurança. Confira o servidor e o registro do dispositivo nos ajustes de conexão."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 연결의 보안 확인이 필요합니다. 연결 설정에서 서버와 기기 등록을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The remote connection needs a security check. Review the server and device registration in connection settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモート接続のセキュリティ確認が必要です。接続設定でサーバーとデバイス登録を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "远程连接需要安全检查。请在连接设置中查看服务器和设备注册信息。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遠端連線需要安全檢查。請在連線設定中查看伺服器和裝置註冊資訊。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La conexión remota requiere una comprobación de seguridad. Revisa el servidor y el registro del dispositivo en los ajustes de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connexion distante nécessite une vérification de sécurité. Consultez le serveur et l’enregistrement de l’appareil dans les réglages de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die entfernte Verbindung benötigt eine Sicherheitsprüfung. Prüfe Server und Geräteregistrierung in den Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A conexão remota precisa de uma verificação de segurança. Confira o servidor e o registro do dispositivo nos ajustes de conexão."
+          }
+        }
       }
     },
     "구성 요소가 호환되지 않습니다. 연결 설정에서 업데이트 또는 복구 방법을 확인해 주세요.": {
       "extractionState": "manual",
       "localizations": {
-        "ko": {"stringUnit": {"state": "translated", "value": "구성 요소가 호환되지 않습니다. 연결 설정에서 업데이트 또는 복구 방법을 확인해 주세요."}},
-        "en": {"stringUnit": {"state": "translated", "value": "Components are incompatible. Check connection settings for update or recovery options."}},
-        "ja": {"stringUnit": {"state": "translated", "value": "コンポーネントに互換性がありません。接続設定で更新または復旧方法を確認してください。"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "组件不兼容。请在连接设置中查看更新或恢复方式。"}},
-        "zh-Hant": {"stringUnit": {"state": "translated", "value": "元件不相容。請在連線設定中查看更新或復原方式。"}},
-        "es": {"stringUnit": {"state": "translated", "value": "Los componentes no son compatibles. Consulta las opciones de actualización o recuperación en los ajustes de conexión."}},
-        "fr": {"stringUnit": {"state": "translated", "value": "Les composants sont incompatibles. Consultez les options de mise à jour ou de récupération dans les réglages de connexion."}},
-        "de": {"stringUnit": {"state": "translated", "value": "Die Komponenten sind nicht kompatibel. Prüfe Aktualisierungs- oder Wiederherstellungsoptionen in den Verbindungseinstellungen."}},
-        "pt": {"stringUnit": {"state": "translated", "value": "Os componentes são incompatíveis. Veja opções de atualização ou recuperação nos ajustes de conexão."}}
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구성 요소가 호환되지 않습니다. 연결 설정에서 업데이트 또는 복구 방법을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Components are incompatible. Check connection settings for update or recovery options."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンポーネントに互換性がありません。接続設定で更新または復旧方法を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "组件不兼容。请在连接设置中查看更新或恢复方式。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "元件不相容。請在連線設定中查看更新或復原方式。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los componentes no son compatibles. Consulta las opciones de actualización o recuperación en los ajustes de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les composants sont incompatibles. Consultez les options de mise à jour ou de récupération dans les réglages de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Komponenten sind nicht kompatibel. Prüfe Aktualisierungs- oder Wiederherstellungsoptionen in den Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os componentes são incompatíveis. Veja opções de atualização ou recuperação nos ajustes de conexão."
+          }
+        }
       }
     },
     "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 %lld개 있습니다.": {
@@ -29437,6 +30537,124 @@
           "stringUnit": {
             "state": "translated",
             "value": "尚未檢查 %lld 個 Agent 的程序狀態。"
+          }
+        }
+      }
+    },
+    "브리지에 저장된 기본 접근 권한으로 새 작업을 실행합니다.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New tasks use the default access level configured in the bridge."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지에 저장된 기본 접근 권한으로 새 작업을 실행합니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいタスクにはブリッジで設定された既定のアクセス権限を適用します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新任务使用桥接中配置的默认访问权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新工作使用橋接中設定的預設存取權限。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las tareas nuevas usan el acceso predeterminado configurado en el puente."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les nouvelles tâches utilisent les droits d’accès par défaut configurés dans le pont."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neue Aufgaben verwenden die in der Bridge festgelegten Standardzugriffsrechte."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Novas tarefas usam o acesso padrão configurado na ponte."
+          }
+        }
+      }
+    },
+    "브리지 기본값": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge default"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 기본값"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジの既定値"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "桥接默认设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "橋接預設值"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valor predeterminado del puente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valeur par défaut du pont"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge-Standard"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Padrão da ponte"
           }
         }
       }

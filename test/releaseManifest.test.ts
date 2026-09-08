@@ -209,6 +209,7 @@ describe("release manifest", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const rendered = {
       resources: {
+        question: { html: "question-v1", metadata: { descriptor: { mimeType: "text/html;profile=mcp-app" }, content: { "codex/uiContractGeneration": 1 } } },
         settings: {
           html: "<!doctype html><p>settings</p>",
           metadata: {
@@ -274,7 +275,7 @@ describe("release manifest", () => {
     legacyPolicy.uiResources.minimumContractGeneration = {
       settings: 3,
       activity: 4,
-      dashboard: 1
+      dashboard: 1, question: 1
     };
     const renderedRevision = (
       settingsHtml: string,
@@ -285,6 +286,7 @@ describe("release manifest", () => {
       dashboardGeneration = 1
     ) => ({
       resources: {
+        question: { html: "question-v1", metadata: { descriptor: { mimeType: "text/html;profile=mcp-app" }, content: { "codex/uiContractGeneration": 1 } } },
         settings: {
           html: settingsHtml,
           metadata: {

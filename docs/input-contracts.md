@@ -1,5 +1,7 @@
 # Input schema contracts
 
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+
 ChatGPT is the normative model client for the bridge. A published
 `inputSchema` tells ChatGPT which arguments it may construct; the runtime Zod
 schema remains the fail-closed parser and the bridge state remains the
@@ -7,8 +9,9 @@ authorization source.
 
 ## Published boundary
 
-All bridge tools publish a closed object root with
-`additionalProperties: false`. Nested objects with named properties are also
+All bridge tools publish an object root. A single-shape contract sets
+`additionalProperties: false`; a union has closed object branches, each with
+`additionalProperties: false`, and no free-form fallback. Nested objects with named properties are also
 closed. This applies to both model-visible and app-only tools: an obsolete,
 misspelled, or invented top-level field must fail input parsing instead of
 being silently discarded.
@@ -32,26 +35,40 @@ three-property maximum.
 The runtime retains the explicit `waitMs`/`waitFor` check as defense against a
 stale or non-validating MCP caller.
 
-`codex_task` publishes execution fields only. It has no UI metadata and no
-presentation input, so calling it multiple times cannot create multiple
-Activity-card shells. Its stable description explains that saved visibility is
-runtime authority; the result's `nextActions` projects whether the admitted Task
-is currently eligible for one separate compact presentation. `codex_activity`
-publishes two presentation modes:
+`codex_task` publishes execution fields only and has no Activity UI binding.
+`codex_status` adds the closed `{kind: "input", jobId, afterCursor?, waitMs?}`
+query. Its input cursor and wait remain separate from ordinary Job progress.
+`codex_cancel` selects `{kind: "job" | "activity", id}` in `target`, with a
+unique requestId, exact expectedVersion, reason and optional impact acknowledgment.
+The old Job shape remains runtime-only compatibility.
 
-- `compact-monitor` requires one UUID `presentationId` and may include one
-  `activityId` as the initial focus; orchestration calls it at most once after
-  all Task calls for an assistant response;
-- `full-history` is the default explicit user-open mode and forbids
-  `presentationId`.
+`codex_models` accepts optional `contractVersion: "2"`. This explicitly requests
+the closed v2 catalog result with `selectionMode: "fixed" | "automatic"` from
+the same settings snapshot as the allowed model/effort list. Omission keeps the
+exact legacy catalog-only result for cached clients. Fixed mode requires omitting
+Task `selection`; automatic mode requires a permitted pair for fresh work.
+One returned model does not identify the policy mode. This read does not open a
+card or change policy; admission still rechecks current settings.
+
+Current Task model-policy failures return executable
+`codex_models({"contractVersion":"2","refresh":true})` recovery in the existing
+string `nextActions` contract. The resulting mode determines whether Task must
+omit or provide `selection`; an empty or unavailable catalog does not authorize
+changing saved settings. A fixed-policy per-call override instead instructs
+omitting `selection`. An unsupported retained-thread override uses the current
+nested `agent.context` field for an explicitly chosen fresh context. Retained
+pre-v2 callers keep their existing error guidance and response schema.
+
+`codex_user_answer.responseRef` distinguishes two existing operations: omission
+lists up to 20 unread references without bodies or consumption, while an exact
+reference returns the body and marks that response seen. Neither sends an answer
+to Codex. GPT owns that separate decision.
 
 Contract v2 publishes one generic closed `project: { name, projectRef,
-projectRevision }` shape and one generic `projectLookup: { name }` shape. It
-does not embed project names, refs, revisions, private UUIDs, paths, or registry
-generations. `projectLookup` is a same-tool no-work operation: it returns the
-exact current selector in `nextActions`, creates no Activity, Agent, Job,
-session, filesystem mutation, or upstream turn, and is then retried with a new
-`requestId`. `projectRef` is opaque public identity and `projectRevision`
+projectRevision }` shape. It does not embed registry values, private UUIDs or
+paths. Resolve unknown selectors with read-only `codex_status` query
+`{ kind: "project", name }`. This creates no Activity, Agent, Job, session,
+filesystem mutation, or upstream turn. `projectRef` is opaque public identity and `projectRevision`
 changes on effective rename, relocate, archive, or restore transactions for
 that project. External availability is rechecked separately. The global
 `registryRevision` remains a Settings CAS generation, not a Task selector. The
@@ -95,7 +112,7 @@ contract before any reinitialized boundary may install the new schema.
 The saved `always`, `background-only`, or `never` visibility policy remains a
 runtime authority. Presentation identity cannot bypass it or alter Task replay.
 
-`codex_dashboard_snapshot` accepts `terminalOffset` and `idleOffset` for the
+`codex_ui_read` (`view: "dashboard"`) accepts `terminalOffset` and `idleOffset` for the
 current status-first card. `projectOffset` and `conversationOffset` remain
 optional compatibility inputs only because immutable generation-4–6 cards
 still send them; their presence asks the server to add the older grouped
@@ -113,7 +130,7 @@ and usage evidence, but cannot broaden control authority or resume an unloaded
 historical App Server thread. Omission remains enriched for retained Activity
 cards; generation 20 sends `false` explicitly on structural reads and watches.
 
-`codex_settings_snapshot` is an app-private read-only call with one optional
+`codex_ui_read` (`view: "settings"`) is an app-private read-only call with one optional
 `refreshModels` boolean. The current Settings card calls it unconditionally on
 cold mount and after revision conflicts. Its default reads current persisted
 settings and project-registry state while using the normal short-lived catalog
@@ -139,13 +156,13 @@ where it must return an authoritative, recoverable error:
   before execution state or side effects. Existing continue/fork calls may omit
   selection and inherit their admission-time thread choice unless they
   deliberately request a runtime-policy-supported model override. If an exact
-  current project selector is unknown, `projectLookup` resolves it through the
-  same stable Task contract without requiring a model selection.
+  current project selector is unknown, `codex_status` query kind=project resolves
+  it without model selection, execution, or permission input.
 - The selected project's ref/revision/name, active/available state, canonical
   root, model catalog, and execution policy are checked again during serialized
   admission even if the client retained a cached descriptor. An unrelated
   project mutation does not invalidate an unchanged selector, while a changed
-  selector returns same-tool lookup recovery rather than requiring rediscovery.
+  selector returns read-only project lookup recovery rather than requiring rediscovery.
 - A cross-backend fresh Agent requires an explicit bounded `handoffSummary`;
   same-backend fresh context forbids it.
 - Cancellation impact sets, optimistic versions, mounted-card leases, and exact
@@ -181,7 +198,7 @@ host metadata plus the four published fields, then proves that another host
 session cannot address that Job.
 Stable descriptor equality across settings/catalog/project changes,
 unavailable-project recovery, fixed and automatic runtime model policies, and
-adaptive/fixed sandbox enforcement remain in the discovery suite.
+bridge-owned sandbox enforcement remain in the discovery suite.
 
 The focused issue-40 discovery delta is checked in at
 `docs/audits/issue-40-tool-schema-delta.json`; the executable full inventory
@@ -189,6 +206,25 @@ snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
 
 ## GPT question orchestration (#68)
 
-`codex_input` accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
+`codex_status` (`query.kind: "input"`) accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
 
-`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_question_card`, `codex_question_submit`, and `codex_question_notify` require the scoped question ID, revision, and private presentation token. Submission and notification are separate contracts. See [the complete lifecycle](gpt-questions.md).
+`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_ui_read` (`view: "question"`) and `codex_question_action` require the scoped question ID, revision, and private presentation token. The action's closed `submit`, `claim`, and `ack` branches preserve separate storage and delivery states. The previous `codex_question_card`, `codex_question_submit`, and `codex_question_notify` names are retained compatibility calls. See [the complete lifecycle](gpt-questions.md).
+
+### Bridge-owned permissions and project reads (#69 follow-up)
+
+Current `codex_task` has no `sandbox` or approval-policy input. The bridge
+uses saved access settings and operator limits; the retained adaptive value
+means the configured bridge default for fresh work. Continue/fork preserve the
+thread policy and recheck operator limits. The execution-envelope generation
+was advanced so unadmitted cached calls cannot silently acquire new authority.
+The runtime accepts the retired field only to identify old calls: exact admitted
+replays remain available, while new admissions return
+`TASK_PERMISSION_INPUT_RETIRED`. No requested-versus-saved conflict exists in
+the current execution path.
+
+Resolve a project using `codex_status` with
+`query: {kind: "project", name: "<exact user-visible name>"}`. It returns the
+opaque current selector without admitting work, loading a model, configuring
+permissions, or opening a card. The previous `codex_task.projectLookup` stays
+runtime-only for cached clients. Invalid or unavailable names do not select a
+fallback. No new tool is registered.

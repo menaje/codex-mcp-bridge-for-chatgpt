@@ -1,10 +1,15 @@
+import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
+import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
+import { objectSchemaUnion } from "./objectSchemaUnion.js";
+import { installLegacyToolCompatibility } from "./legacyToolCompatibility.js";
+import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import { createHash, randomUUID } from "node:crypto";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerQuestionTools, QUESTION_MODEL_OUTPUT_SCHEMAS, QUESTION_APP_OUTPUT_SCHEMAS } from "./questionTools.js";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as z from "zod/v4";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
@@ -1090,80 +1095,6 @@ const settingsViewOutputSchema = z.strictObject({
   })
 });
 
-const modelPolicySummaryOutputSchema = z.strictObject({
-  mode: z.enum(["fixed", "automatic"]),
-  model: z.string().optional(),
-  reasoningEffort: z.string().optional(),
-  allowed: z.enum(["catalog-visible", "explicit"]).optional(),
-  allowedCount: z.number().int().min(0).optional(),
-  delegation: z.boolean()
-}).superRefine((value, context) => {
-  const reject = (path: string, message: string): void => {
-    context.addIssue({ code: "custom", path: [path], message });
-  };
-  if (value.mode === "automatic") {
-    if (value.model !== undefined) {
-      reject("model", "Automatic policy summaries must not expose the saved fallback model.");
-    }
-    if (value.reasoningEffort !== undefined) {
-      reject(
-        "reasoningEffort",
-        "Automatic policy summaries must not expose the saved fallback reasoning effort."
-      );
-    }
-    if (value.allowed === undefined) {
-      reject("allowed", "Automatic policy summaries require an allowlist kind.");
-    } else if (value.allowed === "explicit" && value.allowedCount === undefined) {
-      reject("allowedCount", "Explicit automatic policy summaries require an allowed count.");
-    } else if (value.allowed === "catalog-visible" && value.allowedCount !== undefined) {
-      reject(
-        "allowedCount",
-        "Catalog-visible automatic policy summaries must not publish an allowed count."
-      );
-    }
-    return;
-  }
-  if (value.model === undefined) {
-    reject("model", "Fixed policy summaries require the exact fixed model.");
-  }
-  if (value.reasoningEffort === undefined) {
-    reject("reasoningEffort", "Fixed policy summaries require the exact fixed reasoning effort.");
-  }
-  if (value.allowed !== undefined) {
-    reject("allowed", "Fixed policy summaries must not publish an automatic allowlist kind.");
-  }
-  if (value.allowedCount !== undefined) {
-    reject("allowedCount", "Fixed policy summaries must not publish an automatic allowed count.");
-  }
-});
-
-const compactSettingsOutputSchema = z.strictObject({
-  revisions: z.strictObject({
-    settings: z.number().int().min(0),
-    registry: z.number().int().min(0),
-    policy: z.number().int().min(0)
-  }),
-  policy: z.strictObject({
-    access: z.enum(["read-only", "adaptive", "always-full"]),
-    model: modelPolicySummaryOutputSchema,
-    priority: z.boolean(),
-    maxConcurrentJobs: z.number().int().positive(),
-    activityVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
-  }),
-  projects: z.array(z.strictObject({
-    name: z.string(),
-    available: z.boolean(),
-    archived: z.boolean()
-  })),
-  catalog: z.strictObject({
-    stale: z.boolean(),
-    modelCount: z.number().int().min(0)
-  }),
-  warnings: z.array(z.string()),
-  nextActions: z.array(modelNextActionOutputSchema)
-});
-
 export type SettingsView = z.infer<typeof settingsViewOutputSchema>;
 
 const jobWaitOutputSchema = z.strictObject({
@@ -1255,7 +1186,7 @@ const statusCountsOutputSchema = z.strictObject({
 });
 
 const statusItemOutputSchema = z.strictObject({
-  inputs: z.strictObject({ cursor: z.string(), ordinaryQuestions: z.number().int().min(0), approvalRequests: z.number().int().min(0), readTool: z.literal("codex_input") }).optional(),
+  inputs: z.strictObject({ cursor: z.string(), ordinaryQuestions: z.number().int().min(0), approvalRequests: z.number().int().min(0), readTool: z.literal("codex_status"), queryKind: z.literal("input") }).optional(),
   runtime: z.string().optional(),
   type: z.enum(["session", "job", "activity", "agent", "thread"]),
   id: z.string(),
@@ -1304,6 +1235,13 @@ const codexStatusOutputSchema = z.strictObject({
   }).optional(),
   items: z.array(statusItemOutputSchema),
   warnings: z.array(z.string())
+});
+
+const projectStatusOutputSchema = z.strictObject({
+  kind: z.literal("project"),
+  project: currentProjectSelectionZod().nullable(),
+  error: structuredErrorOutputSchema.optional(),
+  nextActions: z.array(z.string())
 });
 
 const mutationOutputSchema = z.strictObject({
@@ -1441,12 +1379,21 @@ const compactCatalogModelOutputSchema = z.strictObject({
   serviceTiers: z.array(compactCatalogServiceTierOutputSchema)
 });
 
-const codexModelsOutputSchema = z.strictObject({
+const legacyCodexModelsOutputSchema = z.strictObject({
   source: z.string(),
   stale: z.boolean(),
   warning: z.string().nullable(),
   models: z.array(compactCatalogModelOutputSchema)
 });
+
+// Opt-in v2 keeps the exact old result shape for cached callers that omit it.
+const codexModelsOutputSchema = objectSchemaUnion([
+  legacyCodexModelsOutputSchema,
+  legacyCodexModelsOutputSchema.extend({
+    contractVersion: z.literal("2"),
+    selectionMode: z.enum(["fixed", "automatic"])
+  })
+]);
 
 const diagnosticsOutputSchema = z.strictObject({
   kind: z.literal("diagnostics"),
@@ -1540,7 +1487,6 @@ for (const [schema, reuse] of [
   [agentMutationOutputSchema, false],
   [cancelMutationOutputSchema, false],
   [codexModelsOutputSchema, false],
-  [compactSettingsOutputSchema, false],
   [dashboardModelOutputSchema, false],
   [codexStatusOutputSchema, false],
   [codexSteerOutputSchema, false],
@@ -1602,6 +1548,10 @@ const statusResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_status,
   "documented-support-level"
 );
+const projectStatusResultContract = toolOutputContract(
+  "codex_status", "model-orchestrator-semantic", projectStatusOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.codex_status, "documented-support-level"
+);
 const dashboardModelResultContract = toolOutputContract(
   "codex_dashboard",
   "model-orchestrator-semantic",
@@ -1619,12 +1569,6 @@ const modelsResultContract = toolOutputContract(
   "model-orchestrator-semantic",
   codexModelsOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.codex_models
-);
-const compactSettingsResultContract = toolOutputContract(
-  "codex_settings",
-  "model-orchestrator-semantic",
-  compactSettingsOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.codex_settings
 );
 const settingsSnapshotResultContract = toolOutputContract(
   "codex_settings_snapshot",
@@ -1726,48 +1670,61 @@ const diagnosticsResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_diagnostics
 );
 
+const { codex_input: legacyInputOutputSchema, ...currentQuestionOutputSchemas } = QUESTION_MODEL_OUTPUT_SCHEMAS;
+export const LEGACY_MODEL_OUTPUT_SCHEMAS = Object.freeze({
+  codex_input: legacyInputOutputSchema, codex_activity: activityModelOutputSchema,
+  codex_activity_cancel: activityCancelMutationOutputSchema
+});
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
-  ...QUESTION_MODEL_OUTPUT_SCHEMAS,
-  codex_activity: activityModelOutputSchema,
-  codex_activity_cancel: activityCancelMutationOutputSchema,
+  ...currentQuestionOutputSchemas,
   codex_activity_update: activityUpdateMutationOutputSchema,
   codex_agent: agentMutationOutputSchema,
-  codex_cancel: cancelMutationOutputSchema,
+  codex_cancel: objectSchemaUnion([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
   codex_models: codexModelsOutputSchema,
-  codex_settings: compactSettingsOutputSchema,
-  codex_status: codexStatusOutputSchema,
+  codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
+  codex_status: objectSchemaUnion([codexStatusOutputSchema, legacyInputOutputSchema, projectStatusOutputSchema]),
   codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
-
-export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
+const uiControlSummaryOutputSchema = z.strictObject({ kind: z.literal("control"), ready: z.literal(true) });
+export const LEGACY_APP_OUTPUT_SCHEMAS = Object.freeze({
   ...QUESTION_APP_OUTPUT_SCHEMAS,
   codex_activity_handoff: handoffOutputSchema,
   codex_activity_job_cancel: mutationOutputSchema,
   codex_activity_rehydrate: activityRehydrateOutputSchema,
   codex_activity_snapshot: activityViewOutputSchema,
-  codex_agent_recovery_detach: mutationOutputSchema,
   codex_background_process_terminate: mutationOutputSchema,
   codex_dashboard_snapshot: dashboardViewOutputSchema,
-  codex_diagnostics: diagnosticsOutputSchema,
-  codex_interaction_respond: mutationOutputSchema,
   codex_job_steer: mutationOutputSchema,
-  codex_settings_snapshot: settingsViewOutputSchema,
+  codex_settings_snapshot: settingsViewOutputSchema
+});
+export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
+  codex_agent_recovery_detach: mutationOutputSchema, codex_diagnostics: diagnosticsOutputSchema
+});
+export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
+  codex_ui_read: objectSchemaUnion([dashboardViewOutputSchema, settingsViewOutputSchema, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_card, uiControlSummaryOutputSchema]),
+  codex_question_action: objectSchemaUnion([QUESTION_APP_OUTPUT_SCHEMAS.codex_question_card, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_notify]),
+  codex_ui_stop: mutationOutputSchema,
+  codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
 });
 
-export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS;
-export type AppOnlyOutputToolName = keyof typeof APP_ONLY_OUTPUT_SCHEMAS;
+export type ModelVisibleOutputToolName = keyof typeof MODEL_VISIBLE_OUTPUT_SCHEMAS | keyof typeof LEGACY_MODEL_OUTPUT_SCHEMAS;
+export type AppOnlyOutputToolName = keyof typeof APP_ONLY_OUTPUT_SCHEMAS | keyof typeof LEGACY_APP_OUTPUT_SCHEMAS | keyof typeof OPERATOR_OUTPUT_SCHEMAS;
 
 export function validateModelVisibleStructuredOutput(
   toolName: ModelVisibleOutputToolName,
   value: unknown
 ): unknown {
   if (toolName === "codex_task") return validateTaskOutput(value);
-  if (toolName === "codex_status") return validateStatusOutput(value);
+  if (toolName === "codex_status") {
+    if ((value as { kind?: unknown })?.kind === "codex-input") return QUESTION_MODEL_OUTPUT_SCHEMAS.codex_input.parse(value);
+    if ((value as { kind?: unknown })?.kind === "project") return projectStatusOutputSchema.parse(value);
+    return validateStatusOutput(value);
+  }
   if (toolName === "codex_steer") return validateSteerOutput(value);
-  return MODEL_VISIBLE_OUTPUT_SCHEMAS[toolName].parse(value);
+  return ({ ...MODEL_VISIBLE_OUTPUT_SCHEMAS, ...LEGACY_MODEL_OUTPUT_SCHEMAS })[toolName].parse(value);
 }
 
 function validateSteerOutput(value: unknown): z.infer<typeof codexSteerOutputSchema> {
@@ -1857,7 +1814,7 @@ export function validateAppOnlyStructuredOutput(
   toolName: AppOnlyOutputToolName,
   value: unknown
 ): unknown {
-  return APP_ONLY_OUTPUT_SCHEMAS[toolName].parse(value);
+  return ({ ...APP_ONLY_OUTPUT_SCHEMAS, ...LEGACY_APP_OUTPUT_SCHEMAS, ...OPERATOR_OUTPUT_SCHEMAS })[toolName].parse(value);
 }
 
 type SessionDecision = {
@@ -1939,6 +1896,11 @@ const activityCardProofInputSchema = z.strictObject({
   generation: z.number().int().min(1),
   presentation: activityCardPresentationInputSchema
 });
+
+const dashboardControlProofInputSchema = activityCardProofInputSchema.extend({
+  kind: z.literal("dashboard"), token: z.string().min(1).max(32_768)
+});
+const userControlProofInputSchema = z.union([dashboardControlProofInputSchema, activityCardProofInputSchema]);
 
 const automaticActivityCardProofInputSchema = z.strictObject({
   activityId: scopeIdSchema(),
@@ -3679,7 +3641,7 @@ export class CodexJobRegistry {
 
   terminationImpact(jobId: string): { targetJobId: string; affectedJobIds: string[]; collateralJobIds: string[] } {
     const job = this.get(jobId);
-    if (!job) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+    if (!job) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
     if (!isActiveActivityJobStatus(job.status)) {
       return { targetJobId: jobId, affectedJobIds: [jobId], collateralJobIds: [] };
     }
@@ -3865,7 +3827,7 @@ export class CodexJobRegistry {
       throw new Error(`waitMs must be an integer between 1 and ${MAX_CODEX_STATUS_WAIT_MS}.`);
     }
     const initial = this.get(jobId);
-    if (!initial) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+    if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
     if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
     const startedAt = Date.now();
     const initialVersion = initial.version;
@@ -4003,7 +3965,7 @@ export class CodexJobRegistry {
   ): Promise<CodexJob> {
     const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
-    if (!target) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+    if (!target) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
     if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
       throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
     }
@@ -4590,6 +4552,12 @@ export class CardPerformanceTracker {
   }
 }
 
+// MCP sessions sharing one runtime also share in-flight app mutations. This
+// closes the gap between a side effect and its durable replay record.
+const appMutationOperations = new WeakMap<CodexJobRegistry, Map<string, {
+  actionHash: string; promise: Promise<unknown>;
+}>>();
+
 export function registerBridgeTools(
   server: McpServer,
   config: BridgeConfig,
@@ -4608,10 +4576,11 @@ export function registerBridgeTools(
   markTaskDescriptorNotificationEligible(): boolean;
   dispose(): void;
 } {
+  const compatibility = installLegacyToolCompatibility(server);
   jobs.attachUpstream(upstream);
   registerSettingsCardResource(server);
   registerActivityCardResource(server);
-  registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference);
+  const questions = registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference, compatibility);
   registerDashboardCardResource(server);
   const descriptorCoordinator = sharedDescriptorCoordinator || new SdkToolDescriptorCoordinator();
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
@@ -4792,10 +4761,10 @@ export function registerBridgeTools(
       modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend })
     )
   ) => userSettings.executionPolicyRef(settings, catalogFingerprint);
-  const mutationInFlight = new Map<
-    string,
-    { actionHash: string; promise: Promise<unknown> }
+  const mutationInFlight = appMutationOperations.get(jobs) || new Map<
+    string, { actionHash: string; promise: Promise<unknown> }
   >();
+  appMutationOperations.set(jobs, mutationInFlight);
   const runIdempotentMutation = async (
     scopeId: string,
     requestId: string,
@@ -4842,6 +4811,80 @@ export function registerBridgeTools(
     operation
   );
 
+  const controlProofs = uiControlProofs(jobs);
+  const requireControlCard = (
+    args: { scopeId?: string; widgetInstanceId?: string; card: z.infer<typeof userControlProofInputSchema>; jobId?: string; agentId?: string; processId?: string },
+    meta: unknown
+  ) => {
+    const widgetSessionId = mountedWidgetInstanceId(args, meta);
+    if (!widgetSessionId) throw new Error("CARD_LEASE_REQUIRED: Open the work details before using a control.");
+    if ("token" in args.card) {
+      const host = scopeResolver.resolve(meta as ToolCallMetadata, args.scopeId);
+      const claims = controlProofs.require(args.card.token, widgetSessionId, host?.scopeId);
+      const agent = jobs.getAgent(claims.agentId), activity = jobs.getActivity(claims.activityId);
+      if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
+        claims.activityId !== args.card.activityId || claims.generation !== args.card.generation || activity.cardGeneration !== claims.generation ||
+        (args.jobId !== undefined && args.jobId !== claims.jobId) ||
+        (args.agentId !== undefined && args.agentId !== claims.agentId) ||
+        (args.processId !== undefined && !claims.processIds.includes(args.processId))) {
+        throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
+      }
+      // Domain handlers still check the exact current Job/Agent version and state
+      // immediately before dispatch. Proof identity never grants model scope.
+      return { scope: { scopeId: claims.scopeId }, widgetSessionId, presentation: { kind: "explicit" } as ActivityCardPresentationContext, claims };
+    }
+    const scope = scopeResolver.require(meta as ToolCallMetadata, args.scopeId, "Retained Activity card control");
+    const presentation = presentationFromActivityCardProof(args.card);
+    jobs.requireActivityCardLease(scope.scopeId, args.card.activityId, args.card.generation, widgetSessionId, presentation);
+    return { scope, widgetSessionId, presentation, claims: undefined };
+  };
+  const controlDetailInput = z.strictObject({ view: z.literal("control"), rowKey: z.string().regex(/^[a-f0-9]{32}$/),
+    widgetInstanceId: widgetInstanceIdSchema, scopeId: scopeIdSchema().optional() });
+  const readControl: ToolCallback<typeof controlDetailInput> = async (args, extra) => {
+    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata, args.scopeId);
+    const agent = listAllDashboardAgents(jobs).find(agent => dashboardRowKey(agent.agentId) === args.rowKey);
+    if (!agent || agent.lifecycle === "archived") throw new Error("UI_CONTROL_UNAVAILABLE: The selected Agent is unavailable.");
+    const ownedJobs = jobs.listForAgent(agent.agentId);
+    const job = agent.currentJobId ? jobs.get(agent.currentJobId) : ownedJobs.at(-1);
+    const activity = job && jobs.getActivity(job.activityId);
+    if (!job || !activity || activity.scopeId !== agent.scopeId || job.scopeId !== agent.scopeId) {
+      throw new Error("UI_CONTROL_UNAVAILABLE: No retained work is available for this Agent.");
+    }
+    const initialVersion = agent.version, initialJobVersion = job.version;
+    const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent);
+    let processIds: string[] = [], backgroundUnavailable = false;
+    if (agent.lifecycle === "idle" && !agent.currentJobId && thread && backendSupports(thread.backendKind, "supportsBackgroundTerminals")) {
+      const inspection = await inspectDashboardRuntimes(upstream, [{ agentId: agent.agentId, thread,
+        stamp: dashboardRuntimeStamp(agent, job), inspectLiveness: false }]);
+      const observation = inspection.observations.get(agent.agentId);
+      backgroundUnavailable = !observation || observation.backgroundProcessState !== "confirmed";
+      processIds = observation?.backgroundProcessIds?.slice(0, 100) || [];
+    }
+    if (jobs.getAgent(agent.agentId)?.version !== initialVersion || jobs.get(job.jobId)?.version !== initialJobVersion) {
+      throw new Error("UI_CONTROL_TARGET_CHANGED: Work changed while reading its details. Refresh the details.");
+    }
+    const claims: Omit<UiControlClaims, "version" | "expiresAt"> = {
+      widgetInstanceId: args.widgetInstanceId, hostScopeId: host?.scopeId || null, scopeId: agent.scopeId,
+      activityId: activity.activityId, generation: activity.cardGeneration, agentId: agent.agentId,
+      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds
+    };
+    const card = { kind: "dashboard", token: controlProofs.issue(claims), activityId: activity.activityId,
+      generation: activity.cardGeneration, presentation: { kind: "explicit" } };
+    const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,
+      agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectLabel || null,
+      conversationUrl: scopeResolver.conversationUrl(agent.scopeId), card,
+      jobId: job.jobId, jobVersion: job.version, status: job.status,
+      canStop: isActiveActivityJobStatus(job.status),
+      affectedJobIds: isActiveActivityJobStatus(job.status) ? jobs.terminationImpact(job.jobId).affectedJobIds : [],
+      pendingInteractions: job.pendingInteractions.slice(0, MAX_CODEX_INTERACTION_QUESTIONS).map(interaction => ({ ...interaction,
+        ordinary: ordinaryCodexQuestion(interaction),
+        ...(interaction.elicitation ? { elicitation: { ...interaction.elicitation, ...jobs.interactionInput(interaction.interactionId) } } : {}) })),
+      backgroundProcesses: processIds.map(processId => ({ processId })), backgroundUnavailable };
+    if (Buffer.byteLength(JSON.stringify(detail)) > 128 * 1024) throw new Error("UI_CONTROL_TOO_LARGE: The work details exceed the card limit.");
+    return { content: [{ type: "text", text: "Work details loaded." }], structuredContent: { kind: "control", ready: true },
+      _meta: { "codex/uiControl@1": detail } };
+  };
+
   const codexDashboardRuntimeInput = z.strictObject({
     scopeId: scopeIdSchema()
       .optional()
@@ -4866,7 +4909,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Codex Overview`,
       description:
-        "Explicitly open the read-only bridge-wide Codex overview only when the user asks for status across conversations retained by this personal bridge. Rows and status labels are derived only from tracked Codex Jobs, Agents, threads, bounded App Server runtime probes, and Codex-originated input or approval requests; GPT verification, waiting, handoff, and goal-completion judgments are excluded. Opening this card never starts, cancels, steers, leases, or hands off work.",
+        "Open the bridge-wide Codex overview card for retained work across conversations.",
       inputSchema: withJsonSchemaProjection(codexDashboardRuntimeInput, codexDashboardPublicInput),
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -4884,40 +4927,18 @@ export function registerBridgeTools(
         args.scopeId,
         "Bridge-wide Codex overview"
       );
-      const view = await applicationService.dashboardSnapshot({
-        limit: 20,
-        inspectRuntime: false
-      });
-      return dashboardViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        dashboardModelResultContract
-      );
+      const summary = "The bridge-wide Codex overview is open. The card loads current retained work.";
+      return contractedToolResult(dashboardModelResultContract, {}, {
+        kind: "dashboard", scope: "bridge-wide", readOnly: true,
+        statusSource: "codex-runtime-only", summary
+      }, { text: summary }, { appHydration: {
+        "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
+          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"))
+      } });
     }
   );
 
-  server.registerTool(
-    "codex_dashboard_snapshot",
-    {
-      title: "Refresh Codex Overview",
-      description:
-        "App-only read-only fresh-data source for the mounted bridge-wide Codex overview. Current clients send enrich=false for a structural snapshot independent of App Server probes and weekly usage, paint it, then send enrich=true for optional bounded enrichment. Omission retains the enriched behavior of immutable older cards. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
-      inputSchema: dashboardSnapshotInput,
-      outputSchema: dashboardViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
+    const readDashboard: ToolCallback<typeof dashboardSnapshotInput> = async (args, extra) => {
       const { _meta } = extra;
       if (!mountedWidgetInstanceId(args, _meta)) {
         throw new Error(
@@ -4950,7 +4971,31 @@ export function registerBridgeTools(
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         dashboardAppResultContract
       );
-    }
+    };
+
+  server.registerTool(
+    "codex_dashboard_snapshot",
+    {
+      title: "Refresh Codex Overview",
+      description:
+        "App-only read-only fresh-data source for the mounted bridge-wide Codex overview. Current clients send enrich=false for a structural snapshot independent of App Server probes and weekly usage, paint it, then send enrich=true for optional bounded enrichment. Omission retains the enriched behavior of immutable older cards. Mounted recovery works when a host omits conversation metadata; any supplied host or compatibility scope is still validated. It returns bounded pages and has no execution controls or watcher lease.",
+      inputSchema: dashboardSnapshotInput,
+      outputSchema: dashboardViewOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
+      }
+    },
+    readDashboard
   );
 
   const statusJobIdInput = z.string().trim().min(1).max(200)
@@ -4980,11 +5025,17 @@ export function registerBridgeTools(
     waitFor: statusJobWaitForInput.optional(),
     waitMs: statusJobWaitMsInput
   });
+  const statusProjectQueryInput = z.strictObject({
+    kind: z.literal("project"),
+    name: projectNameInput().describe("Exact user-visible project name. Reads its current selector without executing Codex or opening a card.")
+  });
   const codexStatusQueryInput = z.discriminatedUnion("kind", [
     statusJobRuntimeQueryInput,
+    z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape }),
     statusActivityQueryInput,
     statusThreadQueryInput,
-    statusPageQueryInput
+    statusPageQueryInput,
+    statusProjectQueryInput
   ]);
   const statusPublicQueryInput = withJsonSchemaProjection(
     codexStatusQueryInput,
@@ -5000,9 +5051,11 @@ export function registerBridgeTools(
           waitFor: statusJobWaitForInput,
           waitMs: statusJobWaitMsInput
         }).describe("Wait on one exact Job; waitFor is required whenever waitMs is sent.")),
+        jsonSchemaBody(z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape })),
         jsonSchemaBody(statusActivityQueryInput),
         jsonSchemaBody(statusThreadQueryInput),
-        jsonSchemaBody(statusPageQueryInput)
+        jsonSchemaBody(statusPageQueryInput),
+        jsonSchemaBody(statusProjectQueryInput)
       ]
     }
   );
@@ -5020,7 +5073,7 @@ export function registerBridgeTools(
   });
   const codexStatusPublicInput = z.strictObject({
     query: statusPublicQueryInput.optional().describe(
-      "Exact detail, bounded job wait, or one cursor-paginated collection. Omit for the current scoped overview."
+      "Exact detail, read-only project lookup, bounded input/job wait, or one cursor-paginated collection. Omit for the current scoped overview."
     )
   });
 
@@ -5029,9 +5082,9 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read authoritative bridge, Activity, Codex thread, turn, and job state for the current ChatGPT conversation. Omit query for an overview, or choose exactly one job, Activity, thread, or cursor-paginated collection query. Only an exact completed Job query returns its bounded model-authoritative answer; overview, Activity, thread, and page results expose Job IDs and retrieval actions but never Job answer bodies. ChatGPT scope is derived from host metadata; compatibility scope and bridge-wide audit inputs are runtime-only. Mounted cards use the app-private Activity snapshot capability.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job queries retrieve retained final answers.",
       inputSchema: withJsonSchemaProjection(codexStatusRuntimeInput, codexStatusPublicInput),
-      outputSchema: codexStatusOutputSchema,
+      outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -5042,6 +5095,11 @@ export function registerBridgeTools(
     async (args, extra) => {
       const { _meta, signal } = extra;
       const query = args.query;
+      if (query?.kind === "input") {
+        if (args.includeAllScopes) throw new Error("Input lookup is restricted to one conversation.");
+        const { kind, ...input } = query;
+        return questions.readInput(input, extra, args.scopeId);
+      }
       const jobQuery = query?.kind === "job" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
       const threadQuery = query?.kind === "thread" ? query : undefined;
@@ -5053,6 +5111,10 @@ export function registerBridgeTools(
       }
       if (scopeId && args.includeAllScopes) {
         throw new Error("scopeId and includeAllScopes cannot be used together.");
+      }
+      if (query?.kind === "project") {
+        if (!scopeId) throw new Error("Project lookup requires conversation metadata or an explicit compatibility scopeId.");
+        return projectStatusResult(query.name, userSettings);
       }
       if (pageQuery && !scopeId && !args.includeAllScopes) {
         throw new Error(
@@ -5069,7 +5131,7 @@ export function registerBridgeTools(
           );
         }
         const initial = jobs.get(jobQuery.id);
-        if (!initial) throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+        if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
         if (!args.includeAllScopes && initial.scopeId !== scopeId) {
           throw new Error("The requested Codex job belongs to another conversation scope.");
         }
@@ -5105,7 +5167,7 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
-          inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_input" }
+          inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
         return statusToolResult(
           compactStatusProjection(structured),
@@ -5348,7 +5410,7 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
+  if (config.enableRecoveryTools) server.registerTool(
     "codex_diagnostics",
     {
       title: `${PRODUCT_INFO.displayName} Operator Diagnostics`,
@@ -5481,9 +5543,9 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_activity",
     {
-      title: `${PRODUCT_INFO.displayName} Activity Manager`,
+      title: `${PRODUCT_INFO.displayName} Retained Activity Card`,
       description:
-        "Present one Activity card for the current ChatGPT conversation without starting or changing Codex work. After one or more codex_task calls in the same assistant response, call this tool at most once with mode='compact-monitor' and one fresh presentationId; the single compact card aggregates every current or action-needed Activity and Agent in the scope and owns the automatic live watcher and configured completion handoff. Do not call once per task or Agent. If the user explicitly asks to open or browse all current and past work, call once with mode='full-history' and no presentationId; that paginated view uses a separate bounded watcher and never owns automatic handoff. Omission preserves full-history behavior.",
+        "Compatibility-only descriptor for reopening Activity cards already saved in ChatGPT. Hidden from the model. Retains the original presentation, scope and ownership checks during migration; new work uses the overview and independent question card.",
       inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
       outputSchema: activityModelOutputSchema,
       annotations: {
@@ -5492,7 +5554,12 @@ export function registerBridgeTools(
         idempotentHint: true,
         openWorldHint: false
       },
-      _meta: activityCardToolMetadata()
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ...activityCardToolMetadata(),
+        ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] },
+        "openai/visibility": "private"
+      }
     },
     async (args, extra) => {
       const { _meta } = extra;
@@ -5676,6 +5743,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -5831,6 +5899,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -5977,6 +6046,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -6112,7 +6182,7 @@ export function registerBridgeTools(
     {
       title: "Manage Codex Agent",
       description:
-        "Apply one idempotent scope-local operation to a bridge-managed Codex Agent. Archive is reversible and preserves thread/Activity history; restore re-enables the same Agent; rename changes only its display alias. ChatGPT scope is host-derived. Recovery detach and destructive background-process control use separate restricted tools.",
+        "Rename, archive, or restore a Codex Agent in this conversation. Archiving preserves its work history and can be reversed.",
       inputSchema: withJsonSchemaProjection(codexAgentRuntimeInput, codexAgentPublicInput),
       outputSchema: agentMutationOutputSchema,
       annotations: {
@@ -6158,16 +6228,11 @@ export function registerBridgeTools(
           action,
           code: "AGENT_BUSY",
           agent: formatAgentSummary(agent, jobs),
-          forceStop: agent.currentJobId
-            ? {
-                tool: "codex_cancel",
-                arguments: {
-                  requestId: randomUUID(),
-                  jobId: agent.currentJobId,
-                  expectedVersion: jobs.get(agent.currentJobId)?.version
-                }
-              }
-            : null,
+          nextActions: [{
+            tool: "codex_status",
+            arguments: agent.currentJobId ? { query: { kind: "job", id: agent.currentJobId } } : {},
+            userPrompt: "Review the active work. Stopping it requires explicit stop intent, a current version, and a factual reason; an archive request alone is insufficient."
+          }],
           warning: "Force-stop interrupts execution but does not roll back filesystem changes."
         };
         jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, conflictResult);
@@ -6240,7 +6305,7 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
+  if (config.enableRecoveryTools) server.registerTool(
     "codex_agent_recovery_detach",
     {
       title: "Recovery Detach Codex Agent",
@@ -6319,13 +6384,7 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_background_process_terminate",
-    {
-      title: "Stop Codex Background Process",
-      description:
-        "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
-      inputSchema: z.strictObject({
+    const backgroundProcessStopInput = z.strictObject({
         scopeId: scopeIdSchema().optional()
           .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
@@ -6333,40 +6392,13 @@ export function registerBridgeTools(
         agentId: scopeIdSchema().describe("Exact Agent that owns the current App Server thread."),
         expectedAgentVersion: z.number().int().min(1),
         processId: z.string().trim().min(1).max(200),
-        card: activityCardProofInputSchema
-      }),
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+        card: userControlProofInputSchema
+      });
+  const stopBackgroundProcess: ToolCallback<typeof backgroundProcessStopInput> = async (args, { _meta }) => {
+      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      if (claims && claims.agentVersion !== args.expectedAgentVersion) {
+        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
-    },
-    async (args, { _meta }) => {
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex background process termination"
-      );
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Background process termination requires a mounted Activity card.");
-      }
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           action: "terminate-background-process",
@@ -6376,27 +6408,40 @@ export function registerBridgeTools(
           card: args.card
         }))
         .digest("hex");
-      const replay = jobs.getAgentMutation(scope.scopeId, args.requestId);
-      if (replay) {
-        if (replay.actionHash !== actionHash) {
-          throw new Error("requestId was already used for a different Agent mutation in this scope.");
-        }
-        return mutationToolResult(replay.result, "app");
-      }
-      const mutationResult = await terminateAgentBackgroundProcess({
-        jobs,
-        upstream,
-        scopeId: scope.scopeId,
-        agentId: args.agentId,
-        expectedAgentVersion: args.expectedAgentVersion,
-        processId: args.processId
+      const mutationResult = await runIdempotentMutation(scope.scopeId, args.requestId, actionHash, async () => {
+        const result = await terminateAgentBackgroundProcess({
+          jobs, upstream, scopeId: scope.scopeId, agentId: args.agentId,
+          expectedAgentVersion: args.expectedAgentVersion, processId: args.processId
+        });
+        if (typeof result.threadId === "string") invalidateCardRuntimeCache(upstream, result.threadId);
+        return result;
       });
-      if (typeof mutationResult.threadId === "string") {
-        invalidateCardRuntimeCache(upstream, mutationResult.threadId);
-      }
-      jobs.recordAgentMutation(scope.scopeId, args.requestId, actionHash, mutationResult);
       return mutationToolResult(mutationResult, "app");
-    }
+    };
+
+  server.registerTool(
+    "codex_background_process_terminate",
+    {
+      title: "Stop Codex Background Process",
+      description:
+        "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
+      inputSchema: backgroundProcessStopInput,
+      outputSchema: mutationOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      }
+    },
+    stopBackgroundProcess
   );
 
   const codexCancelRuntimeInput = z.strictObject({
@@ -6419,16 +6464,25 @@ export function registerBridgeTools(
         "Exact affected-job list shown by authoritative status/card confirmation when a worker is shared."
       )
   });
-  const codexCancelPublicInput = codexCancelRuntimeInput.omit({ scopeId: true });
+  const codexCancelTargetInput = z.strictObject({
+    scopeId: scopeIdSchema().optional(), requestId: scopeIdSchema(),
+    target: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("job"), id: z.string().trim().min(1).max(200) }),
+      z.strictObject({ kind: z.literal("activity"), id: scopeIdSchema() })
+    ]), expectedVersion: codexCancelRuntimeInput.shape.expectedVersion,
+    reason: codexCancelRuntimeInput.shape.reason,
+    acknowledgeAffectedJobIds: codexCancelRuntimeInput.shape.acknowledgeAffectedJobIds
+  });
+  const codexCancelPublicInput = codexCancelTargetInput.omit({ scopeId: true });
 
   server.registerTool(
     "codex_cancel",
     {
-      title: "Force-stop Codex Job",
+      title: "Force-stop Codex Work",
       description:
-        "Idempotently force-stop one exact-version Codex job in the current ChatGPT conversation scope with a required, short user-facing reason. A durable cancellation intent is recorded before the exact App Server turn is interrupted or its supervised worker is terminated. The target becomes cancelled only after termination is confirmed; shared-worker containment is audited separately, and partial filesystem changes may remain.",
-      inputSchema: withJsonSchemaProjection(codexCancelRuntimeInput, codexCancelPublicInput),
-      outputSchema: cancelMutationOutputSchema,
+        "Force-stop a Codex Job or whole Activity in this conversation. Cancellation is confirmed only after execution stops; filesystem changes are not rolled back.",
+      inputSchema: objectSchemaUnion([codexCancelTargetInput, codexCancelRuntimeInput], codexCancelPublicInput),
+      outputSchema: objectSchemaUnion([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -6436,7 +6490,12 @@ export function registerBridgeTools(
         openWorldHint: false
       }
     },
-    async (args, extra) => {
+    async (input, extra) => {
+      if ("target" in input && input.target.kind === "activity") {
+        const { target, ...args } = input;
+        return cancelActivity({ ...args, activityId: target.id }, extra, "codex_cancel");
+      }
+      const args = "target" in input ? (() => { const { target, ...rest } = input; return { ...rest, jobId: target.id }; })() : input;
       const { _meta } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
@@ -6459,7 +6518,7 @@ export function registerBridgeTools(
         async () => {
           const existing = jobs.get(args.jobId);
           if (!existing) {
-            throw new Error("Unknown Codex job id. Start a job through codex_task first.");
+            throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
           }
           if (existing.scopeId !== scope.scopeId) {
             throw new Error("The requested Codex job belongs to another conversation scope.");
@@ -6505,57 +6564,24 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_activity_job_cancel",
-    {
-      title: "Force-stop Activity Card Job",
-      description:
-        "App-private destructive control for one exact job shown by a live, current Activity card. The bridge validates the widget instance, exact card generation and presentation lease, exact job version, and idempotency request before recording durable provenance and dispatching cancellation.",
-      inputSchema: z.strictObject({
+    const cardJobStopInput = z.strictObject({
         scopeId: scopeIdSchema().optional(),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
         requestId: scopeIdSchema().describe("Unique UUID for this exact card cancellation and its retries."),
         jobId: z.string().trim().min(1).max(200),
         expectedJobVersion: z.number().int().min(1),
-        card: activityCardProofInputSchema,
+        card: userControlProofInputSchema,
         acknowledgeAffectedJobIds: z
           .array(z.string().trim().min(1).max(200))
           .max(HARD_MAX_CONCURRENT_JOBS)
           .optional()
-      }),
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
+      });
+  const stopCardJob: ToolCallback<typeof cardJobStopInput> = async (args, extra) => {
       const { _meta } = extra;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Activity card job cancellation"
-      );
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Job cancellation requires a mounted Activity card.");
+      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      if (claims && claims.jobVersion !== args.expectedJobVersion) {
+        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
       const widgetInstanceDigest = correlationDigest("activity-widget", widgetSessionId) as string;
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
@@ -6590,7 +6616,7 @@ export function registerBridgeTools(
             requestId: args.requestId,
             actionHash,
             source: "widget-control",
-            toolName: "codex_activity_job_cancel",
+            toolName: claims ? "codex_ui_stop" : "codex_activity_job_cancel",
             actionName: "cancel-card-job",
             target: cancellationTargetForJob(job, presentation),
             expectedVersion: args.expectedJobVersion,
@@ -6617,7 +6643,31 @@ export function registerBridgeTools(
         }
       );
       return mutationToolResult({ ok: true, action: "cancel-card-job", job: result }, "app");
-    }
+    };
+
+  server.registerTool(
+    "codex_activity_job_cancel",
+    {
+      title: "Force-stop Activity Card Job",
+      description:
+        "App-private destructive control for one exact job shown by a live, current Activity card. The bridge validates the widget instance, exact card generation and presentation lease, exact job version, and idempotency request before recording durable provenance and dispatching cancellation.",
+      inputSchema: cardJobStopInput,
+      outputSchema: mutationOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      }
+    },
+    stopCardJob
   );
 
   const interactionAnswersBaseInput = z.record(
@@ -6632,13 +6682,7 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_interaction_respond",
-    {
-      title: "Respond to Codex Interaction",
-      description:
-        "App-only one-shot response to one exact pending App Server interaction selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, interaction identity, and optimistic Job version. Answers are transient and are never persisted.",
-      inputSchema: z.strictObject({
+    const interactionResponseInput = z.strictObject({
         scopeId: scopeIdSchema().optional(),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
         requestId: scopeIdSchema().describe("Unique UUID for this exact response and its retries."),
@@ -6662,23 +6706,9 @@ export function registerBridgeTools(
             })
           })
         ]),
-        card: activityCardProofInputSchema
-      }),
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, { _meta }) => {
+        card: userControlProofInputSchema
+      });
+  const respondInteraction: ToolCallback<typeof interactionResponseInput> = async (args, { _meta }) => {
       if (
         "answers" in args.response &&
         Object.keys(args.response.answers).length > MAX_CODEX_INTERACTION_QUESTIONS
@@ -6687,23 +6717,10 @@ export function registerBridgeTools(
           `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions can be answered at once.`
         );
       }
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex interaction response"
-      );
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Interaction responses require a mounted Activity card.");
+      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      if (claims && claims.jobVersion !== args.expectedJobVersion) {
+        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
       const responseHash = createHash("sha256")
         .update(JSON.stringify(args.response))
         .digest("hex");
@@ -6749,7 +6766,7 @@ export function registerBridgeTools(
             throw new Error("Unknown or already resolved Codex interaction id for this job.");
           }
           if (ordinaryCodexQuestion(interaction)) {
-            throw new Error("GPT_RESPONSE_REQUIRED: GPT handles this ordinary question through codex_input and codex_answer.");
+            throw new Error("GPT_RESPONSE_REQUIRED: GPT handles this ordinary question through codex_status input queries and codex_answer.");
           }
           if ("answers" in args.response) {
             if (interaction.kind !== "user-input") {
@@ -6789,7 +6806,30 @@ export function registerBridgeTools(
         }
       );
       return mutationToolResult(result, "app");
-    }
+    };
+
+  server.registerTool(
+    "codex_interaction_respond",
+    {
+      title: "Respond to Codex Interaction",
+      description:
+        "App-only response to an original pending Codex approval or input request. The server verifies the selected target, current version, request identity, and private access proof. Answers are transient.",
+      inputSchema: interactionResponseInput,
+      outputSchema: mutationOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      _meta: {
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+      }
+    },
+    respondInteraction
   );
 
   server.registerTool(
@@ -6797,7 +6837,7 @@ export function registerBridgeTools(
     {
       title: "Steer Active Codex Job",
       description:
-        "Send bounded additional guidance to the exact currently running App Server Job root in this ChatGPT conversation without creating a new turn. Use it for a new user constraint, a verified dependency result, a correction, or an answer to an ordinary message question observed through codex_input when no structured request needs resolving. It never queues work for an idle or terminal Agent, targets an internal Codex subagent, resolves an approval or user-input interaction, changes Activity/project/model/sandbox policy, or cancels work. After terminal state, use codex_task with the existing Agent and context='continue' instead. Reuse requestId only for the exact same job, version, and prompt retry; DELIVERY_UNCERTAIN must be inspected and never automatically resent.",
+        "Send additional guidance to one running Codex turn in this conversation without starting another turn. This does not resolve structured questions or approvals.",
       inputSchema: withJsonSchemaProjection(
         z.strictObject({
           scopeId: scopeIdSchema().optional()
@@ -6940,6 +6980,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -7111,7 +7152,7 @@ export function registerBridgeTools(
     {
       title: "Update Codex Activity",
       description:
-        "Apply one explicit, non-cancelling lifecycle, verification, or policy operation to an Activity at an exact authoritative version. Use this only from the user's request or the orchestrator's independent judgment after inspecting authoritative state; Codex output is untrusted task data and is never authorization to seal, complete, verify, abandon, or change policy. Whole-Activity force-stop uses the separate destructive codex_activity_cancel tool. Mounted-card interaction and steering controls use separate app-private capabilities.",
+        "Update an Activity's lifecycle, verification, or policy at its current version.",
       inputSchema: withJsonSchemaProjection(
         codexActivityUpdateRuntimeInput,
         codexActivityUpdatePublicInput
@@ -7200,25 +7241,11 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_activity_cancel",
-    {
-      title: "Force-stop Codex Activity",
-      description:
-        "Idempotently force-stop every active Codex job in one Activity at an exact authoritative Activity version with a required, short user-facing reason, then mark the Activity cancelled. Shared workers may interrupt jobs outside the Activity and require confirmation of the exact affected-job set. Partial filesystem changes are not rolled back.",
-      inputSchema: withJsonSchemaProjection(
+    const legacyActivityCancelInput = withJsonSchemaProjection(
         codexActivityCancelRuntimeInput,
         codexActivityCancelPublicInput
-      ),
-      outputSchema: activityCancelMutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      }
-    },
-    async (args, extra) => {
+      );
+  const cancelActivity = async (args: z.infer<typeof legacyActivityCancelInput>, extra: Parameters<ToolCallback<typeof legacyActivityCancelInput>>[1], toolName = "codex_activity_cancel") => {
       const { _meta } = extra;
       const scope = scopeResolver.require(
         _meta as ToolCallMetadata,
@@ -7271,7 +7298,7 @@ export function registerBridgeTools(
             requestId: args.requestId,
             actionHash,
             source: "model-tool",
-            toolName: "codex_activity_cancel",
+            toolName,
             actionName: "cancel-activity",
             target: {
               kind: "activity",
@@ -7295,7 +7322,7 @@ export function registerBridgeTools(
               parentIntentId: parentIntent.intentId,
               cascadeId: parentIntent.cascadeId,
               source: "activity-cascade",
-              toolName: "codex_activity_cancel",
+              toolName,
               actionName: "cancel-child-job",
               target: cancellationTargetForJob(job),
               expectedVersion: job.version,
@@ -7376,7 +7403,24 @@ export function registerBridgeTools(
         }
       );
       return mutationToolResult(result, "model", "codex_activity_cancel");
-    }
+    };
+
+  compatibility.registerTool(
+    "codex_activity_cancel",
+    {
+      title: "Force-stop Codex Activity",
+      description:
+        "Idempotently force-stop every active Codex job in one Activity at an exact authoritative Activity version with a required, short user-facing reason, then mark the Activity cancelled. Shared workers may interrupt jobs outside the Activity and require confirmation of the exact affected-job set. Partial filesystem changes are not rolled back.",
+      inputSchema: legacyActivityCancelInput,
+      outputSchema: activityCancelMutationOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    cancelActivity
   );
 
   server.registerTool(
@@ -7384,8 +7428,11 @@ export function registerBridgeTools(
     {
       title: "List Codex Models",
       description:
-        "Discover the exact model/reasoning-effort pairs currently allowed by saved policy, operator ceiling, and the live backend catalog before automatic-policy new or fresh work. Returns only neutral IDs, upstream-provided descriptions, catalog freshness, and factual service-tier support—never recommendations, rankings, defaults, or fallback selections.",
+        "Read the model and reasoning choices allowed by current bridge policy and backend availability.",
       inputSchema: z.strictObject({
+        contractVersion: z.literal("2").optional().describe(
+          "Opt in to selectionMode alongside the allowed catalog from the same settings snapshot. Omission preserves the legacy catalog-only result."
+        ),
         refresh: z
           .boolean()
           .optional()
@@ -7449,6 +7496,7 @@ export function registerBridgeTools(
             }))
         }));
       const structured = {
+        ...(args.contractVersion === "2" ? { contractVersion: "2" as const, selectionMode: preferences.modelPolicy.mode } : {}),
         source: catalog.source,
         stale: catalog.stale,
         warning: catalog.warning || null,
@@ -7472,14 +7520,14 @@ export function registerBridgeTools(
     {
       title: `Open ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Open an interactive settings card and return the saved named-project registry, versioned model/effort policy, independent Priority preference, Codex-app thread visibility, bridge-enforced limits, and current backend-aware model catalog. Use this when the user explicitly asks where or how to configure this ChatGPT-to-Codex bridge, after an actual codex_task response returns PROJECT_SETUP_REQUIRED, or after projectLookup reports that the explicitly requested project needs recovery. Never open it merely because a conversation starts or this plugin is attached.",
+        "Open an interactive card for configuring this ChatGPT-to-Codex bridge.",
       inputSchema: z.strictObject({
         refreshModels: z
           .boolean()
           .optional()
           .describe("Force a fresh Codex model catalog lookup before rendering the card.")
       }),
-      outputSchema: compactSettingsOutputSchema,
+      outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_settings,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -7497,44 +7545,24 @@ export function registerBridgeTools(
       }
     },
     async (args, { _meta }) => {
-      const view = await applicationService.settingsSnapshot({
-        refreshModels: args.refreshModels
-      });
-      return settingsViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        "model"
-      );
+      return {
+        content: [{ type: "text" as const, text: "Settings opened. The card loads the current preferences." }],
+        structuredContent: { kind: "settings", opened: true },
+        _meta: { "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
+          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")),
+          "codex/refreshModels": args.refreshModels === true,
+          hostLocale: metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n") || null }
+      };
     }
   );
 
-  server.registerTool(
-    "codex_settings_snapshot",
-    {
-      title: `Refresh ${PRODUCT_INFO.displayName} Settings`,
-      description:
-        "App-only read-only fresh-data source for the mounted settings card. Cold mounts render only after this tool reads the current persisted settings, project registry, capabilities, and backend model catalog. Set refreshModels only when the model catalog itself must be refreshed.",
-      inputSchema: z.strictObject({
+    const settingsSnapshotInput = z.strictObject({
         refreshModels: z
           .boolean()
           .optional()
           .describe("Force a fresh Codex model catalog lookup for this settings snapshot.")
-      }),
-      outputSchema: settingsViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, { _meta }) => {
+      });
+  const readSettings: ToolCallback<typeof settingsSnapshotInput> = async (args, { _meta }) => {
       const view = await applicationService.settingsSnapshot({
         refreshModels: args.refreshModels
       });
@@ -7543,7 +7571,31 @@ export function registerBridgeTools(
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
         "snapshot"
       );
-    }
+    };
+
+  server.registerTool(
+    "codex_settings_snapshot",
+    {
+      title: `Refresh ${PRODUCT_INFO.displayName} Settings`,
+      description:
+        "App-only read-only fresh-data source for the mounted settings card. Cold mounts render only after this tool reads the current persisted settings, project registry, capabilities, and backend model catalog. Set refreshModels only when the model catalog itself must be refreshed.",
+      inputSchema: settingsSnapshotInput,
+      outputSchema: settingsViewOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ui: { visibility: ["app"] },
+        "openai/visibility": "private",
+        "openai/widgetAccessible": true,
+        "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
+      }
+    },
+    readSettings
   );
 
   const settingsAccessStrategyInput = config.allowDangerFullAccess
@@ -7808,7 +7860,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Validate, atomically persist, and activate one reset or settings patch from the Codex settings card. Ordinary settingsRevision and project registryRevision use independent CAS. Project identity changes use app-private UUID-targeted add, rename, relocate, archive, restore, and archived-registration delete operations; add UUIDs are server-generated. Deleting a registration never deletes its folder, files, or retained work history. Reset restores general preferences only and preserves the registry.",
+        "Save or reset bridge settings from the settings card. Reset preserves registered projects; removing a registration preserves its files and work history.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -7845,7 +7897,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run one Codex turn through a bridge-managed Activity and Agent in the current ChatGPT conversation scope. Contract v2 has a stable input shape: saved access/model/presentation settings, the live model catalog, and the project registry are runtime authority within the statically annotated operator maximum, so ordinary Settings changes do not require a tool-list Refresh. Always send the exact taskContractVersion and executionEnvelopeRef constants. A completed retained result includes its bounded model-authoritative final text in structured answer; content is a compatibility copy and may be absent from the ChatGPT tool transcript. Omit activity to create a new Activity with neutral defaults, or choose an exact existing Activity. Omit agent for a new Activity to create a neutral fresh Agent; for an existing Activity, omission reuses its sole Agent candidate. Choose an exact existing Agent to continue, fork, or deliberately start fresh context. Under automatic model policy, call codex_models and send one exact selection for every new Activity, new Agent, and fresh context; omission fails before any work is admitted. Existing automatic-policy continue/fork calls may omit selection to inherit the thread's admission-time pair, while an explicit pair is a deliberate validated override. Fixed policy callers omit selection and the saved exact pair is applied. New work uses Codex App Server. Threads from retired execution paths require context='fresh' with handoffSummary; it is the only context copied and is not transcript migration. New or fresh work requires an exact {name, projectRef, projectRevision} project selector; paths and private IDs are never accepted. If the exact selector is not known, call this same tool with projectLookup.name. That no-work response returns the exact current selector, then retry with a new requestId. Omit project for existing Activity/Agent continue or fork. An empty registry returns PROJECT_SETUP_REQUIRED and only then may Settings be opened. Runtime project/version checks remain authoritative and never fall back by name. Background returns a tracked job immediately; foreground waits for the terminal result. Generate one UUID requestId per logical call and reuse it only for an exact admitted replay. Follow task nextActions after the task-admission fan-out and render at most one compact Activity card for the entire assistant response.",
+        "Run or continue one Codex turn in the current conversation using the selected project and saved bridge settings.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -7853,6 +7905,8 @@ export function registerBridgeTools(
     async (args, extra) => {
       let removeTaskAbortObserver: (() => void) | undefined;
       let releaseRuntimeAdmission: (() => void) | undefined;
+      let admittedForCall = false;
+      let taskScopeId: string | undefined;
       try {
         const { _meta, signal } = extra;
         const preferences = userSettings.current;
@@ -7862,6 +7916,7 @@ export function registerBridgeTools(
           args.scopeId,
           "Codex task execution"
         );
+        taskScopeId = scope.scopeId;
         const onAbort = () => {
           const running = jobs.peekRequest(scope.scopeId, args.requestId);
           if (!running || running.executionMode !== "foreground") return;
@@ -7896,6 +7951,14 @@ export function registerBridgeTools(
             return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
           }
           throw new Error("Persisted Codex task replay registration disappeared.");
+        }
+        // Only exact already-admitted retries above may carry the retired
+        // permission field. Never reinterpret a cached restricted request as
+        // a new task under a more permissive bridge setting.
+        if (args.sandbox !== undefined) {
+          throw new Error(
+            "TASK_PERMISSION_INPUT_RETIRED: Task permissions are owned by the bridge settings. This cached request contains a retired sandbox field and admitted no work. Refresh tool discovery; new task calls contain no permission fields. Do not automatically strip a denied request's restriction to retry."
+          );
         }
         admitTaskContractForNewCall({
           args,
@@ -7975,7 +8038,7 @@ export function registerBridgeTools(
               `${PROJECT_UNAVAILABLE}: The selected Activity project no longer resolves to its admission-time folder.`
             );
           }
-          const sandbox = resolveTaskSandbox(config, preferences, args.sandbox);
+          const sandbox = resolveTaskSandbox(config, preferences);
           await upstream.prepareExecution?.({ backendKind: config.defaultBackend, contextMode: "fresh" });
           const executionResolution = await resolveExecutionDecision({
             config,
@@ -8061,6 +8124,7 @@ export function registerBridgeTools(
             },
             preflightDone: true,
             onAdmitted: () => {
+              admittedForCall = true;
               releaseRuntimeAdmission?.();
               releaseRuntimeAdmission = undefined;
             }
@@ -8089,7 +8153,7 @@ export function registerBridgeTools(
             });
           }
         );
-        resolveTaskSandbox(config, preferences, args.sandbox, session.sandbox);
+        resolveTaskSandbox(config, preferences, session.sandbox);
         await upstream.prepareExecution?.({ backendKind: session.backendKind, contextMode: agentResolution.contextMode });
         const executionResolution = await resolveExecutionDecision({
           config,
@@ -8156,7 +8220,6 @@ export function registerBridgeTools(
         if (agentResolution.contextMode === "fork") {
           return await forkTrackedSession({
             prompt: args.prompt,
-            requestedSandbox: args.sandbox,
             session,
             routing,
             executionMode,
@@ -8175,6 +8238,7 @@ export function registerBridgeTools(
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
             onAdmitted: () => {
+              admittedForCall = true;
               releaseRuntimeAdmission?.();
               releaseRuntimeAdmission = undefined;
             }
@@ -8191,7 +8255,6 @@ export function registerBridgeTools(
           upstream,
           sessions,
           jobs,
-          requestedSandbox: args.sandbox,
           preferences,
           activityRequest,
           executionDecision,
@@ -8204,11 +8267,14 @@ export function registerBridgeTools(
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
           onAdmitted: () => {
+            admittedForCall = true;
             releaseRuntimeAdmission?.();
             releaseRuntimeAdmission = undefined;
           }
         });
       } catch (error) {
+        const admitted = admittedForCall && taskScopeId ? jobs.peekRequest(taskScopeId, args.requestId) : undefined;
+        if (admitted) return resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false);
         if (error instanceof ExecutionPolicyChangedError) {
           return executionPolicyChangedResult(
             error,
@@ -8235,6 +8301,11 @@ export function registerBridgeTools(
           error.message.startsWith(`${PROJECT_SETUP_REQUIRED}:`)
         ) {
           return projectSetupRequiredResult(error.message);
+        }
+        if (error instanceof ProjectSelectionRecoveryError) {
+          const [code, ...message] = error.message.split(":");
+          return taskPreflightErrorResult({ code, message: message.join(":").trim(), retryable: true,
+            nextActions: projectRecoveryActions(userSettings, error.requested) });
         }
         if (
           error instanceof Error &&
@@ -8281,6 +8352,36 @@ export function registerBridgeTools(
         if (event.backendKind === config.defaultBackend) publishTaskProjection(event.snapshot);
       })
     : undefined;
+  server.registerTool("codex_ui_read", {
+    title: "Read Card Data", description: "App-only data reads for overview, settings, question cards, and selected work details. Each view retains its own scope and proof checks.",
+    inputSchema: objectSchemaUnion([
+      dashboardSnapshotInput.extend({ view: z.literal("dashboard") }),
+      settingsSnapshotInput.extend({ view: z.literal("settings") }),
+      questions.questionCardInputSchema.extend({ view: z.literal("question") }),
+      controlDetailInput
+    ]),
+    outputSchema: APP_ONLY_OUTPUT_SCHEMAS.codex_ui_read,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
+  }, async (args, extra) => {
+    if (args.view === "control") return readControl(args, extra);
+    if (args.view === "dashboard") { const { view, ...input } = args; return readDashboard(input, extra); }
+    if (args.view === "settings") { const { view, ...input } = args; return readSettings(input, extra); }
+    const { view, ...input } = args; return questions.readCard(input, extra);
+  });
+  server.registerTool("codex_ui_stop", {
+    title: "Stop Work from a Card", description: "App-only cancellation of an active Job or termination of idle background processes. Target-specific ownership, version, state, and proof checks apply.",
+    inputSchema: objectSchemaUnion([
+      cardJobStopInput.extend({ kind: z.literal("job") }),
+      backgroundProcessStopInput.extend({ kind: z.literal("process") })
+    ]), outputSchema: mutationOutputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
+  }, async (args, extra) => {
+    if (args.kind === "job") { const { kind, ...input } = args; return stopCardJob(input, extra); }
+    const { kind, ...input } = args; return stopBackgroundProcess(input, extra);
+  });
+
   return {
     applicationService,
     reconcileTaskDescriptor: publishTaskProjection,
@@ -8406,6 +8507,23 @@ function resolveImplicitTaskAgent(
 
 function defaultTaskAgentName(requestId: string): string {
   return `Codex Agent ${requestId}`;
+}
+
+// Only registry selection failures receive new-work project recovery. Pinned
+// thread and post-admission failures must retain their original work identity.
+class ProjectSelectionRecoveryError extends Error {
+  constructor(error: Error, readonly requested: RuntimeProjectSelection) { super(error.message, { cause: error }); }
+}
+
+function resolveProjectForAdmission(userSettings: UserSettingsStore, requested?: RuntimeProjectSelection): ProjectTarget {
+  try { return userSettings.resolveProject(requested); }
+  catch (error) {
+    if (requested && error instanceof Error &&
+      (error.message.startsWith(`${PROJECT_UNAVAILABLE}:`) || error.message.startsWith("PROJECT_NOT_FOUND:"))) {
+      throw new ProjectSelectionRecoveryError(error, requested);
+    }
+    throw error;
+  }
 }
 
 class ExecutionPolicyChangedError extends Error {
@@ -8544,7 +8662,8 @@ function validateTaskSelectionInput(
       "MODEL_SELECTION_FORBIDDEN",
       "This bridge is in fixed model mode and does not accept a per-call model selection.",
       preferences.revision,
-      ["Omit selection and retry; the saved fixed selection will be applied."]
+      ["Omit selection and retry; the saved fixed selection will be applied."],
+      "omit-selection"
     );
   }
   if (
@@ -8673,7 +8792,7 @@ function resolveTaskProjectAdmission(input: {
     input.activityRequest.activityId === undefined ||
     input.agentResolution.contextMode === "fresh";
   const selectedProject = requiresExplicitProject
-    ? input.userSettings.resolveProject(input.args.project)
+    ? resolveProjectForAdmission(input.userSettings, input.args.project)
     : undefined;
   const usesExistingThread =
     Boolean(input.agentResolution.agent) &&
@@ -8773,7 +8892,7 @@ function resolveTaskProjectAdmission(input: {
   }
 
   return taskProjectFromTarget(
-    selectedProject || input.userSettings.resolveProject(input.args.project)
+    selectedProject || resolveProjectForAdmission(input.userSettings, input.args.project)
   );
 }
 
@@ -8799,7 +8918,7 @@ function assertCurrentTaskProjectAdmission(input: {
   requireSameCwd: boolean;
 }): TaskProjectAdmission | undefined {
   if (!input.requested) return;
-  const current = taskProjectFromTarget(input.userSettings.resolveProject(input.requested));
+  const current = taskProjectFromTarget(resolveProjectForAdmission(input.userSettings, input.requested));
   if (
     !input.admitted ||
     current.projectId !== input.admitted.projectId ||
@@ -9241,7 +9360,6 @@ async function continueTrackedSession(input: {
   upstream: CodexUpstream;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
-  requestedSandbox?: SandboxMode;
   preferences: BridgeUserSettings;
   activityRequest: ActivityTaskRequest;
   adoptOnComplete?: boolean;
@@ -9258,7 +9376,7 @@ async function continueTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.requestedSandbox, input.session.sandbox);
+  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
   const currentCwd = resolvePinnedAgentCwd(input);
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
@@ -9387,7 +9505,6 @@ async function continueTrackedSession(input: {
 
 async function forkTrackedSession(input: {
   prompt: string;
-  requestedSandbox?: SandboxMode;
   session: TrackedCodexSession;
   routing: CodexRouting;
   executionMode: ActivityExecutionMode;
@@ -9407,7 +9524,7 @@ async function forkTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.requestedSandbox, input.session.sandbox);
+  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
@@ -9690,15 +9807,16 @@ function resultForJob(
   job: CodexJob,
   staleAfterMs: number,
   preferences: BridgeUserSettings,
-  jobs?: CodexJobRegistry
+  jobs?: CodexJobRegistry,
+  replay = true
 ): ToolResult {
   if (
     job.result &&
     (job.status === "completed" || (job.status === "failed" && job.result.isError))
   ) {
-    return forwardResult(job.result, job, preferences, jobs, true);
+    return forwardResult(job.result, job, preferences, jobs, replay);
   }
-  return taskResultForJob(job, staleAfterMs, preferences, jobs, true);
+  return taskResultForJob(job, staleAfterMs, preferences, jobs, replay);
 }
 
 type PageCursorKind = "sessions" | "jobs" | "activities";
@@ -10067,7 +10185,7 @@ function formatJobStatus(
       : [])
   ];
   const nextActions = active
-    ? [{ tool: "codex_input", arguments: { jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } }]
+    ? [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
     : [];
   return {
     status: job.status,
@@ -10140,7 +10258,7 @@ function formatJobStatus(
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
-            : "Codex is running. Use the Activity card or one bounded status wait for an authoritative update."
+            : "Codex is running. Keep this GPT response active through bounded input waits, handle ordinary questions, and retrieve the exact terminal Job result."
         : job.status === "completed"
           ? resultOmitted
             ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
@@ -13866,7 +13984,7 @@ function codexTaskInputSchema(
       "Exact user-visible project name to resolve without admitting work."
     )
   }).optional().describe(
-    "No-work discovery through this same tool. Use only when the exact projectRef/projectRevision is unknown, then retry with the returned exact selector and a new requestId."
+    "Retained no-work lookup for cached callers. Current callers use codex_status query kind=project."
   );
   const runtimeCommon = {
     scopeId: scopeIdSchema()
@@ -13891,13 +14009,9 @@ function codexTaskInputSchema(
     requestId,
     prompt,
     project,
-    projectLookup,
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode,
-    sandbox: sandboxSchema(config).optional().describe(
-      "Optional requested sandbox. Fixed access modes accept the same sandbox and reject conflicting requests. Continue/fork retain the thread sandbox and must satisfy current operator limits; use fresh context to change sandbox."
-    ),
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -14670,137 +14784,43 @@ async function freshCatalogForPolicy(
 function settingsViewResult(
   view: SettingsView,
   locale: string | undefined,
-  audience: "model" | "snapshot" | "mutation"
+  audience: "snapshot" | "mutation"
 ): ToolResult {
-  const effectiveLocale = resolvePreferredUiLocale(
-    view.settings.uiLocalePreference,
-    locale
-  );
+  const effectiveLocale = resolvePreferredUiLocale(view.settings.uiLocalePreference, locale);
   const localizedView = localizeSettingsView(view, locale);
   const validatedEditorView = settingsViewOutputSchema.parse(localizedView);
-  const unavailableProjectWarnings = view.capabilities.projectAvailability
-    .filter(({ available, archived }) => !available && !archived)
-    .map(({ name }) => `Project '${name}' is unavailable. Relocate, restore, or archive it in Settings.`);
-  const actionableWarnings = [...new Set([
-    ...(view.catalog.warning ? [view.catalog.warning] : []),
-    ...view.warnings.filter((warning) =>
-      /MODEL_|model policy|retired automatic model default|Priority|Existing Agent threads remain pinned|handoffSummary/i
-        .test(warning)
-    ).map(modelVisibleSettingsWarning),
-    ...unavailableProjectWarnings
-  ])]
-    .slice(0, 8)
-    .map((warning) => warning.slice(0, 1_000));
-  const compactView = {
-    revisions: {
-      settings: localizedView.settings.settingsRevision,
-      registry: localizedView.settings.registryRevision,
-      policy: localizedView.policyActivation.policyRevision
-    },
-    policy: {
-      access: localizedView.settings.accessStrategy,
-      model: modelPolicySummary(localizedView.settings.modelPolicy),
-      priority: localizedView.settings.usePriorityServiceTier,
-      maxConcurrentJobs: localizedView.settings.maxConcurrentJobs,
-      activityVisibility: localizedView.settings.activityCardVisibility,
-      completionHandoff: localizedView.settings.completionHandoff
-    },
-    projects: localizedView.capabilities.projectAvailability.map(
-      ({ name, available, archived }) => ({ name, available, archived })
-    ),
-    catalog: {
-      stale: localizedView.catalog.stale,
-      modelCount: localizedView.catalog.models.length
-    },
-    warnings: actionableWarnings,
-    nextActions: (
-      localizedView.catalog.stale ||
-      localizedView.catalog.validation !== "valid" ||
-      actionableWarnings.some((warning) => /MODEL_|model policy|catalog/i.test(warning))
-    )
-      ? ["codex_models"]
-      : []
-  };
-  const localeHydration = {
-    "openai/locale": effectiveLocale,
-    hostLocale: locale || null
-  };
-  if (audience === "snapshot" || audience === "mutation") {
-    const appHydration = {
-      // Retained cards can continue reading the private metadata copy. Current
-      // cards use the same-call structured content as their primary data source.
-      "codex/settingsView": validatedEditorView,
-      ...localeHydration
-    };
-    return contractedToolResult(
-      audience === "snapshot" ? settingsSnapshotResultContract : settingsEditorResultContract,
-      view,
-      validatedEditorView,
-      {
-        text: audience === "snapshot"
-          ? `Settings refreshed at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
-          : `Settings saved at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
-      },
-      { appHydration }
-    );
-  }
   return contractedToolResult(
-    compactSettingsResultContract,
+    audience === "snapshot" ? settingsSnapshotResultContract : settingsEditorResultContract,
     view,
-    compactView,
+    validatedEditorView,
     {
-      text:
-        `Settings opened: revision ${localizedView.settings.settingsRevision}, registry ${localizedView.settings.registryRevision}, ` +
-        `${compactView.projects.length} project(s), ${compactView.warnings.length} warning(s).`
+      text: audience === "snapshot"
+        ? `Settings refreshed at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
+        : `Settings saved at revisions ${localizedView.settings.settingsRevision}/${localizedView.settings.registryRevision}.`
     },
-    { appHydration: localeHydration }
+    { appHydration: {
+      // Retained cards still read the metadata copy. Current cards consume the
+      // same-call structured editor state; no unused model summary is built.
+      "codex/settingsView": validatedEditorView,
+      "openai/locale": effectiveLocale,
+      hostLocale: locale || null
+    } }
   );
-}
-
-function modelVisibleSettingsWarning(warning: string): string {
-  return warning;
-}
-
-function modelPolicySummary(
-  policy: ModelPolicy
-): z.infer<typeof modelPolicySummaryOutputSchema> {
-  if (policy.mode === "fixed") {
-    return {
-      mode: "fixed",
-      model: policy.selection.model,
-      reasoningEffort: policy.selection.reasoningEffort,
-      delegation: policy.constraints.allowDelegation
-    };
-  }
-  return {
-    mode: "automatic",
-    allowed: policy.allowedSelections.kind,
-    ...(policy.allowedSelections.kind === "explicit"
-      ? { allowedCount: policy.allowedSelections.selections.length }
-      : {}),
-    delegation: policy.constraints.allowDelegation
-  };
 }
 
 function resolveTaskSandbox(
   config: BridgeConfig,
   preferences: BridgeUserSettings,
-  requested?: SandboxMode,
   existing?: SandboxMode
 ): SandboxMode {
   const forced = forcedSandboxForStrategy(config, preferences);
-  if (forced && requested && requested !== forced) {
-    throw new Error(
-      `SANDBOX_CONFLICT: Requested sandbox='${requested}' conflicts with the saved ${preferences.accessStrategy} access strategy (sandbox='${forced}'). Change the saved access strategy to allow the requested sandbox; removing the request would use '${forced}'.`
-    );
-  }
   // A saved thread never grants authority that the current operator envelope
   // no longer permits. This applies equally to omission, continue, and fork.
   if (existing) enforceSandbox(config, existing);
-  const resolved = enforceSandbox(config, forced ?? requested ?? existing);
+  const resolved = enforceSandbox(config, forced ?? existing);
   if (existing && resolved !== existing) {
     throw new Error(
-      `SANDBOX_CONTEXT_CONFLICT: This thread requires sandbox='${existing}', but the requested or saved sandbox is '${resolved}'. Use contextMode='fresh' to run with '${resolved}'.`
+      `SANDBOX_CONTEXT_CONFLICT: This existing thread uses '${existing}', but the saved bridge setting requires '${resolved}'. Start a fresh context under the saved setting; task calls cannot change permissions.`
     );
   }
   return resolved;
@@ -16156,16 +16176,7 @@ function taskProjectionForJob(
     warnings: semantic.warnings,
     nextActions: [
       ...semantic.nextActions.map(modelNextActionProjection),
-      ...(
-        preferences.activityCardVisibility === "always" ||
-        (
-          preferences.activityCardVisibility === "background-only" &&
-          job.executionMode === "background"
-        )
-        ? [
-            `After all codex_task calls in this assistant response finish admission, render at most one compact Activity card with codex_activity for activityId ${semantic.activityId}.`
-          ]
-        : [])
+      ...(semantic.terminal ? [] : ["Keep this GPT response active while Codex works. Use bounded input waits, answer questions, then retrieve each exact terminal Job result before reporting completion."])
     ]
   });
   return { structured };
@@ -16533,23 +16544,7 @@ function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): st
 function modelNextActionProjection(
   value: unknown
 ): z.infer<typeof modelNextActionOutputSchema> {
-  const input = isRecord(value) ? value : {};
-  const argumentsValue = isRecord(input.arguments) ? input.arguments : {};
-  const query = isRecord(argumentsValue.query) ? argumentsValue.query : {};
-  const targetId = [
-    input.targetId,
-    query.id,
-    argumentsValue.jobId,
-    argumentsValue.activityId,
-    argumentsValue.agentId
-  ].find((entry): entry is string => typeof entry === "string" && entry.length > 0);
-  const tool = typeof input.tool === "string" && input.tool ? input.tool : "codex_status";
-  const prompt = typeof input.userPrompt === "string" && input.userPrompt
-    ? input.userPrompt.slice(0, 1_000)
-    : undefined;
-  return modelNextActionOutputSchema.parse(
-    prompt || (targetId ? `${tool}(${targetId})` : tool)
-  );
+  return modelNextActionOutputSchema.parse(modelActionGuidance(value));
 }
 
 function modelResultAvailabilityProjection(
@@ -16766,7 +16761,7 @@ function contractedToolResult<Schema extends z.ZodType>(
   } = {}
 ): ToolResult {
   if (contract.toolName === "codex_task") validateTaskOutput(structured);
-  if (contract.toolName === "codex_status") validateStatusOutput(structured);
+  if (contract.toolName === "codex_status") validateModelVisibleStructuredOutput("codex_status", structured);
   if (contract.toolName === "codex_steer") validateSteerOutput(structured);
   return projectToolResult(contract, {
     canonical,
@@ -16820,17 +16815,7 @@ function modelPolicyErrorResult(
     code: error.code,
     message: error.message.replace(`${error.code}: `, ""),
     policyRevision: error.policyRevision,
-    nextActions: stableContract
-      ? error.nextActions.map((action) => {
-          if (action.includes("Refresh the ChatGPT developer-mode connection")) {
-            return "Retry this same stable codex_task contract with a new requestId; no connection Refresh is required.";
-          }
-          return action.replace(
-            "exposed by the current codex_task descriptor",
-            "allowed by the current saved policy and live model catalog"
-          );
-        })
-      : error.nextActions
+    nextActions: stableContract ? modelPolicyRecoveryActions(error) : error.nextActions
   });
 }
 
@@ -16876,7 +16861,7 @@ function projectSelectionChangedResult(
   return taskPreflightErrorResult({
     code: PROJECT_REGISTRY_CHANGED,
     message: stableContract
-      ? "The selected project changed before admission. No work was admitted; resolve it through projectLookup on this same stable task contract and retry."
+      ? "The selected project changed before admission. No work was admitted; resolve it through codex_status query kind=project and retry."
       : message.replace(`${PROJECT_REGISTRY_CHANGED}: `, ""),
     retryable: true,
     nextActions: stableContract
@@ -16903,20 +16888,53 @@ function projectSelectionRequiredResult(
   });
 }
 
+function projectStatusResult(name: string, userSettings: UserSettingsStore): ToolResult {
+  const normalized = normalizeProjectName(name);
+  const key = projectNameKey(normalized);
+  const registry = userSettings.projectRegistry;
+  const project = registry.selectableProjects.find(candidate => candidate.nameKey === key);
+  const matches = registry.projects.filter(candidate => candidate.nameKey === key);
+  const registered = matches.find(candidate => candidate.archivedAt === undefined) ?? matches[0];
+  const code = registry.projects.length === 0 ? PROJECT_SETUP_REQUIRED
+    : registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND";
+  const result = {
+    kind: "project" as const,
+    project: project ? { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision } : null,
+    ...(!project ? { error: {
+      code, message: registry.projects.length === 0
+        ? "No project is registered. No work was admitted."
+        : registered?.archivedAt !== undefined
+          ? `The requested project ${JSON.stringify(normalized)} is archived. No work was admitted.`
+          : registered
+            ? `The folder for requested project ${JSON.stringify(normalized)} is unavailable. No work was admitted.`
+            : `No registered project has the exact name ${JSON.stringify(normalized)}. No work was admitted.`, retryable: true
+    } } : {}),
+    nextActions: project
+      ? [projectSelectorRetryAction(project), "Task permissions are determined by the bridge settings; do not send permission fields."]
+      : projectRecoveryActions(userSettings, { name: normalized }, registry)
+  };
+  return contractedToolResult(projectStatusResultContract, result, result,
+    { text: project ? "Project selector resolved. No work was admitted." : result.error!.message },
+    { isError: !project });
+}
+
 function projectLookupResult(name: string, userSettings: UserSettingsStore): ToolResult {
   const normalized = normalizeProjectName(name);
   const key = projectNameKey(normalized);
-  const selectable = userSettings.projectRegistry.selectableProjects;
+  const registry = userSettings.projectRegistry;
+  if (!registry.projects.length) return projectSetupRequiredResult("No project is registered. No work was admitted.");
+  const selectable = registry.selectableProjects;
   const project = selectable.find((candidate) => candidate.nameKey === key);
   if (!project) {
-    const registered = userSettings.current.projects.find((candidate) => candidate.nameKey === key);
+    const matches = registry.projects.filter(candidate => candidate.nameKey === key);
+    const registered = matches.find(candidate => candidate.archivedAt === undefined) ?? matches[0];
     return taskPreflightErrorResult({
       code: registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND",
       message: registered
         ? `Project ${JSON.stringify(normalized)} is archived or its folder is unavailable; no work was admitted.`
         : `No selectable project has the exact name ${JSON.stringify(normalized)}; no work was admitted.`,
       retryable: true,
-      nextActions: projectRecoveryActions(userSettings)
+      nextActions: projectRecoveryActions(userSettings, { name: normalized }, registry)
     });
   }
   return taskPreflightErrorResult({
@@ -16929,40 +16947,13 @@ function projectLookupResult(name: string, userSettings: UserSettingsStore): Too
 
 function projectRecoveryActions(
   userSettings: UserSettingsStore,
-  requested?: RuntimeProjectSelection
+  requested?: RequestedProjectIdentity,
+  registry = userSettings.projectRegistry
 ): string[] {
-  const selectable = userSettings.projectRegistry.selectableProjects;
-  const exact = requested && "projectRef" in requested
-    ? selectable.find((project) => project.projectRef === requested.projectRef)
-    : requested
-      ? selectable.find((project) => project.nameKey === projectNameKey(requested.name))
-      : selectable.length === 1
-        ? selectable[0]
-        : undefined;
-  if (exact) return [projectSelectorRetryAction(exact)];
-  if (selectable.length === 0) {
-    return [
-      "No project is currently selectable. Restore or register a project in Codex Settings, then retry this same task contract; a connection Refresh is not required."
-    ];
-  }
-  const names = selectable.slice(0, 8).map((project) => project.name);
-  const suffix = selectable.length > names.length
-    ? ` (${selectable.length - names.length} more are available in Settings)`
-    : "";
-  return [
-    `Use this same codex_task with projectLookup={"name":<exact name>} and a new requestId. Selectable names include ${JSON.stringify(names)}${suffix}; the lookup admits no work and returns the exact selector. No connection Refresh is required.`
-  ];
-}
-
-function projectSelectorRetryAction(project: ProjectTarget): string {
-  const selector = {
-    name: project.name,
-    projectRef: project.projectRef,
-    projectRevision: project.projectRevision
-  };
-  return (
-    `Retry this same codex_task with project=${JSON.stringify(selector)} and a new requestId. ` +
-    "No connection Refresh is required."
+  return projectRecoveryGuidance(registry, requested, (names, remaining) =>
+    `Look up the project intended by the user with codex_status using query={"kind":"project","name":<exact name>}. ` +
+    `Selectable names include ${JSON.stringify(names)}${remaining ? ` (${remaining} more registered projects)` : ""}. ` +
+    "Do not choose a first or sole project without an intended target. The lookup admits no work; no connection Refresh is required."
   );
 }
 

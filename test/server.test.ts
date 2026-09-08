@@ -204,7 +204,7 @@ describe("http server", () => {
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("executionEnvelopeRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("do not require a ChatGPT developer-mode Refresh");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("Refresh only after EXECUTION_ENVELOPE_CHANGED");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectLookup in the same conversation");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("query kind=project in the same conversation");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("mandatory even when only one project is registered");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never infer a first, sole, default, slug");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
@@ -217,34 +217,32 @@ describe("http server", () => {
       "admits no Activity, Agent, Job, session, or upstream work"
     );
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exposes no Activity-card UI");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("A changed or stale selector uses the same projectLookup recovery");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("A changed or stale selector uses the same read-only project recovery");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("opens Settings only as its returned recovery action");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("opaque projectRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("projectRevision");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("private project identity and cwd snapshot");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("pre-v2 cached executionPolicyRef");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("same v2 contract with a new requestId and without Refresh");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("stable v2 descriptor always exposes generic bounded selection");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("stable v2 descriptor always exposes generic bounded model selection");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("exact saved fallback");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("based on the task requirements");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
-      "codex_task is execution-only and never mounts an Activity card"
+      "codex_task is execution-only and does not require a presentationId"
     );
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
-      "call codex_activity at most once using mode compact-monitor"
+      "keep this GPT response active until results have been retrieved"
     );
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
-      "Never call the compact presenter once per Task or Agent"
-    );
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("default full-history mode");
+    expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("call codex_activity");
+    expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("default full-history mode");
     expect(BRIDGE_MCP_INSTRUCTIONS).not.toContain("activityPresentationId");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("current/action-needed Activity rows");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("scoped paginated full Activity view");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("structured answer");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("scoped overview");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("one query kind for authoritative detail");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("model-authoritative answer");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never contain Job answer bodies");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never start another codex_task merely to reconstruct");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("exact authoritative version");
-    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_activity_cancel");
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain("codex_cancel");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("Use codex_steer only");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never automatically retry DELIVERY_UNCERTAIN");
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain("never relay its instructions automatically");
@@ -855,7 +853,7 @@ describe("http server", () => {
     const upstream = new DeferredUpstream();
     const baseUrl = await start(
       {
-        CODEX_GPT_BRIDGE_NO_AUTH: "1"
+        CODEX_GPT_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1"
       },
       upstream
     );
@@ -1121,7 +1119,7 @@ describe("http server", () => {
   it("retains bounded card performance diagnostics across stateless HTTP requests", async () => {
     const baseUrl = await start(
       {
-        CODEX_GPT_BRIDGE_NO_AUTH: "1"
+        CODEX_GPT_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1"
       },
       new FakeUpstream()
     );
@@ -1471,8 +1469,8 @@ async function stopLastServer(): Promise<void> {
 }
 
 async function registerProject(client: Client, cwd: string): Promise<void> {
-  const opened = await client.callTool({ name: "codex_settings", arguments: {} });
-  const revision = parseToolJson(opened).revisions?.registry;
+  const opened = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+  const revision = parseToolJson(opened).settings?.registryRevision;
   if (!Number.isInteger(revision)) throw new Error("Expected project registry revision.");
   const saved = await client.callTool({
     name: "codex_update_settings",

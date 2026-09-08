@@ -1,0 +1,160 @@
+{
+  "issue": 69,
+  "source": "pre-change compiled snapshot 6d84d4d",
+  "registered": 30,
+  "model": 15,
+  "app": 15,
+  "descriptorBytes": 179781,
+  "inventory": [
+    {
+      "name": "codex_activity",
+      "audience": "model",
+      "descriptorBytes": 2706
+    },
+    {
+      "name": "codex_activity_cancel",
+      "audience": "model",
+      "descriptorBytes": 2641
+    },
+    {
+      "name": "codex_activity_handoff",
+      "audience": "app",
+      "descriptorBytes": 2731
+    },
+    {
+      "name": "codex_activity_job_cancel",
+      "audience": "app",
+      "descriptorBytes": 4717
+    },
+    {
+      "name": "codex_activity_rehydrate",
+      "audience": "app",
+      "descriptorBytes": 7571
+    },
+    {
+      "name": "codex_activity_snapshot",
+      "audience": "app",
+      "descriptorBytes": 7381
+    },
+    {
+      "name": "codex_activity_update",
+      "audience": "model",
+      "descriptorBytes": 4151
+    },
+    {
+      "name": "codex_agent",
+      "audience": "model",
+      "descriptorBytes": 2389
+    },
+    {
+      "name": "codex_agent_recovery_detach",
+      "audience": "app",
+      "descriptorBytes": 3828
+    },
+    {
+      "name": "codex_answer",
+      "audience": "model",
+      "descriptorBytes": 1936
+    },
+    {
+      "name": "codex_ask_user",
+      "audience": "model",
+      "descriptorBytes": 2461
+    },
+    {
+      "name": "codex_background_process_terminate",
+      "audience": "app",
+      "descriptorBytes": 4905
+    },
+    {
+      "name": "codex_cancel",
+      "audience": "model",
+      "descriptorBytes": 2389
+    },
+    {
+      "name": "codex_dashboard",
+      "audience": "model",
+      "descriptorBytes": 1508
+    },
+    {
+      "name": "codex_dashboard_snapshot",
+      "audience": "app",
+      "descriptorBytes": 45122
+    },
+    {
+      "name": "codex_diagnostics",
+      "audience": "app",
+      "descriptorBytes": 7327
+    },
+    {
+      "name": "codex_input",
+      "audience": "model",
+      "descriptorBytes": 3017
+    },
+    {
+      "name": "codex_interaction_respond",
+      "audience": "app",
+      "descriptorBytes": 5716
+    },
+    {
+      "name": "codex_job_steer",
+      "audience": "app",
+      "descriptorBytes": 4610
+    },
+    {
+      "name": "codex_models",
+      "audience": "model",
+      "descriptorBytes": 2071
+    },
+    {
+      "name": "codex_question_card",
+      "audience": "app",
+      "descriptorBytes": 1620
+    },
+    {
+      "name": "codex_question_notify",
+      "audience": "app",
+      "descriptorBytes": 2301
+    },
+    {
+      "name": "codex_question_submit",
+      "audience": "app",
+      "descriptorBytes": 2095
+    },
+    {
+      "name": "codex_settings",
+      "audience": "model",
+      "descriptorBytes": 3032
+    },
+    {
+      "name": "codex_settings_snapshot",
+      "audience": "app",
+      "descriptorBytes": 12091
+    },
+    {
+      "name": "codex_status",
+      "audience": "model",
+      "descriptorBytes": 6422
+    },
+    {
+      "name": "codex_steer",
+      "audience": "model",
+      "descriptorBytes": 3165
+    },
+    {
+      "name": "codex_task",
+      "audience": "model",
+      "descriptorBytes": 10657
+    },
+    {
+      "name": "codex_update_settings",
+      "audience": "app",
+      "descriptorBytes": 16906
+    },
+    {
+      "name": "codex_user_answer",
+      "audience": "model",
+      "descriptorBytes": 2315
+    }
+  ]
+}

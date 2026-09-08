@@ -138,6 +138,15 @@ const contentResults = Object.fromEntries(
 
 const modelVisibleSchemas = schemaAudit(MODEL_VISIBLE_OUTPUT_SCHEMAS);
 const appOnlySchemas = schemaAudit(APP_ONLY_OUTPUT_SCHEMAS);
+// Input now shares codex_status with other reads; count that schema once in the
+// overall budget, and only dedicated question tools in the question subtotal.
+const dedicatedQuestionTools = ["codex_answer", "codex_ask_user", "codex_user_answer"];
+const dedicatedQuestionSchemaBytes = dedicatedQuestionTools.reduce((total, name) => {
+  const bytes = modelVisibleSchemas.byTool[name];
+  assert.ok(Number.isSafeInteger(bytes) && bytes > 0,
+    `Missing current question output schema: ${name}.`);
+  return total + bytes;
+}, 0);
 const untypedNumericModelSchemaLiterals = untypedNumericLiteralPointers(
   MODEL_VISIBLE_OUTPUT_SCHEMAS
 );
@@ -145,7 +154,7 @@ const issueSchemaBaselineBytes = 20_128;
 const issue40SteeringSchemaBytes = modelVisibleSchemas.byTool.codex_steer || 0;
 
 const report = {
-  auditVersion: 4,
+  auditVersion: 5,
   questionFeatureIssue: 68,
   issue: 36,
   regressionIssue: 38,
@@ -154,6 +163,12 @@ const report = {
     commit: "8a2cf54",
     normativeClient: "ChatGPT",
     measurement: "Buffer.byteLength(JSON.stringify(value), 'utf8')",
+    schemaInventory: {
+      modelTools: Object.keys(MODEL_VISIBLE_OUTPUT_SCHEMAS).length,
+      currentAppTools: Object.keys(APP_ONLY_OUTPUT_SCHEMAS).length,
+      compatibilityDescriptorsIncluded: false,
+      scope: "Current exported output contracts; retained compatibility discovery is measured separately in the issue-69 inventory."
+    },
     fixtureProfile: "bounded deterministic W0/W1/W2/W3 plus issue-38 answer-recovery fixtures",
     phasesIncluded: ["W0", "W1", "W2", "M1", "W3", "M2", "R38"],
     phasesDeferred: [],
@@ -252,10 +267,13 @@ const report = {
     historicalIssue36ReductionTargetPercent: 40,
     targetModelVisibleSchemaBytes: 19_500,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
-    questionToolsSchemaBytes: ["codex_input", "codex_answer", "codex_ask_user", "codex_user_answer"].reduce((total, name) => total + modelVisibleSchemas.byTool[name], 0),
+    dedicatedQuestionTools,
+    dedicatedQuestionToolsSchemaBytes: dedicatedQuestionSchemaBytes,
+    sharedQuestionInputSchema: "codex_status",
     headroomBytes: 19_500 - modelVisibleSchemas.totalBytes,
-    enforcedAt: "issue68-question-orchestration",
-    liveChatGptQuestionWakeVerified: false,
+    enforcedAt: "issue69-tool-consolidation-issue70-guidance",
+    liveHostEvidenceProducedByThisAudit: false,
+    separateLiveQuestionEvidence: "docs/audits/issue-70-unlocked-host.json",
     passed: modelVisibleSchemas.totalBytes <= 19_500
   }
 };

@@ -30,7 +30,7 @@ describe("persistent stdio bridge", () => {
     const serverToClient = new PassThrough();
     const runtime = createStdioBridgeRuntime(
       loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1",
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite"),
         CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(stateDirectory, "settings.json"),
         CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(stateDirectory, "sessions.json"),

@@ -1,31 +1,4 @@
 {
-  "codex_activity": [
-    {
-      "fixture": "empty-activity-view",
-      "structuredContent": {
-        "kind": "activity",
-        "mode": "compact-monitor",
-        "scopeVersion": 0,
-        "counts": { "activities": 0, "agents": 0, "active": 0, "needsAttention": 0 }
-      }
-    }
-  ],
-  "codex_activity_cancel": [
-    {
-      "fixture": "activity-cancelled",
-      "structuredContent": {
-        "kind": "mutation",
-        "ok": true,
-        "action": "cancel",
-        "target": { "type": "activity", "id": "activity-cancelled", "state": "cancelled", "version": 4 },
-        "affectedJobIds": ["job-cancelled"],
-        "policySource": "explicit-tool-input",
-        "codexOutputCanMutatePolicy": false,
-        "warnings": ["Partial filesystem changes were not rolled back."],
-        "nextActions": []
-      }
-    }
-  ],
   "codex_activity_update": [
     {
       "fixture": "activity-updated",
@@ -33,7 +6,12 @@
         "kind": "mutation",
         "ok": true,
         "action": "seal",
-        "target": { "type": "activity", "id": "activity-updated", "state": "sealed", "version": 3 },
+        "target": {
+          "type": "activity",
+          "id": "activity-updated",
+          "state": "sealed",
+          "version": 3
+        },
         "affectedJobIds": [],
         "policySource": "explicit-tool-input",
         "codexOutputCanMutatePolicy": false,
@@ -49,7 +27,11 @@
         "kind": "mutation",
         "ok": true,
         "action": "rename",
-        "target": { "type": "agent", "id": "agent-renamed", "version": 2 },
+        "target": {
+          "type": "agent",
+          "id": "agent-renamed",
+          "version": 2
+        },
         "warnings": [],
         "nextActions": []
       }
@@ -61,9 +43,17 @@
         "ok": false,
         "action": "archive",
         "code": "AGENT_BUSY",
-        "target": { "type": "agent", "id": "agent-busy", "version": 3 },
-        "warnings": ["Force-stop does not roll back filesystem changes."],
-        "nextActions": ["codex_cancel(job-running)"]
+        "target": {
+          "type": "agent",
+          "id": "agent-busy",
+          "version": 3
+        },
+        "warnings": [
+          "Force-stop does not roll back filesystem changes."
+        ],
+        "nextActions": [
+          "codex_cancel(job-running)"
+        ]
       }
     }
   ],
@@ -74,8 +64,14 @@
         "kind": "mutation",
         "ok": true,
         "action": "cancel-job",
-        "target": { "type": "job", "id": "job-cancelled", "state": "cancelled" },
-        "warnings": ["Cancellation does not roll back partial filesystem changes."],
+        "target": {
+          "type": "job",
+          "id": "job-cancelled",
+          "state": "cancelled"
+        },
+        "warnings": [
+          "Cancellation does not roll back partial filesystem changes."
+        ],
         "nextActions": []
       }
     }
@@ -104,7 +100,12 @@
             "id": "gpt-5.6-sol",
             "name": "GPT-5.6 Codex",
             "description": "Upstream model description.",
-            "efforts": [{ "id": "max", "description": "Upstream effort description." }],
+            "efforts": [
+              {
+                "id": "max",
+                "description": "Upstream effort description."
+              }
+            ],
             "serviceTiers": []
           }
         ]
@@ -113,25 +114,10 @@
   ],
   "codex_settings": [
     {
-      "fixture": "compact-settings",
+      "fixture": "thin-settings-opener",
       "structuredContent": {
-        "revisions": { "settings": 4, "registry": 2, "policy": 4 },
-        "policy": {
-          "access": "adaptive",
-          "model": {
-            "mode": "automatic",
-            "allowed": "catalog-visible",
-            "delegation": true
-          },
-          "priority": false,
-          "maxConcurrentJobs": 30,
-          "activityVisibility": "always",
-          "completionHandoff": "off"
-        },
-        "projects": [{ "name": "Bridge", "available": true, "archived": false }],
-        "catalog": { "stale": false, "modelCount": 1 },
-        "warnings": [],
-        "nextActions": []
+        "kind": "settings",
+        "opened": true
       }
     }
   ],
@@ -140,7 +126,10 @@
       "fixture": "overview",
       "structuredContent": {
         "kind": "overview",
-        "scope": { "mode": "scoped", "source": "host-metadata" },
+        "scope": {
+          "mode": "scoped",
+          "source": "host-metadata"
+        },
         "counts": {
           "sessions": 1,
           "jobs": 1,
@@ -150,10 +139,27 @@
           "orphanedAgents": 0
         },
         "items": [
-          { "type": "session", "id": "thread-running", "threadId": "thread-running" },
-          { "type": "job", "id": "job-running", "state": "running", "activityId": "activity-running" },
-          { "type": "activity", "id": "activity-running", "state": "open" },
-          { "type": "agent", "id": "agent-running", "state": "active" }
+          {
+            "type": "session",
+            "id": "thread-running",
+            "threadId": "thread-running"
+          },
+          {
+            "type": "job",
+            "id": "job-running",
+            "state": "running",
+            "activityId": "activity-running"
+          },
+          {
+            "type": "activity",
+            "id": "activity-running",
+            "state": "open"
+          },
+          {
+            "type": "agent",
+            "id": "agent-running",
+            "state": "active"
+          }
         ],
         "warnings": []
       }
@@ -162,7 +168,9 @@
       "fixture": "running-job",
       "structuredContent": {
         "kind": "job",
-        "scope": { "mode": "scoped" },
+        "scope": {
+          "mode": "scoped"
+        },
         "counts": {
           "sessions": 0,
           "jobs": 1,
@@ -171,21 +179,33 @@
           "agents": 1,
           "orphanedAgents": 0
         },
-        "items": [{
-          "type": "job",
-          "id": "job-running",
-          "state": "running",
-          "activityId": "activity-running",
-          "agentId": "agent-running",
-          "terminal": false,
-          "delivery": "status",
-          "replay": false,
-          "versions": { "job": 2, "activity": 1 },
-          "execution": { "mode": "background", "backend": "mcp-server", "sandbox": "read-only" },
-          "result": { "availability": "pending", "omitted": false },
-          "nextActions": [],
-          "message": "Codex is running."
-        }],
+        "items": [
+          {
+            "type": "job",
+            "id": "job-running",
+            "state": "running",
+            "activityId": "activity-running",
+            "agentId": "agent-running",
+            "terminal": false,
+            "delivery": "status",
+            "replay": false,
+            "versions": {
+              "job": 2,
+              "activity": 1
+            },
+            "execution": {
+              "mode": "background",
+              "backend": "mcp-server",
+              "sandbox": "read-only"
+            },
+            "result": {
+              "availability": "pending",
+              "omitted": false
+            },
+            "nextActions": [],
+            "message": "Codex is running."
+          }
+        ],
         "warnings": []
       }
     },
@@ -193,7 +213,9 @@
       "fixture": "completed-job",
       "structuredContent": {
         "kind": "job",
-        "scope": { "mode": "scoped" },
+        "scope": {
+          "mode": "scoped"
+        },
         "counts": {
           "sessions": 1,
           "jobs": 1,
@@ -202,22 +224,34 @@
           "agents": 1,
           "orphanedAgents": 0
         },
-        "items": [{
-          "type": "job",
-          "id": "job-completed",
-          "state": "completed",
-          "activityId": "activity-completed",
-          "agentId": "agent-completed",
-          "threadId": "thread-completed",
-          "terminal": true,
-          "delivery": "primary-content",
-          "replay": false,
-          "versions": { "job": 5, "activity": 4 },
-          "execution": { "mode": "background", "backend": "app-server", "sandbox": "workspace-write" },
-          "result": { "availability": "delivered", "omitted": false },
-          "answer": "ISSUE38_BACKGROUND_SENTINEL\n\n## Result\n- background report recovered",
-          "message": "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
-        }],
+        "items": [
+          {
+            "type": "job",
+            "id": "job-completed",
+            "state": "completed",
+            "activityId": "activity-completed",
+            "agentId": "agent-completed",
+            "threadId": "thread-completed",
+            "terminal": true,
+            "delivery": "primary-content",
+            "replay": false,
+            "versions": {
+              "job": 5,
+              "activity": 4
+            },
+            "execution": {
+              "mode": "background",
+              "backend": "app-server",
+              "sandbox": "workspace-write"
+            },
+            "result": {
+              "availability": "delivered",
+              "omitted": false
+            },
+            "answer": "ISSUE38_BACKGROUND_SENTINEL\n\n## Result\n- background report recovered",
+            "message": "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
+          }
+        ],
         "warnings": []
       }
     },
@@ -225,7 +259,9 @@
       "fixture": "failed-job",
       "structuredContent": {
         "kind": "job",
-        "scope": { "mode": "scoped" },
+        "scope": {
+          "mode": "scoped"
+        },
         "counts": {
           "sessions": 1,
           "jobs": 1,
@@ -234,69 +270,41 @@
           "agents": 1,
           "orphanedAgents": 0
         },
-        "items": [{
-          "type": "job",
-          "id": "job-failed",
-          "state": "failed",
-          "activityId": "activity-failed",
-          "agentId": "agent-failed",
-          "threadId": "thread-failed",
-          "terminal": true,
-          "delivery": "none",
-          "replay": false,
-          "versions": { "job": 4, "activity": 2 },
-          "execution": { "mode": "background", "backend": "app-server", "sandbox": "read-only" },
-          "result": { "availability": "unavailable", "omitted": false },
-          "error": { "code": "JOB_FAILED", "message": "The upstream worker failed." },
-          "nextActions": [],
-          "message": "The upstream worker failed."
-        }],
+        "items": [
+          {
+            "type": "job",
+            "id": "job-failed",
+            "state": "failed",
+            "activityId": "activity-failed",
+            "agentId": "agent-failed",
+            "threadId": "thread-failed",
+            "terminal": true,
+            "delivery": "none",
+            "replay": false,
+            "versions": {
+              "job": 4,
+              "activity": 2
+            },
+            "execution": {
+              "mode": "background",
+              "backend": "app-server",
+              "sandbox": "read-only"
+            },
+            "result": {
+              "availability": "unavailable",
+              "omitted": false
+            },
+            "error": {
+              "code": "JOB_FAILED",
+              "message": "The upstream worker failed."
+            },
+            "nextActions": [],
+            "message": "The upstream worker failed."
+          }
+        ],
         "warnings": []
       }
-    }
-  ],
-  "codex_steer": [
-    {
-      "fixture": "active-turn-delivered",
-      "structuredContent": {
-        "kind": "mutation",
-        "ok": true,
-        "action": "steer",
-        "code": null,
-        "job": {
-          "jobId": "job-steered",
-          "activityId": "activity-steered",
-          "agentId": "agent-steered",
-          "status": "running",
-          "version": 4
-        },
-        "promptPersistedByBridge": false,
-        "steeringScope": "active-codex-turn-only",
-        "delivery": { "status": "delivered" },
-        "message": "Additional guidance was delivered to the exact active Codex turn without creating a new turn.",
-        "warnings": [],
-        "nextActions": []
-      }
     },
-    {
-      "fixture": "dispatch-uncertain",
-      "structuredContent": {
-        "kind": "mutation",
-        "ok": false,
-        "action": "steer",
-        "code": "DELIVERY_UNCERTAIN",
-        "job": null,
-        "promptPersistedByBridge": false,
-        "steeringScope": "active-codex-turn-only",
-        "delivery": { "status": "uncertain" },
-        "message": "The dispatch boundary is uncertain; do not automatically resend.",
-        "warnings": ["The bridge does not claim distributed exactly-once delivery across this crash boundary."],
-        "nextActions": ["Inspect the exact Job with codex_status and do not automatically retry this steering request."]
-      }
-    }
-  ],
-  "codex_task": [],
-  "codex_input": [
     {
       "fixture": "gpt-question-flow",
       "structuredContent": {
@@ -325,6 +333,55 @@
       }
     }
   ],
+  "codex_steer": [
+    {
+      "fixture": "active-turn-delivered",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "steer",
+        "code": null,
+        "job": {
+          "jobId": "job-steered",
+          "activityId": "activity-steered",
+          "agentId": "agent-steered",
+          "status": "running",
+          "version": 4
+        },
+        "promptPersistedByBridge": false,
+        "steeringScope": "active-codex-turn-only",
+        "delivery": {
+          "status": "delivered"
+        },
+        "message": "Additional guidance was delivered to the exact active Codex turn without creating a new turn.",
+        "warnings": [],
+        "nextActions": []
+      }
+    },
+    {
+      "fixture": "dispatch-uncertain",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": false,
+        "action": "steer",
+        "code": "DELIVERY_UNCERTAIN",
+        "job": null,
+        "promptPersistedByBridge": false,
+        "steeringScope": "active-codex-turn-only",
+        "delivery": {
+          "status": "uncertain"
+        },
+        "message": "The dispatch boundary is uncertain; do not automatically resend.",
+        "warnings": [
+          "The bridge does not claim distributed exactly-once delivery across this crash boundary."
+        ],
+        "nextActions": [
+          "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+        ]
+      }
+    }
+  ],
+  "codex_task": [],
   "codex_answer": [
     {
       "fixture": "gpt-question-flow",

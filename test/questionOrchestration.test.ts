@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -93,10 +93,62 @@ describe("GPT question orchestration", () => {
     emit = undefined; finish = undefined; assign = undefined;
   });
 
+  it("binds global user controls to exact displayed work without granting GPT cross-conversation access", async () => {
+    const jobId = await start();
+    question({ kind: "command-approval", origin: "app-approval", interactionId: "approval-1", isBlocking: true,
+      questions: undefined, availableDecisions: ["accept", "decline"] });
+    const job = jobs.get(jobId)!;
+    const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + job.agentId).digest("hex").slice(0, 32);
+    const widgetInstanceId = randomUUID();
+    const read = await ok("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta);
+    expect(read.structuredContent).toEqual({ kind: "control", ready: true });
+    expect(JSON.stringify(read.structuredContent)).not.toContain("approval-1");
+    const detail = read._meta["codex/uiControl@1"];
+    expect(detail).toMatchObject({ jobId, projectName: "Fixture", canStop: true });
+    expect(detail.pendingInteractions[0].interactionId).toBe("approval-1");
+    const args = { widgetInstanceId, card: detail.card, requestId: randomUUID(), jobId,
+      expectedJobVersion: detail.jobVersion, interactionId: "approval-1", response: { decision: "accept" } };
+    for (const patch of [{ widgetInstanceId: randomUUID() }, { jobId: "another-job" },
+      { card: { ...detail.card, token: detail.card.token + "tampered" } },
+      { expectedJobVersion: detail.jobVersion + 1 }, { interactionId: "unknown" }, { response: { decision: "acceptForSession" } }]) {
+      expect((await call("codex_interaction_respond", { ...args, ...patch, requestId: randomUUID() }, otherMeta)).isError).toBe(true);
+    }
+    expect((await call("codex_interaction_respond", args, meta)).isError).toBe(true);
+    expect((await call("codex_status", { query: { kind: "input", jobId } }, otherMeta)).isError).toBe(true);
+    expect((await call("codex_cancel", { requestId: randomUUID(), target: { kind: "job", id: jobId }, expectedVersion: job.version, reason: "Stop" }, otherMeta)).isError).toBe(true);
+    expect(delivered).toEqual([]);
+    const [first, replay] = await Promise.all([ok("codex_interaction_respond", args, otherMeta), ok("codex_interaction_respond", args, otherMeta)]);
+    expect(first.structuredContent).toEqual(replay.structuredContent);
+    expect(delivered).toEqual([{ id: "approval-1", response: { decision: "accept" } }]);
+    expect((await call("codex_interaction_respond", { ...args, requestId: randomUUID() }, otherMeta)).isError).toBe(true);
+    question();
+    const next = (await ok("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta))._meta["codex/uiControl@1"];
+    expect(next.pendingInteractions[0].ordinary).toBe(true);
+    const refused = await call("codex_interaction_respond", { ...args, card: next.card, expectedJobVersion: next.jobVersion,
+      requestId: randomUUID(), interactionId: "fixture:1:question", response: { answers: { color: ["Blue"] } } }, otherMeta);
+    expect(JSON.stringify(refused)).toContain("GPT_RESPONSE_REQUIRED");
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("returns current question state from submit, claim and acknowledgment without an extra read", async () => {
+    const created = await ok("codex_ask_user", { requestId: randomUUID(), title: "Choice", questions: [field] });
+    const { questionId, revision, presentationToken } = created._meta[USER_QUESTION_META];
+    const proof = { questionId, revision, presentationToken };
+    const submitted = await ok("codex_question_action", { ...proof, operation: { kind: "submit", response: { answers: { color: ["Blue"] } } } });
+    expect(submitted._meta[USER_QUESTION_META]).toMatchObject({ status: "answered", notification: "stored", consumed: false });
+    const claim = await ok("codex_question_action", { ...proof, operation: { kind: "claim" } });
+    expect(claim.structuredContent.send).toBe(true);
+    expect(claim._meta[USER_QUESTION_META].notification).toBe("dispatching");
+    const ack = await ok("codex_question_action", { ...proof, operation: { kind: "ack", attempt: claim.structuredContent.attempt, state: "uncertain" } });
+    expect(ack._meta[USER_QUESTION_META]).toMatchObject({ notification: "uncertain", consumed: false });
+    expect((await ok("codex_question_action", { ...proof, operation: { kind: "claim" } })).structuredContent.send).toBe(false);
+    expect(delivered).toEqual([]);
+  });
+
   it("waits for input rather than progress, and answers after unrelated Job revisions without a card", async () => {
     const jobId = await start();
-    const initial = (await ok("codex_input", { jobId })).structuredContent;
-    const waiting = ok("codex_input", { jobId, afterCursor: initial.cursor, waitMs: 500 });
+    const initial = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
+    const waiting = ok("codex_status", { query: { kind: "input", ...{ jobId, afterCursor: initial.cursor, waitMs: 500 } } });
     emit?.({ progress: 1, message: "Independent progress" });
     question();
     const observed = (await waiting).structuredContent;
@@ -105,7 +157,7 @@ describe("GPT question orchestration", () => {
     const version = jobs.get(jobId)!.version;
     emit?.({ progress: 2, event: { eventId: randomUUID(), type: "command", phase: "completed", summary: "Unrelated command", createdAt: Date.now() } });
     expect(jobs.get(jobId)!.version).toBeGreaterThan(version);
-    expect((await ok("codex_input", { jobId })).structuredContent.cursor).toBe(observed.cursor);
+    expect((await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent.cursor).toBe(observed.cursor);
     const args = { jobId, requestId: randomUUID(), questionRef: observed.questions[0].questionRef, answers: { color: ["Blue"] } };
     const [a, b] = await Promise.all([ok("codex_answer", args), ok("codex_answer", args)]);
     expect(a.structuredContent.delivery).toBe("delivered");
@@ -121,23 +173,23 @@ describe("GPT question orchestration", () => {
 
   it("keeps completed message items visible while the turn runs and ignores non-input progress", async () => {
     const jobId = await start();
-    const before = (await ok("codex_input", { jobId })).structuredContent;
-    const wait = ok("codex_input", { jobId, afterCursor: before.cursor, waitMs: 40 });
+    const before = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
+    const wait = ok("codex_status", { query: { kind: "input", ...{ jobId, afterCursor: before.cursor, waitMs: 40 } } });
     emit?.({ progress: 3, message: "Still working" });
     expect((await wait).structuredContent.timedOut).toBe(true);
     emit?.({ progress: 4, event: { eventId: "interim-message", type: "agent-message", phase: "completed", summary: "Which color?", createdAt: Date.now() } });
-    const result = (await ok("codex_input", { jobId, afterCursor: before.cursor, waitMs: 100 })).structuredContent;
+    const result = (await ok("codex_status", { query: { kind: "input", ...{ jobId, afterCursor: before.cursor, waitMs: 100 } } })).structuredContent;
     expect(result.active).toBe(true);
     expect(result.messages[0].text).toBe("Which color?");
     expect(jobs.get(jobId)!.status).toBe("running");
     const status = (await ok("codex_status", { query: { kind: "job", id: jobId } })).structuredContent;
-    expect(status.items[0].inputs.readTool).toBe("codex_input");
+    expect(status.items[0].inputs.readTool).toBe("codex_status");
   });
 
   it.each([true, false])("answers freeform questions (blocking=%s) and prevents a retry after an uncertain dispatch", async isBlocking => {
     const jobId = await start();
     question({ isBlocking, questions: [{ ...field, options: [], isSecret: false }] });
-    const input = (await ok("codex_input", { jobId })).structuredContent;
+    const input = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
     expect(input.questions[0].questions[0].options).toBeUndefined();
     const args = { jobId, requestId: randomUUID(), questionRef: input.questions[0].questionRef, answers: { color: ["A freeform answer"] } };
     deliveryFailure = true;
@@ -149,10 +201,10 @@ describe("GPT question orchestration", () => {
 
   it("drops old questions when the executing worker or turn is replaced", async () => {
     const jobId = await start(); question();
-    const input = (await ok("codex_input", { jobId })).structuredContent;
+    const input = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
     assign?.({ backendKind: "app-server", workerId: "replacement-worker", workerGeneration: 2,
       threadId: "fixture-thread", upstreamRequestId: "replacement-turn" });
-    const current = (await ok("codex_input", { jobId })).structuredContent;
+    const current = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
     expect(current.questions).toEqual([]);
     expect(current.cursor).not.toBe(input.cursor);
     expect((await call("codex_answer", { jobId, requestId: randomUUID(), questionRef: input.questions[0].questionRef, answers: { color: ["Blue"] } })).isError).toBe(true);
@@ -161,7 +213,7 @@ describe("GPT question orchestration", () => {
 
   it("rejects changed questions, old workers, secrets, approvals and unknown input origins", async () => {
     const jobId = await start(); question();
-    const ref = (await ok("codex_input", { jobId })).structuredContent.questions[0].questionRef;
+    const ref = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent.questions[0].questionRef;
     const answer = { jobId, requestId: randomUUID(), questionRef: ref, answers: { color: ["Blue"] } };
     question({ questions: [{ ...field, question: "A changed question", isSecret: false }] });
     expect((await call("codex_answer", answer)).isError).toBe(true);
@@ -169,11 +221,11 @@ describe("GPT question orchestration", () => {
     expect((await call("codex_answer", answer)).isError).toBe(true);
     for (const origin of ["app-approval", "unknown"] as const) {
       question({ origin });
-      expect((await ok("codex_input", { jobId })).structuredContent.questions).toEqual([]);
+      expect((await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent.questions).toEqual([]);
       expect((await call("codex_answer", answer)).isError).toBe(true);
     }
     question({ questions: [{ ...field, isSecret: true }] });
-    const secret = (await ok("codex_input", { jobId })).structuredContent;
+    const secret = (await ok("codex_status", { query: { kind: "input", ...{ jobId } } })).structuredContent;
     expect(secret.questions).toEqual([]); expect(secret.approvals).toHaveLength(1);
     expect(delivered).toEqual([]);
   });

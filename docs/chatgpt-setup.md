@@ -1,5 +1,7 @@
 # Connect Codex MCP Bridge for ChatGPT
 
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+
 The bridge uses the selected Codex CLI's App Server for execution. ChatGPT connects to the bridge through MCP.
 
 ## 1. Prepare Codex and the bridge
@@ -89,7 +91,7 @@ initialization again; no external session store or separate service is required.
 Persistent stdio instead has one tunnel-owned MCP process/connection and does
 not use the HTTP session registry.
 
-The default capability profile is read-only. To allow adaptive mutation choices without changing the saved default:
+The default capability profile is read-only. To enable additional bridge-owned access strategies without changing the saved default:
 
 ```bash
 npm run bridge:secure -- --allow-write
@@ -104,8 +106,8 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify discovery of fifteen model-visible tools: `codex_dashboard`, `codex_status`, `codex_steer`, `codex_activity`, `codex_activity_cancel`, `codex_cancel`, `codex_activity_update`, `codex_agent`, `codex_models`, `codex_settings`, `codex_task`, `codex_input`, `codex_answer`, `codex_ask_user`, and `codex_user_answer`.
-6. The app-private `codex_dashboard_snapshot`, `codex_settings_snapshot`, `codex_activity_rehydrate`, `codex_activity_snapshot`, `codex_interaction_respond`, `codex_job_steer`, `codex_activity_handoff`, `codex_background_process_terminate`, `codex_update_settings`, `codex_question_card`, `codex_question_submit`, and `codex_question_notify` tools should also be registered but are not normal model operations. Recovery detach is private and operator-disabled by default.
+5. Verify the twelve model tools listed in [Card tools](card-tools.md); retired Activity presenters and input/cancellation aliases must not appear in the model inventory.
+6. Verify five app-only tools: `codex_ui_read`, `codex_update_settings`, `codex_question_action`, `codex_ui_stop`, and `codex_interaction_respond`. The 12 retained app-only descriptors are separately marked compatibility; total discovery is 29 during migration. Operator diagnostics and recovery are opt-in.
 
 ### Refresh after a bridge/UI change
 
@@ -121,16 +123,25 @@ Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugi
 
 Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
 
-Installing GPT question orchestration adds four public tools and three card-only tools, so its first installation requires Refresh. Confirm `codex_ask_user` and `codex_user_answer` appear in ChatGPT's connection metadata before testing a card. A live server `tools/list` result proves publication only; it does not prove that ChatGPT's cached tool list adopted the new tools.
+On first installation of the #68 or #69 tool contract, confirm `codex_ask_user` and `codex_user_answer` in ChatGPT connection metadata after Refresh. A server `tools/list` result proves publication only; it does not prove that ChatGPT has adopted the changed inventory.
 
 After Refresh:
 
 1. inspect `dist/ui-manifest.json`;
 2. confirm the registered `codex_settings` `_meta.ui.resourceUri` and `openai/outputTemplate` exactly equal the manifest's current Settings URI;
-3. confirm `codex_task` has no UI metadata and `codex_activity` points to the current Activity URI;
+3. confirm `codex_task` has no UI metadata and `codex_ask_user` points to the current question URI;
 4. confirm `codex_dashboard` points to the current Dashboard URI;
 5. open a new conversation and run the smoke checklist below;
 6. test an existing conversation. Its supported cached URI must still render; ask it to rediscover tools or use a new conversation only to pick up the new descriptor. The bridge can signal a stateful tool-list change but cannot guarantee that an already cached conversation adopted and used the refreshed metadata.
+
+The integrated #69/#70 actual-host check confirmed that this cache can preserve
+already loaded tool definitions after both connection Refresh and a fresh page
+load. One old conversation retained the long Settings description, missing model
+catalog v2 and Task sandbox input, while a new conversation and newly discovered
+tools in another existing conversation used the current definitions. Explicit
+rediscovery did not replace the old bindings. Verify the actual schema; repeated
+Refresh or adding fields to an unsupported cached schema is not a migration.
+See the [unlocked-host evidence](audits/2026-09-08-issue-70-unlocked-host.md).
 
 See OpenAI's [Plugin Refresh guidance](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata) and [MCP App UI guidance](https://developers.openai.com/plugins/build/chatgpt-ui).
 
@@ -164,7 +175,7 @@ ranking, recommendation, or its own reasoning-effort glossary.
 
 The **Fast mode** checkbox is separate from model and reasoning level. `codex_task` exposes only model and reasoning-effort choices to GPT. If the user enables Fast mode, the bridge injects the supported `priority`/`fast` service tier internally when it calls Codex; GPT cannot choose or override it. Native and card Settings share localized names, and execution badges reflect each run's captured mode rather than the latest global preference.
 
-The public Settings call returns only a compact path-free summary. Generation 14 starts with its editor hidden and calls the app-private `codex_settings_snapshot`; only that fresh response is rendered, so reopening an old conversation cannot paint the original settings metadata. The model catalog uses the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails and uses the same snapshot path with `refreshModels: true`.
+The public Settings call returns only a thin opening acknowledgment and performs no snapshot/catalog read. Generation 14 starts with its editor hidden and calls the app-private `codex_ui_read` (`view: "settings"`); only that fresh response is rendered, so reopening an old conversation cannot paint the original settings metadata. The model catalog uses the bridge's short TTL and last-known-good cache. The card does not poll and has no persistent refresh button. A retry action appears only when the catalog is stale or a lookup fails and uses the same snapshot path with `refreshModels: true`.
 
 A saved model/access/presentation setting, catalog, project registry, or project
 availability change takes effect for runtime admission immediately. None changes
@@ -222,7 +233,7 @@ entries are preserved. Retained generation-9 and newer resources keep this
 mutation boundary; earlier ID/default and single-revision contracts are incompatible.
 
 On a fresh install the project registry contains no entries. The stable public
-`codex_task` descriptor still exposes generic `project` and `projectLookup`
+`codex_task` descriptor exposes a generic `project` selector; `codex_status` exposes project lookup
 shapes. `codex_task` is always execution-only and never has an Activity-card UI
 binding; project registration does not change its descriptor. Do not open Settings merely because a conversation
 starts or the plugin is attached. After the user explicitly requests new or
@@ -231,7 +242,7 @@ Agent, Job, session, or upstream work and returns `PROJECT_SETUP_REQUIRED` with
 `codex_settings` as the next action. Only then should GPT show the card and
 explain what must be registered.
 
-After registration, use `projectLookup: { name }` on the same Task contract when
+After registration, use `codex_status` with `query: { kind: "project", name }` when
 the exact selector is unknown. That call returns the exact `{ name, projectRef,
 projectRevision }` in `nextActions`, admits no work, and is retried with a new
 `requestId`. The serialized admission boundary remains authoritative: new
@@ -246,14 +257,17 @@ change tunnel credentials, operator capabilities, or the Codex approval policy.
 
 Project selection and access strategy are independent:
 
-- fixed `read-only` accepts omitted or matching `sandbox: "read-only"`;
-- fixed `always-full` accepts omitted or matching `sandbox: "danger-full-access"`;
-- `adaptive` accepts only operator-enabled per-turn sandbox choices.
+- `read-only` applies read-only access to new work;
+- `always-full` applies full access within the operator ceiling;
+- the retained `adaptive` value is shown as **Bridge default** and uses the
+  operator-configured default for new work. GPT no longer chooses permissions.
 
-Conflicting fixed-mode requests return `SANDBOX_CONFLICT`. Keep the requested
-intent and adjust the saved strategy; removing `sandbox` could grant broader
-access. Continue/fork recheck the current operator ceiling and keep the existing
-thread sandbox. A sandbox change requires a fresh context.
+`codex_task` has no permission fields. The bridge alone resolves sandbox and
+approval policy; no GPT-request-versus-setting conflict is needed. Cached calls
+containing the retired field cannot admit new work: refresh discovery. Exact
+already-admitted retries still retrieve their original result. Continue/fork
+recheck operator limits and preserve thread policy; incompatible saved settings
+require fresh context. Host approval review remains an independent boundary.
 
 The public `codex_task` descriptor never contains `cwd`, internal UUID, registry
 inventory, or catalog inventory. Generic `project` remains optional so
@@ -262,7 +276,7 @@ Activity or fresh Agent context, even with one project. The global
 `registryRevision` is Settings CAS only and does not invalidate an unchanged
 selector. Missing selection with an active registry fails `PROJECT_REQUIRED`; a
 truly empty registry returns `PROJECT_SETUP_REQUIRED`. Stale or unavailable
-selectors return same-tool lookup/recovery guidance with no connection Refresh.
+selectors return read-only `codex_status` project lookup/recovery guidance with no connection Refresh.
 Activity, Agent creation/assignment, replay, and Job admission recheck the
 selected project atomically and pin its private UUID/cwd; a backend-assigned
 resumable thread receives the same pin before reuse. Exact admitted v7 replay
@@ -270,8 +284,9 @@ remains valid after later registry or settings changes. Continue/fork omits
 `project` and keeps the admission-time snapshot; an unavailable pinned folder
 returns `PROJECT_UNAVAILABLE` without fallback. Legacy `{ name,
 registryRevision }` remains cached pre-v2 runtime migration input. A caller that
-sends `cwd` fails strict parsing; a fixed mode accepts matching sandbox intent
-and rejects a conflicting value before task creation.
+sends `cwd` fails strict parsing. New task calls contain no permission intent;
+the bridge applies its saved access strategy without a GPT-versus-setting
+comparison. Cached permission-bearing calls cannot admit new work.
 
 The ref/revision tuple prevents stale project mappings. A different complete, currently valid selector is still a valid transport-level choice; the bridge cannot infer contrary natural-language intent. Multi-project write/full-access fresh confirmation remains a separate app-private follow-up rather than a model-visible `confirmed` field.
 
@@ -296,11 +311,11 @@ Call `codex_status` and confirm:
 Inspect `tools/list`:
 
 - `codex_task` has no UI metadata, caller `scopeId`, presentation field, `modelPolicyRevision`, `cwd`, arbitrary `threadId`, `sessionMode`, or `adoptThread`;
-- `codex_activity` exposes `compact-monitor` with required `presentationId` and default `full-history` without one;
-- `project` is one generic closed `{ name, projectRef, projectRevision }` object and `projectLookup` is one generic closed `{ name }` no-work operation; neither contains registry values;
+- `codex_activity` is retained as app-only compatibility discovery for old cards and is absent from GPT's public tools;
+- `project` is one generic closed `{ name, projectRef, projectRevision }` object; read-only `codex_status` project lookup supplies its current values;
 - `taskContractVersion` is exact `"2"` and `executionEnvelopeRef` is one required exact 64-hex const;
-- `selection` is one generic closed model/effort object and `sandbox` lists only the operator-enabled maximum;
-- fixed access/model modes are enforced at runtime and reject incompatible explicit overrides;
+- `selection` is one generic closed model/effort object; there is no `sandbox`, approval-policy, or other permission input;
+- the bridge applies saved access settings within operator limits; fixed model mode rejects explicit model overrides;
 - Activity and Agent routing use separate discriminated `activity` and `agent` objects;
 - an existing Agent's optional `context` values are exactly `continue`, `fork`, and `fresh`.
 - `codex_steer` exposes exactly `requestId`, `jobId`, `expectedJobVersion`, and `prompt`; it exposes no scope, Activity, Agent, thread/turn, card, policy, model, project, sandbox, cancellation, approval, or interaction field;
@@ -309,7 +324,7 @@ Inspect `tools/list`:
 
 ## 6. Agent and Activity routing
 
-ChatGPT omits `scopeId`; the bridge derives it from anonymous conversation host metadata. A non-ChatGPT compatibility host must generate/reuse an explicit scope UUID. Every logical `codex_task` turn gets a fresh UUID `requestId`; reuse it only for an exact retry. Task execution has no presentation identity. After all Task calls for one assistant response, generate one fresh `presentationId` only for the single compact-monitor presenter call permitted by the saved visibility policy.
+ChatGPT omits `scopeId`; the bridge derives it from anonymous conversation host metadata. A non-ChatGPT compatibility host must generate/reuse an explicit scope UUID. Every logical `codex_task` turn gets a fresh UUID `requestId`; reuse it only for an exact retry. Task execution has no presentation identity. New work creates no Activity card; keep bounded input waits active and retrieve each exact terminal Job result.
 
 Use these routes:
 
@@ -366,9 +381,9 @@ A new but dependent goal creates a linked Activity without reopening the complet
 
 For independent verification, create another fresh Agent or explicitly fork an existing Agent. Different Agents run in parallel; the same Agent/thread serializes active turns. If several Agents are attached to an Activity, the bridge rejects a follow-up without an exact nested Agent ID. The former flat routing fields have expired and are rejected.
 
-Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the mounted Activity card's destructive private control; exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
+Agent lifecycle is separate from turn and Activity lifecycle. A terminal turn returns the Agent to `idle` and releases its active Activity assignment while preserving history. Model-visible `codex_agent` provides only one discriminated `operation`: `rename` (with `name`), `archive`, or `restore`. Archive/restore changes only bridge-local logical state and never invokes upstream thread archive/unarchive, protecting other Agents that descend from the same fork tree. Active/waiting Agents and Agents with App Server background terminals cannot be archived. Exact process termination belongs to the global work details' destructive app-only control; retained Activity cards keep their compatibility control. Exceptional assignment detach is an operator-enabled private recovery operation. There is no GPT-facing permanent delete.
 
-Activity lifecycle changes require the exact version from authoritative status. `codex_activity_update` accepts one non-cancelling `operation`: seal, complete, abandon, start verification, pass/fail verification, or set policy. Each operation exposes only its relevant payload. Whole-Activity force-stop is the separate destructive and idempotent `codex_activity_cancel`, which additionally requires a unique `requestId`; retry that UUID only for the exact same cancellation. Public single-Job `codex_cancel` likewise requires a cancellation-specific `requestId` plus the exact current Job `expectedVersion`. An exact retry is replay-safe, while reuse with another payload is rejected. A shared-worker impact must be confirmed with the complete affected-job list. The old flat update and cancellation forms have expired and are rejected.
+Activity lifecycle changes require the exact version from authoritative status. `codex_activity_update` accepts one non-cancelling `operation`: seal, complete, abandon, start verification, pass/fail verification, or set policy. Each operation exposes only its relevant payload. Whole-Activity force-stop is the separate destructive and idempotent `codex_cancel` (`target.kind: "activity"`), which additionally requires a unique `requestId`; retry that UUID only for the exact same cancellation. Public single-Job `codex_cancel` likewise requires a cancellation-specific `requestId` plus the exact current Job `expectedVersion`. An exact retry is replay-safe, while reuse with another payload is rejected. A shared-worker impact must be confirmed with the complete affected-job list. The old flat update and cancellation forms have expired and are rejected.
 
 Before continuing, App Server threads are checked with `thread/read`. A missing
 or system-error thread makes the Agent `orphaned`; an active turn or temporary
@@ -446,29 +461,9 @@ Job-result wake system.
 
 `codex_task` is execution-only. Its descriptor has no Activity UI resource, it accepts no presentation field, and its result carries no Activity bootstrap. Therefore multiple Task or Agent calls in one response create no card shells by themselves.
 
-After admitting all Task calls for one assistant response, apply the saved visibility policy once. With `always`, call `codex_activity` at most once using `mode: "compact-monitor"` and a fresh UUID `presentationId`. With `background-only`, do so only if at least one admitted Task used `executionMode: "background"`. With `never`, do not call it. Never call the compact presenter once per Task or Agent. An optional `activityId` chooses the initial focus while the compact feed still covers all current/action-needed work in the conversation.
+New work does not open Activity cards. Keep the current GPT response active using bounded input waits and retrieve each terminal Job result with an exact query. Native Codex alerts remain independent. Existing mounted old cards retain their original completion handoff only during the migration window. The replacement path for a previously ended GPT response is not proven by local tests; see the rollout gate in [Card tools](card-tools.md).
 
-For example, after one or more eligible Task calls:
-
-```json
-{
-  "mode": "compact-monitor",
-  "presentationId": "...",
-  "activityId": "..."
-}
-```
-
-The dedicated presenter returns strict private `_meta["codex/activityView@11"]` hydration. The mounted widget then starts one bounded app-private `codex_activity_snapshot` watch, which establishes or renews the exact Activity/generation/presentation lease for that widget session. `requestId` remains scoped only to execution retry; `presentationId` is scoped only to an exact compact presentation retry and cannot select visibility or alter Task replay.
-
-An explicit user request to open or reopen Activity calls `codex_activity` in its default `full-history` mode and omits `presentationId`. The strict public result retains `mode` plus optional Activity identity/version so a cold remount can safely reconstruct a read-only full snapshot even if the host discarded private metadata. Retained pre-decoupling Task shells can still use the same app-private `codex_activity_rehydrate` endpoint with their exact Job/request correlation; new Task descriptors cannot create those shells.
-
-The automatically mounted card is a compact feed scoped to the current ChatGPT conversation. Running/terminating work, user-blocked work, recovery states, and verification or completion-handoff waits appear first. Up to three recent terminal or idle Activities are visible by default, followed by an initially collapsed section containing up to three idle Agents that are not already nested in those recent Activities. User block sorts before recovery, result review, and progress; rows in the same group sort by most-recent change with an Activity-ID tiebreaker. One localized row still reports exact completed-Activity, ended-Activity, and idle-Agent totals beyond the bounded detail. An Activity is not folded while verification, handoff, a Job, an interaction, an open assignment, or an App Server background process remains. The completed count is Activity-centric and survives Agent reuse.
-
-An explicit user request for all work calls `codex_activity` and opens the full view. The full view uses the same scoped Activity row and rendering engine as the compact monitor, adds terminal/idle Activity history and idle Agents, and pages both with a bounded opaque cursor tied to the scope version. An exact requested Activity selects its containing page. Cursor invalidation resets safely after a live ordering change. Explicit cards retain their separate watcher admission and never own automatic completion handoff. Historical Task rehydration remains compact, while a restored explicit rehydration remains full and paginatable; both are one-shot and read-only until an explicit refresh promotes the mounted Activity to the normal live full view.
-
-### Bridge-wide Dashboard
-
-When the user explicitly asks for a Codex overview across all ChatGPT conversations, call `codex_dashboard` once in the conversation they want to keep as the overview location. This is an unconditional read-only feature of the personal, single-user bridge; there is no Dashboard operator flag to enable. “All” means scopes currently known from live Jobs, result-free archived Job summaries, non-archived Agents, or tracked threads—not the account's complete ChatGPT history. The default result-bearing Job window is six hours/100 Jobs, the Dashboard reads at most 10,000 archived summaries, and the tracked-thread registry defaults to 1,000 entries. The public result is a redacted aggregate fallback so a non-UI host still receives useful status, but it carries only locale app metadata and no full Dashboard view. The generation-17 UI starts cold in loading state, renders a fresh structural app-only `codex_dashboard_snapshot` without waiting for runtime or usage probes, and then applies a bounded enriched snapshot; it does not consume the conversation's cached initial tool result or later host replays of that result. The snapshot supplies active, recent-Agent, and idle pages and computes the larger project/conversation compatibility pages only when an immutable older card supplies those offsets. A mounted recovery call may omit conversation metadata, while any supplied host or compatibility scope is still validated.
+When the user explicitly asks for a Codex overview across all ChatGPT conversations, call `codex_dashboard` once in the conversation they want to keep as the overview location. Opening and refreshing the overview is read-only; deliberately opened work details offer validated user controls in this personal, single-user bridge; there is no Dashboard operator flag to enable. “All” means scopes currently known from live Jobs, result-free archived Job summaries, non-archived Agents, or tracked threads—not the account's complete ChatGPT history. The default result-bearing Job window is six hours/100 Jobs, the Dashboard reads at most 10,000 archived summaries, and the tracked-thread registry defaults to 1,000 entries. The public result is a redacted aggregate fallback so a non-UI host still receives useful status, but it carries only locale app metadata and no full Dashboard view. The generation-17 UI starts cold in loading state, renders a fresh structural app-only `codex_ui_read` (`view: "dashboard"`) without waiting for runtime or usage probes, and then applies a bounded enriched snapshot; it does not consume the conversation's cached initial tool result or later host replays of that result. The snapshot supplies active, recent-Agent, and idle pages and computes the larger project/conversation compatibility pages only when an immutable older card supplies those offsets. A mounted recovery call may omit conversation metadata, while any supplied host or compatibility scope is still validated.
 
 The Dashboard refreshes on initial mount, page re-entry, stale visibility return, and the refresh button. Until the first fresh structural snapshot succeeds it shows loading rather than cached or empty counts; an initial failure asks the user to retry with the same card’s Refresh button and never falls back to the original tool response. Generation 19 preserves the last successfully loaded mounted view and its timestamp on page re-entry older than one second or visibility return older than thirty seconds. A failed refresh leaves that view visible with a localized warning; Refresh or the next visibility/online return can retry the same card. Obsolete in-flight responses still cannot replace a newer view. Cold mounts continue to require a fresh snapshot and do not render a cached conversation tool result. During cold startup, generation 18 uses `window.openai.callTool` immediately when the ChatGPT compatibility bridge exists instead of waiting for the standard MCP Apps initialization timeout. Structural data is requested with `enrich: false`; a second `enrich: true` request is optional and cannot hide or invalidate the structural result when it fails. Enrichment is limited to active/attention/currently visible Agent rows, at most eight in-flight workers, 400 ms per probe, a 1.2-second runtime budget, and an independent 800-ms usage budget. It reads only already loaded background-terminal state and never calls `thread/resume` to populate a card. Generation 18 retains the fixed `active → recent terminal → idle` order and groups every section by opaque Activity identity with Agents nested below. The idle heading is explicitly **Recent Activity**, because an idle Agent has released its current assignment; Agents with no retained Activity are grouped under **No recent Activity**. All three pages preserve whole Activity groups, so the nominal Agent-row limit may be exceeded when one Activity contains more Agents. Project and GPT conversation context appear once on the Activity; every Agent keeps the actual model/reasoning effort for its latest turn, and a different current selection remains separately labelled as next-run settings. Up to 12 older turns suppress the enclosing Activity title, retain distinct Activity-ID boundaries even when visible titles match, and always show their own execution evidence or an unavailable label. Recent and idle sections append later pages in place through **Show more**, with no previous/next replacement navigation. A stable opaque row key and requested-offset check evict moved rows and rebase a clamped page. The idle section starts collapsed on each fresh card. Older retained turns also start collapsed under each Agent. Ordinary refreshes preserve the idle and history disclosures in the current mounted iframe without `localStorage`.
 
@@ -476,7 +471,15 @@ The mounted snapshot performs bounded read-only App Server checks for at most 10
 
 Dashboard state must remain Codex-runtime-only: exact Job running/terminal/termination state, tracking liveness, Agent lifecycle, pending Codex input/approval interactions, and confirmed App Server background-terminal counts. Do not map Activity lifecycle, waiting, verification, completion handoff, or GPT's goal-completion judgment into these labels. **Codex turn completed** means exactly Job status `completed`; failed, interrupted, and cancelled remain separate terminal outcomes. **Attention states** uses only the latest retained outcome per Agent, so a later running/completed retry clears an earlier failure; it is a neutral summary rather than a claim that the user or GPT must inspect the row. Remaining background terminals appear separately from running Codex turns. Active, recent, and idle headings are Activity context with their saved Agent names nested below. The current/latest turn retains the exact effective model/reasoning-effort selection when known, and older calls for that same Agent appear only inside its expandable history. An idle Agent may additionally show its labeled current tracked-session selection; that value is never substituted for an unknown historical turn. Old archived summaries without a retained start time report **Work time unavailable** rather than zero. Active timing is Job start-to-now work time. Terminal and idle retained timing is Job start-to-terminal work time when known plus time since the exact outcome; absolute start, update, and end timestamps are not displayed. A reported runtime model reroute is shown as `selected → rerouted`, with the admission-time effective effort retained. The card never prints the session identifier, thread identifier, or compatibility alias as text. The bridge can retain a validated `codex://threads/<uuid>` candidate for the native macOS **Open Codex conversation** action, but the ChatGPT Dashboard does not render it because card-host navigation does not reliably open custom app schemes. Native availability still requires an exact retained tracked App Server session whose creation-time visibility bit permits it; the exact current thread wins over its matching session-tree UUID so forks open the correct descendant. Separately, OpenAI defines `openai/session` as an anonymized correlation value rather than a navigable-route guarantee. For a UUID-shaped host value, the bridge keeps a bounded private mapping and exposes one best-effort **Open conversation** link in each Activity context. GPT navigation is independent of the Codex-app visibility setting. Arbitrary values are not persisted, and scopes retained before capture cannot be backfilled. The ChatGPT route is not probed. The Dashboard CSP allows only `https://chatgpt.com` for `window.openai.openExternal`, and the anchor remains the fallback. Apart from those validated private route targets, the view contains hashed conversation, project, Activity, and row keys plus display context only—never raw Job, Activity, Agent, thread, worker, or process IDs; paths; prompts; results; errors; commands; or controls. User-defined project/Agent/Activity display labels and the navigation links can reveal cross-conversation task context, so keep this overview on the single trusted user's connection. A widget-instance UUID is correlation rather than authentication.
 
-The feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, each Agent's current or latest effective model/reasoning-effort selection, and necessary controls such as verification, retry, Agent-work force-stop, background-process stop, approval, or input. Current operational state has priority over prior attempt history: an active retry renders as **Running**, with a localized previous-failure count only when that count is positive. A primary **Failed** state does not repeat the same failure as secondary history. Model labels match the Settings catalog display names and fall back to internal IDs only when necessary. A reported App Server model reroute is rendered as `selected → rerouted`; the effort remains the Job's admission-time effective effort. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
+### Retained Activity cards during migration
+
+The following presentation and handoff behavior describes existing saved cards
+only. It is not an instruction to create a new Activity card. Current work
+details and controls use the global card and app-only `codex_ui_read`,
+`codex_ui_stop`, and `codex_interaction_respond` contracts; see
+[Card tools](card-tools.md) for compatibility and removal conditions.
+
+The retained feed shows only Activity title, Agent display name, separate display-only role, localized state, kind, timing, final project-folder name when multiple projects are relevant, each Agent's current or latest effective model/reasoning-effort selection, and necessary controls such as verification, retry, Agent-work force-stop, background-process stop, approval, or input. Current operational state has priority over prior attempt history: an active retry renders as **Running**, with a localized previous-failure count only when that count is positive. A primary **Failed** state does not repeat the same failure as secondary history. Model labels match the Settings catalog display names and fall back to internal IDs only when necessary. A reported App Server model reroute is rendered as `selected → rerouted`; the effort remains the Job's admission-time effective effort. Approval and input responses use `codex_interaction_respond` with an idempotency UUID, exact Job version, interaction ID, and current card proof; answers are transient and never written to bridge state.
 
 Detailed Job status includes a selection-only `executionAudit`: requested,
 policy-effective, and evidence-backed actual model/effort, plus reroute reason
@@ -500,7 +503,7 @@ Only the newest confirmed mounted compact-monitor presentation owns the scope li
 
 When the exact Job completes with `result.availability: "delivered"`, read that Job item's `answer`. Overview, Activity, thread, and page status never carry Job answer bodies. `omitted` and `unavailable` keep `answer` absent; `delivered` without `answer` is a contract/host delivery failure and must not trigger a new re-report Job.
 
-Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. The card's private `codex_activity_job_cancel` is a distinct destructive surface, and `codex_activity_cancel` force-stops every active job in one exact-version Activity. Every path durably records its cancellation operation and intent before interruption; terminal state is recorded only after exit evidence. Activity cancellation records a parent intent, enters `Activity-terminating`, records linked child intents, cancels the children, and only then writes `Activity-cancelled`. None rolls back filesystem changes. HTTP abort, SSE disconnect, MCP cancellation notifications, wait/snapshot abort, presentation supersession, and widget unmount are transport or presentation observations only and never cancel a Job.
+Wait timeout leaves Codex running. `codex_cancel` interrupts one exact App Server turn or tracked worker process. The card's private `codex_activity_job_cancel` is a distinct destructive surface, and `codex_cancel` (`target.kind: "activity"`) force-stops every active job in one exact-version Activity. Every path durably records its cancellation operation and intent before interruption; terminal state is recorded only after exit evidence. Activity cancellation records a parent intent, enters `Activity-terminating`, records linked child intents, cancels the children, and only then writes `Activity-cancelled`. None rolls back filesystem changes. HTTP abort, SSE disconnect, MCP cancellation notifications, wait/snapshot abort, presentation supersession, and widget unmount are transport or presentation observations only and never cancel a Job.
 
 ### Cancellation provenance and escalation
 
@@ -547,15 +550,15 @@ In a new ChatGPT conversation:
 4. change a harmless preference and save;
 5. confirm there is no persistent model-refresh button; if a stale/failure warning is present, use its contextual retry and confirm the last-known-good options remain populated;
 6. choose **Restore default settings**, confirm, and verify the card rerenders;
-7. confirm `codex_task` has no `cwd`/UUID/registry/catalog inventory, requires exact contract v2 plus `executionEnvelopeRef`, and publishes generic closed project/lookup/selection/operator-bounded sandbox shapes;
-8. keep the same conversation and cached v2 descriptor, add project B, resolve it through `projectLookup`, and run there with a new `requestId`; then rename/relocate/archive/restore it and confirm the stale selector fails before Activity, Agent, Job, filesystem, or Codex work and recovers through the same tool without Refresh;
+7. confirm `codex_task` has no `cwd`/UUID/registry/catalog inventory or permission inputs, requires exact contract v2 plus `executionEnvelopeRef`, and publishes generic closed project/selection shapes; project lookup belongs to read-only `codex_status`;
+8. keep the same conversation and cached v2 descriptor, add project B, resolve it through `codex_status` project lookup, and run there with a new `requestId`; then rename/relocate/archive/restore it and confirm the stale selector fails before Activity, Agent, Job, filesystem, or Codex work and recovers through read-only project lookup without Refresh;
 9. in that same conversation, change read-only to another operator-enabled access strategy, change model policy, Priority, thread visibility, card visibility, and locale; confirm no `tools/list_changed`, the descriptor remains byte-identical, a new call uses current settings, and an exact prior v7 retry returns its retained original admission;
-10. make several Task/Agent calls in one response, confirm none has Task UI metadata, then call one compact-monitor presenter and verify exactly one Activity card shows current/action-needed rows plus one exact past-record summary;
-11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm the single presenter card covers both without per-Agent shells;
-12. explicitly ask for all Activities, confirm `codex_activity` opens bounded previous/next pages in the same conversation only, and verify an exact old Activity opens on its containing page while an unselected view starts at the priority-first page;
-13. complete work, confirm the automatic summary's completed-Activity and actual idle-Agent counts remain exact after Agent reuse, and verify there is no KPI/card grid/layout selector or full path/backend/ID/timeline detail;
+10. make several Task/Agent calls in one response and confirm no new Activity shell or compact-monitor presenter appears;
+11. run a same-Agent `continue`, then a second-Agent parallel `fresh`/`fork`, and confirm the separate global overview shows both with their exact Activity/Agent context;
+12. query scoped Activities through `codex_status` pagination, open the requested global overview through `codex_dashboard`, and separately verify that an existing saved Activity card can reopen and refresh during migration;
+13. complete work, retrieve each exact Job result, and confirm the global card's terminal and idle states remain correct after Agent reuse; verify Codex completion, GPT result handling, and user notifications independently;
 14. archive/restore an idle Agent and confirm the same immutable ID/thread history remains;
-15. start a linked Activity with the existing Agent and confirm it gets a new card generation without reopening the terminal source; use `fresh` plus another project to verify an explicit linked-project switch;
+15. start a linked Activity with the existing Agent and confirm its lineage is retained without reopening the terminal source or creating an Activity card; use `fresh` plus another project to verify an explicit linked-project switch;
 16. in an App Server canary, verify command/file/permission/input prompts expose
     only their advertised decisions, including session approval when offered;
     confirm cancel/decline, automatic resolution, and expiry all remove the
@@ -609,8 +612,8 @@ In a new ChatGPT conversation:
 
 In an existing cached pre-v2 conversation:
 
-1. inspect whether `codex_task` still exposes `executionPolicyRef` or dynamic project/model branches;
-2. perform one Developer-mode **Refresh** to adopt contract v2 (a host-cached input schema cannot be changed retroactively by the server);
+1. inspect whether `codex_task` still exposes `executionPolicyRef`, `sandbox`, `projectLookup`, or dynamic project/model branches, and whether `codex_status` includes the project query;
+2. perform Developer-mode **Refresh** to import current discovery. On the tested ChatGPT host, existing conversations retained already loaded tool schemas after Refresh, while a new conversation obtained the current schema. Verify the actual schema before execution; do not reinterpret or retry a denied cached request;
 3. confirm every supported cached UI resource still resolves;
 4. from then on, keep that same conversation while changing ordinary Settings and projects, and prove new calls use current state without another Refresh.
 
@@ -639,7 +642,7 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
 - Runtime dotenv rejected: use a regular non-symlink file owned by the current user with mode `0600`; do not put it in a registered project.
 - Tool discovery fails: keep the bridge running and rerun `tunnel-client doctor`.
 - Old Settings card/tool schema: first confirm its URI is present in `dist/ui-manifest.json`. Supported cached URIs must render; deploy current server, use plugin **Refresh**, then start a new conversation only when new metadata is required.
-- `PROJECT_REQUIRED`: call the same v2 `codex_task` with `projectLookup.name`, then retry with its exact returned selector and a new `requestId`.
+- `PROJECT_REQUIRED`: call `codex_status` with `query: { kind: "project", name: "<exact name>" }`, then retry with its exact returned selector and a new `requestId`.
 - `PROJECT_REGISTRY_CHANGED`: the selected project is stale; use the same-tool lookup recovery and a new `requestId`. No work was admitted and no connection Refresh is required. A cached pre-v2 legacy selector must migrate once.
 - `PROJECT_NAME_CONFLICT` / `PROJECT_CWD_CONFLICT`: choose a unique active normalized name/canonical folder.
 - `PROJECT_UNAVAILABLE`: restore the exact pinned folder, or fix/archive the **Needs recovery** project. The bridge does not fall back elsewhere.
@@ -657,7 +660,7 @@ Record Desktop/Web/iOS surface, plugin URI/template, old/new conversation behavi
   generation changed; Refresh the developer-mode connection and retry with the
   new exact contract/envelope constants.
 - Unrecognized Task `cwd`: refresh the plugin/tool list; select an exact registered `{ name, projectRef, projectRevision }` object instead.
-- `SANDBOX_CONFLICT`: the requested sandbox conflicts with the saved fixed strategy. Adjust the saved strategy to permit the requested sandbox; do not remove a restriction merely to retry.
+- `TASK_PERMISSION_INPUT_RETIRED`: a cached task request still contains a retired permission field. Refresh discovery. Current GPT calls contain no permission settings; the bridge applies saved policy. Do not silently reinterpret a previously denied restricted request.
 - `SANDBOX_CONTEXT_CONFLICT`: continue/fork cannot change the existing sandbox. Use fresh context with the intended permissions.
 - `EXECUTION_ACCESS_MISMATCH`: the CLI returned a different policy or omitted required evidence. No model turn was started; inspect the selected CLI/configuration.
 - `CODEX_PROTOCOL_UNSUPPORTED` / `CODEX_PROTOCOL_UNVERIFIED`: the selected installation cannot confirm the required App Server contract. Repair it or explicitly select a compatible CLI.

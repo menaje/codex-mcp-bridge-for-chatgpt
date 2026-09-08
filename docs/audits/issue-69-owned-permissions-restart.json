@@ -1,0 +1,64 @@
+{
+  "issue": 69,
+  "testedAt": "2026-09-08T02:10:41.385Z",
+  "source": "consistent read-only backup of the user's current database",
+  "productionDatabaseModified": false,
+  "codexCalls": 0,
+  "appReads": 4,
+  "restartPasses": [
+    {
+      "pass": 1,
+      "preserved": true,
+      "changedTables": [],
+      "expiredQuestionsRemoved": 0
+    },
+    {
+      "pass": 2,
+      "preserved": true,
+      "changedTables": [],
+      "expiredQuestionsRemoved": 0
+    }
+  ],
+  "activeJobRecovery": "not exercised when snapshot has no active Jobs",
+  "sourceSchema": "13",
+  "sourceJobStates": [
+    {
+      "status": "cancelled",
+      "count": 17
+    },
+    {
+      "status": "completed",
+      "count": 440
+    },
+    {
+      "status": "failed",
+      "count": 17
+    },
+    {
+      "status": "interrupted",
+      "count": 1
+    }
+  ],
+  "tableCounts": {
+    "sessions": 280,
+    "jobs": 475,
+    "activities": 203,
+    "agents": 234,
+    "agent_threads": 242,
+    "activity_agents": 474,
+    "user_settings": 1,
+    "projects": 4,
+    "project_registry": 1,
+    "user_questions": 0,
+    "codex_question_deliveries": 0,
+    "agent_mutations": 8,
+    "cancellation_operations": 16,
+    "cancellation_intents": 18,
+    "steering_deliveries": 68,
+    "completion_outbox": 0
+  },
+  "expiredQuestionsEligibleForExistingCleanup": 0,
+  "stage": "complete",
+  "passed": true,
+  "temporaryCopyRemoved": true
+}

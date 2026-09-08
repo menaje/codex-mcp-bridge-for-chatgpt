@@ -1,0 +1,84 @@
+{
+  "issue": 69,
+  "reviewedAt": "2026-09-08T02:59:50.206175+00:00",
+  "verdict": "not-complete",
+  "reviewedCommit": "b6157b0",
+  "permissionImplementationCommit": "af1a8f7",
+  "followupIssue": 70,
+  "followupCommit": "e62b583",
+  "developmentCommit": "323d55c",
+  "runtime": {
+    "runningBuild": "54296e0f0010-dirty:9af435da30f3",
+    "candidateDeployed": false,
+    "priorityEnabled": false,
+    "accessStrategy": "always-full"
+  },
+  "targetedTests": {
+    "passed": 18,
+    "skippedByNameFilter": 219,
+    "newFullSuiteRun": false,
+    "previousFullSuitePassed": 760,
+    "releaseCheckPassed": true
+  },
+  "isolatedMcpRecoveryObservations": {
+    "issue69": {
+      "source": "codex-mcp-bridge-issue-69",
+      "unavailableAlphaRecoverySuggestsBeta": true,
+      "missingSelectionSuggestsSoleProjectForExecution": true,
+      "unknownJobSuggestsNewTask": true,
+      "unknownProjectImmediatelyDirectsSettingsOpen": true,
+      "upstreamCalls": 0,
+      "newJobs": 0,
+      "liveStateUsed": false
+    },
+    "issue70": {
+      "source": "codex-mcp-bridge-issue-70",
+      "unavailableAlphaRecoverySuggestsBeta": false,
+      "missingSelectionSuggestsSoleProjectForExecution": false,
+      "unknownJobSuggestsNewTask": false,
+      "unknownProjectImmediatelyDirectsSettingsOpen": false,
+      "upstreamCalls": 0,
+      "newJobs": 0,
+      "liveStateUsed": false
+    }
+  },
+  "integrationPreview": {
+    "method": "git merge-tree --write-tree --name-only; no checkout or index changed",
+    "issue70ConflictCount": 0,
+    "committedDevelopmentConflictFiles": [
+      "macos/Resources/Localization/Localizable.xcstrings",
+      "src/activityCard.ts",
+      "src/dashboardCard.ts",
+      "src/settingsCard.ts",
+      "src/uiI18n.ts",
+      "src/uiManifest.generated.ts",
+      "ui-manifest.lock.json"
+    ],
+    "originalUncommittedChangesIncluded": false,
+    "originalWorkingDirectoryStatusEntries": 116
+  },
+  "remaining": [
+    "Integrate issue 70 recovery and model-policy guidance.",
+    "Resolve committed development merge conflicts, then review preservation of original uncommitted changes.",
+    "Validate existing-conversation schema transition.",
+    "Verify native and ChatGPT completion notifications and existing ended-response handoff.",
+    "Verify actual approval, input, stop, remaining-process control and active-work restart.",
+    "Integrate, publish and deploy."
+  ],
+  "hostDeniedActivityCompletion": {
+    "previouslyObserved": true,
+    "retested": false,
+    "jobCompleted": true,
+    "activityLifecycle": "open"
+  },
+  "legacyDeletion": {
+    "retainedNames": 14,
+    "status": "agreed deferred removal after a separate decision; not an accidental omission"
+  },
+  "reviewMutations": {
+    "liveServiceChanged": false,
+    "liveWorkCreated": false,
+    "userSettingsChanged": false,
+    "branchesMerged": false
+  }
+}

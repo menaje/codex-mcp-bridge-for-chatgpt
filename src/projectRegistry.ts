@@ -259,18 +259,20 @@ export class ProjectRegistry {
   resolve(selection?: RuntimeProjectSelection): ProjectTarget {
     const active = this.entries.filter((entry) => entry.project.archivedAt === undefined);
     if (!selection) {
-      if (active.length === 0) {
+      if (this.entries.length === 0) {
         throw new Error(
           `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting new work.`
         );
       }
       throw new Error(
-        `${PROJECT_REQUIRED}: Select an exact current project selector before starting new work.`
+        active.length === 0
+          ? `${PROJECT_REQUIRED}: All registered projects are archived. Restore the intended existing registration before starting new work.`
+          : `${PROJECT_REQUIRED}: Select an exact current project selector before starting new work.`
       );
     }
     let entry: ProjectAvailability;
     if ("registryRevision" in selection) {
-      if (active.length === 0) {
+      if (this.entries.length === 0) {
         throw new Error(
           `${PROJECT_SETUP_REQUIRED}: Register a project folder in Codex settings before starting new work.`
         );
