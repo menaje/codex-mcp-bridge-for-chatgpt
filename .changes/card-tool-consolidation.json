@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Retire new Activity screens, separate user questions, consolidate GPT status/cancellation and app-only card tools, and move validated user controls into deliberately opened overview details.",
+  "breaking": true,
+  "migration": "Refresh tool discovery for the 12 model and 5 app-only contracts. Retired names and immutable cards remain compatible for at least 60 days and two stable releases after first release, subject to the documented completion-flow and client migration gates. Saved Activity/handoff preferences remain for legacy cards; they no longer create new Activity screens. Actual ChatGPT completion notification preservation must be verified before rollout. See docs/card-tools.md."
+}

@@ -81,7 +81,7 @@ ChatGPT HTTP 500과 터널 내부 502 관측은 복구 성공으로 처리하지
 
 ## Issue #68: actual host acceptance
 
-- [ ] GPT reads an ordinary Codex question with codex_input and answers through the correct protocol.
+- [ ] GPT reads an ordinary Codex question with codex_status query kind=input and answers through the correct protocol.
 - [ ] GPT decides that user opinion is needed, writes a codex_ask_user card, and receives an actual user submission.
 - [ ] The real ChatGPT host resumes GPT, which reads codex_user_answer and applies its decision to the exact Codex Job.
 - [ ] Reopen, stale card, scope mismatch, denied follow-up and uncertain delivery are distinguished.

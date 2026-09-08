@@ -1062,22 +1062,7 @@ private struct GeneralSettingsPane: View {
                 Text(threadVisibilityDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("액티비티 카드 표시", selection: activityCardVisibilityBinding) {
-                    ForEach(snapshot.capabilities.availableActivityCardVisibilities, id: \.self) {
-                        Text(activityVisibilityLabel($0, locale: model.interfaceLocale)).tag($0)
-                    }
-                }
-                Picker("완료 후 ChatGPT에 넘기기", selection: $draft.completionHandoff) {
-                    ForEach(snapshot.capabilities.availableCompletionHandoffs, id: \.self) {
-                        Text(handoffLabel($0, locale: model.interfaceLocale)).tag($0)
-                    }
-                }
-                .disabled(draft.activityCardVisibility == "never")
-                if draft.activityCardVisibility == "never" {
-                    Text("자동으로 넘기려면 액티비티 카드가 표시되어야 합니다.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+
             }
 
             if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
@@ -1235,13 +1220,6 @@ private struct GeneralSettingsPane: View {
 
     private func choices(for modelID: String) -> [ModelChoice] {
         choices.filter { $0.model == modelID }
-    }
-
-    private var activityCardVisibilityBinding: Binding<String> {
-        Binding(
-            get: { draft.activityCardVisibility },
-            set: { draft.setActivityCardVisibility($0) }
-        )
     }
 
     private func modelLabel(_ modelID: String) -> String {

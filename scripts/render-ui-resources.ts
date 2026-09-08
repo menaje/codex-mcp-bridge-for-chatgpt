@@ -1,3 +1,4 @@
+import { QUESTION_CARD_URI, QUESTION_CARD_HTML, QUESTION_CARD_CONTENT_METADATA, QUESTION_CARD_RESOURCE_DESCRIPTOR } from "../src/questionCard.js";
 import {
   ACTIVITY_CARD_CONTENT_METADATA,
   ACTIVITY_CARD_HTML,
@@ -19,6 +20,7 @@ import {
 
 process.stdout.write(JSON.stringify({
   resources: {
+    question: { uri: QUESTION_CARD_URI, html: QUESTION_CARD_HTML, metadata: { descriptor: QUESTION_CARD_RESOURCE_DESCRIPTOR, content: QUESTION_CARD_CONTENT_METADATA } },
     settings: {
       uri: SETTINGS_CARD_URI,
       html: SETTINGS_CARD_HTML,

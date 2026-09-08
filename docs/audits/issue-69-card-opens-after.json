@@ -1,0 +1,35 @@
+{
+  "source": "issue-69 working tree",
+  "observations": {
+    "settingsOpen": {
+      "settingsSnapshots": 0,
+      "dashboardSnapshots": 0,
+      "catalogCalls": 0,
+      "codexCalls": 0
+    },
+    "settingsMount": {
+      "settingsSnapshots": 1,
+      "dashboardSnapshots": 0,
+      "catalogCalls": 1,
+      "codexCalls": 0
+    },
+    "dashboardOpen": {
+      "settingsSnapshots": 1,
+      "dashboardSnapshots": 0,
+      "catalogCalls": 1,
+      "codexCalls": 0
+    },
+    "dashboardStructure": {
+      "settingsSnapshots": 1,
+      "dashboardSnapshots": 1,
+      "catalogCalls": 1,
+      "codexCalls": 0
+    },
+    "dashboardEnriched": {
+      "settingsSnapshots": 1,
+      "dashboardSnapshots": 2,
+      "catalogCalls": 1,
+      "codexCalls": 0
+    }
+  }
+}

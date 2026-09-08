@@ -13,7 +13,7 @@ GPT가 읽을 답변을 저장하며, Codex에 직접 응답하지 않는다.
 
 ## 실행 흐름
 
-1. `codex_input({jobId})`로 일반 질문과 공개 중간 메시지를 읽는다.
+1. `codex_status({query: {kind: "input", jobId}})`로 일반 질문과 공개 중간 메시지를 읽는다.
 2. 구조화된 일반 질문은 `codex_answer({requestId, jobId, questionRef, answers})`로
    답한다. 질문 ID와 선택지를 그대로 사용한다. 작업의 다른 진행 이벤트로
    Job 버전이 바뀌어도 같은 질문의 답변은 유효하다.
@@ -25,7 +25,7 @@ GPT가 읽을 답변을 저장하며, Codex에 직접 응답하지 않는다.
    결정한다. 원래 Codex 요청이 종료됐다면 현재 결과를 확인한 뒤 명시적으로
    이어간다. 사용자 질문은 Codex 요청과 별도의 수명을 가진다.
 
-새 입력을 기다릴 때는 `codex_input`에 마지막 `afterCursor`와 최대 60초의
+새 입력을 기다릴 때는 `codex_status`의 `input` query에 마지막 `afterCursor`와 최대 60초의
 `waitMs`를 보낸다. 명령 실행·진행률만 바뀐 경우에는 대기를 끝내지 않는다.
 이 경로는 Activity 카드의 자동 표시 설정과 독립적이다. `codex_status`의
 정확한 Job 조회에는 입력 cursor와 일반 질문·승인 요청 수, 조회 도구가 포함된다.
@@ -38,10 +38,13 @@ GPT가 읽을 답변을 저장하며, Codex에 직접 응답하지 않는다.
 
 ## 카드와 후속 처리
 
-기존 Activity 리소스는 GPT 질문 모드에서도 같은 폼과 MCP 통신을 사용한다.
-질문 카드는 Activity 감시 lease를 얻거나 완료 인계 소유권을 가져오지 않는다.
-일반 Codex 질문의 기존 Activity 폼은 GPT 처리 중임을 표시하고 직접 답변을
-제출하지 않는다. 승인 UI는 기존 경로를 유지한다.
+질문 카드는 독립된 `question` 리소스를 사용한다. `codex_ui_read`의
+`view: "question"`으로 처음 읽거나 새로고침하고, `codex_question_action`의
+`submit`·`claim`·`ack`로 각각 답변 저장과 후속 메시지 전달 상태를 처리한다.
+각 응답에 최신 비공개 카드 상태를 포함해 제출 직후 추가 조회를 하지 않는다.
+Activity 감시 lease나 완료 인계 소유권을 가져오지 않는다. 실제 Codex 승인과
+입력은 전역 현황의 작업 상세에서 원본 요청으로 처리하고, 일반 질문에는
+GPT가 처리한다는 표시만 보여준다. [호환 및 완료 알림 이전](card-tools.md)을 참고한다.
 
 카드 전용 호출에서 호스트가 대화 메타데이터를 생략하면 비공개 카드 정보의
 대화 식별자와 정확한 질문·revision·presentationToken으로 접근을 검증한다.

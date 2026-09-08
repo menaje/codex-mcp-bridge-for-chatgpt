@@ -16,11 +16,13 @@ import { SessionRegistry } from "../src/sessionRegistry.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { USER_QUESTION_META } from "../src/questionTools.js";
 const builtRenderer = process.argv.includes("--built");
-const { ACTIVITY_CARD_HTML } = await import(builtRenderer ? "../dist/activityCard.js" : "../src/activityCard.js");
+const legacyRenderer = process.argv.includes("--legacy");
+const renderer = await import((builtRenderer ? "../dist/" : "../src/") + (legacyRenderer ? "activityCard.js" : "questionCard.js"));
+const CARD_HTML = legacyRenderer ? renderer.ACTIVITY_CARD_HTML : renderer.QUESTION_CARD_HTML;
 
 // Production MCP handlers, SQLite and renderer. Only the ChatGPT host is simulated.
 const root = await mkdtemp(path.join(tmpdir(), "question-card-browser-"));
-const artifacts = path.resolve("output/playwright/question-card-regression" + (builtRenderer ? "-built" : ""));
+const artifacts = path.resolve("output/playwright/question-card-regression" + (builtRenderer ? "-built" : "") + (legacyRenderer ? "-legacy" : ""));
 await mkdir(artifacts, { recursive: true });
 const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
 const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ROOTS: root });
@@ -41,7 +43,7 @@ await Promise.all([client.connect(a), server.connect(b)]);
 const meta = { "openai/session": "isolated-question-browser" };
 const call = async (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args, _meta: meta }) as Promise<any>;
 const records = new Map<string, { bootstrap: any; calls: string[]; followUps: number }>();
-for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired"]) {
+for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired", ...(!legacyRenderer ? ["read-retry"] : [])]) {
   const bootstrap = await call("codex_ask_user", { requestId: randomUUID(), title: "화면 색상 선택", questions: [{
     id: "color", header: "색상", question: "어떤 색상을 사용할까요?", isOther: true,
     options: [{ label: "파랑", description: "기본 색상" }, { label: "빨강", description: "강조 색상" }]
@@ -56,11 +58,14 @@ const http = createServer(async (request, response) => {
       let body = ""; for await (const chunk of request) body += chunk;
       const input = JSON.parse(body);
       if (url.pathname === "/call") {
-        record.calls.push(input.name);
+        record.calls.push(input.name + (input.name === "codex_question_action" ? ":" + input.arguments.operation.kind : ""));
+        if (mode === "read-retry" && input.name === "codex_ui_read" && record.calls.length === 1) {
+          response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify({ isError: true, content: [{ type: "text", text: "Transient read failure" }] })); return;
+        }
         const result = mode === "metadata-missing"
           ? await client.callTool({ name: input.name, arguments: input.arguments }) as any
           : await call(input.name, input.arguments);
-        if (mode === "expired" && input.name === "codex_question_card" && result._meta?.[USER_QUESTION_META]) result._meta[USER_QUESTION_META].expiresAt = Date.now() - 1;
+        if (mode === "expired" && (input.name === "codex_question_card" || input.name === "codex_ui_read") && result._meta?.[USER_QUESTION_META]) result._meta[USER_QUESTION_META].expiresAt = Date.now() - 1;
         response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(result)); return;
       }
       record.followUps++;
@@ -73,7 +78,7 @@ const http = createServer(async (request, response) => {
       const prelude = `<script>window.__errors=[];window.addEventListener('error',e=>window.__errors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__errors.push(String(e.reason)));
         ${mode === "compatibility" ? `window.openai={locale:"ko-KR",toolOutput:${JSON.stringify(record.bootstrap.structuredContent)},toolResponseMetadata:${JSON.stringify(record.bootstrap._meta)},callTool:async(name,args)=>(await fetch('/call?mode=${mode}',{method:'POST',body:JSON.stringify({name,arguments:args})})).json(),sendFollowUpMessage:async({prompt})=>(await fetch('/followup?mode=${mode}',{method:'POST',body:JSON.stringify({role:'user',content:[{type:'text',text:prompt}]})})).json(),notifyIntrinsicHeight:()=>{}};` : ""}
       </script>`;
-      response.end(ACTIVITY_CARD_HTML.replace("</head>", prelude + "</head>")); return;
+      response.end(CARD_HTML.replace("</head>", prelude + "</head>")); return;
     }
     response.end(`<html><head><meta charset="utf-8"></head><body style="margin:0"><iframe id="card" style="border:0;width:100%;height:650px" src="/card?mode=${mode}"></iframe><script>
       const frame=document.getElementById('card');
@@ -97,11 +102,14 @@ try {
   for (const [mode, record] of records) {
     if (mode !== "standard") await cli("goto", `http://127.0.0.1:${port}/?mode=${mode}`);
     await writeFile(path.join(artifacts, `${mode}-before.txt`), await cli("snapshot"));
+    if (mode === "read-retry") {
+      await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.locator('#message.error').waitFor();await frame.getByRole('button',{name:/새로고침/}).click();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor()}`);
+    }
     if (mode === "expired") {
       await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByText('질문이 만료되었거나 사용할 수 없습니다.').waitFor();if(await frame.getByRole('button',{name:'GPT에 답변 보내기'}).count())throw new Error('Expired form is still editable')}`);
     } else {
       if (mode === "standard") {
-        await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:/새로고침/}).click();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Refresh lost the selected answer');await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'en-US'}},'*')});await frame.getByRole('button',{name:'Send to GPT',exact:true}).waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Locale change lost the selected answer');await frame.getByRole('heading',{name:'화면 색상 선택',exact:true}).waitFor();await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'ko-KR'}},'*')});await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor()}`);
+        await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:/새로고침/}).click();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Refresh lost the selected answer');if(${!legacyRenderer}){await page.frames().find(f=>f.url().includes('/card')).evaluate(()=>{window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}))});await frame.getByRole('button',{name:/새로고침/}).waitFor();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Restoration lost the selected answer')}await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'en-US'}},'*')});await frame.getByRole('button',{name:'Send to GPT',exact:true}).waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Locale change lost the selected answer');await frame.getByRole('heading',{name:'화면 색상 선택',exact:true}).waitFor();await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'ko-KR'}},'*')});await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor()}`);
         await cli("screenshot", "--filename", path.join(artifacts, "question.png"));
       }
       await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).click();await frame.getByText(${JSON.stringify(mode === "uncertain" ? "응답은 저장됐습니다. 이 대화에서 GPT에게 계속 진행을 요청해 주세요." : mode === "denied" ? "답변을 저장했습니다." : "GPT에 후속 처리를 요청했습니다.")},{exact:true}).waitFor()}`);
@@ -110,7 +118,7 @@ try {
         await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByRole('button',{name:'GPT에 후속 처리 요청',exact:true}).click();await frame.getByText('GPT에 후속 처리를 요청했습니다.',{exact:true}).waitFor()}`);
       }
       const { questionId, revision, presentationToken } = record.bootstrap._meta[USER_QUESTION_META];
-      const refreshed = await call("codex_question_card", { questionId, revision, presentationToken });
+      const refreshed = await call("codex_ui_read", { view: "question", questionId, revision, presentationToken });
       const responseRef = refreshed._meta[USER_QUESTION_META].responseRef;
       const read = await call("codex_user_answer", { responseRef });
       assert.deepEqual(read.structuredContent.responses[0].answers, [{ questionId: "color", values: ["파랑"] }]);
@@ -120,7 +128,7 @@ try {
       }
     }
     await cli("run-code", "async page=>{const frame=page.frames().find(f=>f.url().includes('/card'));const errors=await frame.evaluate(()=>window.__errors);if(errors.length)throw new Error(JSON.stringify(errors))}");
-    assert.equal(record.calls.filter(name => name === "codex_question_submit").length, mode === "expired" ? 0 : 1);
+    assert.equal(record.calls.filter(name => name === (legacyRenderer ? "codex_question_submit" : "codex_question_action:submit")).length, mode === "expired" ? 0 : 1);
     assert.equal(record.followUps, mode === "expired" || mode === "uncertain" ? 0 : mode === "denied" ? 2 : 1);
     assert.ok(!record.calls.some(name => name.startsWith("codex_activity") || name === "codex_interaction_respond"));
     results.push({ mode, calls: record.calls, followUps: record.followUps, passed: true });
@@ -128,7 +136,7 @@ try {
     if (mode === "standard") await cli("screenshot", "--filename", path.join(artifacts, "answered.png"));
   }
   assert.equal(codexCalls, 0);
-  await writeFile(path.join(artifacts, "results.json"), JSON.stringify({ builtRenderer, codexCalls, results }, null, 2));
+  await writeFile(path.join(artifacts, "results.json"), JSON.stringify({ builtRenderer, legacyRenderer, codexCalls, results }, null, 2));
   process.stdout.write(JSON.stringify({ passed: results.length, builtRenderer, codexCalls, artifacts }) + "\n");
 } catch (error) {
   await writeFile(path.join(artifacts, "failure-snapshot.txt"), await cli("snapshot").catch(String));

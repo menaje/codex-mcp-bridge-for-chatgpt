@@ -1,5 +1,7 @@
 # Input schema contracts
 
+Issue #69 current contract: [Card tools and migration](card-tools.md). Current discovery has 12 model tools and 5 app-only tools. Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+
 ChatGPT is the normative model client for the bridge. A published
 `inputSchema` tells ChatGPT which arguments it may construct; the runtime Zod
 schema remains the fail-closed parser and the bridge state remains the
@@ -7,8 +9,9 @@ authorization source.
 
 ## Published boundary
 
-All bridge tools publish a closed object root with
-`additionalProperties: false`. Nested objects with named properties are also
+All bridge tools publish an object root. A single-shape contract sets
+`additionalProperties: false`; a union has closed object branches, each with
+`additionalProperties: false`, and no free-form fallback. Nested objects with named properties are also
 closed. This applies to both model-visible and app-only tools: an obsolete,
 misspelled, or invented top-level field must fail input parsing instead of
 being silently discarded.
@@ -32,18 +35,12 @@ three-property maximum.
 The runtime retains the explicit `waitMs`/`waitFor` check as defense against a
 stale or non-validating MCP caller.
 
-`codex_task` publishes execution fields only. It has no UI metadata and no
-presentation input, so calling it multiple times cannot create multiple
-Activity-card shells. Its stable description explains that saved visibility is
-runtime authority; the result's `nextActions` projects whether the admitted Task
-is currently eligible for one separate compact presentation. `codex_activity`
-publishes two presentation modes:
-
-- `compact-monitor` requires one UUID `presentationId` and may include one
-  `activityId` as the initial focus; orchestration calls it at most once after
-  all Task calls for an assistant response;
-- `full-history` is the default explicit user-open mode and forbids
-  `presentationId`.
+`codex_task` publishes execution fields only and has no Activity UI binding.
+`codex_status` adds the closed `{kind: "input", jobId, afterCursor?, waitMs?}`
+query. Its input cursor and wait remain separate from ordinary Job progress.
+`codex_cancel` selects `{kind: "job" | "activity", id}` in `target`, with a
+unique requestId, exact expectedVersion, reason and optional impact acknowledgment.
+The old Job shape remains runtime-only compatibility.
 
 Contract v2 publishes one generic closed `project: { name, projectRef,
 projectRevision }` shape and one generic `projectLookup: { name }` shape. It
@@ -95,7 +92,7 @@ contract before any reinitialized boundary may install the new schema.
 The saved `always`, `background-only`, or `never` visibility policy remains a
 runtime authority. Presentation identity cannot bypass it or alter Task replay.
 
-`codex_dashboard_snapshot` accepts `terminalOffset` and `idleOffset` for the
+`codex_ui_read` (`view: "dashboard"`) accepts `terminalOffset` and `idleOffset` for the
 current status-first card. `projectOffset` and `conversationOffset` remain
 optional compatibility inputs only because immutable generation-4–6 cards
 still send them; their presence asks the server to add the older grouped
@@ -113,7 +110,7 @@ and usage evidence, but cannot broaden control authority or resume an unloaded
 historical App Server thread. Omission remains enriched for retained Activity
 cards; generation 20 sends `false` explicitly on structural reads and watches.
 
-`codex_settings_snapshot` is an app-private read-only call with one optional
+`codex_ui_read` (`view: "settings"`) is an app-private read-only call with one optional
 `refreshModels` boolean. The current Settings card calls it unconditionally on
 cold mount and after revision conflicts. Its default reads current persisted
 settings and project-registry state while using the normal short-lived catalog
@@ -189,6 +186,6 @@ snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
 
 ## GPT question orchestration (#68)
 
-`codex_input` accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
+`codex_status` (`query.kind: "input"`) accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
 
 `codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_question_card`, `codex_question_submit`, and `codex_question_notify` require the scoped question ID, revision, and private presentation token. Submission and notification are separate contracts. See [the complete lifecycle](gpt-questions.md).

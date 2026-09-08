@@ -80,12 +80,14 @@
     "minimumContractGeneration": {
       "settings": 9,
       "activity": 12,
-      "dashboard": 6
+      "dashboard": 6,
+      "question": 1
     },
     "resources": [
       "settings",
       "activity",
-      "dashboard"
+      "dashboard",
+      "question"
     ]
   },
   "release": {

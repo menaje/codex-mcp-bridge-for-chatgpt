@@ -123,6 +123,8 @@ export class UserSettingsStore {
       uiLocalePreference: "auto",
       maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
       showBridgeThreadsInCodexApp: false,
+      // Retained cards still interpret this setting. Current presenters do not
+      // use it; preserve the default so legacy completion handoff can migrate.
       activityCardVisibility: "always",
       completionHandoff: "off"
     });

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -946,1381 +946,54 @@ describe("bridge tools", () => {
 
 
 
-  it("publishes the consolidated Activity, settings, and Codex tools", async () => {
+  it("publishes twelve model tools and five closed app-only contracts without retired descriptors", async () => {
     const root = temporaryRoot();
-    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
-
-    const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      "codex_activity",
-      "codex_activity_cancel",
-      "codex_activity_handoff",
-      "codex_activity_job_cancel",
-      "codex_activity_rehydrate",
-      "codex_activity_snapshot",
-      "codex_activity_update",
-      "codex_agent",
-      "codex_agent_recovery_detach",
-      "codex_answer",
-      "codex_ask_user",
-      "codex_background_process_terminate",
-      "codex_cancel",
-      "codex_dashboard",
-      "codex_dashboard_snapshot",
-      "codex_diagnostics",
-      "codex_input",
-      "codex_interaction_respond",
-      "codex_job_steer",
-      "codex_models",
-      "codex_question_card",
-      "codex_question_notify",
-      "codex_question_submit",
-      "codex_settings",
-      "codex_settings_snapshot",
-      "codex_status",
-      "codex_steer",
-      "codex_task",
-      "codex_update_settings",
-      "codex_user_answer",
-    ]);
-    const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
-    const typelessModelLiterals: string[] = [];
-    const openInputObjects: string[] = [];
-    const visitPublishedSchema = (
-      value: unknown,
-      pointer: string,
-      options: { requireLiteralType: boolean; requireClosedObjects: boolean }
-    ): void => {
-      if (!value || typeof value !== "object") return;
-      if (Array.isArray(value)) {
-        value.forEach((entry, index) =>
-          visitPublishedSchema(entry, `${pointer}/${index}`, options)
-        );
-        return;
-      }
-      const object = value as Record<string, unknown>;
-      const literals = Object.prototype.hasOwnProperty.call(object, "const")
-        ? [object.const]
-        : Array.isArray(object.enum)
-          ? object.enum
-          : [];
-      const declaredTypes = new Set(
-        Array.isArray(object.type) ? object.type : [object.type]
-      );
-      const hasLiteralType = (entry: unknown) => {
-        if (entry === null) return declaredTypes.has("null");
-        if (typeof entry === "number") {
-          return declaredTypes.has("number") || declaredTypes.has("integer");
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
+    try {
+      const { tools } = await client.listTools();
+      const appNames = ["codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_update_settings"];
+      const modelNames = ["codex_activity_update", "codex_agent", "codex_answer", "codex_ask_user", "codex_cancel", "codex_dashboard", "codex_models", "codex_settings", "codex_status", "codex_steer", "codex_task", "codex_user_answer"];
+      expect(tools.map(tool => tool.name).sort()).toEqual([...appNames, ...modelNames].sort());
+      expect(catalog.calls).toHaveLength(0);
+      expect(Buffer.byteLength(JSON.stringify(tools))).toBeLessThan(150_000);
+      for (const tool of tools) {
+        const isApp = appNames.includes(tool.name);
+        const metadata = tool._meta as Record<string, any> | undefined;
+        expect(metadata?.ui?.visibility?.every((value: string) => value === "app") || false, tool.name).toBe(isApp);
+        if (isApp) {
+          expect(metadata?.ui?.visibility, tool.name).toEqual(["app"]);
+          expect(metadata?.["openai/visibility"]).toBe("private");
         }
-        return declaredTypes.has(typeof entry);
-      };
-      if (options.requireLiteralType && literals.some((entry) => !hasLiteralType(entry))) {
-        typelessModelLiterals.push(pointer);
+        expect(tool.inputSchema.type, tool.name).toBe("object");
+        expect(tool.outputSchema?.type, tool.name).toBe("object");
+        const branches = (tool.inputSchema as any).anyOf || [tool.inputSchema];
+        for (const branch of branches) expect(branch.additionalProperties, tool.name).toBe(false);
       }
-      if (
-        options.requireClosedObjects &&
-        object.properties &&
-        object.additionalProperties !== false
-      ) openInputObjects.push(pointer);
-      for (const [key, entry] of Object.entries(object)) {
-        visitPublishedSchema(entry, `${pointer}/${key}`, options);
+      const named = (name: string) => tools.find(tool => tool.name === name)!;
+      expect(named("codex_task")._meta?.ui).toBeUndefined();
+      expect(named("codex_ask_user")._meta?.["openai/outputTemplate"]).toMatch(/question/);
+      expect(named("codex_cancel").inputSchema.properties?.target).toBeDefined();
+      expect(named("codex_status").inputSchema.properties).not.toHaveProperty("scopeId");
+      expect(JSON.stringify(named("codex_status").inputSchema)).toContain('"input"');
+      expect(named("codex_ui_read").annotations?.readOnlyHint).toBe(true);
+      expect(named("codex_ui_stop").annotations?.destructiveHint).toBe(true);
+      expect(named("codex_question_action").annotations?.destructiveHint).toBe(false);
+      expect(named("codex_interaction_respond").annotations?.destructiveHint).toBe(true);
+      for (const arguments_ of [{ view: "settings", unexpected: true }, { view: "anything" }, { view: "dashboard", questionId: SCOPE_A }]) {
+        const rejected = await client.callTool({ name: "codex_ui_read", arguments: arguments_ });
+        expect(rejected.isError).toBe(true);
       }
-    };
-    for (const tool of tools.tools) {
-      const meta = (tool._meta || {}) as Record<string, any>;
-      const declaredVisibility = Array.isArray(meta.ui?.visibility)
-        ? meta.ui.visibility as string[]
-        : undefined;
-      const modelVisible = declaredVisibility
-        ? declaredVisibility.includes("model")
-        : meta["openai/visibility"] !== "private";
-      visitPublishedSchema(tool.inputSchema, `${tool.name}/inputSchema`, {
-        requireLiteralType: modelVisible,
-        requireClosedObjects: true
-      });
-      if (modelVisible) {
-        visitPublishedSchema(tool.outputSchema, `${tool.name}/outputSchema`, {
-          requireLiteralType: true,
-          requireClosedObjects: false
-        });
-      }
-    }
-    expect(typelessModelLiterals).toEqual([]);
-    expect(openInputObjects).toEqual([]);
-    for (const tool of tools.tools) {
-      expect(tool.inputSchema, `${tool.name} must reject unknown root inputs`).toMatchObject({
-        type: "object",
-        additionalProperties: false
-      });
-      expect(tool.outputSchema, `${tool.name} must declare structuredContent`).toMatchObject({
-        type: "object",
-        additionalProperties: false
-      });
-    }
-    expect(byName.get("codex_status")?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true
-    });
-    expect(byName.get("codex_dashboard")).toMatchObject({
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { resourceUri: DASHBOARD_CARD_URI, visibility: ["model", "app"] },
-        "openai/outputTemplate": DASHBOARD_CARD_URI,
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
-      }
-    });
-    expect(byName.get("codex_dashboard_snapshot")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private"
-    });
-    expect(byName.get("codex_diagnostics")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private"
-    });
-    expect(byName.get("codex_status")?.inputSchema).toMatchObject({
-      properties: {
-        query: {
-          oneOf: expect.arrayContaining([
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                kind: { type: "string", const: "page" },
-                collection: { type: "string", enum: ["sessions", "jobs", "activities"] }
-              })
-            })
-          ])
-        }
-      }
-    });
-    const statusQueryVariants = (
-      byName.get("codex_status")?.inputSchema.properties?.query as {
-        oneOf?: Array<Record<string, any>>;
-      }
-    )?.oneOf || [];
-    const statusJobQueryVariants = statusQueryVariants.filter(
-      (variant) => variant.properties?.kind?.const === "job"
-    );
-    expect(statusJobQueryVariants).toHaveLength(2);
-    const immediateJobQuery = statusJobQueryVariants.find(
-      (variant) => !variant.properties?.waitFor
-    );
-    expect(Object.keys(immediateJobQuery?.properties || {}).sort()).toEqual(["id", "kind"]);
-    expect(immediateJobQuery?.required?.sort()).toEqual(["id", "kind"]);
-    const waitingJobQuery = statusJobQueryVariants.find(
-      (variant) => variant.properties?.waitFor
-    );
-    expect(waitingJobQuery).toMatchObject({
-      required: expect.arrayContaining(["kind", "id", "waitFor"]),
-      properties: {
-        kind: { type: "string", const: "job" },
-        waitFor: {
-          type: "string",
-          enum: ["change", "terminal"],
-          description: expect.any(String)
-        },
-        waitMs: expect.objectContaining({ maximum: 60000 })
-      },
-      additionalProperties: false
-    });
-    for (const hiddenCardField of [
-      "scopeId",
-      "includeAllScopes",
-      "jobId",
-      "activityId",
-      "threadId",
-      "waitFor",
-      "waitMs",
-      "sessionLimit",
-      "sessionOffset",
-      "sessionCursor",
-      "jobLimit",
-      "jobOffset",
-      "jobCursor",
-      "activityLimit",
-      "activityOffset",
-      "activityCursor",
-      "activityView",
-      "mountedActivityId",
-      "cardGeneration",
-      "activityPresentationId",
-      "presentationKind",
-      "afterVersion"
-    ]) {
-      expect(byName.get("codex_status")?.inputSchema.properties)
-        .not.toHaveProperty(hiddenCardField);
-    }
-    expect(Object.keys(byName.get("codex_activity")?.inputSchema.properties || {}).sort())
-      .toEqual(["activityId", "mode", "presentationId"]);
-    expect(byName.get("codex_task")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false
-    });
-    expect(byName.get("codex_task")?._meta).toBeUndefined();
-    expect(byName.get("codex_activity")?._meta).toMatchObject({
-      ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
-      "openai/outputTemplate": ACTIVITY_CARD_URI
-    });
-    expect(byName.get("codex_task")?.outputSchema).toMatchObject({
-      type: "object",
-      properties: {
-        contractVersion: { type: "string", enum: ["1"] },
-        state: expect.any(Object),
-        executionMode: expect.any(Object),
-        resultAvailability: expect.any(Object),
-        error: expect.objectContaining({ type: ["object", "null"] })
-      }
-    });
-    expect((byName.get("codex_task")?.outputSchema as any).required.sort())
-      .toEqual(Object.keys((byName.get("codex_task")?.outputSchema as any).properties).sort());
-    for (const retired of ["bridgeSession", "bridgeActivity", "activityTracking"]) {
-      expect((byName.get("codex_task")?.outputSchema as any).properties)
-        .not.toHaveProperty(retired);
-    }
-    expect(byName.get("codex_activity")?.outputSchema).toMatchObject({
-      type: "object",
-      required: expect.arrayContaining(["kind", "scopeVersion", "counts"]),
-      additionalProperties: false
-    });
-    expect((byName.get("codex_activity")?.outputSchema as any).properties)
-      .not.toHaveProperty("feed");
-    expect(byName.get("codex_activity_snapshot")?.outputSchema).toMatchObject({
-      type: "object",
-      required: expect.arrayContaining(["scopeVersion", "watcherPolicy", "feed"]),
-      properties: {
-        mountedPresentation: expect.any(Object),
-        watcherPolicy: expect.any(Object),
-        feed: expect.any(Object)
-      }
-    });
-    expect(byName.get("codex_activity_rehydrate")?.outputSchema).toEqual(
-      byName.get("codex_activity_snapshot")?.outputSchema
-    );
-    for (const cardOriginTool of [
-      "codex_activity_handoff",
-      "codex_background_process_terminate",
-      "codex_cancel",
-      "codex_interaction_respond",
-      "codex_job_steer"
-    ]) {
-      expect(byName.get(cardOriginTool)?.outputSchema).toMatchObject({ type: "object" });
-    }
-    expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining([
-        "taskContractVersion",
-        "executionEnvelopeRef",
-        "requestId",
-        "prompt"
-      ])
-    });
-    expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
-      .not.toContain("activityPresentationId");
-    expect((byName.get("codex_task")?.inputSchema as any)).not.toHaveProperty("allOf");
-    expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
-      .not.toContain("scopeId");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("cwd");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("threadId");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("sessionMode");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("adoptThread");
-    expect(byName.get("codex_cancel")?.inputSchema.properties).not.toHaveProperty("scopeId");
-    expect(byName.get("codex_cancel")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "jobId", "expectedVersion", "reason"])
-    });
-    expect(byName.get("codex_cancel")?.inputSchema.properties?.reason)
-      .toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
-    expect(Object.keys(byName.get("codex_steer")?.inputSchema.properties || {}).sort())
-      .toEqual(["expectedJobVersion", "jobId", "prompt", "requestId"]);
-    expect(byName.get("codex_steer")?.inputSchema).toMatchObject({
-      required: ["requestId", "jobId", "expectedJobVersion", "prompt"],
-      additionalProperties: false
-    });
-    expect(byName.get("codex_steer")?.inputSchema.properties).not.toHaveProperty("scopeId");
-    for (const forbidden of [
-      "activityId",
-      "agentId",
-      "threadId",
-      "turnId",
-      "card",
-      "sandbox",
-      "model",
-      "project",
-      "interactionId",
-      "response"
-    ]) {
-      expect(byName.get("codex_steer")?.inputSchema.properties).not.toHaveProperty(forbidden);
-    }
-    expect(byName.get("codex_steer")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: false
-    });
-    expect(byName.get("codex_steer")?._meta).not.toMatchObject({
-      "openai/visibility": "private"
-    });
-    expect(byName.get("codex_activity_job_cancel")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private",
-      "openai/widgetAccessible": true,
-      "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-    });
-    expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
-      activity: { oneOf: expect.any(Array) },
-      agent: { oneOf: expect.any(Array) },
-      executionMode: { enum: ["foreground", "background"] },
-      requestId: expect.any(Object),
-      taskContractVersion: { const: CODEX_TASK_INPUT_CONTRACT_VERSION },
-      executionEnvelopeRef: expect.objectContaining({ const: expect.any(String) }),
-      project: expect.objectContaining({ additionalProperties: false }),
-      projectLookup: expect.objectContaining({ additionalProperties: false }),
-      selection: expect.objectContaining({ additionalProperties: false }),
-      prompt: expect.any(Object)
-    });
-    expect(byName.get("codex_task")?.inputSchema.properties)
-      .not.toHaveProperty("executionPolicyRef");
-    expect(byName.get("codex_task")?.inputSchema.properties)
-      .not.toHaveProperty("activityPresentationId");
-    for (const hiddenTaskField of [
-      "scopeId",
-      "modelPolicyRevision",
-      "activityId",
-      "continuationOfActivityId",
-      "activityTitle",
-      "activityKind",
-      "handoffPolicy",
-      "completionTrigger",
-      "agentId",
-      "agentName",
-      "agentRole",
-      "contextMode"
-    ]) {
-      expect(byName.get("codex_task")?.inputSchema.properties)
-        .not.toHaveProperty(hiddenTaskField);
-    }
-    const taskProperties = byName.get("codex_task")?.inputSchema.properties as
-      | Record<string, any>
-      | undefined;
-    expect(taskProperties?.executionMode?.description).toContain(
-      "Controls Codex execution timing, not Activity-card visibility"
-    );
-    expect(taskProperties?.executionMode?.description).toContain(
-      "default a new Activity to background"
-    );
-    expect(taskProperties?.requestId?.description).toContain(
-      "Never reuse it to group different tasks or multiple calls in one GPT response"
-    );
-    expect(taskProperties).not.toHaveProperty("projectId");
-    expect(taskProperties?.project?.description).toContain("Exact current selector");
-    expect(taskProperties?.project).toMatchObject({
-      required: ["name", "projectRef", "projectRevision"],
-      properties: {
-        name: { type: "string" },
-        projectRef: { type: "string" },
-        projectRevision: { type: "integer" }
-      }
-    });
-    expect(Object.keys(taskProperties?.project?.properties || {}).sort())
-      .toEqual(["name", "projectRef", "projectRevision"]);
-    expect(JSON.stringify(taskProperties?.project)).not.toContain("Test Project");
-    const activityVariants = taskProperties?.activity?.oneOf as Array<Record<string, any>>;
-    expect(activityVariants.map((variant) => variant.properties?.mode?.const).sort())
-      .toEqual(["existing", "new"]);
-    expect(activityVariants.find((variant) => variant.properties?.mode?.const === "existing"))
-      .toMatchObject({ required: expect.arrayContaining(["mode", "id"]) });
-    const newActivityVariant = activityVariants.find(
-      (variant) => variant.properties?.mode?.const === "new"
-    );
-    expect(newActivityVariant).toMatchObject({
-      properties: {
-        continuationOf: expect.any(Object),
-        title: expect.any(Object),
-        policy: expect.any(Object)
-      }
-    });
-    expect(newActivityVariant?.properties?.policy?.properties?.kind?.enum)
-      .toEqual(["discussion", "investigation", "review", "implementation", "other"]);
-    expect(newActivityVariant?.properties?.policy?.properties?.handoff?.enum)
-      .toEqual(["none", "notify", "verify"]);
-    expect(newActivityVariant?.properties?.policy?.properties?.completion?.enum)
-      .toEqual(["manual", "sealed-jobs-terminal"]);
-    const agentVariants = taskProperties?.agent?.oneOf as Array<Record<string, any>>;
-    expect(agentVariants.map((variant) => variant.properties?.mode?.const).sort())
-      .toEqual(["existing", "new"]);
-    expect(agentVariants.find((variant) => variant.properties?.mode?.const === "existing"))
-      .toMatchObject({
-        required: expect.arrayContaining(["mode", "id"]),
-        properties: { context: { enum: ["continue", "fork", "fresh"] } }
-      });
-    expect(agentVariants.find((variant) => variant.properties?.mode?.const === "new")?.properties)
-      .not.toHaveProperty("context");
-    const agentInputProperties = byName.get("codex_agent")?.inputSchema.properties as
-      | Record<string, any>
-      | undefined;
-    expect(agentInputProperties).toMatchObject({
-      agentId: expect.any(Object),
-      requestId: expect.any(Object),
-      operation: expect.any(Object)
-    });
-    const agentOperationVariants = agentInputProperties?.operation?.oneOf as
-      | Array<Record<string, any>>
-      | undefined;
-    expect(agentOperationVariants?.map((variant) => variant.properties?.kind?.const).sort())
-      .toEqual(["archive", "rename", "restore"]);
-    expect(agentOperationVariants?.find((variant) => variant.properties?.kind?.const === "rename"))
-      .toMatchObject({
-        required: expect.arrayContaining(["kind", "name"]),
-        properties: { name: expect.any(Object) }
-      });
-    expect(Object.keys(byName.get("codex_agent")?.inputSchema.properties || {}).sort())
-      .toEqual(["agentId", "operation", "requestId"]);
-    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("activityId");
-    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("processId");
-    expect(byName.get("codex_agent")?.inputSchema.properties).not.toHaveProperty("action");
-    expect(byName.get("codex_agent_recovery_detach")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private"
-    });
-    expect(byName.get("codex_background_process_terminate")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: false
-    });
-    expect(byName.get("codex_background_process_terminate")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private",
-      "openai/widgetAccessible": true,
-      "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-    });
-    for (const appTool of [
-      "codex_activity_rehydrate",
-      "codex_activity_snapshot",
-      "codex_interaction_respond",
-      "codex_job_steer"
-    ]) {
-      expect(byName.get(appTool)?._meta).toMatchObject({
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      });
-    }
-    expect(byName.get("codex_activity_snapshot")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["card"]),
-      properties: {
-        afterVersion: { minimum: 0 },
-        cursor: { maxLength: 256, type: "string" },
-        waitMs: { maximum: 60000 },
-        widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") },
-        card: expect.any(Object)
-      }
-    });
-    expect(byName.get("codex_activity_rehydrate")?.inputSchema).toMatchObject({
-      properties: {
-        jobId: expect.any(Object),
-        requestId: expect.any(Object),
-        mode: expect.any(Object),
-        activityId: expect.any(Object),
-        activityVersion: expect.any(Object),
-        cursor: { maxLength: 256, type: "string" },
-        widgetInstanceId: { type: "string", pattern: expect.stringContaining("[0-9a-f]") }
-      }
-    });
-    const interactionResponseSchema = byName.get("codex_interaction_respond")
-      ?.inputSchema.properties?.response as {
-        anyOf?: Array<Record<string, any>>;
-        oneOf?: Array<Record<string, any>>;
-      };
-    const answerResponseVariant = (
-      interactionResponseSchema.anyOf || interactionResponseSchema.oneOf || []
-    ).find((variant) => variant.properties?.answers);
-    expect(answerResponseVariant?.properties?.answers).toMatchObject({
-      type: "object",
-      maxProperties: MAX_CODEX_INTERACTION_QUESTIONS
-    });
-    expect(byName.get("codex_activity_handoff")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["action", "outboxIds", "card"]),
-      properties: {
-        action: { enum: ["claim-batch", "delivered-batch", "release-batch"] }
-      }
-    });
-    expect(byName.get("codex_activity_handoff")?.inputSchema.properties)
-      .not.toHaveProperty("outboxId");
-    expect(byName.get("codex_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
-      .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
-    expect(byName.get("codex_activity_cancel")?.inputSchema.properties?.acknowledgeAffectedJobIds)
-      .toMatchObject({ maxItems: HARD_MAX_CONCURRENT_JOBS });
-    expect(byName.get("codex_activity_update")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false
-    });
-    const activityUpdateProperties = byName.get("codex_activity_update")?.inputSchema.properties as
-      | Record<string, any>
-      | undefined;
-    expect(Object.keys(activityUpdateProperties || {}).sort()).toEqual([
-      "activityId",
-      "expectedVersion",
-      "operation"
-    ]);
-    const activityOperationVariants = activityUpdateProperties?.operation?.oneOf as
-      | Array<Record<string, any>>
-      | undefined;
-    expect(activityOperationVariants?.flatMap((variant) => {
-      const discriminator = variant.properties?.kind;
-      return discriminator?.const ? [discriminator.const] : discriminator?.enum || [];
-    }).sort()).toEqual([
-      "abandon",
-      "complete",
-      "seal",
-      "set-policy",
-      "start-verification",
-      "verification-failed",
-      "verification-passed"
-    ]);
-    expect(activityOperationVariants?.find(
-      (variant) => variant.properties?.kind?.const === "verification-passed"
-    )).toMatchObject({
-      required: expect.arrayContaining(["kind", "evidence"])
-    });
-    expect(activityOperationVariants?.find(
-      (variant) => variant.properties?.kind?.const === "verification-failed"
-    )).toMatchObject({
-      required: expect.arrayContaining(["kind", "reason"])
-    });
-    expect(activityOperationVariants?.find(
-      (variant) => variant.properties?.kind?.const === "set-policy"
-    )).toMatchObject({
-      required: expect.arrayContaining(["kind", "policy"]),
-      properties: { policy: expect.objectContaining({ minProperties: 1 }) }
-    });
-    expect(byName.get("codex_activity_cancel")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: false
-    });
-    expect(Object.keys(byName.get("codex_activity_cancel")?.inputSchema.properties || {}).sort())
-      .toEqual([
-        "acknowledgeAffectedJobIds",
-        "activityId",
-        "expectedVersion",
-        "reason",
-        "requestId"
-      ]);
-    expect(byName.get("codex_activity_cancel")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "activityId", "expectedVersion", "reason"])
-    });
-    expect(byName.get("codex_activity_cancel")?.inputSchema.properties?.reason)
-      .toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
-    expect(byName.get("codex_activity_job_cancel")?.inputSchema.properties)
-      .not.toHaveProperty("reason");
-    expect(byName.get("codex_settings")?._meta).toMatchObject({
-      ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
-      "openai/outputTemplate": SETTINGS_CARD_URI,
-      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
-    });
-    expect(byName.get("codex_settings_snapshot")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private",
-      "openai/widgetAccessible": true,
-      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
-    });
-    expect(byName.get("codex_update_settings")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private"
-    });
-    expect(byName.get("codex_update_settings")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false
-    });
-    const updateSettingsSchema = byName.get("codex_update_settings")?.inputSchema as any;
-    expect(Object.keys(updateSettingsSchema.properties).sort()).toEqual([
-      "expectedRegistryRevision",
-      "expectedSettingsRevision",
-      "operation"
-    ]);
-    expect(updateSettingsSchema.required).toEqual(["operation"]);
-    expect(updateSettingsSchema.properties.operation.oneOf.map(
-      (variant: any) => variant.properties.kind.const
-    )).toEqual(["reset", "patch"]);
-    const settingsPatchSchema = updateSettingsSchema.properties.operation.oneOf[1]
-      .properties.settings;
-    expect(settingsPatchSchema).toMatchObject({
-      minProperties: 1,
-      properties: {
-        accessStrategy: { enum: ["read-only", "adaptive"] },
-        uiLocalePreference: {
-          enum: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
-        },
-        activityCard: {
-          minProperties: 1,
-          properties: {
-            visibility: { enum: ["always", "background-only", "never"] },
-            completionHandoff: { enum: ["off", "auto-handoff"] }
-          }
-        }
-      }
-    });
-    const policyVariants = settingsPatchSchema.properties.modelPolicy.oneOf ||
-      settingsPatchSchema.properties.modelPolicy.anyOf;
-    const automaticPolicySchema = policyVariants.find(
-      (variant: any) => variant.properties.mode.const === "automatic"
-    );
-    expect(automaticPolicySchema.required).toEqual(expect.arrayContaining([
-      "mode",
-      "allowedSelections",
-      "constraints"
-    ]));
-    expect(automaticPolicySchema.properties).not.toHaveProperty("fallbackSelection");
-    expect(settingsPatchSchema.properties.projectOperations.items.oneOf.map(
-      (variant: any) => variant.properties.kind.const
-    )).toEqual(["add", "rename", "relocate", "archive", "restore", "delete"]);
-    expect(settingsPatchSchema.properties).not.toHaveProperty("defaultProjectId");
-    expect(updateSettingsSchema.properties).not.toHaveProperty("projects");
-    expect(updateSettingsSchema.properties).not.toHaveProperty("defaultCwd");
-    expect(updateSettingsSchema.properties).not.toHaveProperty("reset");
-    expect(updateSettingsSchema.properties).not.toHaveProperty("activityCardView");
-    expect(JSON.stringify(byName.get("codex_update_settings")?.inputSchema)).not.toContain('"all"');
-    expect(byName.get("codex_update_settings")?.inputSchema.properties)
-      .not.toHaveProperty("defaultSessionMode");
-    expect(byName.get("codex_update_settings")?.inputSchema.properties)
-      .not.toHaveProperty("autoResumeTtlMs");
-
-    const discoveryInventory = tools.tools.map((tool) => {
-      const meta = (tool._meta || {}) as Record<string, any>;
-      const declaredVisibility = Array.isArray(meta.ui?.visibility)
-        ? meta.ui.visibility as string[]
-        : undefined;
-      const properties = Object.keys(tool.inputSchema.properties || {}).sort();
-      return {
-        name: tool.name,
-        visibility: {
-          model: declaredVisibility
-            ? declaredVisibility.includes("model")
-            : meta["openai/visibility"] !== "private",
-          app: declaredVisibility
-            ? declaredVisibility.includes("app")
-            : meta["openai/widgetAccessible"] === true,
-          operatorCapability: tool.name === "codex_agent_recovery_detach"
-        },
-        propertyCount: properties.length,
-        properties,
-        schemaBytes: Buffer.byteLength(JSON.stringify(tool.inputSchema), "utf8"),
-        annotations: {
-          readOnly: tool.annotations?.readOnlyHint ?? null,
-          destructive: tool.annotations?.destructiveHint ?? null,
-          idempotent: tool.annotations?.idempotentHint ?? null,
-          openWorld: tool.annotations?.openWorldHint ?? null
-        }
-      };
-    });
-    const taskDescriptor = byName.get("codex_task")!;
-    const taskContractBytes = Buffer.byteLength(
-      JSON.stringify(taskDescriptor.inputSchema),
-      "utf8"
-    ) + Buffer.byteLength(JSON.stringify(taskDescriptor.outputSchema), "utf8");
-    const taskOutputBytes = Buffer.byteLength(
-      JSON.stringify(taskDescriptor.outputSchema),
-      "utf8"
-    );
-    expect(taskContractBytes).toBeLessThanOrEqual(9_500);
-    expect(taskOutputBytes).toBeLessThanOrEqual(2_500);
-    expect(discoveryInventory).toMatchInlineSnapshot(`
-      [
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_input",
-          "properties": [
-            "afterCursor",
-            "jobId",
-            "waitMs",
-          ],
-          "propertyCount": 3,
-          "schemaBytes": 305,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_answer",
-          "properties": [
-            "answers",
-            "jobId",
-            "questionRef",
-            "requestId",
-          ],
-          "propertyCount": 4,
-          "schemaBytes": 726,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_ask_user",
-          "properties": [
-            "expiresInMinutes",
-            "questions",
-            "requestId",
-            "title",
-          ],
-          "propertyCount": 4,
-          "schemaBytes": 1128,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_user_answer",
-          "properties": [
-            "responseRef",
-          ],
-          "propertyCount": 1,
-          "schemaBytes": 340,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_question_card",
-          "properties": [
-            "presentationToken",
-            "questionId",
-            "revision",
-            "scopeId",
-          ],
-          "propertyCount": 4,
-          "schemaBytes": 930,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_question_submit",
-          "properties": [
-            "presentationToken",
-            "questionId",
-            "response",
-            "revision",
-            "scopeId",
-          ],
-          "propertyCount": 5,
-          "schemaBytes": 1389,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_question_notify",
-          "properties": [
-            "operation",
-            "presentationToken",
-            "questionId",
-            "revision",
-            "scopeId",
-          ],
-          "propertyCount": 5,
-          "schemaBytes": 1519,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_dashboard",
-          "properties": [],
-          "propertyCount": 0,
-          "schemaBytes": 114,
-          "visibility": {
-            "app": true,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_dashboard_snapshot",
-          "properties": [
-            "conversationOffset",
-            "enrich",
-            "idleOffset",
-            "limit",
-            "projectOffset",
-            "scopeId",
-            "terminalOffset",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 8,
-          "schemaBytes": 950,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_status",
-          "properties": [
-            "query",
-          ],
-          "propertyCount": 1,
-          "schemaBytes": 1992,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_diagnostics",
-          "properties": [],
-          "propertyCount": 0,
-          "schemaBytes": 114,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_activity",
-          "properties": [
-            "activityId",
-            "mode",
-            "presentationId",
-          ],
-          "propertyCount": 3,
-          "schemaBytes": 831,
-          "visibility": {
-            "app": true,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_activity_rehydrate",
-          "properties": [
-            "activityId",
-            "activityVersion",
-            "cursor",
-            "enrich",
-            "jobId",
-            "limit",
-            "mode",
-            "requestId",
-            "scopeId",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 10,
-          "schemaBytes": 1692,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": true,
-          },
-          "name": "codex_activity_snapshot",
-          "properties": [
-            "afterVersion",
-            "card",
-            "cursor",
-            "enrich",
-            "limit",
-            "scopeId",
-            "waitMs",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 8,
-          "schemaBytes": 1728,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_activity_handoff",
-          "properties": [
-            "action",
-            "card",
-            "outboxIds",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 4,
-          "schemaBytes": 1340,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_agent",
-          "properties": [
-            "agentId",
-            "operation",
-            "requestId",
-          ],
-          "propertyCount": 3,
-          "schemaBytes": 1137,
-          "visibility": {
-            "app": true,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_agent_recovery_detach",
-          "properties": [
-            "activityId",
-            "agentId",
-            "expectedAgentVersion",
-            "requestId",
-            "scopeId",
-          ],
-          "propertyCount": 5,
-          "schemaBytes": 1066,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": true,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_background_process_terminate",
-          "properties": [
-            "agentId",
-            "card",
-            "expectedAgentVersion",
-            "processId",
-            "requestId",
-            "scopeId",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 7,
-          "schemaBytes": 2001,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_cancel",
-          "properties": [
-            "acknowledgeAffectedJobIds",
-            "expectedVersion",
-            "jobId",
-            "reason",
-            "requestId",
-          ],
-          "propertyCount": 5,
-          "schemaBytes": 1083,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_activity_job_cancel",
-          "properties": [
-            "acknowledgeAffectedJobIds",
-            "card",
-            "expectedJobVersion",
-            "jobId",
-            "requestId",
-            "scopeId",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 7,
-          "schemaBytes": 1820,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_interaction_respond",
-          "properties": [
-            "card",
-            "expectedJobVersion",
-            "interactionId",
-            "jobId",
-            "requestId",
-            "response",
-            "scopeId",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 8,
-          "schemaBytes": 2825,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_steer",
-          "properties": [
-            "expectedJobVersion",
-            "jobId",
-            "prompt",
-            "requestId",
-          ],
-          "propertyCount": 4,
-          "schemaBytes": 792,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_job_steer",
-          "properties": [
-            "card",
-            "expectedJobVersion",
-            "jobId",
-            "prompt",
-            "requestId",
-            "scopeId",
-            "widgetInstanceId",
-          ],
-          "propertyCount": 7,
-          "schemaBytes": 1771,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": false,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_activity_update",
-          "properties": [
-            "activityId",
-            "expectedVersion",
-            "operation",
-          ],
-          "propertyCount": 3,
-          "schemaBytes": 2476,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": true,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_activity_cancel",
-          "properties": [
-            "acknowledgeAffectedJobIds",
-            "activityId",
-            "expectedVersion",
-            "reason",
-            "requestId",
-          ],
-          "propertyCount": 5,
-          "schemaBytes": 1158,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": true,
-            "readOnly": true,
-          },
-          "name": "codex_models",
-          "properties": [
-            "refresh",
-          ],
-          "propertyCount": 1,
-          "schemaBytes": 244,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": true,
-            "readOnly": true,
-          },
-          "name": "codex_settings",
-          "properties": [
-            "refreshModels",
-          ],
-          "propertyCount": 1,
-          "schemaBytes": 232,
-          "visibility": {
-            "app": true,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": true,
-            "openWorld": true,
-            "readOnly": true,
-          },
-          "name": "codex_settings_snapshot",
-          "properties": [
-            "refreshModels",
-          ],
-          "propertyCount": 1,
-          "schemaBytes": 233,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": true,
-            "idempotent": false,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_update_settings",
-          "properties": [
-            "expectedRegistryRevision",
-            "expectedSettingsRevision",
-            "operation",
-          ],
-          "propertyCount": 3,
-          "schemaBytes": 4827,
-          "visibility": {
-            "app": true,
-            "model": false,
-            "operatorCapability": false,
-          },
-        },
-        {
-          "annotations": {
-            "destructive": false,
-            "idempotent": false,
-            "openWorld": false,
-            "readOnly": false,
-          },
-          "name": "codex_task",
-          "properties": [
-            "activity",
-            "agent",
-            "executionEnvelopeRef",
-            "executionMode",
-            "project",
-            "projectLookup",
-            "prompt",
-            "requestId",
-            "sandbox",
-            "selection",
-            "taskContractVersion",
-          ],
-          "propertyCount": 11,
-          "schemaBytes": 5598,
-          "visibility": {
-            "app": false,
-            "model": true,
-            "operatorCapability": false,
-          },
-        },
-      ]
-    `);
-
-    await close();
+      const old = await client.callTool({ name: "codex_settings_snapshot", arguments: {} });
+      expect(old.isError).not.toBe(true);
+      expect(privateSettingsView(old).settings.settingsRevision).toBe(0);
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_settings_snapshot");
+    } finally { await close(); }
   });
 
   it("rejects unknown root inputs and oversized interaction answer maps", async () => {
     const root = temporaryRoot();
-    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const { client, close } = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }), new FakeUpstream());
     const card = {
       activityId: SCOPE_A,
       generation: ACTIVITY_CARD_CONTRACT_GENERATION,
@@ -2630,7 +1303,7 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("Codex Bridge 설정");
     expect(contents.text).toContain("window.openai.callTool");
     expect(contents.text).toContain("codex_update_settings");
-    expect(contents.text).toContain('callTool("codex_settings_snapshot"');
+    expect(contents.text).toContain('callTool("codex_ui_read"');
     expect(contents.text).not.toContain('callTool("codex_settings",');
     expect(contents.text).not.toContain('message.method==="ui/notifications/tool-result"');
     expect(contents.text).toContain('id="settings-form" hidden');
@@ -2739,7 +1412,7 @@ describe("bridge tools", () => {
           expect(html).not.toContain('id="default-project"');
           expect(html).not.toContain("defaultProjectId");
           if (revision.uri === currentUri) {
-            expect(html).toContain('callTool("codex_settings_snapshot"');
+            expect(html).toContain('callTool("codex_ui_read"');
             expect(html).not.toContain('callTool("codex_settings",');
             expect(html).not.toContain('message.method==="ui/notifications/tool-result"');
           }
@@ -2768,7 +1441,7 @@ describe("bridge tools", () => {
           }
           expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
         } else if (name === "dashboard") {
-          expect(html).toContain('callTool("codex_dashboard_snapshot"');
+          expect(html).toMatch(/callTool\("codex_(dashboard_snapshot|ui_read)"/);
           expect(html).toContain('window.addEventListener("pageshow"');
           if (revision.uri === currentUri) {
             expect(html).toContain('id="weekly-usage"');
@@ -2994,7 +1667,7 @@ describe("bridge tools", () => {
     const upstream = new HangingCardEnrichmentUpstream();
     const config = configFor(root, {
       CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
-      CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "500"
+      CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "500", CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1"
     });
     const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
       config,
@@ -3416,9 +2089,7 @@ describe("bridge tools", () => {
       scope: "bridge-wide",
       readOnly: true,
       statusSource: "codex-runtime-only",
-      summary: expect.stringMatching(
-        /^2 tracked retained conversations; 1 active; 1 running; 0 needing attention;/
-      )
+      summary: expect.stringContaining("card loads current retained work")
     });
     expect((opened as { _meta?: Record<string, unknown> })._meta)
       .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
@@ -4199,7 +2870,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.probeCalls).toEqual([]);
     expect((opened as { structuredContent?: any }).structuredContent?.summary)
-      .toContain("1 App Server runtime checks deferred");
+      .toContain("card loads current retained work");
     expect((opened as { _meta?: Record<string, unknown> })._meta)
       .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
 
@@ -4417,8 +3088,7 @@ describe("bridge tools", () => {
       name: "codex_dashboard",
       arguments: { scopeId: SCOPE_A }
     });
-    expect((failedOverview as { structuredContent?: any }).structuredContent?.summary)
-      .toContain("1 needing attention");
+    expect((await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A })).view.counts.needsAttention).toBe(1);
 
     const retry = parseToolJson(await client.callTool({
       name: "codex_task",
@@ -4435,7 +3105,7 @@ describe("bridge tools", () => {
       arguments: { scopeId: SCOPE_A }
     });
     expect((runningOverview as { structuredContent?: any }).structuredContent?.summary)
-      .toContain("1 active; 1 running; 0 needing attention");
+      .toContain("card loads current retained work");
     const { view: runningView } = await freshDashboardSnapshot(rawCallTool, {
       scopeId: SCOPE_A
     });
@@ -5633,15 +4303,14 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(config, new FakeUpstream());
 
     const opened = parseToolJson(await client.callTool({
-      name: "codex_settings",
-      arguments: {}
+      name: "codex_ui_read", arguments: { view: "settings" }
     }));
-    expect(opened.revisions).toMatchObject({
-      settings: 0,
-      registry: 0
+    expect(opened.settings).toMatchObject({
+      settingsRevision: 0,
+      registryRevision: 0
     });
-    expect(opened.projects).toEqual([]);
-    expect(opened).not.toHaveProperty("capabilities");
+    expect(opened.settings.projects).toEqual([]);
+    expect(opened.capabilities.projectAvailability).toEqual([]);
 
     const firstSave = await client.callTool({
       name: "codex_update_settings",
@@ -5726,20 +4395,19 @@ describe("bridge tools", () => {
     );
 
     const view = (await client.callTool({
-      name: "codex_settings",
-      arguments: {}
+      name: "codex_ui_read", arguments: { view: "settings" }
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
-    expect(view.projects).toEqual([
+    expect(view.capabilities.projectAvailability).toMatchObject([
       { name: "Active", available: true, archived: false },
       { name: "Recovery", available: false, archived: false }
     ]);
-    expect(JSON.stringify(view.projects)).not.toContain(second);
-    expect(JSON.stringify(view.projects)).not.toContain("unavailableReason");
-    expect(view.projects).toContainEqual({
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
+    expect(view.capabilities.projectAvailability).toContainEqual(expect.objectContaining({
       name: "Recovery",
       available: false,
       archived: false
-    });
+    }));
     expect(privateSettingsView(await client.callTool({
       name: "codex_settings_snapshot",
       arguments: {}
@@ -5782,12 +4450,11 @@ describe("bridge tools", () => {
       (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
 
     const initial = (await client.callTool({
-      name: "codex_settings",
-      arguments: {}
+      name: "codex_ui_read", arguments: { view: "settings" }
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
     const baselineNotifications = listChanged;
-    expect(initial.projects).toEqual([
+    expect(initial.capabilities.projectAvailability).toMatchObject([
       { name: "Alpha Workspace", available: true, archived: false }
     ]);
     const initialDescriptor = await taskDescriptor();
@@ -5797,11 +4464,10 @@ describe("bridge tools", () => {
 
     renameSync(project, displaced);
     const unavailable = (await client.callTool({
-      name: "codex_settings",
-      arguments: {}
+      name: "codex_ui_read", arguments: { view: "settings" }
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(unavailable.projects).toEqual([
+    expect(unavailable.capabilities.projectAvailability).toMatchObject([
       { name: "Alpha Workspace", available: false, archived: false }
     ]);
     expect(listChanged).toBe(baselineNotifications);
@@ -5846,11 +4512,10 @@ describe("bridge tools", () => {
 
     renameSync(displaced, project);
     const recovered = (await client.callTool({
-      name: "codex_settings",
-      arguments: {}
+      name: "codex_ui_read", arguments: { view: "settings" }
     }) as { structuredContent?: Record<string, any> }).structuredContent!;
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(recovered.projects).toEqual([
+    expect(recovered.capabilities.projectAvailability).toMatchObject([
       { name: "Alpha Workspace", available: true, archived: false }
     ]);
     expect(listChanged).toBe(baselineNotifications);
@@ -5921,7 +4586,7 @@ describe("bridge tools", () => {
   it("keeps routine status independent from upstream inventory diagnostics", async () => {
     const root = temporaryRoot();
     const upstream = new FailingInventoryUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, close } = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }), upstream);
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({ kind: "overview", scopeCounts: { jobs: 0 } });
@@ -6217,7 +4882,7 @@ describe("bridge tools", () => {
       arguments: {}
     }));
     expect(JSON.stringify(publicView)).not.toContain("gpt-private-legacy-default");
-    expect(publicView.warnings).toContain(
+    expect(settings.loadWarnings).toContain(
       "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work."
     );
     expect(privateView.warnings.join(" ")).not.toContain("gpt-private-legacy-default");
@@ -6300,7 +4965,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("opens Settings through the normal catalog cache path and forces refresh only for retry", async () => {
+  it("opens Settings without reading data and hydrates once through the common read", async () => {
     const root = temporaryRoot();
     const catalog = new FakeModelCatalog();
     const { client, close } = await connectTestClient(
@@ -6312,6 +4977,10 @@ describe("bridge tools", () => {
 
     await client.callTool({ name: "codex_settings", arguments: {} });
     await client.callTool({ name: "codex_settings", arguments: { refreshModels: true } });
+    expect(catalog.calls).toEqual([]);
+    await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+    expect(catalog.calls).toEqual([{ refresh: false, backendKind: "app-server" }]);
+    await client.callTool({ name: "codex_ui_read", arguments: { view: "settings", refreshModels: true } });
     expect(catalog.calls).toEqual([
       { refresh: false, backendKind: "app-server" },
       { refresh: true, backendKind: "app-server" }
@@ -6367,12 +5036,7 @@ describe("bridge tools", () => {
       await client.callTool({ name: "codex_settings", arguments: {} })
     );
     expect(publicModels).not.toHaveProperty("policy");
-    expect(publicSettings.policy.model).toMatchObject({
-      mode: "automatic",
-      allowed: "catalog-visible"
-    });
-    expect(publicSettings.policy.model).not.toHaveProperty("model");
-    expect(publicSettings.policy.model).not.toHaveProperty("reasoningEffort");
+    expect(publicSettings).toEqual({ kind: "settings", opened: true });
     expect(publicModels.models.every((model: Record<string, unknown>) =>
       !("defaultEffort" in model) && !("isDefault" in model)
     )).toBe(true);
@@ -6607,10 +5271,9 @@ describe("bridge tools", () => {
     expect(unsupportedPriority.isError).toBe(true);
     expect(JSON.stringify(unsupportedPriority)).toContain("MODEL_UNAVAILABLE");
     expect(JSON.stringify(unsupportedPriority)).toContain("Priority");
-    const settings = await client.callTool({ name: "codex_settings", arguments: {} });
+    const settings = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
     expect(parseToolJson(settings)).toMatchObject({
-      revisions: { settings: 2 },
-      policy: { priority: false }
+      settings: { settingsRevision: 2, usePriorityServiceTier: false }
     });
     await close();
   });
@@ -6710,7 +5373,7 @@ describe("bridge tools", () => {
       new DriftingModelCatalog(),
       settings
     );
-    const opened = await client.callTool({ name: "codex_settings", arguments: {} });
+    const opened = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
     expect((opened as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
       .toEqual(expect.arrayContaining([expect.stringContaining("MODEL_UNAVAILABLE")]));
     const task = await runTask(client, {
@@ -6813,21 +5476,7 @@ describe("bridge tools", () => {
     );
 
     const opened = await client.callTool({ name: "codex_settings", arguments: {} });
-    expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      revisions: { settings: 0, registry: 1, policy: 0 },
-      policy: {
-        access: "adaptive",
-          model: {
-            mode: "automatic",
-            allowed: "catalog-visible"
-          },
-        maxConcurrentJobs: 30,
-        activityVisibility: "always",
-        completionHandoff: "off"
-      },
-      projects: [{ name: "Test Project", available: true, archived: false }],
-      catalog: { stale: false, modelCount: 3 }
-    });
+    expect(parseToolJson(opened)).toEqual({ kind: "settings", opened: true });
     const openedSnapshot = await client.callTool({
       name: "codex_settings_snapshot",
       arguments: {}
@@ -7219,7 +5868,7 @@ describe("bridge tools", () => {
     });
     const backgroundOnlyForegroundTask = parseToolJson(backgroundOnlyForeground);
     expect(backgroundOnlyForegroundTask.nextActions.join(" ")).not.toContain(
-      "render at most one compact Activity card"
+      "Keep this GPT response active"
     );
     expect((backgroundOnlyForeground as { _meta?: Record<string, unknown> })._meta)
       .toBeUndefined();
@@ -7248,7 +5897,7 @@ describe("bridge tools", () => {
       executionMode: "background"
     });
     expect(backgroundOnlyBackground.nextActions.join(" ")).toContain(
-      "render at most one compact Activity card"
+      "Keep this GPT response active"
     );
     expect((backgroundOnlyBackgroundResult as { _meta?: Record<string, unknown> })._meta)
       .toBeUndefined();
@@ -8131,10 +6780,9 @@ describe("bridge tools", () => {
       jobs
     );
 
-    const settingsResult = await client.callTool({ name: "codex_settings", arguments: {} });
+    const settingsResult = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
     expect((settingsResult as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
       .toEqual(expect.arrayContaining([
-        expect.stringContaining("Retired execution paths cannot resume"),
         expect.stringContaining("handoffSummary")
       ]));
 
@@ -8420,7 +7068,7 @@ describe("bridge tools", () => {
       }
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("RECOVERY_OPERATION_DISABLED");
+    expect(JSON.stringify(denied)).toContain("not found");
     expect(jobs.listActivityAgentAssignments(activity.activityId, agent.agentId)[0]?.releasedAt)
       .toBeUndefined();
     await close();
@@ -8498,6 +7146,68 @@ describe("bridge tools", () => {
       expect.objectContaining({ threadId: "source-thread", isCurrent: true })
     ]);
     await close();
+  });
+
+  it("stops exact work from a global detail proof and replays without another termination", async () => {
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const started = parseToolJson(await runTask(client, { prompt: "Global stop fixture", executionMode: "background" }));
+      const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + started.agentId).digest("hex").slice(0, 32);
+      const widgetInstanceId = randomUUID();
+      const result = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const detail = (result as any)._meta["codex/uiControl@1"];
+      const args = { kind: "job", scopeId: SCOPE_B, requestId: randomUUID(), widgetInstanceId,
+        jobId: started.jobId, expectedJobVersion: detail.jobVersion, card: detail.card };
+      expect((await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, expectedJobVersion: detail.jobVersion + 1 } })).isError).toBe(true);
+      const first = await rawCallTool({ name: "codex_ui_stop", arguments: args });
+      expect(first.isError, JSON.stringify(first)).not.toBe(true);
+      const replay = await rawCallTool({ name: "codex_ui_stop", arguments: args });
+      expect(replay.structuredContent).toEqual(first.structuredContent);
+      expect(upstream.aborts).toBe(1);
+      expect(jobs.get(started.jobId)?.status).toBe("cancelled");
+      expect(jobs.listCancellationIntents({ jobId: started.jobId })).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: "widget-control", toolName: "codex_ui_stop" })
+      ]));
+    } finally { while (upstream.pendingCount) upstream.resolveNext(); await close(); }
+  });
+
+  it("uses global detail proofs for idle processes and rejects a version race after inventory", async () => {
+    const upstream = new BackgroundTerminalUpstream();
+    const config = configFor(temporaryRoot());
+    const connection = await connectTestClient(config, upstream);
+    const { client, rawCallTool, jobs, close } = connection;
+    const second = await connectTestClient(config, upstream, connection.sessions, new FakeModelCatalog(), connection.settings, jobs);
+    try {
+      const completed = parseToolJson(await runTask(client, { prompt: "Idle process fixture", executionMode: "foreground" }));
+      const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + completed.agentId).digest("hex").slice(0, 32);
+      const widgetInstanceId = randomUUID();
+      const read = async () => {
+        const value = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
+        expect(value.isError, JSON.stringify(value)).not.toBe(true);
+        return (value as any)._meta["codex/uiControl@1"];
+      };
+      const detail = await read();
+      expect(detail.canStop).toBe(false);
+      expect(detail.backgroundProcesses).toHaveLength(2);
+      const args = { kind: "process", scopeId: SCOPE_B, requestId: randomUUID(), widgetInstanceId,
+        agentId: completed.agentId, expectedAgentVersion: detail.agentVersion, processId: "background-process-1", card: detail.card };
+      expect((await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, processId: "not-displayed" } })).isError).toBe(true);
+      const [stopped, concurrent] = await Promise.all([rawCallTool({ name: "codex_ui_stop", arguments: args }), second.rawCallTool({ name: "codex_ui_stop", arguments: args })]);
+      expect(concurrent.structuredContent).toEqual(stopped.structuredContent);
+      expect(stopped.isError, JSON.stringify(stopped)).not.toBe(true);
+      expect((await rawCallTool({ name: "codex_ui_stop", arguments: args })).structuredContent).toEqual(stopped.structuredContent);
+      expect(upstream.terminationCalls).toHaveLength(1);
+      const current = await read();
+      upstream.beforeNextList = () => { jobs.renameAgent(completed.agentId, "Changed during lookup"); };
+      const raced = await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, requestId: randomUUID(),
+        card: current.card, expectedAgentVersion: current.agentVersion, processId: "legacy-background-process-2" } });
+      expect(raced.isError).toBe(true);
+      expect(JSON.stringify(raced)).toContain("AGENT_VERSION_CHANGED");
+      expect(upstream.terminationCalls).toHaveLength(1);
+      expect(jobs.get(completed.jobId)?.status).toBe("completed");
+    } finally { await second.close(); await close(); }
   });
 
   it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
@@ -9937,10 +8647,11 @@ describe("bridge tools", () => {
 
     const activityVersion = jobs.getActivity(running.activityId)?.version as number;
     const missingReason = await client.callTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: {
+        scopeId: SCOPE_A,
         requestId: "61616161-6161-4161-8161-616161616161",
-        activityId: running.activityId,
+        target: { kind: "activity", id: running.activityId },
         expectedVersion: activityVersion
       }
     });
@@ -9948,10 +8659,11 @@ describe("bridge tools", () => {
     expect(JSON.stringify(missingReason)).toContain("reason");
     expect(upstream.aborts).toBe(0);
     const stale = await client.callTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: {
+        scopeId: SCOPE_A,
         requestId: "62626262-6262-4262-8262-626262626262",
-        activityId: running.activityId,
+        target: { kind: "activity", id: running.activityId },
         expectedVersion: activityVersion + 1,
         reason: "The user stopped this Activity"
       }
@@ -9960,11 +8672,11 @@ describe("bridge tools", () => {
     expect(JSON.stringify(stale)).toContain("Activity version changed");
     expect(upstream.aborts).toBe(0);
     const crossScope = await rawCallTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: {
         scopeId: SCOPE_B,
         requestId: "63636363-6363-4363-8363-636363636362",
-        activityId: running.activityId,
+        target: { kind: "activity", id: running.activityId },
         expectedVersion: activityVersion,
         reason: "The user stopped this Activity"
       }
@@ -9973,17 +8685,18 @@ describe("bridge tools", () => {
     expect(JSON.stringify(crossScope)).toContain("another conversation scope");
 
     const cancellationArguments = {
+      scopeId: SCOPE_A,
       requestId: "63636363-6363-4363-8363-636363636363",
-      activityId: running.activityId,
+      target: { kind: "activity", id: running.activityId },
       expectedVersion: activityVersion,
       reason: "The user stopped this Activity"
     } as const;
     const cancelled = parseToolJson(await client.callTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: cancellationArguments
     }));
     const cancellationReplay = parseToolJson(await client.callTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: cancellationArguments
     }));
     expect(cancellationReplay).toEqual(cancelled);
@@ -10109,7 +8822,7 @@ describe("bridge tools", () => {
       })
     ]));
     const changedRetry = await client.callTool({
-      name: "codex_activity_cancel",
+      name: "codex_cancel",
       arguments: { ...cancellationArguments, reason: "Different cancellation semantics" }
     });
     expect(changedRetry.isError).toBe(true);
@@ -12806,9 +11519,9 @@ describe("bridge tools", () => {
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).not.toHaveProperty("projects");
     const settingsView = parseToolJson(
-      await client.callTool({ name: "codex_settings", arguments: {} })
+      await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } })
     );
-    expect(settingsView.projects).toEqual([
+    expect(settingsView.capabilities.projectAvailability).toMatchObject([
       { name: "알파 저장소", available: true, archived: false },
       { name: "Beta Workspace", available: true, archived: false }
     ]);

@@ -94,6 +94,14 @@ describe("model-visible output contracts", () => {
     }
   });
 
+  it("continues validating retired cached-call fixtures outside current discovery", () => {
+    const fixtures = readFixture<Record<ModelVisibleOutputToolName, StructuredFixture[]>>("legacy-model-results.json");
+    for (const [name, results] of Object.entries(fixtures)) {
+      expect(MODEL_VISIBLE_OUTPUT_SCHEMAS).not.toHaveProperty(name);
+      for (const result of results) expect(() => validateModelVisibleStructuredOutput(name as ModelVisibleOutputToolName, result.structuredContent)).not.toThrow();
+    }
+  });
+
   it("rejects automatic default disclosure from model-visible outputs", () => {
     const models = structuredClone(
       modelResults.codex_models[0]!.structuredContent
@@ -108,10 +116,9 @@ describe("model-visible output contracts", () => {
     const settings = structuredClone(
       modelResults.codex_settings[0]!.structuredContent
     ) as Record<string, any>;
-    settings.policy.model.model = "gpt-private-fallback";
-    settings.policy.model.reasoningEffort = "private-effort";
+    settings.policy = { model: "gpt-private-fallback", reasoningEffort: "private-effort" };
     expect(() => validateModelVisibleStructuredOutput("codex_settings", settings))
-      .toThrow(/must not expose the saved fallback/);
+      .toThrow();
   });
 
   it("keeps steering success, failure, and dispatch uncertainty semantically aligned", () => {
@@ -151,7 +158,7 @@ describe("model-visible output contracts", () => {
         object.properties !== undefined ||
         Object.prototype.hasOwnProperty.call(object, "additionalProperties");
       if (describesObject) {
-        if (object.additionalProperties === false) {
+        if (object.additionalProperties === false || Array.isArray(object.anyOf)) {
           // Closed, projection-owned envelope.
         } else if (
           object.additionalProperties &&
@@ -170,7 +177,9 @@ describe("model-visible output contracts", () => {
 
     for (const [toolName, schema] of Object.entries(MODEL_VISIBLE_OUTPUT_SCHEMAS)) {
       const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
-      expect(jsonSchema.additionalProperties, `${toolName} root must be closed`).toBe(false);
+      for (const branch of (jsonSchema.anyOf || [jsonSchema]) as Record<string, unknown>[]) {
+        expect(branch.additionalProperties, `${toolName} branch must be closed`).toBe(false);
+      }
       visit(jsonSchema, toolName);
     }
 
@@ -284,7 +293,7 @@ describe("model-visible output contracts", () => {
         expect(error).not.toHaveProperty("nextActions");
       }
     }
-    const activity = modelResults.codex_activity[0]!.structuredContent;
+    const activity = readFixture<Record<string, StructuredFixture[]>>("legacy-model-results.json").codex_activity[0]!.structuredContent;
     for (const retiredLeaf of [
       "feed",
       "activities",

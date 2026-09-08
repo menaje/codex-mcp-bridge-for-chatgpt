@@ -12,7 +12,7 @@ const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
-const UI_RESOURCE_NAMES = ["settings", "activity", "dashboard"];
+const UI_RESOURCE_NAMES = ["settings", "activity", "dashboard", "question"];
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
@@ -183,7 +183,7 @@ export function validateReleaseManifest(value) {
     UI_RESOURCE_NAMES.some((name) => !uiResources.resources.includes(name)) ||
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
-    fail("uiResources.resources must contain settings, activity, and dashboard exactly once");
+    fail("uiResources.resources must contain settings, activity, dashboard, and question exactly once");
   }
 
   const release = requiredRecord(root.release, "release");

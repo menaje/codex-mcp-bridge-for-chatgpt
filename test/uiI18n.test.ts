@@ -349,11 +349,12 @@ describe("human-facing UI localization", () => {
       expect(bundle).not.toHaveProperty("settings.title");
     }
 
-    expect(DASHBOARD_CARD_HTML).toContain(
-      serializedUiTranslations([
-        "common", "usage", "cancellation", "dashboard", "activity.lastChanged"
-      ])
-    );
+    const dashboardBundles = JSON.parse(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
+    const dashboardKeys = [...DASHBOARD_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
+    for (const bundle of Object.values(dashboardBundles) as Record<string, string>[]) {
+      for (const key of dashboardKeys) expect(bundle[key], key).toBeTruthy();
+      expect(bundle).not.toHaveProperty("settings.title");
+    }
     expect(SETTINGS_CARD_HTML).not.toContain('"activity.title"');
     expect(ACTIVITY_CARD_HTML).not.toContain('"settings.title"');
     expect(DASHBOARD_CARD_HTML).not.toContain('"settings.title"');
@@ -376,7 +377,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
-    expect(SETTINGS_CARD_HTML).toContain('id="activity-card-visibility"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).toContain('id="use-priority-service-tier" type="checkbox"');
     expect(SETTINGS_CARD_HTML).toContain(
       'id="show-bridge-threads-in-codex-app" type="checkbox"'
@@ -395,7 +396,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
     expect(ACTIVITY_CARD_HTML).not.toContain("let viewMode=");
     expect(serialized).not.toContain("settings.cardView");
-    expect(SETTINGS_CARD_HTML).toContain('id="completion-handoff"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
     expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
     expect(SETTINGS_CARD_HTML).toContain('id="project-list"');
     expect(SETTINGS_CARD_HTML).toContain('id="add-project" type="button"');
@@ -441,7 +442,7 @@ describe("human-facing UI localization", () => {
     for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain("initialMetadata,navigator.language)");
     }
-    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_dashboard_snapshot"');
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(DASHBOARD_CARD_HTML).toContain('id="dashboard-content" hidden');
     expect(DASHBOARD_CARD_HTML).toContain('data-i18n="common.loading"');
     expect(DASHBOARD_CARD_HTML).toContain("function normalizeHostToolResult");
@@ -464,7 +465,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
     expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
     expect(DASHBOARD_CARD_HTML).toContain("dashboard.refreshFailedRetained");
-    expect(SETTINGS_CARD_HTML).toContain('callTool("codex_settings_snapshot"');
+    expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
     expect(SETTINGS_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
     expect(SETTINGS_CARD_HTML).toContain('id="settings-form" hidden');
