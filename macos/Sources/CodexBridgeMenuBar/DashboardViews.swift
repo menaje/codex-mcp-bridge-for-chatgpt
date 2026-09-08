@@ -1033,13 +1033,6 @@ private struct DashboardRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if let tokens = row.tokenUsage {
-                DisclosureGroup("세션 누적 토큰") {
-                    LabeledContent("입력 토큰", value: tokens.inputTokens.formatted())
-                    LabeledContent("캐시 토큰", value: tokens.cachedInputTokens.formatted())
-                    LabeledContent("출력 토큰", value: tokens.outputTokens.formatted())
-                }
-            }
             if let next = nextExecution {
                 Text(BridgeAppLocalization.format(
                     "다음 실행 설정: %@",
