@@ -1,5 +1,9 @@
 # Issue #69 completion review
 
+This is the **pre-integration review**. The subsequent integration resolved
+the code findings and is recorded in [integration and rollout preparation](2026-09-08-issue-69-integration.md).
+The actual-host and operating rollout conditions remain open.
+
 The overall issue is **not complete**. This review inspected `b6157b0`, the
 running service, GitHub acceptance criteria, and the independently implemented
 #70 follow-up at `e62b583`. It did not change the user's running service,

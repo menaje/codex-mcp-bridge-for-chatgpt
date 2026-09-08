@@ -172,7 +172,7 @@ try {
       await page.evaluate(()=>{window.__draftFocus=document.activeElement;window.dispatchEvent(new MessageEvent('message',{source:window.parent,data:{jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'en-US'}}}))});
     `);
     assert.equal(await evaluate("()=>document.activeElement===window.__draftFocus"), true, "host locale lost project focus");
-    assert.equal(await evaluate("()=>document.querySelector('#access-strategy option:checked').textContent"), "GPT chooses per task");
+    assert.equal(await evaluate("()=>document.querySelector('#access-strategy option:checked').textContent"), "Bridge default");
     await run(`await page.locator('input[data-effort="high"]').focus();await page.evaluate(()=>{window.__draftFocus=document.activeElement;window.dispatchEvent(new CustomEvent('openai:set_globals',{detail:{globals:{locale:'ja-JP'}}}))});`);
     assert.equal(await evaluate("()=>document.activeElement===window.__draftFocus"), true, "host locale replaced model controls");
     const draft = await evaluate("()=>({concurrency:document.querySelector('#concurrency').value,project:document.querySelector('.project-label-input')?.value,cwd:document.querySelector('.project-cwd-input')?.value,high:document.querySelector('input[data-effort=high]').checked,locale:document.documentElement.lang})");
