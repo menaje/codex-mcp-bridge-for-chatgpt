@@ -50,6 +50,15 @@ Task `selection`; automatic mode requires a permitted pair for fresh work.
 One returned model does not identify the policy mode. This read does not open a
 card or change policy; admission still rechecks current settings.
 
+Current Task model-policy failures return executable
+`codex_models({"contractVersion":"2","refresh":true})` recovery in the existing
+string `nextActions` contract. The resulting mode determines whether Task must
+omit or provide `selection`; an empty or unavailable catalog does not authorize
+changing saved settings. A fixed-policy per-call override instead instructs
+omitting `selection`. An unsupported retained-thread override uses the current
+nested `agent.context` field for an explicitly chosen fresh context. Retained
+pre-v2 callers keep their existing error guidance and response schema.
+
 `codex_user_answer.responseRef` distinguishes two existing operations: omission
 lists up to 20 unread references without bodies or consumption, while an exact
 reference returns the body and marks that response seen. Neither sends an answer

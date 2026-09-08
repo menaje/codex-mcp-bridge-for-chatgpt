@@ -1,4 +1,23 @@
 import * as z from "zod/v4";
+import type { ModelPolicyError } from "./modelPolicy.js";
+
+/** Current task recovery; retained pre-v2 callers keep their original guidance. */
+export function modelPolicyRecoveryActions(error: ModelPolicyError): string[] {
+  if (error.recovery === "omit-selection") {
+    return ["Omit selection and retry the same codex_task with a new requestId; the saved fixed selection will be applied. No settings change or connection Refresh is required."];
+  }
+  if (error.recovery === "fresh-context") {
+    return [
+      'Read codex_status({}) to inspect the retained work before deciding whether to replace its context.',
+      "If fresh context is authorized, retry codex_task for the same existing Agent with agent.context='fresh', an exact current project selector, and a new requestId. The current thread's transcript is not copied into fresh context."
+    ];
+  }
+  return [
+    'codex_models({"contractVersion":"2","refresh":true})',
+    "Use the returned selectionMode: fixed mode omits selection; automatic mode uses an exact returned model and reasoning effort within the user's delegation. Retry the same codex_task with a new requestId only after resolving this error; no connection Refresh is required.",
+    "If the catalog cannot be read or no compatible choice is returned, report that condition to the user. Open codex_settings({}) only if the user chooses to review or change the saved policy; do not automatically change Priority, permissions, or other saved settings."
+  ];
+}
 
 const identifier = z.string().trim().min(1).max(200);
 const safeReadArguments = {

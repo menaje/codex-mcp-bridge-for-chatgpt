@@ -12,7 +12,8 @@ import { BridgeStateStore } from "../src/stateStore.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { CodexJobRegistry } from "../src/tools.js";
-import { modelActionGuidance } from "../src/toolGuidance.js";
+import { modelActionGuidance, modelPolicyRecoveryActions } from "../src/toolGuidance.js";
+import { ModelPolicyError } from "../src/modelPolicy.js";
 import { projectRecoveryGuidance } from "../src/projectGuidance.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 
@@ -32,7 +33,7 @@ describe("tool guidance through production MCP", () => {
   const upstreamCall = vi.fn(async () => { throw new Error("Guidance must not execute Codex"); });
   const getCatalog = vi.fn(async () => catalog);
   const call = async (name: string, args: Record<string, unknown> = {}) =>
-    await client.callTool({ name, arguments: args, _meta: metadata }) as any;
+    await client.callTool({ name, arguments: JSON.parse(JSON.stringify(args)), _meta: metadata }) as any;
   const task = (args: Record<string, unknown> = {}) => call("codex_task", {
     requestId: randomUUID(), taskContractVersion: "2", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
     prompt: "Inspect the requested project", selection, ...args
@@ -187,6 +188,73 @@ describe("tool guidance through production MCP", () => {
     await client.listTools();
     expect((await call("codex_models", { contractVersion: "2", refresh: true })).structuredContent)
       .toMatchObject({ selectionMode: "fixed", models: [{ id: selection.model, efforts: [{ id: selection.reasoningEffort }] }] });
+  });
+
+  it.each([
+    ["missing", "MODEL_SELECTION_REQUIRED"],
+    ["unavailable", "MODEL_UNAVAILABLE"],
+    ["disallowed", "MODEL_POLICY_CHANGED"],
+    ["catalog-failure", "MODEL_UNAVAILABLE"]
+  ])("recovers %s model input through an executable v2 catalog read", async (scenario, code) => {
+    const alpha = await add("Alpha");
+    if (scenario === "disallowed") getCatalog.mockResolvedValue({ ...catalog, models: catalog.models.map(model => ({
+      ...model, supportedReasoningEfforts: [...model.supportedReasoningEfforts, { effort: "low" }]
+    })) });
+    if (scenario === "catalog-failure") getCatalog.mockRejectedValueOnce(new Error("Fixture catalog unavailable"));
+    const result = await task({ project: { name: alpha.name, projectRef: alpha.projectRef, projectRevision: alpha.projectRevision },
+      selection: scenario === "missing" ? undefined : scenario === "catalog-failure" ? selection : {
+        model: selection.model, reasoningEffort: scenario === "disallowed" ? "low" : "missing-effort"
+      } });
+    expect(result.structuredContent).toMatchObject({ error: { code }, delivery: "none", jobId: null });
+    const [read, ...remaining] = result.structuredContent.nextActions as string[];
+    expect(read).toBe('codex_models({"contractVersion":"2","refresh":true})');
+    const args = JSON.parse(read.slice("codex_models(".length, -1));
+    const recovered = await call("codex_models", args);
+    expect(recovered.structuredContent).toMatchObject({ selectionMode: "automatic",
+      models: [{ id: selection.model, efforts: [{ id: selection.reasoningEffort }] }] });
+    expect(remaining.join(" ")).not.toContain("Refresh the model catalog and settings");
+    expect(remaining.join(" ")).toContain("only after resolving this error");
+  });
+
+  it("recovers a fixed override without allowing a per-call replacement or changing settings", async () => {
+    await add("Alpha");
+    settings.update({ modelPolicy: { mode: "fixed", selection, constraints: { allowDelegation: false } } }, settings.current.revision);
+    const before = settings.current;
+    const result = await task();
+    expect(result.structuredContent).toMatchObject({ error: { code: "MODEL_SELECTION_FORBIDDEN" }, delivery: "none", jobId: null });
+    expect(result.structuredContent.nextActions).toEqual([expect.stringContaining("Omit selection and retry")]);
+    expect(JSON.stringify(result.structuredContent.nextActions)).not.toContain("codex_settings(");
+    expect(settings.current).toEqual(before);
+  });
+
+  it.each(["priority", "fixed-unavailable"])("keeps %s settings when the catalog has no compatible choice", async (scenario) => {
+    const alpha = await add("Alpha");
+    if (scenario === "priority") settings.update({ usePriorityServiceTier: true }, settings.current.revision);
+    else {
+      settings.update({ modelPolicy: { mode: "fixed", selection, constraints: { allowDelegation: false } } }, settings.current.revision);
+      getCatalog.mockResolvedValue({ ...catalog, models: [] });
+    }
+    const before = settings.current;
+    const result = await task({ project: { name: alpha.name, projectRef: alpha.projectRef, projectRevision: alpha.projectRevision },
+      selection: scenario === "priority" ? selection : undefined });
+    expect(result.structuredContent).toMatchObject({ error: { code: "MODEL_UNAVAILABLE" }, delivery: "none", jobId: null });
+    expect(result.structuredContent.nextActions[0]).toBe('codex_models({"contractVersion":"2","refresh":true})');
+    expect(result.structuredContent.nextActions.join(" ")).not.toContain("Disable Priority");
+    expect(result.structuredContent.nextActions.join(" ")).toContain("only if the user chooses");
+    expect((await call("codex_models", { contractVersion: "2", refresh: true })).structuredContent)
+      .toMatchObject({ selectionMode: scenario === "priority" ? "automatic" : "fixed", models: [] });
+    expect(settings.current).toEqual(before);
+  });
+
+  it("preserves legacy error guidance while current fresh-context guidance uses the nested input", () => {
+    const original = ["Start explicit fresh context with contextMode='fresh'."];
+    const error = new ModelPolicyError("THREAD_OVERRIDE_UNSUPPORTED", "Fixture retained backend", 1, original, "fresh-context");
+    const current = modelPolicyRecoveryActions(error);
+    expect(current[0]).toContain("codex_status({})");
+    expect(current.join(" ")).toContain("agent.context='fresh'");
+    expect(current.join(" ")).not.toContain("contextMode=");
+    expect(current.join(" ")).toContain("transcript is not copied");
+    expect(error.nextActions).toEqual(original);
   });
 
   it("publishes exact, safe read actions and turns retained incomplete cancellation actions into inspection", async () => {

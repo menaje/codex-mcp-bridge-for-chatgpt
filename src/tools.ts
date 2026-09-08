@@ -1,5 +1,5 @@
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
-import { modelActionGuidance } from "./toolGuidance.js";
+import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
 import { objectSchemaUnion } from "./objectSchemaUnion.js";
 import { installLegacyToolCompatibility } from "./legacyToolCompatibility.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
@@ -8661,7 +8661,8 @@ function validateTaskSelectionInput(
       "MODEL_SELECTION_FORBIDDEN",
       "This bridge is in fixed model mode and does not accept a per-call model selection.",
       preferences.revision,
-      ["Omit selection and retry; the saved fixed selection will be applied."]
+      ["Omit selection and retry; the saved fixed selection will be applied."],
+      "omit-selection"
     );
   }
   if (
@@ -16791,17 +16792,7 @@ function modelPolicyErrorResult(
     code: error.code,
     message: error.message.replace(`${error.code}: `, ""),
     policyRevision: error.policyRevision,
-    nextActions: stableContract
-      ? error.nextActions.map((action) => {
-          if (action.includes("Refresh the ChatGPT developer-mode connection")) {
-            return "Retry this same stable codex_task contract with a new requestId; no connection Refresh is required.";
-          }
-          return action.replace(
-            "exposed by the current codex_task descriptor",
-            "allowed by the current saved policy and live model catalog"
-          );
-        })
-      : error.nextActions
+    nextActions: stableContract ? modelPolicyRecoveryActions(error) : error.nextActions
   });
 }
 

@@ -98,6 +98,8 @@ export type ModelPolicyErrorCode =
   | "MODEL_UNAVAILABLE"
   | "THREAD_OVERRIDE_UNSUPPORTED";
 
+export type ModelPolicyRecovery = "catalog" | "omit-selection" | "fresh-context";
+
 export class ModelPolicyError extends Error {
   readonly name = "ModelPolicyError";
 
@@ -105,7 +107,8 @@ export class ModelPolicyError extends Error {
     readonly code: ModelPolicyErrorCode,
     message: string,
     readonly policyRevision: number,
-    readonly nextActions: string[]
+    readonly nextActions: string[],
+    readonly recovery: ModelPolicyRecovery = "catalog"
   ) {
     super(
       code === "MODEL_SELECTION_REQUIRED"
@@ -233,7 +236,8 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
         "MODEL_SELECTION_FORBIDDEN",
         "This bridge is in fixed model mode and does not accept a per-call model selection.",
         input.policyRevision,
-        ["Omit selection and retry; the saved fixed selection will be applied."]
+        ["Omit selection and retry; the saved fixed selection will be applied."],
+        "omit-selection"
       );
     }
     if (catalogSupportsSelection(input.catalog, policy.selection)) {
@@ -321,7 +325,8 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
         "THREAD_OVERRIDE_UNSUPPORTED",
         `Backend ${input.backendKind} cannot apply the selected model configuration to the continued thread.`,
         input.policyRevision,
-        ["Start explicit fresh context with contextMode='fresh'.", "Use the App Server backend for turn-level selection changes."]
+        ["Start explicit fresh context with contextMode='fresh'.", "Use the App Server backend for turn-level selection changes."],
+        "fresh-context"
       );
     }
   }

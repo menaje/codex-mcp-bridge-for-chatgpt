@@ -4720,7 +4720,7 @@ describe("bridge tools", () => {
             code: "MODEL_SELECTION_REQUIRED",
             message: "Automatic policy requires an exact model and reasoning effort."
           },
-          nextActions: ["codex_models"]
+          nextActions: expect.arrayContaining(['codex_models({"contractVersion":"2","refresh":true})'])
         }
       });
       expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);

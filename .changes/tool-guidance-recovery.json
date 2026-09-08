@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "minor",
-  "summary": "Clarify consolidated tool descriptions and project recovery; add opt-in model selection policy discovery without opening settings.",
+  "summary": "Clarify consolidated tool descriptions, project and model-error recovery; add opt-in model selection policy discovery without opening settings.",
   "breaking": false,
   "migration": null
 }
