@@ -10,7 +10,7 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 15;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 16;
 export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 9;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const SETTINGS_CARD_HTML_MAX_BYTES = 192 * 1_024;
@@ -26,7 +26,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure named projects, saved access, model/effort policy, independent Priority processing, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for ${PRODUCT_INFO.displayName}.`,
+    `Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency, and Activity-card visibility for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": true,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",

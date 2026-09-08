@@ -69,6 +69,14 @@ of the row. Same-Activity history omits the already visible Activity title;
 distinct same-title Activities retain a neutral previous-Activity boundary, and
 every historical turn keeps its own model/reasoning line or an unavailable label.
 
+**Fast mode** uses the localized name **빠른 처리 (Fast)** in Korean Settings.
+The menu bar and Activity/Dashboard cards show a localized lightning badge beside
+the model and reasoning level when that execution captured `priority` or `fast`.
+Changing the preference updates supported next-run settings without relabelling
+running or historical work. Settings explains that the model and reasoning level
+stay the same while usage or costs may increase. All nine interface languages
+use matching names in native Settings and the Settings card.
+
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content plus a small Server tab for the
 backend and maximum access. General changes save automatically; the Server tab

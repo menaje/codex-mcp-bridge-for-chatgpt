@@ -961,6 +961,36 @@ final class AppPresentationTests: XCTestCase {
         ))
     }
 
+    func testFastModeUsesEachExecutionAndDetectsNextRunChanges() throws {
+        let standard = try dashboardExecution(
+            model: "gpt-5.6", displayName: nil, effort: "high",
+            reroutedModel: nil, isCurrent: true
+        )
+        XCTAssertNil(standard.serviceTier)
+        XCTAssertFalse(DashboardExecutionPresentation.usesFastProcessing(standard))
+        for tier in ["priority", "fast", " FAST ", "PRIORITY"] {
+            let fast = try dashboardExecution(
+                model: "gpt-5.6", displayName: nil, effort: "high",
+                reroutedModel: nil, isCurrent: true, serviceTier: tier
+            )
+            XCTAssertTrue(DashboardExecutionPresentation.usesFastProcessing(fast))
+            XCTAssertNotNil(DashboardExecutionPresentation.next(current: fast, latest: standard))
+            XCTAssertNotNil(DashboardExecutionPresentation.next(current: standard, latest: fast))
+            let historicalFast = try dashboardExecution(
+                model: "gpt-5.6", displayName: nil, effort: "high",
+                reroutedModel: nil, isCurrent: false, serviceTier: "priority"
+            )
+            XCTAssertNil(DashboardExecutionPresentation.next(current: fast, latest: historicalFast))
+        }
+        for tier in ["default", "auto", "flex", "ultrafast", ""] {
+            let execution = try dashboardExecution(
+                model: "gpt-5.6", displayName: nil, effort: "high",
+                reroutedModel: nil, isCurrent: false, serviceTier: tier
+            )
+            XCTAssertFalse(DashboardExecutionPresentation.usesFastProcessing(execution))
+        }
+    }
+
     func testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution() throws {
         let firstExecution = try dashboardExecution(
             model: "gpt-5.6-sol",
@@ -1700,7 +1730,8 @@ private func dashboardExecution(
     displayName: String?,
     effort: String,
     reroutedModel: String?,
-    isCurrent: Bool
+    isCurrent: Bool,
+    serviceTier: String? = nil
 ) throws -> DashboardExecution {
     var object: [String: Any] = [
         "model": model,
@@ -1708,6 +1739,7 @@ private func dashboardExecution(
         "isCurrent": isCurrent
     ]
     if let displayName { object["modelDisplayName"] = displayName }
+    if let serviceTier { object["serviceTier"] = serviceTier }
     if let reroutedModel { object["reroutedModel"] = reroutedModel }
     return try JSONDecoder().decode(
         DashboardExecution.self,

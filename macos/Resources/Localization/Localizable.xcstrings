@@ -1753,6 +1753,122 @@
         }
       }
     },
+    "빠른 처리": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schnell"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rápido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rapide"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高速処理"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빠른 처리"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rápido"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速处理"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速處理"
+          }
+        }
+      }
+    },
+    "빠른 처리 (Fast)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schnellmodus (Fast)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast mode"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modo rápido (Fast)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mode rapide (Fast)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高速処理 (Fast)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빠른 처리 (Fast)"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modo rápido (Fast)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速处理 (Fast)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快速處理 (Fast)"
+          }
+        }
+      }
+    },
     "중간": {
       "localizations": {
         "en": {
@@ -1801,6 +1917,64 @@
           "stringUnit": {
             "state": "translated",
             "value": "Médio"
+          }
+        }
+      }
+    },
+    "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Führt unterstützte Modelle schneller aus. Modell und Denkstufe bleiben gleich; Verbrauch oder Kosten können steigen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ejecuta más rápido los modelos compatibles. El modelo y el nivel de razonamiento se mantienen; el consumo o el coste pueden aumentar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accélère les modèles compatibles. Le modèle et le niveau de raisonnement restent identiques ; la consommation ou les coûts peuvent augmenter."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "対応モデルをより速く実行します。モデルと推論レベルは維持されますが、使用量や料金が増える場合があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Executa os modelos compatíveis mais rapidamente. O modelo e o nível de raciocínio permanecem iguais; o consumo ou o custo podem aumentar."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更快地运行支持的模型。模型和推理强度保持不变，用量或费用可能增加。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更快地執行支援的模型。模型與推理強度保持不變，用量或費用可能增加。"
           }
         }
       }
@@ -5182,58 +5356,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Não foi possível conectar ao servidor Bridge"
-          }
-        }
-      }
-    },
-    "빠른 처리 우선 사용": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Prefer Fast Processing"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "高速処理を優先"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "优先快速处理"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "優先快速處理"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Preferir procesamiento rápido"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Privilégier le traitement rapide"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Schnelle Verarbeitung bevorzugen"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Preferir processamento rápido"
           }
         }
       }
@@ -11006,58 +11128,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Uso semanal"
-          }
-        }
-      }
-    },
-    "지원되는 모델에서 Priority/Fast 처리 계층을 요청합니다.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Requests the Priority/Fast service tier on supported models."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "対応モデルでPriority/Fast処理階層を要求します。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "为支持的模型请求 Priority/Fast 处理层级。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "為支援的模型請求 Priority/Fast 處理層級。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Solicita el nivel de procesamiento Priority/Fast en los modelos compatibles."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Demande le niveau de traitement Priority/Fast pour les modèles compatibles."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Fordert für unterstützte Modelle die Verarbeitungsstufe Priority/Fast an."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Solicita a camada de processamento Priority/Fast nos modelos compatíveis."
           }
         }
       }

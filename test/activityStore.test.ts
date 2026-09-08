@@ -493,7 +493,7 @@ describe("Activity SQLite state", () => {
       ...job("job-a", "request-a", ACTIVITY_A, "completed", 3),
       createdAt: 1,
       executionDecision: {
-        effectiveSelection: { model: "gpt-test", reasoningEffort: "high" }
+        effectiveSelection: { model: "gpt-test", reasoningEffort: "high", serviceTier: "priority" }
       },
       publicEvents: [{
         type: "model",
@@ -514,6 +514,7 @@ describe("Activity SQLite state", () => {
         execution: {
           model: "gpt-test",
           reasoningEffort: "high",
+          serviceTier: "priority",
           reroutedModel: "gpt-rerouted"
         }
       })

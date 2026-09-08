@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { usesFastProcessing } from "../src/executionPresentation.js";
 import {
   ACTIVITY_CARD_HTML,
   ACTIVITY_CARD_HTML_MAX_BYTES,
@@ -985,6 +987,30 @@ describe("human-facing UI localization", () => {
     )).toEqual({ kind: "boundary" });
   });
 
+  it("uses the same localized Fast mode names in native settings and both cards", () => {
+    const native = JSON.parse(readFileSync(new URL("../macos/Resources/Localization/Localizable.xcstrings", import.meta.url), "utf8"));
+    const hint = "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.";
+    for (const [locale, bundle] of Object.entries(UI_TRANSLATIONS)) {
+      for (const [webKey, nativeKey] of [
+        ["settings.usePriority", "빠른 처리 (Fast)"],
+        ["settings.usePriorityHint", hint],
+        ["dashboard.execution.fast", "빠른 처리"]
+      ] as const) {
+        expect(bundle[webKey], locale).toBe(native.strings[nativeKey].localizations[locale].stringUnit.value);
+      }
+      expect(bundle["settings.usePriority"]).toContain("Fast");
+      expect(bundle["settings.automaticNotice"]).not.toContain("Priority");
+      expect(bundle["settings.warning.legacyModel"]).not.toContain("Priority");
+    }
+    for (const serviceTier of ["priority", "fast", " FAST ", "PRIORITY"]) {
+      expect(usesFastProcessing({ serviceTier })).toBe(true);
+    }
+    for (const serviceTier of [undefined, null, "", "default", "auto", "flex", "ultrafast", 1]) {
+      expect(usesFastProcessing({ serviceTier })).toBe(false);
+    }
+    expect(usesFastProcessing(undefined)).toBe(false);
+  });
+
   it("shows next-run settings only when the current selection differs from the last run", () => {
     const latest = {
       model: "gpt-5.6-sol",
@@ -1004,6 +1030,12 @@ describe("human-facing UI localization", () => {
     };
 
     expect(dashboardExecutionsEqual(latest, sameCurrent)).toBe(true);
+    expect(shouldShowDashboardNextExecution({ ...sameCurrent, serviceTier: "priority" }, latest)).toBe(true);
+    expect(shouldShowDashboardNextExecution(sameCurrent, { ...latest, serviceTier: "fast" })).toBe(true);
+    expect(dashboardExecutionsEqual(
+      { ...latest, serviceTier: "priority" },
+      { ...sameCurrent, serviceTier: " FAST " }
+    )).toBe(true);
     expect(shouldShowDashboardNextExecution(sameCurrent, latest)).toBe(false);
     expect(shouldShowDashboardNextExecution(changedCurrent, latest)).toBe(true);
     expect(shouldShowDashboardNextExecution(sameCurrent, undefined)).toBe(true);

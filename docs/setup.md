@@ -272,7 +272,7 @@ This choice cannot exceed **Server → Maximum Allowed Access**. For example, se
 - **Fixed** chooses one model and reasoning level for new work.
 - **Automatic** lets ChatGPT choose from either the visible catalog or an explicit allowlist.
 - **Allow Ultra reasoning and sub-agent delegation** exposes Ultra where supported and permits delegated sub-agents.
-- **Prefer Fast Processing** requests the Priority/Fast service tier only for models that support it.
+- **Fast mode** requests faster processing for supported models. The model and reasoning level stay the same; usage or costs may increase. Its localized lightning badge appears beside the execution's model and effort in the menu bar and cards.
 - **Refresh model list** reloads the currently available catalog.
 
 Existing Agents keep execution context according to their continuation rules. Model availability can change with the installed Codex version and service catalog.
