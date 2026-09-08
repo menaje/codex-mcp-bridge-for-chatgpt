@@ -17,10 +17,12 @@ server.registerTool("input_probe", {
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 }, async () => {
+  // Actual-host acceptance includes manual card navigation and submission.
+  // Keep the original request alive while the operator selects the test value.
   const response = await server.server.elicitInput({
     mode: "form", message: "원본 입력 검증: 파랑 또는 빨강을 선택하세요. 실제 사용자 정보는 입력하지 마세요.",
     requestedSchema: { type: "object", properties: { color: { type: "string", title: "검증 색상", enum: ["blue", "red"] } }, required: ["color"] }
-  });
+  }, { timeout: 10 * 60 * 1000 });
   return { content: [{ type: "text", text: `ORIGINAL_INPUT:${response.action}:${response.content?.color || "none"}` }] };
 });
 await server.connect(new StdioServerTransport());
