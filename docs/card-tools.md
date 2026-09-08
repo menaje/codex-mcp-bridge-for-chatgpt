@@ -135,6 +135,15 @@ There is no new database schema migration in #69 (the #68 baseline is schema 13)
 
 ## Completion-flow rollout gate
 
+The subsequent [PR #71 actual-host run](audits/2026-09-08-pr-71-runtime-acceptance.md)
+verified the current active-response path: background execution, leaving the
+work conversation, exact result retrieval, GPT final response and ChatGPT's
+unread completion indication. The retained global overview and graceful restart
+with active work also passed. The user authorized dev integration and local
+operating rollout on this evidence. Issue #69 remains open for independent
+native banners, already-ended-response Job wake and the remaining original
+control scenarios; these are not claimed by that development rollout.
+
 The user reports using both native Codex/macOS and ChatGPT notifications.
 The inspected saved policy is `background-only` plus `auto-handoff`, so removing
 the old mounted card's completion handoff silently would be a regression.

@@ -1,5 +1,9 @@
 # Issue #70 actual-host verification after unlock
 
+This records the earlier temporary activation. The subsequent successful
+current-PR execution, ChatGPT unread indication and graceful active-work restart
+are recorded in [PR #71 runtime acceptance](2026-09-08-pr-71-runtime-acceptance.md).
+
 The integrated candidate's Settings description, model catalog v2 and independent
 question flow passed on authenticated ChatGPT Web through the in-app browser.
 This is actual host evidence, not the earlier local renderer fixtures. Final

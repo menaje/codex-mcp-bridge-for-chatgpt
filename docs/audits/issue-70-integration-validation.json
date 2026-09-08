@@ -26,7 +26,7 @@
   "originalAuditFilesPreserved": true,
   "liveRuntimeChangedByThisTask": true,
   "actualChatGptAdoptionVerified": true,
-  "remaining": "Final dev merge and operating rollout remain pending issue 69 execution/notification/control gates; candidate runtime and discovery are restored after the host execution rejection.",
+  "remaining": "Issue #70 is ready for dev integration after the current-PR execution, ChatGPT unread indication and active-work drain/restart verification. Independent native banners, ended-response Job wake and original live control scenarios remain tracked in issue #69.",
   "actualHostBlocker": {
     "reason": "ChatGPT automatic review rejected the single synthetic codex_task before admission",
     "lockResolved": true,
@@ -35,9 +35,10 @@
     "retried": false,
     "activeWorkRestartAttempted": false,
     "operatingDeploymentClaimed": false,
-    "evidence": "issue-70-unlocked-host.json"
+    "evidence": "issue-70-unlocked-host.json",
+    "historical": true
   },
-  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed.",
+  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed. Current-PR background execution, exact result retrieval, unread indication, retained global overview and active-work graceful restart subsequently passed.",
   "latestDevelopmentIntegration": {
     "commit": "d0bd2d7534f41b6c2abeb77f1f24d351d31010a9",
     "developmentCommit": "be98e0008bca0306598718d659ca49c2f7f6c028",
@@ -68,5 +69,6 @@
       "removedToolSubtotalReferenceFixed": true,
       "nonFiniteSubtotalRejected": true
     }
-  }
+  },
+  "latestActualHostEvidence": "pr-71-runtime-acceptance.json"
 }
