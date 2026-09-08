@@ -1,5 +1,5 @@
 {
-  "auditVersion": 4,
+  "auditVersion": 5,
   "questionFeatureIssue": 68,
   "issue": 36,
   "regressionIssue": 38,
@@ -8,6 +8,12 @@
     "commit": "8a2cf54",
     "normativeClient": "ChatGPT",
     "measurement": "Buffer.byteLength(JSON.stringify(value), 'utf8')",
+    "schemaInventory": {
+      "modelTools": 12,
+      "currentAppTools": 5,
+      "compatibilityDescriptorsIncluded": false,
+      "scope": "Current exported output contracts; retained compatibility discovery is measured separately in the issue-69 inventory."
+    },
     "fixtureProfile": "bounded deterministic W0/W1/W2/W3 plus issue-38 answer-recovery fixtures",
     "phasesIncluded": [
       "W0",
@@ -110,61 +116,34 @@
     "schemaBytes": {
       "modelVisible": {
         "byTool": {
-          "codex_activity": 638,
-          "codex_activity_cancel": 887,
           "codex_activity_update": 887,
           "codex_agent": 641,
           "codex_answer": 511,
           "codex_ask_user": 422,
-          "codex_cancel": 641,
+          "codex_cancel": 1495,
           "codex_dashboard": 408,
-          "codex_input": 2002,
-          "codex_models": 1239,
-          "codex_settings": 1724,
-          "codex_status": 3586,
+          "codex_models": 2595,
+          "codex_settings": 232,
+          "codex_status": 6423,
           "codex_steer": 1360,
           "codex_task": 2416,
           "codex_user_answer": 1357
         },
-        "totalBytes": 18719
+        "totalBytes": 18747
       },
       "appOnly": {
         "byTool": {
-          "codex_activity_handoff": 910,
-          "codex_activity_job_cancel": 2218,
-          "codex_activity_rehydrate": 4883,
-          "codex_activity_snapshot": 4883,
-          "codex_agent_recovery_detach": 2218,
-          "codex_background_process_terminate": 2218,
-          "codex_dashboard_snapshot": 43267,
-          "codex_diagnostics": 6446,
           "codex_interaction_respond": 2218,
-          "codex_job_steer": 2218,
-          "codex_question_card": 270,
-          "codex_question_notify": 315,
-          "codex_question_submit": 270,
-          "codex_settings_snapshot": 11175,
+          "codex_question_action": 552,
+          "codex_ui_read": 54841,
+          "codex_ui_stop": 2218,
           "codex_update_settings": 11175
         },
-        "totalBytes": 94684
+        "totalBytes": 71004
       }
     },
     "resultBytes": {
       "structuredContent": {
-        "codex_activity": {
-          "byFixture": {
-            "empty-activity-view": 128
-          },
-          "maxBytes": 128,
-          "minBytes": 128
-        },
-        "codex_activity_cancel": {
-          "byFixture": {
-            "activity-cancelled": 322
-          },
-          "maxBytes": 322,
-          "minBytes": 322
-        },
         "codex_activity_update": {
           "byFixture": {
             "activity-updated": 250
@@ -208,13 +187,6 @@
           "maxBytes": 323,
           "minBytes": 323
         },
-        "codex_input": {
-          "byFixture": {
-            "gpt-question-flow": 416
-          },
-          "maxBytes": 416,
-          "minBytes": 416
-        },
         "codex_models": {
           "byFixture": {
             "current-model-catalog": 238
@@ -224,20 +196,21 @@
         },
         "codex_settings": {
           "byFixture": {
-            "compact-settings": 391
+            "thin-settings-opener": 33
           },
-          "maxBytes": 391,
-          "minBytes": 391
+          "maxBytes": 33,
+          "minBytes": 33
         },
         "codex_status": {
           "byFixture": {
             "completed-job": 755,
             "failed-job": 636,
+            "gpt-question-flow": 416,
             "overview": 455,
             "running-job": 532
           },
           "maxBytes": 755,
-          "minBytes": 455
+          "minBytes": 416
         },
         "codex_steer": {
           "byFixture": {
@@ -355,11 +328,18 @@
   "finalGenerationBudget": {
     "historicalIssue36ReductionTargetPercent": 40,
     "targetModelVisibleSchemaBytes": 19500,
-    "actualModelVisibleSchemaBytes": 18719,
-    "questionToolsSchemaBytes": 4292,
-    "headroomBytes": 781,
-    "enforcedAt": "issue68-question-orchestration",
-    "liveChatGptQuestionWakeVerified": false,
+    "actualModelVisibleSchemaBytes": 18747,
+    "dedicatedQuestionTools": [
+      "codex_answer",
+      "codex_ask_user",
+      "codex_user_answer"
+    ],
+    "dedicatedQuestionToolsSchemaBytes": 2290,
+    "sharedQuestionInputSchema": "codex_status",
+    "headroomBytes": 753,
+    "enforcedAt": "issue69-tool-consolidation-issue70-guidance",
+    "liveHostEvidenceProducedByThisAudit": false,
+    "separateLiveQuestionEvidence": "docs/audits/issue-70-unlocked-host.json",
     "passed": true
   }
 }

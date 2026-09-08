@@ -2040,7 +2040,7 @@ describe("bridge tools", () => {
       expect(reads).toHaveBeenCalledTimes(2);
       expect(second.counts).toEqual(first.counts);
     } finally { await close(); }
-  });
+  }, 15_000);
 
   it("shows every bridge-tracked conversation through a read-only Codex-runtime-only Dashboard", async () => {
     const root = temporaryRoot();

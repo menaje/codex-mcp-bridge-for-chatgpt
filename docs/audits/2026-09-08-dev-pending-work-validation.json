@@ -1,0 +1,106 @@
+{
+  "date": "2026-09-08",
+  "baseCommit": "323d55c725acfa82e81a0e3d350adf16f53468e7",
+  "targetBranch": "dev",
+  "scope": [
+    "CLI permission admission and effective policy verification",
+    "GPT question and user-answer orchestration",
+    "HTTP managed tunnel and shared native/runtime admission",
+    "Card freshness, recovery, and stale settings responses",
+    "Original feasibility and tool-guidance audit artifacts"
+  ],
+  "validation": {
+    "node": {
+      "command": "npm run check",
+      "files": 61,
+      "passed": 750,
+      "failed": 0,
+      "discoveryDirectory": "test"
+    },
+    "macos": {
+      "command": "npm run macos:check",
+      "total": 101,
+      "passed": 99,
+      "skipped": 2,
+      "failed": 0,
+      "skippedOptIns": [
+        "live companion socket",
+        "live HTTPS pairing invitation"
+      ]
+    },
+    "localization": {
+      "command": "npm run macos:localizations:check",
+      "strings": 570,
+      "languages": 9
+    },
+    "appServer": {
+      "command": "npm run app-server:compat:check",
+      "cliVersion": "0.153.3",
+      "jsonSchemas": 416,
+      "typescriptSchemas": 827
+    },
+    "outputContracts": {
+      "command": "npx tsx scripts/output-contract-audit.ts --check",
+      "modelVisibleSchemaBytes": 18719,
+      "modelVisibleSchemaBudget": 19500,
+      "appOnlySchemaBytes": 95164
+    },
+    "browser": {
+      "host": "local mocked ChatGPT host",
+      "totalScenarios": 44,
+      "groups": [
+        {
+          "name": "card information",
+          "scenarios": 5,
+          "built": true
+        },
+        {
+          "name": "interaction inputs",
+          "scenarios": 4,
+          "built": false
+        },
+        {
+          "name": "GPT question card",
+          "scenarios": 6,
+          "built": true,
+          "codexCalls": 0
+        },
+        {
+          "name": "card resilience",
+          "scenarios": 29,
+          "built": true
+        }
+      ]
+    },
+    "release": {
+      "stage": "development",
+      "currentVersion": "0.3.0",
+      "fragments": 40,
+      "plannedVersion": "0.4.0",
+      "plannedCandidate": "0.4.0-rc.1",
+      "candidateCreated": false
+    },
+    "whitespace": {
+      "command": "git diff --cached --check -- . ':(exclude)ui-resources/**'",
+      "passed": true,
+      "immutableSnapshotsWithPreservedTrailingWhitespace": 5
+    }
+  },
+  "openIssues": [
+    9,
+    11,
+    15,
+    44,
+    52,
+    53,
+    68,
+    69,
+    70
+  ],
+  "separateDraftPullRequest": 71,
+  "exclusions": [
+    "No authenticated model or actual ChatGPT interaction was rerun during this commit verification.",
+    "No production app replacement, runtime restart, candidate publication, tag, or release promotion was performed.",
+    "Issue 69 and 70 final implementations remain in draft PR 71, not this baseline commit."
+  ]
+}
