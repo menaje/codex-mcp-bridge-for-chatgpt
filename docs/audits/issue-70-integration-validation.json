@@ -37,5 +37,36 @@
     "operatingDeploymentClaimed": false,
     "evidence": "issue-70-unlocked-host.json"
   },
-  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed."
+  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed.",
+  "latestDevelopmentIntegration": {
+    "commit": "d0bd2d7534f41b6c2abeb77f1f24d351d31010a9",
+    "developmentCommit": "be98e0008bca0306598718d659ca49c2f7f6c028",
+    "alreadyIntegratedSnapshotBase": "2c3658b8e0996cf287d577262e198bb7ef5f5bc7",
+    "contentMergeUsedVerifiedSnapshotBase": true,
+    "productSrcUnchangedFromHostCandidate": true,
+    "localizationSemanticsUnchanged": true,
+    "repositoryTests": {
+      "command": "npm run check",
+      "files": 63,
+      "passed": 780,
+      "failed": 0,
+      "testDiscoveryDirectory": "test"
+    },
+    "nativeLocalization": {
+      "passed": true,
+      "strings": 572,
+      "languages": 9,
+      "compilationPassed": true
+    },
+    "outputContractAudit": {
+      "passed": true,
+      "auditVersion": 5,
+      "modelBytes": 18747,
+      "modelBudgetBytes": 19500,
+      "currentAppBytes": 71004,
+      "dedicatedQuestionBytes": 2290,
+      "removedToolSubtotalReferenceFixed": true,
+      "nonFiniteSubtotalRejected": true
+    }
+  }
 }

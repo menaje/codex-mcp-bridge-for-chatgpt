@@ -88,3 +88,34 @@ description. No final dev merge or operating rollout is claimed.
 
 See [machine-readable evidence](issue-70-unlocked-host.json). The validated
 product source and its 780-test/macOS results are unchanged by this documentation.
+
+## Parallel dev publication and audit correction
+
+During final publication, `origin/dev` advanced to `be98e00`, independently
+committing the original pending work already integrated from snapshot `2c3658b`.
+Using only the Git ancestry merge base would apply that work twice and produce
+24 apparent conflicts. The exact snapshot-to-dev comparison had only seven
+additional files, and parsed localization data was identical. Content integration
+used that verified snapshot base, retained the current localization values with
+the dev formatting, and included the new test discovery, fixture timeout and
+validation records. Merge `d0bd2d7` records the real dev parent. Product `src`
+remains byte-identical to the host-tested candidate; native localization meaning
+and Swift source are unchanged.
+
+The updated repository-only test command passed all **780 tests in 63 files**,
+and native compilation/localization passed **572 strings in nine languages**.
+The upstream 15-second timeout for the 24-Job metadata fixture was retained;
+its read-count assertions remain unchanged. This is separate from the earlier
+f5027b3 run, which did not increase that timeout.
+
+The separate output-contract audit exposed an integration omission: its question
+subtotal still referenced retired `codex_input`, producing a non-finite value,
+and its baseline still listed the old tools. Audit generation 5 now measures the
+12 current model and five current app output contracts, excludes migration
+metadata explicitly, and counts question input once inside `codex_status`.
+Dedicated question schemas must have valid positive byte counts. The budget
+remains **19,500 bytes**; current model schemas use **18,747 bytes**, current app
+schemas **71,004 bytes**, and dedicated question schemas **2,290 bytes**. The
+regenerated baseline passes `--check`. This audit reports fixture evidence
+separately from the actual-host question evidence above; no removed MCP tool was
+restored and no runtime execution behavior changed.
