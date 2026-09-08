@@ -13,21 +13,33 @@ The baseline was measured before changes, and its counts are retained in
 in [after](issue-69-card-tools-after.json) and
 [operator](issue-69-card-tools-operator.json).
 
-| Inventory | Before | Current default | Operator mode |
+| Inventory | Before | Migration default | Operator mode |
 | --- | ---: | ---: | ---: |
 | Model descriptors | 15 | 12 | 12 |
-| App-only descriptors | 15 | 5 | 7 |
-| Total advertised descriptors | 30 | 17 | 19 |
-| Serialized descriptor bytes, summed per tool | 179,781 | 137,544 | 148,699 |
-| Unadvertised compatibility names | 0 | 14 | 14 |
+| Current app-only descriptors | — | 5 | 5 |
+| Retained app-only descriptors | — | 12 | 12 |
+| Operator descriptors | — | 0 | 2 |
+| Total app-only descriptors | 15 | 17 | 19 |
+| Total advertised descriptors | 30 | 29 | 31 |
+| Serialized descriptor bytes, summed per tool | 179,781 | 237,404 | 248,559 |
+| Model-only descriptor bytes | 50,860 | 44,515 | 44,515 |
+| Unadvertised compatibility names | 0 | 2 | 2 |
 | Total accepted names during migration | 30 | 31 | 33 |
 
-Discovery shrinks by 13 names and 42,237 bytes (23.5%). The temporary accepted-name
-count is deliberately reported separately: old handlers have not all been
-deleted. Fourteen bounded aliases share the retained handlers and do not publish
-descriptors. Diagnostics and recovery detach are operator-only. There are no
-additional experimental registrations. Alias removal requires the migration
-window and completion/host checks in [Card tools](../card-tools.md).
+The current contract is 17 tools (12 model and 5 app-only), totaling 137,589
+serialized bytes, but that is a subset of actual migration discovery. Real
+ChatGPT testing invalidated the original 17-descriptor rollout: saved cards
+require both their original presenter and their app-call descriptors. Twelve
+retained app-only registrations now carry `codex/registrationTier: compatibility`;
+only `codex_input` and `codex_activity_cancel` remain unadvertised aliases.
+
+GPT discovery shrinks by three names and 6,345 bytes (12.5%). Total discovery
+shrinks by only one name during migration, and its bytes increase by 57,623
+because current and old app contracts coexist. Do not report the 17-tool subset
+as the live inventory or claim all descriptor duplication has already gone.
+After a separately recorded deletion decision, the retired 14 names can be
+removed under the conditions in [Card tools](../card-tools.md). Common handlers
+and retained data remain. Diagnostics and recovery detach are operator-only.
 
 ## Actual work and calls
 
@@ -97,21 +109,83 @@ Browser artifacts are local under `output/playwright/`: `question-card-regressio
 `progressive-card-regression`, and `card-resilience/dist`. These are real browser
 tests with a simulated ChatGPT host, not evidence of actual ChatGPT resumption.
 
+## Actual ChatGPT and state verification
+
+The user confirmed using both native and ChatGPT notifications. Saved
+`background-only`/`auto-handoff` values were preserved, and no duplicate native
+notification feature was added.
+
+On 2026-09-08, the authenticated ChatGPT Safari host was exercised through its
+normal UI against packaged native candidates. The original runtime was
+`54296e0f0010-dirty:9af435da30f3`; the successful compatibility candidate was
+`cf029606c66d-dirty:7cc1b24623e9`. The candidate's compiled runtime files match the
+final checked build byte-for-byte, excluding build-info (audit-script changes
+alter the source fingerprint). Helper replacement used its normal drain path;
+no active Jobs existed at the cutovers.
+
+- Actual Refresh discovered 17 tools, but reopening an existing explicit
+  Activity failed with `Failed to fetch template`. Registering the Activity URI
+  on a different private tool added the template to discovery but did not fix
+  that saved presenter.
+- Keeping the original presenter as app-only gave 18 descriptors and restored
+  the frame. Its unadvertised read calls still failed: the card retained the
+  previous day's cached timestamp and reported refresh failure.
+- Keeping the 12 app-only compatibility descriptors gave **29 discovered tools,
+  12 public and 17 private**. The same existing Activity then read current data
+  and successfully refreshed to 10:25:07 KST. All retained app callers are kept
+  for the documented migration window; this experiment directly exercised the
+  presenter and reads, not every legacy mutation.
+- The user's existing separate global-overview conversation reopened, refreshed
+  current data and displayed the new details controls. Opening a harmless
+  retained verification Agent's details showed the exact selected work. No
+  unrelated work was modified.
+- The independent `question/04852baeb268` card rendered in the actual host.
+  An unpredictable ASCII value generated **after card creation** was entered
+  only into the card. Refresh preserved the draft; submission initiated a host
+  follow-up; GPT read the stored response and returned the exact value. Reentry
+  showed the consumed message with no editable answer or submit control. SQLite
+  independently showed `status: answered`, `notification: requested` and a
+  `consumedAt` timestamp. No Codex execution was requested in this test.
+- A consistent read-only copy of the user's live SQLite state was initialized,
+  read and reopened twice with the real stores and MCP server. The final run
+  includes **475 Jobs and the real answered question**, plus saved projects,
+  settings, Activity/Agent links, results and idempotency records. All protected
+  rows were preserved, with four app reads and zero Codex calls. See
+  [state restart report](issue-69-state-restart.json). The first pre-cutover
+  snapshot had two already expired questions; startup cleaned them under the
+  existing #68 retention policy. No schema migration was introduced. Active-Job
+  recovery was not exercised because the snapshot had no active Jobs.
+- The compatibility revision passed the full TypeScript/release check and all
+  **754 tests in 62 files**. Native packaging again passed 100 tests (2 skipped),
+  an optimized build, isolated runtime installation and ad-hoc signature checks.
+
 ## Remaining rollout evidence
 
-The user confirmed using both native and ChatGPT notifications. The saved
-`background-only`/`auto-handoff` combination confirms an enabled legacy card
-dependency; it does not itself prove which notification was received.
+The card-free completion probe was submitted, and the work conversation was
+left in favor of the separate overview. ChatGPT finished with an unread marker,
+but **admission was blocked before a new Job existed**. Its automatic safety
+check rejected project lookup and a full-access task call. The lower-risk
+read-only attempt reached bridge validation but correctly returned
+`SANDBOX_CONFLICT` against the saved `always-full` policy. No execution, setting
+change, new Activity, Agent, Job or Activity card resulted. This proves neither
+Codex completion nor completion notification delivery.
 
-Saved values and mounted legacy handoff remain intact. New instructions keep the
-current GPT response active through bounded waits and exact result retrieval.
-Native notifications are unchanged and no bridge-native duplicate alerts were
-added. Before deployment or closing #69, verify actual ChatGPT completion,
-result retrieval and notification after leaving the work conversation, and
-reopen the existing overview conversation. Verify that the host permits the
-cached alias calls as well as the new discovery/visibility contract. Protocol
-compatibility alone does not prove that host behavior.
+Keep actual Codex terminal state, retained result, GPT result retrieval and
+user notification as separate outstanding checks. Real original approval,
+active-stop and idle-process control also need a suitable authorized live
+fixture; their domain/MCP/browser tests have passed locally. The live probe
+block is external host approval plus the current saved execution policy, not
+permission to weaken those checks or silently change settings.
 
-No production replacement, push, or actual ChatGPT end-to-end notification test
-was performed in this implementation run. The code is prepared for review;
-the issue remains open for these explicit rollout checks.
+The 17-tool fresh contract is implemented, but migration discovery is 29 until
+a separate deletion decision. Retired entry points are not physically removed.
+Final integration/deployment and issue closure remain gated by the actual
+completion-flow checks in [Card tools](../card-tools.md).
+
+The test runtime and ChatGPT metadata were restored to the original deployed
+build (30 discovered tools), without replacing the live database. The user
+independently disabled Priority at 10:38 KST and explicitly confirmed preserving
+that change. Other saved preferences and the project registry matched the
+pre-test backup. The #69 code remains in the isolated implementation worktree;
+no integration, push or production rollout is claimed. Machine-readable host
+observations are in [the live-host report](issue-69-live-host.json).

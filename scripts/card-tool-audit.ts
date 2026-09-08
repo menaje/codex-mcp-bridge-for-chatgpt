@@ -24,14 +24,23 @@ try {
   await Promise.all([client.connect(a), server.connect(b)]);
   const { tools } = await client.listTools();
   const inventory = tools.map(tool => {
-    const meta = tool._meta as { ui?: { visibility?: string[] } } | undefined;
+    const meta = tool._meta as { ui?: { visibility?: string[] }; "codex/registrationTier"?: string } | undefined;
     return { name: tool.name, audience: meta?.ui?.visibility?.every(value => value === "app") ? "app" : "model",
+      tier: meta?.["codex/registrationTier"] === "compatibility" ? "compatibility" :
+        ["codex_diagnostics", "codex_agent_recovery_detach"].includes(tool.name) ? "operator" : "current",
       descriptorBytes: Buffer.byteLength(JSON.stringify(tool)) };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const report = { issue: 69, source: "issue-69 working tree", operator,
     registered: inventory.length, model: inventory.filter(tool => tool.audience === "model").length,
     app: inventory.filter(tool => tool.audience === "app").length,
-    descriptorBytes: inventory.reduce((sum, tool) => sum + tool.descriptorBytes, 0), inventory };
+    descriptorBytes: inventory.reduce((sum, tool) => sum + tool.descriptorBytes, 0),
+    current: { registered: inventory.filter(tool => tool.tier === "current").length,
+      model: inventory.filter(tool => tool.tier === "current" && tool.audience === "model").length,
+      app: inventory.filter(tool => tool.tier === "current" && tool.audience === "app").length,
+      descriptorBytes: inventory.filter(tool => tool.tier === "current").reduce((sum, tool) => sum + tool.descriptorBytes, 0) },
+    compatibilityDescriptors: inventory.filter(tool => tool.tier === "compatibility").length,
+    unadvertisedCompatibilityNames: ["codex_activity_cancel", "codex_input"],
+    acceptedNames: inventory.length + 2, inventory };
   const output = path.resolve(`docs/audits/issue-69-card-tools-${operator ? "operator" : "after"}.json`);
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");
   process.stdout.write(JSON.stringify({ ...report, inventory: undefined, output }) + "\n");

@@ -1,6 +1,6 @@
 # Output projection contracts
 
-Issue #69 current contract: [Card tools and migration](card-tools.md). Current discovery has 12 model tools and 5 app-only tools. Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
 
 This document defines the output profile established by issue 36, corrected by
 issue 38, extended with the issue-40 active-turn steering contract, refined

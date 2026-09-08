@@ -144,7 +144,7 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     const questionCardInputSchema = z.strictObject(cardProof);
   const readCard: ToolCallback<typeof questionCardInputSchema> = async (args, extra) => cardResult(store.requireCard(cardScope(extra._meta, args.scopeId), args), uiLocale());
 
-  compatibility.registerTool("codex_question_card", {
+  server.registerTool("codex_question_card", {
     title: "Refresh Question Card", description: "App-only scoped question card hydration; independent of Activity leases.",
     inputSchema: questionCardInputSchema, outputSchema: cardOutput, annotations: readAnnotations, _meta: { ...appMeta, "codex/registrationTier": "compatibility" }
   }, readCard);
@@ -160,7 +160,7 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     return cardResult(record, uiLocale());
   };
 
-  compatibility.registerTool("codex_question_submit", {
+  server.registerTool("codex_question_submit", {
     title: "Submit Answer to GPT", description: "App-only immutable answer submission. Stores the answer for GPT without calling Codex.",
     inputSchema: questionSubmitInputSchema,
     outputSchema: cardOutput, annotations: writeAnnotations, _meta: { ...appMeta, "codex/registrationTier": "compatibility" }
@@ -177,7 +177,7 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     return resultOf({ kind: "question-notification", ...result });
   };
 
-  compatibility.registerTool("codex_question_notify", {
+  server.registerTool("codex_question_notify", {
     title: "Record GPT Answer Notification", description: "App-only claim/acknowledgment of a question-answer follow-up. A host acknowledgment is not GPT consumption.",
     inputSchema: questionNotifyInputSchema,
     outputSchema: QUESTION_APP_OUTPUT_SCHEMAS.codex_question_notify, annotations: writeAnnotations, _meta: { ...appMeta, "codex/registrationTier": "compatibility" }

@@ -4,5 +4,5 @@
   "bump": "minor",
   "summary": "BREAKING: Retire new Activity screens, separate user questions, consolidate GPT status/cancellation and app-only card tools, and move validated user controls into deliberately opened overview details.",
   "breaking": true,
-  "migration": "Refresh tool discovery for the 12 model and 5 app-only contracts. Retired names and immutable cards remain compatible for at least 60 days and two stable releases after first release, subject to the documented completion-flow and client migration gates. Saved Activity/handoff preferences remain for legacy cards; they no longer create new Activity screens. Actual ChatGPT completion notification preservation must be verified before rollout. See docs/card-tools.md."
+  "migration": "Refresh discovery: 12 model + 5 current app tools, plus 12 app-only legacy descriptors (29 total); 2 model aliases stay unlisted. Retain old cards/settings for at least 60 days and two stable releases after first release. Removal requires a separate deletion decision and verified client/completion migration; time alone never deletes them. New work creates no Activity cards. Verify actual ChatGPT completion notifications before rollout. See docs/card-tools.md."
 }

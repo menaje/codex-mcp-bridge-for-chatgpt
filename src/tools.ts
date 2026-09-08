@@ -4949,7 +4949,7 @@ export function registerBridgeTools(
       );
     };
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_dashboard_snapshot",
     {
       title: "Refresh Codex Overview",
@@ -4964,6 +4964,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -5505,12 +5506,12 @@ export function registerBridgeTools(
       .describe("Optional exact Activity to mount; otherwise the newest Activity is selected when available.")
   });
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_activity",
     {
-      title: `${PRODUCT_INFO.displayName} Activity Manager`,
+      title: `${PRODUCT_INFO.displayName} Retained Activity Card`,
       description:
-        "Present one Activity card for the current ChatGPT conversation without starting or changing Codex work. After one or more codex_task calls in the same assistant response, call this tool at most once with mode='compact-monitor' and one fresh presentationId; the single compact card aggregates every current or action-needed Activity and Agent in the scope and owns the automatic live watcher and configured completion handoff. Do not call once per task or Agent. If the user explicitly asks to open or browse all current and past work, call once with mode='full-history' and no presentationId; that paginated view uses a separate bounded watcher and never owns automatic handoff. Omission preserves full-history behavior.",
+        "Compatibility-only descriptor for reopening Activity cards already saved in ChatGPT. Hidden from the model. Retains the original presentation, scope and ownership checks during migration; new work uses the overview and independent question card.",
       inputSchema: withJsonSchemaProjection(codexActivityRuntimeInput, codexActivityPublicInput),
       outputSchema: activityModelOutputSchema,
       annotations: {
@@ -5519,7 +5520,12 @@ export function registerBridgeTools(
         idempotentHint: true,
         openWorldHint: false
       },
-      _meta: activityCardToolMetadata()
+      _meta: {
+        "codex/registrationTier": "compatibility",
+        ...activityCardToolMetadata(),
+        ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] },
+        "openai/visibility": "private"
+      }
     },
     async (args, extra) => {
       const { _meta } = extra;
@@ -5688,7 +5694,7 @@ export function registerBridgeTools(
     }
   });
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_activity_rehydrate",
     {
       title: "Rehydrate Codex Activity Card",
@@ -5703,6 +5709,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -5832,7 +5839,7 @@ export function registerBridgeTools(
     }
   );
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_activity_snapshot",
     {
       title: "Refresh Codex Activity Card",
@@ -5858,6 +5865,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -5987,7 +5995,7 @@ export function registerBridgeTools(
     card: automaticActivityCardProofInputSchema
   });
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_activity_handoff",
     {
       title: "Deliver Codex Activity Handoff",
@@ -6004,6 +6012,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -6381,7 +6390,7 @@ export function registerBridgeTools(
       return mutationToolResult(mutationResult, "app");
     };
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_background_process_terminate",
     {
       title: "Stop Codex Background Process",
@@ -6396,6 +6405,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -6606,7 +6616,7 @@ export function registerBridgeTools(
       return mutationToolResult({ ok: true, action: "cancel-card-job", job: result }, "app");
     };
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_activity_job_cancel",
     {
       title: "Force-stop Activity Card Job",
@@ -6621,6 +6631,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -6773,7 +6784,7 @@ export function registerBridgeTools(
     {
       title: "Respond to Codex Interaction",
       description:
-        "App-only one-shot response to one exact pending App Server interaction selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, interaction identity, and optimistic Job version. Answers are transient and are never persisted.",
+        "App-only one-shot response to one exact pending App Server interaction selected in authenticated overview details or a retained Activity card. The server revalidates the private proof or legacy lease, target scope and ownership, interaction identity, and optimistic Job version. Answers are transient and are never persisted.",
       inputSchema: interactionResponseInput,
       outputSchema: mutationOutputSchema,
       annotations: {
@@ -6917,7 +6928,7 @@ export function registerBridgeTools(
     }
   );
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_job_steer",
     {
       title: "Steer Active Codex Job",
@@ -6940,6 +6951,7 @@ export function registerBridgeTools(
         openWorldHint: false
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
@@ -7528,7 +7540,7 @@ export function registerBridgeTools(
       );
     };
 
-  compatibility.registerTool(
+  server.registerTool(
     "codex_settings_snapshot",
     {
       title: `Refresh ${PRODUCT_INFO.displayName} Settings`,
@@ -7543,6 +7555,7 @@ export function registerBridgeTools(
         openWorldHint: true
       },
       _meta: {
+        "codex/registrationTier": "compatibility",
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,

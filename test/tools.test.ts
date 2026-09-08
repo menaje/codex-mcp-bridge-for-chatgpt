@@ -946,17 +946,22 @@ describe("bridge tools", () => {
 
 
 
-  it("publishes twelve model tools and five closed app-only contracts without retired descriptors", async () => {
+  it("publishes twelve model tools, five current app contracts and retained app-only compatibility", async () => {
     const root = temporaryRoot();
     const catalog = new FakeModelCatalog();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
     try {
       const { tools } = await client.listTools();
-      const appNames = ["codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_update_settings"];
+      const legacyAppNames = ["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate", "codex_activity_handoff", "codex_job_steer", "codex_activity_job_cancel", "codex_background_process_terminate", "codex_dashboard_snapshot", "codex_settings_snapshot", "codex_question_card", "codex_question_submit", "codex_question_notify"];
+      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_update_settings"];
       const modelNames = ["codex_activity_update", "codex_agent", "codex_answer", "codex_ask_user", "codex_cancel", "codex_dashboard", "codex_models", "codex_settings", "codex_status", "codex_steer", "codex_task", "codex_user_answer"];
       expect(tools.map(tool => tool.name).sort()).toEqual([...appNames, ...modelNames].sort());
       expect(catalog.calls).toHaveLength(0);
-      expect(Buffer.byteLength(JSON.stringify(tools))).toBeLessThan(150_000);
+      const currentTools = tools.filter(tool => !legacyAppNames.includes(tool.name));
+      expect(currentTools).toHaveLength(17);
+      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(150_000);
+      expect(tools.filter(tool => tool._meta?.["codex/registrationTier"] === "compatibility")
+        .map(tool => tool.name).sort()).toEqual(legacyAppNames.sort());
       for (const tool of tools) {
         const isApp = appNames.includes(tool.name);
         const metadata = tool._meta as Record<string, any> | undefined;
@@ -972,6 +977,14 @@ describe("bridge tools", () => {
       }
       const named = (name: string) => tools.find(tool => tool.name === name)!;
       expect(named("codex_task")._meta?.ui).toBeUndefined();
+      // Saved Activity cards require their original descriptor after ChatGPT
+      // refreshes metadata. Retaining the URI on another tool is insufficient.
+      expect(tools.filter(tool => tool._meta?.["openai/outputTemplate"] === ACTIVITY_CARD_URI)
+        .map(tool => tool.name)).toEqual(["codex_activity"]);
+      expect(named("codex_activity")._meta?.ui).toEqual({ resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] });
+      const retainedTemplate = await client.readResource({ uri: ACTIVITY_CARD_URI });
+      expect(retainedTemplate.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
+      expect((retainedTemplate.contents[0] as { text: string }).text).toMatch(/<!doctype html>/i);
       expect(named("codex_ask_user")._meta?.["openai/outputTemplate"]).toMatch(/question/);
       expect(named("codex_cancel").inputSchema.properties?.target).toBeDefined();
       expect(named("codex_status").inputSchema.properties).not.toHaveProperty("scopeId");
@@ -987,7 +1000,8 @@ describe("bridge tools", () => {
       const old = await client.callTool({ name: "codex_settings_snapshot", arguments: {} });
       expect(old.isError).not.toBe(true);
       expect(privateSettingsView(old).settings.settingsRevision).toBe(0);
-      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_settings_snapshot");
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_input");
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_activity_cancel");
     } finally { await close(); }
   });
 

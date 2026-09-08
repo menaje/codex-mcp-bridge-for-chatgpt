@@ -2,94 +2,195 @@
   "issue": 69,
   "source": "issue-69 working tree",
   "operator": false,
-  "registered": 17,
+  "registered": 29,
   "model": 12,
-  "app": 5,
-  "descriptorBytes": 137544,
+  "app": 17,
+  "descriptorBytes": 237404,
+  "current": {
+    "registered": 17,
+    "model": 12,
+    "app": 5,
+    "descriptorBytes": 137589
+  },
+  "compatibilityDescriptors": 12,
+  "unadvertisedCompatibilityNames": [
+    "codex_activity_cancel",
+    "codex_input"
+  ],
+  "acceptedNames": 31,
   "inventory": [
+    {
+      "name": "codex_activity",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 2300
+    },
+    {
+      "name": "codex_activity_handoff",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 2772
+    },
+    {
+      "name": "codex_activity_job_cancel",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 5718
+    },
+    {
+      "name": "codex_activity_rehydrate",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 7612
+    },
+    {
+      "name": "codex_activity_snapshot",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 7422
+    },
     {
       "name": "codex_activity_update",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 4138
     },
     {
       "name": "codex_agent",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 2389
     },
     {
       "name": "codex_answer",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 1954
     },
     {
       "name": "codex_ask_user",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 2402
+    },
+    {
+      "name": "codex_background_process_terminate",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 5906
     },
     {
       "name": "codex_cancel",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 3554
     },
     {
       "name": "codex_dashboard",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 1508
+    },
+    {
+      "name": "codex_dashboard_snapshot",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 45163
     },
     {
       "name": "codex_interaction_respond",
       "audience": "app",
-      "descriptorBytes": 6676
+      "tier": "current",
+      "descriptorBytes": 6721
+    },
+    {
+      "name": "codex_job_steer",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 4651
     },
     {
       "name": "codex_models",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 2071
     },
     {
       "name": "codex_question_action",
       "audience": "app",
+      "tier": "current",
       "descriptorBytes": 3250
+    },
+    {
+      "name": "codex_question_card",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 1661
+    },
+    {
+      "name": "codex_question_notify",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 2342
+    },
+    {
+      "name": "codex_question_submit",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 2136
     },
     {
       "name": "codex_settings",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 1448
+    },
+    {
+      "name": "codex_settings_snapshot",
+      "audience": "app",
+      "tier": "compatibility",
+      "descriptorBytes": 12132
     },
     {
       "name": "codex_status",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 8899
     },
     {
       "name": "codex_steer",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 3180
     },
     {
       "name": "codex_task",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 10657
     },
     {
       "name": "codex_ui_read",
       "audience": "app",
+      "tier": "current",
       "descriptorBytes": 57665
     },
     {
       "name": "codex_ui_stop",
       "audience": "app",
+      "tier": "current",
       "descriptorBytes": 8532
     },
     {
       "name": "codex_update_settings",
       "audience": "app",
+      "tier": "current",
       "descriptorBytes": 16906
     },
     {
       "name": "codex_user_answer",
       "audience": "model",
+      "tier": "current",
       "descriptorBytes": 2315
     }
   ]

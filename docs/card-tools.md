@@ -7,11 +7,20 @@ records remain the execution, ownership and verification model.
 
 ## Current discovery
 
-The default inventory is **17 descriptors: 12 model tools and 5 app-only tools**.
-Operator mode (`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach.
-Fourteen retired names remain strictly validated, unadvertised compatibility
-handlers. They are not included in the 17, and their implementations are not
-claimed to have been deleted.
+The new contract has **17 tools: 12 model tools and 5 app-only tools**. During
+migration, actual discovery also includes **12 app-only compatibility
+descriptors**, for **29 total (12 model, 17 app-only)**. Operator mode
+(`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach, for 31.
+Two old model names remain unadvertised aliases. Thus the server accepts 31
+names by default and 33 in operator mode. All 14 retired names are still tracked
+for later removal; this is not a claim that their implementations were deleted.
+
+Actual ChatGPT testing rejected unadvertised calls from retained cards. Keeping
+only their server handlers and immutable resources was insufficient: removing
+the original presenter broke template loading, and keeping that presenter alone
+restored the frame but broke refresh. The compatibility descriptors are private
+to apps and marked `codex/registrationTier: compatibility`. GPT's tool inventory
+remains 12; current cards use the five consolidated contracts below.
 
 | Model tools | Purpose |
 | --- | --- |
@@ -99,18 +108,24 @@ first stable release containing #69, whichever is later**. There is no timer
 that automatically disables a mounted card. Removal also requires an announced
 upgrade, fresh discovery of current tools, verified reopening of the user's
 existing overview conversation, no supported mounted clients depending on the
-old contracts, and the completion-flow rollout checks below. Remove descriptors,
-handlers, retained resources and legacy settings together in a subsequent change.
+old contracts, and the completion-flow rollout checks below. The 14 retired
+names remain tracked for removal, not permanent retention. Record a separate
+deletion decision before removing their compatibility entry points and unused
+handlers, retained resources and legacy settings in a subsequent change. Elapsed
+time alone does not authorize automatic deletion. Preserve common handlers still
+used by the current tools and all retained work, question and result data.
 
-The 14 unadvertised names are `codex_activity`, `codex_activity_cancel`,
+The 14 retained names are `codex_activity`, `codex_activity_cancel`,
 `codex_input`, `codex_activity_snapshot`, `codex_activity_rehydrate`,
 `codex_activity_handoff`, `codex_job_steer`, `codex_activity_job_cancel`,
 `codex_background_process_terminate`, `codex_dashboard_snapshot`,
 `codex_settings_snapshot`, `codex_question_card`, `codex_question_submit`, and
 `codex_question_notify`. Each retains strict parsing, output validation and
-original scope/widget checks. Current discovery and instructions do not route
-new clients to them. Immutable old resources, including the overview, remain
-served during this window. No execution is restarted to rebuild a result.
+original scope/widget checks. Only `codex_activity_cancel` and `codex_input` are
+unadvertised; the other 12 are app-only compatibility descriptors needed by
+retained cards. Current renderer code and model instructions use the consolidated
+contracts. Immutable old resources, including the overview, remain served during
+this window. No execution is restarted to rebuild a result.
 
 Current ChatGPT and macOS Settings hide Activity display and card-handoff
 controls. Persisted values and the legacy default remain intact for mounted

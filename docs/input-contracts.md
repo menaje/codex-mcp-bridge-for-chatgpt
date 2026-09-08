@@ -1,6 +1,6 @@
 # Input schema contracts
 
-Issue #69 current contract: [Card tools and migration](card-tools.md). Current discovery has 12 model tools and 5 app-only tools. Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
 
 ChatGPT is the normative model client for the bridge. A published
 `inputSchema` tells ChatGPT which arguments it may construct; the runtime Zod
@@ -188,4 +188,4 @@ snapshot remains in `test/tools.test.ts` so descriptor drift fails the suite.
 
 `codex_status` (`query.kind: "input"`) accepts an exact `jobId`, optional `afterCursor`, and `waitMs` bounded to 60 seconds. `codex_answer` accepts `requestId`, `jobId`, the current opaque `questionRef`, and an answer map keyed by the exact question IDs. Scope comes from host metadata; neither tool requires a mounted card or exposes upstream targeting overrides. The question reference binds the worker generation, thread, turn, and question revision independently of unrelated Job progress.
 
-`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_question_card`, `codex_question_submit`, and `codex_question_notify` require the scoped question ID, revision, and private presentation token. Submission and notification are separate contracts. See [the complete lifecycle](gpt-questions.md).
+`codex_ask_user` accepts an idempotent `requestId`, title, 1–3 questions, and optional expiry of 1–1440 minutes. `codex_user_answer` accepts an optional `responseRef`; omission discovers unread references without consuming the bodies. App-only `codex_ui_read` (`view: "question"`) and `codex_question_action` require the scoped question ID, revision, and private presentation token. The action's closed `submit`, `claim`, and `ack` branches preserve separate storage and delivery states. The previous `codex_question_card`, `codex_question_submit`, and `codex_question_notify` names are retained compatibility calls. See [the complete lifecycle](gpt-questions.md).

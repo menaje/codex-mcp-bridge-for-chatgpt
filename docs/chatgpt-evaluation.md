@@ -81,9 +81,19 @@ ChatGPT HTTP 500과 터널 내부 502 관측은 복구 성공으로 처리하지
 
 ## Issue #68: actual host acceptance
 
-- [ ] GPT reads an ordinary Codex question with codex_status query kind=input and answers through the correct protocol.
-- [ ] GPT decides that user opinion is needed, writes a codex_ask_user card, and receives an actual user submission.
-- [ ] The real ChatGPT host resumes GPT, which reads codex_user_answer and applies its decision to the exact Codex Job.
-- [ ] Reopen, stale card, scope mismatch, denied follow-up and uncertain delivery are distinguished.
+These results concern the pre-consolidation #68 tool names and Activity-based question renderer. The #69 contract uses `codex_status` input queries and an independent question card; its evidence is recorded separately below.
 
-Production MCP/SQLite tests, actual CLI tests and the local Chromium host harness are supporting evidence. They do not complete these real-host conditions. See [the contract](gpt-questions.md) and issue #68.
+- [x] GPT reads an ordinary Codex question with `codex_input` and answers with `codex_steer` in the same turn (`gpt-6-astra / low`, exact final output confirmed).
+- [x] In an explicit opinion-needed scenario, GPT writes a `codex_ask_user` card and receives a submission through the real host UI, operated by the user-authorized in-app browser.
+- [x] The real ChatGPT host resumes GPT, which reads `codex_user_answer` before creating the Codex Job. A Korean-containing value disclosed only through the card is reflected exactly in the completed result.
+- [x] A completed card survives conversation reload without editable fields or a submit button. Actual cancellation is read by GPT; a one-minute expiry disables submission and the record is pruned on refresh. Neither creates an extra Codex Job.
+- [ ] Actual host fault injection for scope mismatch, denied/unsupported follow-up and uncertain delivery. These cases have supporting MCP and simulated-host coverage, not real-host acceptance evidence.
+
+Verified on 2026-09-08 after the user refreshed plugin metadata in the existing ChatGPT conversation. An earlier `gpt-5.6-luna / low` run emitted a question but ended with `PROBE_UNAVAILABLE` before GPT could deliver guidance; it is not counted as a successful direct answer. The scripted scenarios verify the tool paths, not the quality of GPT's judgment in every task. All three test Activities were completed, with four terminal Codex Jobs.
+
+Production MCP/SQLite tests, actual CLI tests and the local Chromium host harness are supporting evidence. They do not replace the real-host conditions. See [the acceptance evidence](audits/2026-09-08-gpt-question-followup.md), [the contract](gpt-questions.md) and issue #68.
+
+
+## Issue #69: actual host acceptance
+
+See [the live-host audit](audits/2026-09-08-card-tool-consolidation.md#actual-chatgpt-and-state-verification) and [sanitized observations](audits/issue-69-live-host.json). Existing Activity, overview and settings cards were reopened; the independent question draft survived refresh and its submitted answer was read by GPT. The card-free Codex completion test was blocked before admission by host safety review and the saved execution policy. Completion notifications and live control mutations remain unverified.

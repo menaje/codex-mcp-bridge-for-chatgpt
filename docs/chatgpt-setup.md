@@ -1,6 +1,6 @@
 # Connect Codex MCP Bridge for ChatGPT
 
-Issue #69 current contract: [Card tools and migration](card-tools.md). Current discovery has 12 model tools and 5 app-only tools. Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
 
 The bridge uses the selected Codex CLI's App Server for execution. ChatGPT connects to the bridge through MCP.
 
@@ -106,8 +106,8 @@ Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT
 2. Open Plugins and create a developer-mode connection.
 3. Choose Tunnel and select/paste the matching tunnel ID.
 4. Use `No Auth`; the loopback bridge and OpenAI tunnel form the transport boundary.
-5. Verify the twelve model tools listed in [Card tools](card-tools.md); retired Activity presenters and input/cancellation aliases must not appear in discovery.
-6. Verify five app-only tools: `codex_ui_read`, `codex_update_settings`, `codex_question_action`, `codex_ui_stop`, and `codex_interaction_respond`. Operator diagnostics and recovery are opt-in.
+5. Verify the twelve model tools listed in [Card tools](card-tools.md); retired Activity presenters and input/cancellation aliases must not appear in the model inventory.
+6. Verify five app-only tools: `codex_ui_read`, `codex_update_settings`, `codex_question_action`, `codex_ui_stop`, and `codex_interaction_respond`. The 12 retained app-only descriptors are separately marked compatibility; total discovery is 29 during migration. Operator diagnostics and recovery are opt-in.
 
 ### Refresh after a bridge/UI change
 
@@ -122,6 +122,8 @@ npm run check
 Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves the newly advertised current URI and every retained URI whose UI contract generation is still supported.
 
 Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
+
+On first installation of the #68 or #69 tool contract, confirm `codex_ask_user` and `codex_user_answer` in ChatGPT connection metadata after Refresh. A server `tools/list` result proves publication only; it does not prove that ChatGPT has adopted the changed inventory.
 
 After Refresh:
 

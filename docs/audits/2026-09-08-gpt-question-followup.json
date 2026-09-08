@@ -111,7 +111,7 @@
       "elapsedMs": 13516
     }
   ],
-  "liveChatGptVerified": false,
+  "liveChatGptVerified": true,
   "localServiceUpdated": true,
   "validation": {
     "typescriptBuild": "passed",
@@ -138,11 +138,115 @@
   },
   "liveHost": {
     "macLocked": false,
-    "screenAutomation": "ChatGPT apps denied by Computer Use safety policy",
-    "status": "User confirmation requested: task-send was acknowledged but no new ChatGPT turn or card creation was observed",
-    "actualCardSubmitted": false,
-    "actualParentGptRead": false,
-    "actualCodexResult": false
+    "surface": "real ChatGPT in authorized in-app browser",
+    "uiActor": "Codex acting on the user-authorized browser test",
+    "status": "passed after user refreshed plugin metadata in the existing conversation",
+    "actualCardSubmitted": true,
+    "actualParentGptRead": true,
+    "actualCodexResult": true,
+    "testPromptDelivered": true,
+    "parentGptResponded": true,
+    "missingTools": [],
+    "metadataRefreshPending": false,
+    "newConversationRequired": false,
+    "followUp": "standard ui/message; actual parent GPT resumed without manual follow-up",
+    "selectionSmoke": {
+      "passed": true,
+      "draftSurvivedCardRefresh": true,
+      "answerDisclosedBeforeSubmission": true,
+      "causalRelayProof": false
+    },
+    "blindRelay": {
+      "passed": true,
+      "answerKnownOnlyThroughCard": true,
+      "containsKorean": true,
+      "exactCodexOutput": true,
+      "readBeforeCodexStarted": true,
+      "readToJobCreationMs": 9914,
+      "jobStatus": "completed",
+      "publicEventTypes": [
+        "agent-message",
+        "turn",
+        "usage"
+      ],
+      "codexToolEvents": 0
+    },
+    "completedCardRemount": {
+      "consumedShown": true,
+      "editableFields": 0,
+      "submitButtons": 0
+    },
+    "cancel": {
+      "status": "cancelled",
+      "actualParentGptRead": true,
+      "newCodexJobs": 0
+    },
+    "expiry": {
+      "ttlMinutes": 1,
+      "actualTimeElapsed": true,
+      "recordPrunedOnRefresh": true,
+      "expiredShown": true,
+      "submitButtons": 0,
+      "newCodexJobs": 0
+    },
+    "lifecycleBaselineJobs": 2,
+    "lifecycleFinalJobs": 2,
+    "liveFaultInjectionVerified": false,
+    "faultRecoveryEvidence": "simulated host regression covers denial, unavailable standard API with compatibility transport, uncertain delivery and metadata omission",
+    "previousAccessLimitation": "native Codex/ChatGPT app access was denied; this did not prohibit the authorized in-app browser",
+    "directOrdinaryQuestion": {
+      "passed": true,
+      "surface": "real ChatGPT via authorized in-app browser",
+      "model": "gpt-6-astra",
+      "reasoningEffort": "low",
+      "initialAnswerDisclosed": false,
+      "initialPromptInspectedInHost": true,
+      "route": "codex_steer",
+      "sameTurn": true,
+      "steerToolCallsObserved": 4,
+      "successfulDeliveryReceiptsObserved": 1,
+      "otherSteerOutputs": "The host tool inspector displayed no tool response for the first three calls; their delivery is not inferred from that UI.",
+      "confirmedReceipt": {
+        "expectedJobVersion": 8,
+        "status": "delivered",
+        "newTurnCreated": false
+      },
+      "newUserQuestionCards": 0,
+      "jobStatus": "completed",
+      "answer": "GPT_DIRECT:Red",
+      "activityCleanup": {
+        "lifecycle": "completed",
+        "version": 5,
+        "total_jobs": 1,
+        "completed_jobs": 1,
+        "running_jobs": 0
+      },
+      "publicEventTypes": [
+        "agent-message",
+        "turn",
+        "usage"
+      ],
+      "actualQuestionReadBeforeReply": true
+    },
+    "directUnavailableAttempt": {
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "low",
+      "questionObserved": true,
+      "terminalResult": "PROBE_UNAVAILABLE",
+      "gptReportedTerminalSteerRejected": true,
+      "passedAsDirectAnswer": false,
+      "scope": "This model run did not wait; this does not assert permanent lack of support in all model configurations."
+    },
+    "cardActivityCleanup": {
+      "lifecycle": "completed",
+      "version": 7,
+      "verification": "not-required",
+      "total_jobs": 2,
+      "completed_jobs": 2,
+      "running_jobs": 0
+    },
+    "testActivitiesCompleted": 3,
+    "testJobsCompleted": 4
   },
   "browser": {
     "builtRenderer": true,
@@ -252,6 +356,10 @@
       "backgroundProcessAgents": 0,
       "backgroundProcessUnknownAgents": 0
     },
-    "publishedQuestionTools": 7
+    "publishedQuestionTools": 7,
+    "backupIntegrity": "ok",
+    "backupMode": "0600",
+    "settingsUnchanged": true,
+    "projectsUnchanged": true
   }
 }
