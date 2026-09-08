@@ -3,6 +3,10 @@
 Follow-up to merged PR #71 (`899aca3`). This record distinguishes actual
 ChatGPT observations, real Codex requests, and simulated browser tests.
 
+The later [original-input retry](2026-09-08-issue-69-input-retry.md) reached the
+actual form but exposed a fixture timeout. Its next attempt was blocked before
+admission. The historical observations below remain unchanged; #69 is still open.
+
 ## Scope correction
 
 The issue explicitly excludes building a new, unsupported card-free wake of an

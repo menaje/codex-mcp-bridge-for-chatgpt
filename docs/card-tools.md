@@ -146,9 +146,12 @@ unread completion indication. The retained global overview and graceful restart
 with active work also passed. The user authorized dev integration and local
 operating rollout on this evidence. The [subsequent control acceptance run](audits/2026-09-08-issue-69-final-acceptance.md)
 fixed the sandboxed confirmation defect and verified actual overview Job stop,
-original approval rejection and idle process termination. One additional original
-form-input Job was blocked by ChatGPT's safety check before admission; #69 stays
-open for that actual-host gate. Native banner tests belong to #15, and a new
+original approval rejection and idle process termination. The [original-input
+retry](audits/2026-09-08-issue-69-input-retry.md) reached the real form and resolved
+its request, but the fixture had already timed out. A further attempt after
+extending the fixture timeout was blocked before Job creation. #69 stays open
+until the submitted value reaches the same Job's result. Native banner tests
+belong to #15, and a new
 unsupported already-ended-response wake is explicitly outside #69's mandatory
 scope. Earlier residual lists that made those unconditional #69 gates were too broad.
 
