@@ -1,5 +1,9 @@
 # 브리지 도구 설명·입출력 스키마 검토
 
+이 문서와 같은 이름의 JSON은 통합 전의 제안 기록이다. 현재 도구 구성과
+반영 결과는 [구현 기록](2026-09-08-tool-guidance-implementation.md) 및
+[후속 검토](2026-09-08-tool-guidance-completion-review.md)를 따른다.
+
 후속 코드 분석으로 일부 제안을 조정했다. 적용 판단은 [코드 적합성 재검토](/Volumes/Data/Dev/codex-mcp-bridge/docs/audits/2026-09-08-tool-guidance-code-fit.md)를 우선한다. F02·F03·F06은 구현 방식을 수정했고, F07의 최근 100개 제한에 따른 유효 과거 응답 누락 우려는 철회했다.
 
 검토일: 2026-09-08. 대상: HEAD 54296e0f0010 위의 현재 작업 디렉터리. 이 문서는 검토와 변경 제안이며 운영 도구 수정·배포 결과가 아니다.

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "issue": 70,
+  "date": "2026-09-08",
+  "validatedCommit": "f5027b367309088d2e68782d99e13aa0e46b7033",
+  "sourceSha256": "73a0f0c880b815c4b1bf099438f83175026df11dbb7b6e6d0fbbaa6d957652e9",
+  "developmentCommit": "323d55c725acfa82e81a0e3d350adf16f53468e7",
+  "modelRecoveryFix": "52607c9f85d0ffb893a009340c534d3d1fec9f25",
+  "parallelIntegrationCommit": "ee9bd3539e1d6cd3a255b6435244339e9cd45d33",
+  "validationCommand": "node scripts/release-validation.mjs affected --base origin/dev",
+  "releaseChecksPassed": true,
+  "cliContractVersion": "0.153.3",
+  "node": {
+    "filesPassed": 63,
+    "testsPassed": 780,
+    "failed": 0
+  },
+  "macos": {
+    "executed": 101,
+    "passed": 99,
+    "skipped": 2,
+    "failed": 0,
+    "strictConcurrency": true
+  },
+  "developmentIncluded": true,
+  "originalAuditFilesPreserved": true,
+  "liveRuntimeChangedByThisTask": false,
+  "actualChatGptAdoptionVerified": false,
+  "remaining": "Final integrated revision and actual host rollout coordinated with issue 69; do not equate local validation with operating completion."
+}
