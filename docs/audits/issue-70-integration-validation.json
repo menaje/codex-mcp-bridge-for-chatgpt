@@ -26,5 +26,12 @@
   "originalAuditFilesPreserved": true,
   "liveRuntimeChangedByThisTask": false,
   "actualChatGptAdoptionVerified": false,
-  "remaining": "Final integrated revision and actual host rollout coordinated with issue 69; do not equate local validation with operating completion."
+  "remaining": "Final integrated revision and actual host rollout coordinated with issue 69; do not equate local validation with operating completion.",
+  "actualHostBlocker": {
+    "reason": "Mac locked during normal computer-use check",
+    "reportedBy": "issue 69 integration audit",
+    "candidateBuild": "f5027b367309:21c885d97b57",
+    "operatorUnlockRequestedInIssue69Task": true,
+    "operatingDeploymentClaimed": false
+  }
 }
