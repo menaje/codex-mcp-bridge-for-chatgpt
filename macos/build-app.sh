@@ -8,7 +8,6 @@ app_bundle="$output_directory/Codex MCP Bridge for ChatGPT.app"
 contents_directory="$app_bundle/Contents"
 resources_directory="$contents_directory/Resources"
 runtime_directory="$resources_directory/Runtime"
-app_icon_source="$script_directory/Resources/AppIcon/app-icon-1024.png"
 app_iconset_directory="$output_directory/AppIcon.iconset"
 bundle_version="${MACOS_BUNDLE_VERSION:-1}"
 target_architecture="${MACOS_TARGET_ARCHITECTURE:-}"
@@ -93,21 +92,7 @@ xcrun xcstringstool compile \
   --output-directory "$resources_directory" \
   --serialization-format text
 
-if [[ ! -f "$app_icon_source" ]]; then
-  echo "Missing app icon source: $app_icon_source" >&2
-  exit 1
-fi
-
-/usr/bin/sips -z 16 16 "$app_icon_source" --out "$app_iconset_directory/icon_16x16.png" >/dev/null
-/usr/bin/sips -z 32 32 "$app_icon_source" --out "$app_iconset_directory/icon_16x16@2x.png" >/dev/null
-/usr/bin/sips -z 32 32 "$app_icon_source" --out "$app_iconset_directory/icon_32x32.png" >/dev/null
-/usr/bin/sips -z 64 64 "$app_icon_source" --out "$app_iconset_directory/icon_32x32@2x.png" >/dev/null
-/usr/bin/sips -z 128 128 "$app_icon_source" --out "$app_iconset_directory/icon_128x128.png" >/dev/null
-/usr/bin/sips -z 256 256 "$app_icon_source" --out "$app_iconset_directory/icon_128x128@2x.png" >/dev/null
-/usr/bin/sips -z 256 256 "$app_icon_source" --out "$app_iconset_directory/icon_256x256.png" >/dev/null
-/usr/bin/sips -z 512 512 "$app_icon_source" --out "$app_iconset_directory/icon_256x256@2x.png" >/dev/null
-/usr/bin/sips -z 512 512 "$app_icon_source" --out "$app_iconset_directory/icon_512x512.png" >/dev/null
-cp "$app_icon_source" "$app_iconset_directory/icon_512x512@2x.png"
+swift "$script_directory/generate-app-icons.swift" --iconset "$app_iconset_directory"
 /usr/bin/iconutil -c icns "$app_iconset_directory" -o "$resources_directory/AppIcon.icns"
 rm -rf "$app_iconset_directory"
 

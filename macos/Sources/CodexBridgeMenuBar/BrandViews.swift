@@ -83,22 +83,34 @@ struct BridgeMenuBarIcon: View {
             context?.addPath(BridgeBrandMarkShape().path(in: rect).cgPath)
             context?.drawPath(using: .eoFill)
 
+            // Include stroke widths and round caps in the 18 pt canvas. Clear
+            // the mark behind the badge so its outline stays legible at 1x.
+            let badge = CGRect(x: 12.5, y: 1.5, width: 4, height: 4)
+            if health != .healthy {
+                context?.saveGState()
+                context?.setBlendMode(.clear)
+                context?.fillEllipse(in: badge.insetBy(dx: -0.5, dy: -0.5))
+                context?.restoreGState()
+            }
+
             switch health {
             case .healthy:
                 break
             case .checking:
                 context?.setStrokeColor(NSColor.black.cgColor)
-                context?.setLineWidth(1.4)
-                context?.strokeEllipse(in: CGRect(x: 13, y: 0.5, width: 5, height: 5))
+                context?.setLineWidth(1)
+                context?.strokeEllipse(in: badge)
             case .attention:
-                context?.fillEllipse(in: CGRect(x: 13, y: 0.5, width: 5, height: 5))
+                context?.fillEllipse(in: badge)
             case .unavailable:
-                context?.setStrokeColor(NSColor.black.cgColor)
-                context?.setLineWidth(2.4)
-                context?.setLineCap(.round)
-                context?.move(to: CGPoint(x: 13.2, y: 1.2))
-                context?.addLine(to: CGPoint(x: 17.2, y: 5.2))
-                context?.strokePath()
+                // Keep the circular badge vocabulary. A short clear minus
+                // indicates unavailable without drawing a slash over the logo.
+                context?.fillEllipse(in: badge)
+                context?.saveGState()
+                context?.setBlendMode(.clear)
+                context?.fill(CGRect(x: badge.midX - 1, y: badge.midY - 0.5,
+                                     width: 2, height: 1))
+                context?.restoreGState()
             }
             context?.restoreGState()
             return true

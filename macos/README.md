@@ -176,3 +176,27 @@ The manifest explicitly supports macOS 13+ through separate Apple Silicon
 tested on a matching native runner; cross-compilation is rejected. A Universal
 package remains unsupported. Updater policy and the physical accessibility,
 sleep/wake, and network-recovery checks remain release gates for both targets.
+
+## App icons
+
+`generate-app-icons.swift` is the source of truth for the app icon. The bundle
+uses a continuous rounded silhouette with transparent exterior pixels, so the
+legacy `.icns` artwork also works in macOS versions and views that do not apply
+an icon mask. The 16 pt and 32 pt designs have optical adjustments; each 1x and
+2x image is rendered from its corresponding design instead of downsampling one
+1024 px bitmap. The generator checks dimensions and actual transparency during
+every app build. macOS 26 can apply its own icon appearance to the packaged icon.
+
+To refresh the checked-in SVG and PNG previews after changing the design:
+
+```bash
+swift macos/generate-app-icons.swift \
+  --iconset macos/build/AppIcon.iconset \
+  --preview-directory macos/Resources/AppIcon
+```
+
+The menu-bar icon remains a black-and-clear template image; in-app branding uses
+transparent vector shapes and SF Symbols. Neither uses the app icon's background.
+Menu-bar health uses no badge when healthy, an open circle while checking, a
+filled circle when attention is needed, and a filled circle with a clear minus
+when unavailable. The accessible label and Dashboard provide the exact status.
