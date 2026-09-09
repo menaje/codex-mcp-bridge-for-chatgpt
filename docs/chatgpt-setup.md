@@ -151,6 +151,7 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 
 - access strategy;
 - fixed or automatic exact model policy;
+- user model descriptions for automatic selection;
 - independent Fast mode for Codex calls;
 - named projects with explicit per-task selection;
 - UI language;
@@ -159,6 +160,15 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 - optional completion handoff.
 
 For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved model/effort choices; it does not add an `all` value to the tool schema and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
+
+In automatic mode, **Model descriptions** shows each model's official catalog
+text. Use **Edit**, then **Save description** or **Cancel**. A saved description
+is labeled **User description** and replaces that model's selection guidance
+returned to GPT. **View official description** shows the current catalog text;
+**Use official description**, or saving an empty edit, removes the override.
+Only user text is stored. Official catalog refresh and caching stay unchanged,
+and fixed mode retains the text without using it. These preferences are shared
+with the native app. See [user model descriptions](model-selection.md#user-model-descriptions).
 
 **Allow Ultra reasoning** controls the `ultra` effort, which includes automatic
 task delegation. Turning it off retains explicit saved Ultra choices but removes

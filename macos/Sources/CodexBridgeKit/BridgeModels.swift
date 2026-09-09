@@ -250,6 +250,8 @@ public struct BridgeSettings: Codable, Sendable {
     public let updatedAt: String?
     public let accessStrategy: String
     public let modelPolicy: ModelPolicy
+    /// Missing on older servers; official catalog descriptions are never copied here.
+    public let modelDescriptionOverrides: [String: String]?
     public let usePriorityServiceTier: Bool
     public let projects: [BridgeProject]
     public let uiLocalePreference: String
@@ -469,6 +471,7 @@ public enum SettingsOperation: Encodable, Sendable {
 public struct SettingsPatch: Encodable, Sendable {
     public var accessStrategy: String?
     public var modelPolicy: ModelPolicy?
+    public var modelDescriptionOverrides: [String: String]?
     public var usePriorityServiceTier: Bool?
     public var uiLocalePreference: String?
     public var maxConcurrentJobs: Int?
@@ -479,6 +482,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public init(
         accessStrategy: String? = nil,
         modelPolicy: ModelPolicy? = nil,
+        modelDescriptionOverrides: [String: String]? = nil,
         usePriorityServiceTier: Bool? = nil,
         uiLocalePreference: String? = nil,
         maxConcurrentJobs: Int? = nil,
@@ -488,6 +492,7 @@ public struct SettingsPatch: Encodable, Sendable {
     ) {
         self.accessStrategy = accessStrategy
         self.modelPolicy = modelPolicy
+        self.modelDescriptionOverrides = modelDescriptionOverrides
         self.usePriorityServiceTier = usePriorityServiceTier
         self.uiLocalePreference = uiLocalePreference
         self.maxConcurrentJobs = maxConcurrentJobs

@@ -5,9 +5,10 @@
 `codex_models({"contractVersion":"2"})` returns the current selection mode and
 policy-allowed model/effort choices. Model names, model descriptions, effort
 descriptions and service-tier descriptions come from the selected Codex
-installation's catalog. The bridge preserves those descriptions; it does not
-scrape a website or add a model ranking, performance score, benchmark, price
-table or task-to-model recommendation.
+installation's catalog. In automatic mode, a saved user description replaces
+only that model's description in `codex_models`; all other descriptions still
+come from the catalog. The bridge does not scrape a website or supply a model
+ranking, performance score, benchmark, price table or task-to-model recommendation.
 
 The primary catalog source is App Server `model/list`. If refresh fails, the
 bridge can retain the last successful result or use `codex debug models` as an
@@ -27,6 +28,43 @@ GPT's choice can also reflect the user's request and preferences, earlier
 conversation, its existing knowledge, and instructions from its host. The
 absence of a bridge recommendation table does not guarantee that GPT reasons
 only from the catalog.
+
+## User model descriptions
+
+In automatic mode, the native app and Settings card show **Model descriptions**.
+Each model initially shows its official catalog description. **Edit** starts with
+the current text; **Save description** saves a deliberate change, and **Cancel**
+discards the edit. Saved text is marked **User description**, with **View official
+description** and **Use official description** alongside it. Clearing the
+text also restores the official description. Saving untouched official text
+does not create a saved copy.
+
+Shared settings persist only `modelDescriptionOverrides: { [modelId]: text }`.
+The full Settings catalog remains official data. In automatic mode, an overridden
+`codex_models.models[]` entry has `descriptionSource: "user"`; otherwise its shape
+and official description remain unchanged. User text is selection guidance, not
+a verified capability claim, and cannot expand the executable choices or alter
+model, effort, access, or service-tier policy.
+
+The existing on-demand catalog read and cache behavior is unchanged: by default,
+a successful catalog result is reused for ten minutes, an explicit refresh can
+request an earlier update, and a failed refresh can retain the last successful
+result. No upstream push subscription or separate official-description store is
+added. A refreshed official description appears for unmodified models and in
+the comparison for modified models. Restoring uses the current catalog result,
+not a copy saved when editing began.
+
+Fixed mode retains user descriptions but ignores them. A model removed from the
+catalog keeps its saved text and remains visible in the editor for editing or
+restoration; that does not make the model executable. Settings reset removes all
+user descriptions. Older saved settings without the map load as an empty map,
+and a new native app hides the editor when connected to an older server that
+does not expose it.
+
+Edits allow up to 2,000 UTF-16 code units per description, 100 stored entries, and
+64 KiB of serialized override data. The editors save the description separately
+from other preferences. Revision checks prevent concurrent screens from silently
+overwriting each other, and a failed save preserves the text for review and retry.
 
 ## Ultra eligibility
 
@@ -81,3 +119,9 @@ Run the browser regression with `npx tsx scripts/ultra-policy-browser-regression
 Its report, snapshots and screenshots are written to `output/playwright/ultra-policy/`.
 The [dated completion review](audits/2026-09-09-ultra-policy.md) records acceptance
 criteria, executed checks and the limits of runtime verification.
+
+Model-description tests cover persistence, legacy settings, current-catalog
+restoration, fixed-mode behavior, unchanged execution references and concurrent
+edits. Run `npm run test:model-descriptions-browser` for the card flow against
+the real in-memory MCP settings path and a simulated upstream catalog. It writes
+its report and screenshots to `output/playwright/model-descriptions/`.

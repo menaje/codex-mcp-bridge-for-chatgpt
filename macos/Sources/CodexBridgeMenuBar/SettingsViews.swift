@@ -1032,6 +1032,11 @@ private struct GeneralSettingsPane: View {
                 .disabled(model.generalSettingsSaveState.isActive)
             }
 
+            if draft.policyMode == "automatic", snapshot.settings.modelDescriptionOverrides != nil {
+                ModelDescriptionsSettingsSection(snapshot: snapshot)
+                    .id(model.connectionContextID)
+            }
+
             Section("표시와 실행") {
                 Picker("앱 및 카드 언어", selection: $draft.uiLocalePreference) {
                     ForEach(snapshot.capabilities.availableUiLocalePreferences, id: \.self) {
@@ -1101,6 +1106,7 @@ private struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .disabled(model.modelDescriptionSaveInProgress)
         .confirmationDialog("일반 설정을 운영자 기본값으로 되돌릴까요?", isPresented: $showResetConfirmation) {
             Button("일반 설정 초기화", role: .destructive) {
                 Task {

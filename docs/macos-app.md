@@ -99,7 +99,8 @@ use matching names in native Settings and the Settings card.
 
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content plus a small Server tab for the
-backend and maximum access. General changes save automatically; the Server tab
+backend and maximum access. General changes save automatically, except model
+descriptions, which use explicit Save/Cancel controls; the Server tab
 keeps an explicit apply-and-restart confirmation because those values are stored
 in the private dotenv and require runtime replacement. Tunnel setup, Codex
 browser login, and profile repair appear in a separate first-run/connection-
@@ -342,6 +343,16 @@ supply one exact model and effort while continue/fork omission inherits the
 retained thread. Loading, mutation, Dashboard,
 authentication, runtime, and diagnostic failures keep independent UI state so
 one successful poll cannot hide another failed action.
+Automatic mode also exposes a per-model description editor. It starts with the
+current official catalog text and saves only user overrides in shared server
+settings. Modified rows identify user text and offer current-official comparison
+and restoration. Edits survive refresh and save failures; revision conflicts
+require reviewing the current saved description before retrying. Description
+saves are separate from General autosave, and temporarily disable the General
+form to prevent overlapping writes. Fixed mode retains the overrides without
+applying them. Missing catalog models keep their saved text. See
+[user model descriptions](model-selection.md#user-model-descriptions).
+
 While the Settings window is open it refreshes the shared snapshot every ten
 seconds. General edits are coalesced for 450 ms and serialized with exact
 settings-revision checks. A successful save rebases any newer local edits onto

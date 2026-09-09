@@ -189,6 +189,11 @@ import {
 } from "./cancellation.js";
 import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js";
 import {
+  MAX_MODEL_DESCRIPTION_LENGTH,
+  modelDescriptionProjection,
+  type ModelDescriptionOverrides
+} from "./modelDescriptions.js";
+import {
   TOOL_CONTENT_BYTE_CAPS,
   TOOL_STRUCTURED_BYTE_CAPS,
   boundedUtf8JsonString,
@@ -1015,6 +1020,7 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   updatedAt: z.string().nullable(),
   accessStrategy: z.enum(["read-only", "adaptive", "always-full"]),
   modelPolicy: modelPolicyZod(),
+  modelDescriptionOverrides: z.record(z.string(), z.string()),
   usePriorityServiceTier: z.boolean(),
   projects: z.array(z.strictObject({
     id: z.string(),
@@ -1391,6 +1397,7 @@ const compactCatalogModelOutputSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
+  descriptionSource: z.literal("user").optional().describe("Present when description is user-authored selection guidance; omitted for the installed Codex catalog description."),
   efforts: z.array(compactCatalogEffortOutputSchema),
   serviceTiers: z.array(compactCatalogServiceTierOutputSchema)
 });
@@ -7520,7 +7527,7 @@ export function registerBridgeTools(
     {
       title: "List Codex Models",
       description:
-        "Read the model and reasoning choices allowed by current bridge policy and backend availability. Model, reasoning, and service-tier descriptions come from the installed Codex catalog. The bridge filters executable choices and may return an empty list with a policy warning.",
+        "Read the model and reasoning choices allowed by current bridge policy and backend availability. Descriptions come from the installed Codex catalog; in automatic mode a saved user model description replaces the catalog description and is marked descriptionSource=user. The bridge filters executable choices and may return an empty list with a policy warning.",
       inputSchema: z.strictObject({
         contractVersion: z.literal("2").optional().describe(
           "Opt in to selectionMode alongside the allowed catalog from the same settings snapshot. Omission preserves the legacy catalog-only result."
@@ -7567,7 +7574,7 @@ export function registerBridgeTools(
           id: model.id,
           name: model.displayName,
           questions: modelQuestionCapabilities(model),
-          ...(model.description ? { description: model.description } : {}),
+          ...modelDescriptionProjection(model, preferences.modelDescriptionOverrides, preferences.modelPolicy.mode === "automatic"),
           efforts: [...(allowedEffortsByModel.get(model.id) || [])]
             .sort()
             .map((effort) => {
@@ -7746,6 +7753,7 @@ export function registerBridgeTools(
   const nestedSettingsPatchBase = z.strictObject({
     accessStrategy: settingsAccessStrategyInput.optional(),
     modelPolicy: editableModelPolicyZod().optional(),
+    modelDescriptionOverrides: z.record(z.string().min(1).max(200), z.string().max(MAX_MODEL_DESCRIPTION_LENGTH)).optional(),
     usePriorityServiceTier: z.boolean().optional(),
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
@@ -7793,6 +7801,7 @@ export function registerBridgeTools(
       const nestedKeys = [
         "accessStrategy",
         "modelPolicy",
+        "modelDescriptionOverrides",
         "usePriorityServiceTier",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -7806,6 +7815,7 @@ export function registerBridgeTools(
       for (const key of [
         "accessStrategy",
         "modelPolicy",
+        "modelDescriptionOverrides",
         "usePriorityServiceTier",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -10733,6 +10743,7 @@ export type BridgeSettingsSnapshotOptions = {
 export type BridgeSettingsPatchInput = {
   accessStrategy?: AccessStrategy;
   modelPolicy?: ModelPolicy;
+  modelDescriptionOverrides?: ModelDescriptionOverrides;
   usePriorityServiceTier?: boolean;
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;

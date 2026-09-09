@@ -3,6 +3,7 @@ import { resolveHostUiLocaleTag, serializedUiTranslations } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { hostToolResultMetadata, normalizeHostToolResult } from "./uiHostToolResult.js";
 import { withUiToolCallTimeout } from "./uiToolCallFallback.js";
+import { MODEL_DESCRIPTION_EDITOR_SCRIPT } from "./modelDescriptionCard.js";
 import {
   currentUiResourceUri,
   htmlForUiResource,
@@ -10,10 +11,10 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 16;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 17;
 export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 9;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
-export const SETTINGS_CARD_HTML_MAX_BYTES = 192 * 1_024;
+export const SETTINGS_CARD_HTML_MAX_BYTES = 224 * 1_024;
 export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Settings`,
   description: "Localized interactive settings card for user-configurable Codex bridge preferences.",
@@ -119,7 +120,20 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     .scope { margin:4px 0 0; font-size:12px; }
     .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .wide { grid-column:1/-1; }
     label { display:grid; gap:6px; font-size:12px; font-weight:650; }
-    select,input { width:100%; min-height:38px; border:1px solid var(--border); border-radius:10px; background:Canvas; color:CanvasText; padding:8px 10px; font:inherit; }
+    select,input,textarea { width:100%; min-height:38px; border:1px solid var(--border); border-radius:10px; background:Canvas; color:CanvasText; padding:8px 10px; font:inherit; }
+    textarea { resize:vertical; line-height:1.5; }
+    .model-descriptions-panel { margin-top:16px; }
+    .model-descriptions-panel h2 { margin:0 0 4px; font-size:14px; }
+    #model-descriptions { display:grid; gap:10px; margin-top:10px; }
+    .model-description-row { min-width:0; padding:12px; border:1px solid var(--border); border-radius:10px; }
+    .model-description-header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .model-description-header h3 { flex:1; min-width:120px; font-size:12px; margin:0; overflow-wrap:anywhere; }
+    .model-description-text { margin:8px 0; font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .model-description-row label { margin-top:10px; }
+    .model-description-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+    .model-description-official { margin:10px 0; font-size:11px; }
+    .model-description-official summary { cursor:pointer; color:var(--muted); }
+    .model-description-error { font-size:12px; color:var(--danger); line-height:1.5; }
     input[type="checkbox"] { width:auto; min-height:auto; padding:0; accent-color:var(--accent); }
     .policy-panel { border:1px solid var(--border); border-radius:12px; padding:12px; }
     .policy-panel[hidden] { display:none; }
@@ -219,6 +233,11 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
             </div>
           </div>
           <div class="notice" data-i18n="settings.automaticNotice"></div>
+          <section class="model-descriptions-panel" aria-labelledby="model-descriptions-title">
+            <h2 id="model-descriptions-title" data-i18n="settings.modelDescriptions.title"></h2>
+            <p class="hint" data-i18n="settings.modelDescriptions.hint"></p>
+            <div id="model-descriptions"></div>
+          </section>
         </section>
         <section class="wide projects-panel" aria-labelledby="projects-title">
           <div class="projects-header"><div><h2 id="projects-title" data-i18n="settings.projects"></h2><div class="hint" data-i18n="settings.projectsHint"></div></div><button id="add-project" type="button" data-i18n="settings.addProject"></button></div>
@@ -263,6 +282,23 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     const elements = { form:byId("settings-form"),loading:byId("settings-loading"),retryLoad:byId("retry-load"),access:byId("access-strategy"),accessHint:byId("access-hint"),mode:byId("model-policy-mode"),delegation:byId("allow-delegation"),ultraWarning:byId("ultra-policy-warning"),priority:byId("use-priority-service-tier"),fixedPanel:byId("fixed-policy-panel"),automaticPanel:byId("automatic-policy-panel"),model:byId("policy-model"),effort:byId("policy-effort"),effortDescription:byId("effort-description"),effortCompatibility:byId("effort-compatibility"),allowedScope:byId("allowed-scope"),explicitPanel:byId("explicit-selection-panel"),allowedModels:byId("allowed-models"),effortGroups:byId("effort-groups"),selectionCount:byId("selection-count"),addProject:byId("add-project"),projectList:byId("project-list"),noProjects:byId("no-projects"),projectError:byId("project-error"),codexAppThreads:byId("show-bridge-threads-in-codex-app"),codexAppThreadsHint:byId("codex-app-threads-hint"),language:byId("ui-language"),concurrency:byId("concurrency"),save:byId("save"),retryModels:byId("retry-models"),reset:byId("reset"),status:byId("status"),fullWarning:byId("full-warning"),catalogStatus:byId("catalog-status"),catalogStatusLabel:byId("catalog-status-label"),catalogStatusSource:byId("catalog-status-source"),catalogWarning:byId("catalog-warning"),catalogWarningText:byId("catalog-warning-text") };
     const LANGUAGE_LABELS = {en:"English",ko:"한국어",ja:"日本語","zh-Hans":"简体中文","zh-Hant":"繁體中文",es:"Español",fr:"Français",de:"Deutsch",pt:"Português"};
     const KNOWN_EFFORTS = new Set(["minimal","low","medium","high","xhigh","max","ultra"]);
+    ${MODEL_DESCRIPTION_EDITOR_SCRIPT}
+    const descriptionEditor = createModelDescriptionEditor(byId("model-descriptions"), {
+      text: (key) => t["settings.modelDescriptions." + key],
+      cancelText: () => t["common.cancel"],
+      save: async (overrides, revision) => unwrap(await callTool("codex_update_settings", {
+        expectedSettingsRevision: revision,
+        operation: { kind: "patch", settings: { modelDescriptionOverrides: overrides } }
+      })),
+      reload: async () => unwrap(await callTool("codex_ui_read", { view: "settings" })),
+      committed: (next, previousRevision) => {
+        // Rebase unrelated local fields only when the saved settings baseline still matches.
+        if (view && view.settings.settingsRevision === previousRevision) view = next;
+        localizeCatalog(next);
+      },
+      busy: (busy, message) => setBusy(busy, message || (busy ? t["settings.saving"] : "")),
+      error: (error) => setError(error)
+    });
     function resolveLocale(value) { const v=String(value||"en").replaceAll("_","-").toLowerCase(); if(v==="ko"||v.startsWith("ko-"))return"ko";if(v==="ja"||v.startsWith("ja-"))return"ja";if(v==="zh-hant"||/^zh-(tw|hk|mo)(-|$)/.test(v))return"zh-Hant";if(v==="zh"||v==="zh-hans"||v.startsWith("zh-"))return"zh-Hans";for(const key of["es","fr","de","pt"])if(v===key||v.startsWith(key+"-"))return key;return"en"; }
     function effectiveLocaleTag() { return localePreference==="auto"?hostLocaleTag:localePreference; }
     function localizeDraft() {
@@ -277,7 +313,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
       for(const input of elements.effortGroups.querySelectorAll("input")){if(input.dataset.action==="all-efforts"){input.nextSibling.textContent=t["settings.selectAllEfforts"];input.parentElement.title=input.indeterminate?t["settings.partialEffortsSelected"]:"";}else input.nextSibling.textContent=(t["effort."+input.dataset.effort+".label"]||input.dataset.effort)+(isUltraDisabled({reasoningEffort:input.dataset.effort})?" ("+t["settings.ultraDisabled"]+")":availableKeys.has(input.value)?"":" ("+t["settings.savedModel"]+")");}
       elements.selectionCount.textContent=t["settings.selectionCount"].replace("{count}",String(checkedExplicitSelections().length));
       updateUltraPolicyNotice();
-      const addProjectDisabled=elements.addProject.disabled;updateAccessNotice();updateCodexAppThreadsHint();updateEffortHelper();localizeProjectRows();elements.addProject.disabled=addProjectDisabled;localizeCatalog(view);
+      const addProjectDisabled=elements.addProject.disabled;updateAccessNotice();updateCodexAppThreadsHint();updateEffortHelper();localizeProjectRows();elements.addProject.disabled=addProjectDisabled;localizeCatalog(view);descriptionEditor.refresh();
     }
     function setLocale(value,rerender=true) { localeTag=String(value||"en").replaceAll("_","-");locale=resolveLocale(localeTag);t=BUNDLES[locale]||BUNDLES.en;document.documentElement.lang=localeTag;document.title=t["settings.title"];for(const node of document.querySelectorAll("[data-i18n]"))node.textContent=t[node.dataset.i18n]||BUNDLES.en[node.dataset.i18n]||node.dataset.i18n;if(rerender&&view)localizeDraft();if(!view&&loadError)setError(loadError); }
     function option(value,label) { const node=document.createElement("option");node.value=value;node.textContent=label;return node; }
@@ -381,10 +417,10 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     function updateAccessNotice() { const value=elements.access.value;const key=value==="read-only"?"settings.access.readOnlyHint":value==="always-full"?"settings.access.fullHint":"settings.access.adaptiveHint";elements.accessHint.textContent=t[key];elements.fullWarning.classList.toggle("show",value==="always-full"); }
     function updateCodexAppThreadsHint() { elements.codexAppThreadsHint.textContent=t["settings.codexAppThreadsHint"]; }
     async function loadSettings() { if(initialLoading)return;initialLoading=true;loadError=null;elements.retryLoad.disabled=true;elements.retryLoad.hidden=true;elements.loading.classList.remove("error");elements.loading.textContent=t["common.loading"];try{render(unwrap(await callTool("codex_ui_read",{view:"settings",refreshModels:hostToolResultMetadata(initialMetadata)["codex/refreshModels"]===true})));}catch(error){setError(error);}finally{initialLoading=false;elements.retryLoad.disabled=false;} }
-    function render(next,localeReady=false,preserveLocalePreference=false) { if(!next||!next.settings)return;view=next;loadError=null;elements.retryLoad.hidden=true;elements.loading.hidden=true;elements.loading.classList.remove("error");elements.catalogStatus.hidden=false;elements.form.hidden=false;const settings=next.settings,limits=next.capabilities;if(!preserveLocalePreference)localePreference=settings.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);elements.access.replaceChildren();const accessLabels={"read-only":t["settings.access.readOnly"],adaptive:t["settings.access.adaptive"],"always-full":t["settings.access.full"]};for(const value of limits.availableAccessStrategies||[])elements.access.appendChild(option(value,accessLabels[value]||value));elements.access.value=settings.accessStrategy;elements.priority.checked=settings.usePriorityServiceTier===true;elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true;modelPolicyDirty=false;renderModelPolicy(settings.modelPolicy);renderProjects(settings,limits);elements.language.replaceChildren();for(const value of limits.availableUiLocalePreferences||["auto",...Object.keys(LANGUAGE_LABELS)])elements.language.appendChild(option(value,value==="auto"?t["settings.language.auto"]:LANGUAGE_LABELS[value]||value));elements.language.value=localePreference;elements.concurrency.value=String(settings.maxConcurrentJobs);elements.concurrency.max=String(limits.maxConcurrentJobs);updateAccessNotice();updateCodexAppThreadsHint();localizeCatalog(next); }
+    function render(next,localeReady=false,preserveLocalePreference=false) { if(!next||!next.settings)return;view=next;loadError=null;elements.retryLoad.hidden=true;elements.loading.hidden=true;elements.loading.classList.remove("error");elements.catalogStatus.hidden=false;elements.form.hidden=false;const settings=next.settings,limits=next.capabilities;if(!preserveLocalePreference)localePreference=settings.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);elements.access.replaceChildren();const accessLabels={"read-only":t["settings.access.readOnly"],adaptive:t["settings.access.adaptive"],"always-full":t["settings.access.full"]};for(const value of limits.availableAccessStrategies||[])elements.access.appendChild(option(value,accessLabels[value]||value));elements.access.value=settings.accessStrategy;elements.priority.checked=settings.usePriorityServiceTier===true;elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true;modelPolicyDirty=false;renderModelPolicy(settings.modelPolicy);renderProjects(settings,limits);elements.language.replaceChildren();for(const value of limits.availableUiLocalePreferences||["auto",...Object.keys(LANGUAGE_LABELS)])elements.language.appendChild(option(value,value==="auto"?t["settings.language.auto"]:LANGUAGE_LABELS[value]||value));elements.language.value=localePreference;elements.concurrency.value=String(settings.maxConcurrentJobs);elements.concurrency.max=String(limits.maxConcurrentJobs);updateAccessNotice();updateCodexAppThreadsHint();localizeCatalog(next);descriptionEditor.setSnapshot(next); }
     function localizeCatalog(next) { const catalogState=next.catalog.validation||"invalid",catalogStatusKey=catalogState==="valid"?"settings.catalogStatus.valid":catalogState==="temporarily-unverified-with-last-known-good"?"settings.catalogStatus.lastKnownGood":"settings.catalogStatus.invalid";elements.catalogStatus.dataset.state=catalogState;elements.catalogStatusLabel.textContent=t[catalogStatusKey];elements.catalogStatusSource.textContent=t["settings.catalogSource"].replace("{source}",next.catalog.source||"—");const catalogProblem=Boolean(next.catalog.warning||next.catalog.stale||catalogState==="invalid"),warnings=[next.catalog.warning,...(next.warnings||[])].filter(Boolean).join("\n")||(catalogProblem?t["common.error"]:"");elements.catalogWarningText.textContent=warnings;elements.catalogWarning.classList.toggle("show",Boolean(warnings));elements.retryModels.hidden=!catalogProblem; }
     function mutationStatus(next,ordinaryMessage) { return next&&next.policyActivation&&next.policyActivation.developerModeRefreshRequired?t["settings.developerModeRefreshRequired"]:ordinaryMessage; }
-    function setBusy(busy,message) { for(const node of[elements.save,elements.retryModels,elements.reset,...elements.projectList.querySelectorAll("button")])node.disabled=busy;elements.addProject.disabled=busy||projectRows().length>=100;elements.status.classList.remove("error");elements.status.textContent=message||""; }
+    function setBusy(busy,message) { descriptionEditor.setDisabled(busy);for(const node of[elements.save,elements.retryModels,elements.reset,...elements.projectList.querySelectorAll("button")])node.disabled=busy;elements.addProject.disabled=busy||projectRows().length>=100;elements.status.classList.remove("error");elements.status.textContent=message||""; }
     function localizedErrorMessage(error) { const raw=uiBridgeErrorMessage(error,"");if(raw&&Object.values(t).includes(raw))return raw;const code=raw.match(/\b[A-Z][A-Z0-9_]{2,}\b/);return code?t["common.errorCode"].replace("{code}",code[0]):t["common.error"]; }
     function setError(error) { const message=localizedErrorMessage(error);if(!view){loadError=error;elements.loading.hidden=false;elements.loading.classList.add("error");elements.loading.textContent=message;elements.retryLoad.hidden=false;return;}elements.status.classList.add("error");elements.status.textContent=message; }
     async function handleMutationError(error) { const value=uiBridgeErrorMessage(error,t["common.error"]),revisionConflict=value.includes("SETTINGS_REVISION_CONFLICT")||value.includes("PROJECT_REGISTRY_REVISION_CONFLICT");if(value.includes("PROJECT_")&&!revisionConflict){setBusy(false);showProjectError(projectErrorMessage(value));elements.status.classList.add("error");elements.status.textContent=t["settings.projectError"];return;}if(!revisionConflict){setBusy(false);setError(error);return;}try{render(unwrap(await callTool("codex_ui_read",{view:"settings"})));setBusy(false);elements.status.classList.add("error");elements.status.textContent=t["settings.conflict"];}catch(refreshError){setBusy(false);setError(refreshError);} }
@@ -404,7 +440,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     elements.language.addEventListener("change",()=>{localePreference=elements.language.value;setLocale(effectiveLocaleTag());});
     elements.form.addEventListener("submit",async(event)=>{event.preventDefault();if(!view)return;const projectSettings=buildProjectSettings();if(!projectSettings||!elements.form.reportValidity())return;setBusy(true,t["settings.saving"]);try{const settings={accessStrategy:elements.access.value,usePriorityServiceTier:elements.priority.checked,showBridgeThreadsInCodexApp:elements.codexAppThreads.checked,uiLocalePreference:elements.language.value,maxConcurrentJobs:integerValue(elements.concurrency)},projectOperations=buildProjectOperations(projectSettings.projects);if(projectOperations.length)settings.projectOperations=projectOperations;if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy();const args={expectedSettingsRevision:view.settings.settingsRevision,expectedRegistryRevision:view.settings.registryRevision,operation:{kind:"patch",settings}};const result=await callTool("codex_update_settings",args),next=unwrap(result);render(next);setBusy(false,mutationStatus(next,t["settings.saved"]));}catch(error){await handleMutationError(error);}});
     elements.retryModels.addEventListener("click",async()=>{setBusy(true,t["settings.refreshing"]);try{const next=unwrap(await callTool("codex_ui_read",{view:"settings",refreshModels:true}));render(next);setBusy(false,mutationStatus(next,t["settings.refreshed"]));}catch(error){setBusy(false);setError(error);}});
-    elements.reset.addEventListener("click",async()=>{if(!view)return;setBusy(true,t["settings.resetting"]);try{const next=unwrap(await callTool("codex_update_settings",{expectedSettingsRevision:view.settings.settingsRevision,operation:{kind:"reset"}}));render(next);setBusy(false,mutationStatus(next,t["settings.resetDone"]));}catch(error){await handleMutationError(error);}});
+    elements.reset.addEventListener("click",async()=>{if(!view)return;setBusy(true,t["settings.resetting"]);try{const next=unwrap(await callTool("codex_update_settings",{expectedSettingsRevision:view.settings.settingsRevision,operation:{kind:"reset"}}));descriptionEditor.reset();render(next);setBusy(false,mutationStatus(next,t["settings.resetDone"]));}catch(error){await handleMutationError(error);}});
     elements.retryLoad.addEventListener("click",()=>void loadSettings());
     standardBridgeReady=initializeStandardBridge();setLocale(localeTag);void loadSettings();
   </script>

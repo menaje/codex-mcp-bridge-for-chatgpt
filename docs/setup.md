@@ -277,6 +277,19 @@ This choice cannot exceed **Server → Maximum Allowed Access**. For example, se
 
 Existing Agents keep execution context according to their continuation rules. Model availability can change with the installed Codex version and service catalog.
 
+### General: model descriptions
+
+In Automatic mode, **Model descriptions** shows the official description of
+each model. Select **Edit** to adjust the text ChatGPT uses when choosing a
+model, then **Save description** or **Cancel**. This editor uses explicit save
+in both the native app and the ChatGPT Settings card.
+
+Saved text has a **User description** label. **View official description** shows
+the current official text, and **Use official description** removes your
+override. Saving empty text also restores it. The official model list keeps its
+existing refresh behavior. Switching to Fixed retains your descriptions for
+later use; a model temporarily missing from the list also keeps its saved text.
+
 ### General: display and execution
 
 - **App and card language** applies one explicit language to both surfaces. Automatic follows the Mac language in the app and the ChatGPT display language in cards, so they may differ.
