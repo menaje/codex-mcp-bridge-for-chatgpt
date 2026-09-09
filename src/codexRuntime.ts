@@ -218,6 +218,22 @@ export class CodexRuntimeManager {
     };
   }
 
+  /** Stable across activation, but changes when the user selects another target. */
+  async activationTarget(): Promise<{ revision: number; command: string | null; description: string }> {
+    const state = await this.readState();
+    return this.activationTargetFromState(state);
+  }
+
+  private activationTargetFromState(state: z.infer<typeof stateSchema>): { revision: number; command: string | null; description: string } {
+    const staged = state.managed.find(item => item.id === state.stagedId);
+    const selectsStaged = staged && (state.stagedSelectionRevision === null || state.stagedSelectionRevision === state.selectionRevision)
+      && (!state.preferences.pinnedVersion || state.preferences.pinnedVersion === staged.version);
+    const selection = state.pendingSelection || state.selection;
+    const command = this.configuredCommand() || state.pendingSelection?.command || (selectsStaged ? this.managedCommand(staged) : state.selection?.command) || null;
+    return { revision: state.selectionRevision, command,
+      description: [selection?.source || (staged ? "bridge" : "Codex"), selectsStaged ? staged.version : selection?.version].filter(Boolean).join(" · ") };
+  }
+
   async select(id: string): Promise<CliRuntimeSnapshot> {
     if (this.configuredCommand()) throw new Error("CODEX_EXPLICIT_OVERRIDE: Remove the explicit Codex path from the runtime environment before changing the saved selection.");
     const candidate = (await this.discover()).find(item => item.id === id);
@@ -378,10 +394,20 @@ export class CodexRuntimeManager {
     return this.snapshot();
   }
 
-  async applyPending(): Promise<void> {
-    if (this.configuredCommand()) return;
+  async applyPending(expected?: { revision: number; command: string | null }): Promise<void> {
+    if (this.configuredCommand()) {
+      if (expected && expected.command !== this.configuredCommand()) throw new Error("LIFECYCLE_TARGET_CHANGED: The configured CLI changed.");
+      return;
+    }
     await this.changeState(async state => {
-      if ((await this.liveLeases()).length) return;
+      const target = this.activationTargetFromState(state);
+      if (expected && (target.revision !== expected.revision || target.command !== expected.command)) {
+        throw new Error("LIFECYCLE_TARGET_CHANGED: The selected CLI changed before activation.");
+      }
+      if ((await this.liveLeases()).length) {
+        if (expected && (state.stagedId || state.pendingSelection)) throw new Error("CODEX_APPLY_PENDING: A CLI lease still protects the previous selection.");
+        return;
+      }
       const applying = !!(state.stagedId || state.pendingSelection);
       if (state.stagedId) {
         const staged = state.managed.find(item => item.id === state.stagedId);
@@ -401,6 +427,9 @@ export class CodexRuntimeManager {
       }
       if (state.pendingSelection) {
         state.selection = state.pendingSelection; state.pendingSelection = null; state.selectionRequired = false;
+      }
+      if (expected?.command && state.selection?.command !== expected.command) {
+        throw new Error("CODEX_APPLY_FAILED: The reserved CLI could not be activated.");
       }
       if (state.operation && (state.operation.phase === "pending" || (applying && state.operation.action === "apply"))) {
         state.operation = { ...state.operation, phase: "complete", error: null, updatedAt: new Date().toISOString() };

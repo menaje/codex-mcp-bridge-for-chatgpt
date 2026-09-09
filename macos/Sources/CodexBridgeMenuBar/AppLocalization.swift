@@ -81,6 +81,51 @@ enum BridgeAppLocalization {
         return string(key, locale: locale)
     }
 
+    /// Lifecycle failures can contain both an initial failure and rollback
+    /// outcome. Map their categories to copy without displaying raw diagnostics.
+    static func lifecycleFailureDescription(_ diagnostic: String?, locale: Locale) -> String {
+        let message = diagnostic ?? ""
+        let causes: [(String, String)] = [
+            ("LIFECYCLE_TARGET_CHANGED", "대기 중 설정이나 CLI 선택이 바뀌었습니다. 현재 선택으로 다시 요청해 주세요."),
+            ("DRAIN_CANCEL_FAILED", "작업 접수를 다시 열지 못했습니다. 서버 상태를 확인해 주세요."),
+            ("RUNTIME_READINESS_TIMEOUT", "브리지 helper가 제한 시간 안에 준비되지 않았습니다."),
+            ("Timed out waiting for the bridge companion", "브리지 helper가 제한 시간 안에 준비되지 않았습니다."),
+            ("RUNTIME_READINESS_EXITED", "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요."),
+            ("before the bridge and tunnel became ready", "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요."),
+            ("HELPER_SHUTDOWN_TIMEOUT", "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."),
+            ("HELPER_SHUTDOWN_FAILED", "브리지 helper를 종료하지 못했습니다. 관련 프로세스 상태를 확인해 주세요."),
+            ("RUNTIME_STOP_", "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."),
+            ("RUNTIME_TREE_", "관련 프로세스의 확인 또는 종료를 마치지 못했습니다. 서버 상태를 확인해 주세요."),
+            ("LIFECYCLE_HANDOFF_CONNECTION_FAILED", "로컬 서비스의 응답을 확인하지 못해 후속 처리를 마치지 못했습니다. 다시 요청해 주세요."),
+            ("LIFECYCLE_SETTINGS_SAVE_FAILED", "설정 변경사항을 저장하지 못해 후속 처리를 중단했습니다."),
+            ("LIFECYCLE_MODE_SAVE_FAILED", "연결 모드 설정을 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."),
+            ("LIFECYCLE_RECEIPT_SAVE_FAILED", "처리 결과를 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."),
+            ("LIFECYCLE_RUNTIME_NOT_STOPPED", "서버가 아직 실행 중이어서 후속 처리를 진행하지 않았습니다."),
+            ("LIFECYCLE_RECOVERY_REQUIRED", "복구된 서버 상태가 예약과 일치하지 않습니다. 서버 상태를 확인한 뒤 다시 요청해 주세요."),
+            ("HELPER_REPLACEMENT_ROLLBACK_FAILED", "helper 교체와 이전 helper 복구에 실패했습니다. 설치 상태를 확인해 주세요."),
+            ("HELPER_REPLACEMENT_FAILED", "helper 교체를 마치지 못했습니다. 설치 상태를 확인한 뒤 다시 요청해 주세요."),
+            ("HELPER_LAUNCH_FAILED", "브리지 helper를 시작하지 못했습니다. 설치 상태를 확인해 주세요."),
+            ("HELPER_BUILD_MISMATCH", "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요."),
+            ("BRIDGE_RUNTIME_MISSING", "설치된 브리지 helper를 찾을 수 없습니다. 앱을 다시 설치해 주세요."),
+            ("SETUP_REQUIRED", "런타임 연결 정보가 아직 저장되지 않았습니다.")
+        ]
+        let configurationFailed = message.contains("CONFIG_APPLY_FAILED") || message.contains("CONFIG_ROLLBACK_")
+        var details: [String] = configurationFailed ? [string("설정 적용에 실패했습니다.", locale: locale)] : []
+        if let cause = causes.first(where: { message.contains($0.0) }) {
+            details.append(string(cause.1, locale: locale))
+        }
+        if message.contains("CONFIG_ROLLBACK_RESTART_FAILED") {
+            details.append(string("이전 설정을 복원했지만 서버를 다시 시작하지 못했습니다.", locale: locale))
+        } else if message.contains("CONFIG_ROLLBACK_FAILED") {
+            details.append(string("이전 설정을 복원하지 못했습니다. 연결 설정을 확인해 주세요.", locale: locale))
+        } else if message.contains("Previous runtime configuration was restored.") {
+            details.append(string("이전 설정을 복원했습니다.", locale: locale))
+        }
+        return details.isEmpty
+            ? string("예약한 작업을 완료하지 못했습니다. 현재 상태를 확인한 뒤 다시 요청해 주세요.", locale: locale)
+            : details.joined(separator: " ")
+    }
+
     static func errorDescription(_ error: Error, locale: Locale) -> String {
         switch error {
         case let error as RemoteConnectionStorageError:
@@ -322,6 +367,8 @@ enum BridgeAppLocalization {
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
+        case .replacementPending:
+            return string("작업이 끝나면 helper를 갱신하도록 예약했습니다.", locale: locale)
         case .shutdownFailed(let message):
             return format(
                 "브리지 helper를 종료하지 못했습니다: %@",
@@ -384,6 +431,9 @@ enum BridgeAppLocalization {
         }
 
         let recoveryMarker = " 이전 helper 복구에도 실패했습니다: "
+        if message.contains("LIFECYCLE_BUSY") {
+            return string("이미 예약된 작업이 있습니다. 예약을 취소한 뒤 다시 요청해 주세요.", locale: locale)
+        }
         if let markerRange = message.range(of: recoveryMarker) {
             let initialFailure = String(message[..<markerRange.lowerBound])
             let recoveryFailure = String(message[markerRange.upperBound...])

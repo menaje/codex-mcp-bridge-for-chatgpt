@@ -107,6 +107,7 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("menu bar application finished launching")
+        Self.model?.lifecycleTerminationHandler = { NSApp.terminate(nil) }
         Task { await Self.model?.start() }
         if ProcessInfo.processInfo.environment["CODEX_MCP_BRIDGE_OPEN_SETTINGS"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -128,7 +129,7 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         terminationRequestInProgress = true
         Task { @MainActor in
             var shouldTerminate = await model.shutdownApplication(force: false)
-            if !shouldTerminate {
+            if !shouldTerminate && !model.applicationShutdownReserved {
                 if model.generalSettingsSaveState == .failed {
                     presentShutdownFailure(model: model)
                 } else if confirmForceShutdown(model: model) {

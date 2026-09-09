@@ -88,6 +88,28 @@ public struct MacOSHelperClient: Sendable {
         )
     }
 
+    public func reserveReplacement(targetBuildID: String) async throws -> String? {
+        do {
+            let current = try await lifecycleStatus()
+            let operation: RuntimeLifecycleOperation
+            if let current, current.isPending {
+                guard current.kind == "helper-replace", current.targetBuildId == targetBuildID else {
+                    throw HelperBootstrapError.replacementBlocked("LIFECYCLE_BUSY")
+                }
+                operation = current
+            } else {
+                operation = try await requestLifecycle(.init(kind: "helper-replace", targetBuildId: targetBuildID))
+            }
+            guard operation.needsHandoff else { throw HelperBootstrapError.replacementPending }
+            _ = try await acknowledgeLifecycle(requestId: operation.requestId)
+            return operation.requestId
+        } catch let error as LocalRPCError where error.isUnsupportedMethod {
+            // One-time migration from helpers predating durable reservations.
+            try await prepareForReplacement()
+            return nil
+        }
+    }
+
     public func waitForChanges(after: String?) async throws -> ChangeNotice {
         try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
     }
@@ -99,6 +121,35 @@ public struct MacOSHelperClient: Sendable {
 
     public func status() async throws -> HelperStatus {
         try await rpc.call("helper.status", params: EmptyParameters(), timeout: 15)
+    }
+
+    public func requestLifecycle(_ request: RuntimeLifecycleRequest) async throws -> RuntimeLifecycleOperation {
+        // A lost receipt may be retried, using the same ID and exact payload.
+        let operation: RuntimeLifecycleOperation
+        do { operation = try await rpc.call("lifecycle.request", params: request, timeout: 20) }
+        catch let error as LocalRPCError {
+            switch error {
+            case .connectionFailed, .writeFailed, .emptyResponse:
+                try Task.checkCancellation()
+                operation = try await rpc.call("lifecycle.request", params: request, timeout: 20)
+            default: throw error
+            }
+        }
+        guard operation.requestId == request.requestId else { throw LocalRPCError.malformedResponse("LIFECYCLE_ID_CONFLICT") }
+        return operation
+    }
+
+    public func lifecycleStatus(requestId: String? = nil) async throws -> RuntimeLifecycleOperation? {
+        let response: RuntimeLifecycleStatus = try await rpc.call("lifecycle.status", params: RuntimeLifecycleReference(requestId: requestId))
+        return response.operation
+    }
+
+    public func cancelLifecycle(requestId: String) async throws -> RuntimeLifecycleOperation {
+        try await rpc.call("lifecycle.cancel", params: RuntimeLifecycleReference(requestId: requestId))
+    }
+
+    public func acknowledgeLifecycle(requestId: String) async throws -> RuntimeLifecycleOperation {
+        try await rpc.call("lifecycle.acknowledge", params: RuntimeLifecycleReference(requestId: requestId))
     }
 
     public func discoverSetup() async throws -> TunnelSetupDiscovery {

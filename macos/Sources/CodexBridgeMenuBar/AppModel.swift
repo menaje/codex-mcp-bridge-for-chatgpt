@@ -321,6 +321,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastAutosavedDraft: SettingsDraft?
     @Published private(set) var applicationShutdownCompleted = false
     @Published private(set) var applicationShutdownInProgress = false
+    @Published var lifecycleOperation: RuntimeLifecycleOperation?
+    private var lifecycleHandoffTask: Task<Void, Never>?
+    private var handledLifecycleUpdate: String?
+    var lifecycleTerminationHandler: (() -> Void)?
+
+    var applicationShutdownReserved: Bool {
+        lifecycleOperation?.kind == "shutdown" && lifecycleOperation?.isPending == true
+    }
     @Published private(set) var connectionPreferences: BridgeConnectionPreferences
     @Published private(set) var remoteHello: RemoteCompanionHello?
     @Published private(set) var remoteManagementStatus: RemoteManagementStatus?
@@ -329,7 +337,7 @@ final class AppModel: ObservableObject {
     @Published var remotePairingInvitation: RemotePairingInvitation?
     @Published private(set) var connectionContextID = UUID()
 
-    private let bootstrapper = HelperBootstrap()
+    private let bootstrapper: any HelperBootstrapping
     private let loginItemController: any LoginItemControlling
     private let connectionStore: (any BridgeConnectionPreferencesStoring)?
     private let credentialStore: any RemoteCredentialStoring
@@ -375,6 +383,7 @@ final class AppModel: ObservableObject {
 
     init(
         paths: RuntimePaths? = nil,
+        bootstrapper: any HelperBootstrapping = HelperBootstrap(),
         loginItemController: (any LoginItemControlling)? = nil,
         connectionStore: (any BridgeConnectionPreferencesStoring)? = nil,
         operationalNotifications: OperationalNotifications? = nil,
@@ -398,6 +407,7 @@ final class AppModel: ObservableObject {
         }
     ) {
         self.paths = paths
+        self.bootstrapper = bootstrapper
         self.loginItemController = loginItemController ?? ServiceManagementLoginItemController()
         self.connectionStore = connectionStore
         self.operationalNotifications = operationalNotifications
@@ -416,6 +426,7 @@ final class AppModel: ObservableObject {
 
     var operationalObservation: OperationalObservation {
         guard !isBusy, !loginInProgress, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
+        if !isRemoteClient, lifecycleOperation?.isExecuting == true { return .unknown }
         if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
@@ -622,6 +633,7 @@ final class AppModel: ObservableObject {
 
     var isBridgeConnectionChecking: Bool {
         if systemObservationPending { return true }
+        if !isRemoteClient, lifecycleOperation?.isExecuting == true { return true }
         guard !needsSetup, !connectionCheckRequiresAttention else { return false }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello == nil else { return false }
@@ -705,12 +717,7 @@ final class AppModel: ObservableObject {
         connectionErrorMessage = nil
 
         if mode == .remoteClient {
-            do {
-                try await stopLocalOwnershipForModeSwitch(force: force)
-            } catch {
-                connectionErrorMessage = localizedApplicationShutdownError(error)
-                return false
-            }
+            return await reserveLifecycle(kind: "mode-switch", force: force)
         }
 
         let previous = connectionPreferences
@@ -738,6 +745,13 @@ final class AppModel: ObservableObject {
             do {
                 let paths = await resolvedPaths()
                 try await bootstrapper.ensureRunning(paths: paths)
+                startupErrorMessage = nil
+                let client = await helperClient()
+                let current = try await client.lifecycleStatus()
+                if current?.isPending != true {
+                    observeLifecycle(try await client.requestLifecycle(.init(kind: "start")))
+                }
+            } catch HelperBootstrapError.replacementPending {
                 startupErrorMessage = nil
             } catch {
                 startupErrorMessage = localizedErrorDescription(error)
@@ -1070,6 +1084,8 @@ final class AppModel: ObservableObject {
 
     private func startOnce() async {
         beginOperationalNotifications()
+        do { try await recoverExternalHandoff() }
+        catch { startupErrorMessage = localizedErrorDescription(error); return }
         if isRemoteClient {
             logger.info("starting in remote client mode without local helper bootstrap")
             isBusy = true
@@ -1086,6 +1102,10 @@ final class AppModel: ObservableObject {
             let paths = await resolvedPaths()
             try await bootstrapper.ensureRunning(paths: paths)
             logger.info("helper bootstrap completed")
+            startupErrorMessage = nil
+            beginPolling()
+            await refreshAll()
+        } catch HelperBootstrapError.replacementPending {
             startupErrorMessage = nil
             beginPolling()
             await refreshAll()
@@ -1207,6 +1227,7 @@ final class AppModel: ObservableObject {
         let refreshContent = systemObservationPending || helperStatus?.bridge.connected != true
         systemObservationPending = false
         helperStatus = next
+        if let next { observeLifecycle(next.lifecycle) }
         localConnectionRecovery.observe(
             available: next?.bridge.connected == true && next?.tunnel.connected == true,
             retryable: next.map { $0.phase == "running" && $0.configuration.valid } ?? true,
@@ -1613,17 +1634,8 @@ final class AppModel: ObservableObject {
 
     func saveSetup(apiKey: String, tunnelId: String) async -> Bool {
         guard !isRemoteClient else { return false }
-        return await performRuntime {
-            let client = await self.helperClient()
-            let result = try await client.applySetup(
-                apiKey: apiKey.isEmpty ? nil : apiKey,
-                tunnelId: tunnelId.isEmpty ? nil : tunnelId,
-                force: false,
-                timeoutMilliseconds: 60_000
-            )
-            self.helperStatus = result.status
-            await self.refreshAll()
-        }
+        return await reserveLifecycle(kind: "configure", configuration: .init(
+            apiKey: apiKey.isEmpty ? nil : apiKey, tunnelId: tunnelId.isEmpty ? nil : tunnelId))
     }
 
     func refreshSetupDiscovery() async {
@@ -1648,18 +1660,7 @@ final class AppModel: ObservableObject {
 
     func importDiscoveredSetup(candidateId: String) async -> Bool {
         guard !isRemoteClient else { return false }
-        let succeeded = await performRuntime {
-            let client = await self.helperClient()
-            let result = try await client.importSetup(
-                candidateId: candidateId,
-                force: false,
-                timeoutMilliseconds: 60_000
-            )
-            self.helperStatus = result.status
-            self.setupDiscovery = nil
-            self.setupDiscoveryErrorMessage = nil
-            await self.refreshAll()
-        }
+        let succeeded = await reserveLifecycle(kind: "configure", candidateId: candidateId)
         if !succeeded { await refreshSetupDiscovery() }
         return succeeded
     }
@@ -1725,17 +1726,8 @@ final class AppModel: ObservableObject {
         force: Bool = false
     ) async -> Bool {
         guard !isRemoteClient else { return false }
-        return await performRuntime {
-            let client = await self.helperClient()
-            let result = try await client.configureRuntime(
-                defaultBackend: defaultBackend,
-                maximumAccess: maximumAccess,
-                force: force,
-                timeoutMilliseconds: 60_000
-            )
-            self.helperStatus = result.status
-            await self.refreshAll()
-        }
+        return await reserveLifecycle(kind: "configure", force: force,
+            configuration: .init(defaultBackend: defaultBackend, maximumAccess: maximumAccess))
     }
 
     func repairConfigurationPermissions() async -> Bool {
@@ -1745,8 +1737,9 @@ final class AppModel: ObservableObject {
             _ = try await client.repairConfigurationPermissions()
             await self.refreshStatus()
             if self.helperStatus?.configuration.valid == true {
-                self.helperStatus = try await client.startRuntime()
-                await self.refreshAll()
+                self.observeLifecycle(try await client.requestLifecycle(.init(kind: "start")))
+                self.beginPolling()
+                self.enqueueRefresh(["status"])
             }
         }
     }
@@ -1782,29 +1775,12 @@ final class AppModel: ObservableObject {
 
     func startRuntime() async -> Bool {
         guard !isRemoteClient else { return false }
-        return await performRuntime {
-            let client = await self.helperClient()
-            self.helperStatus = try await client.startRuntime()
-            await self.refreshAll()
-        }
+        return await reserveLifecycle(kind: "start")
     }
 
     func stopRuntime(force: Bool) async -> Bool {
         guard !isRemoteClient else { return false }
-        let succeeded = await performRuntime {
-            let client = await self.helperClient()
-            self.helperStatus = try await client.stopRuntime(
-                force: force,
-                timeoutMilliseconds: 60_000
-            )
-            self.dashboard = nil
-            self.settings = nil
-        }
-        if !succeeded {
-            await refreshStatus()
-            await refreshDashboard()
-        }
-        return succeeded
+        return await reserveLifecycle(kind: "stop", force: force)
     }
 
     func shutdownApplication(force: Bool) async -> Bool {
@@ -1840,89 +1816,30 @@ final class AppModel: ObservableObject {
             authStatus = nil
             return true
         }
-        let paths = await resolvedPaths()
-        let client = await helperClient()
-        do {
-            do {
-                let stopped = try await client.prepareApplicationShutdown(
-                    force: force,
-                    timeoutMilliseconds: 60_000
-                )
-                guard stopped.phase == "stopped", stopped.pid == nil else {
-                    throw NSError(
-                        domain: "CodexBridgeApplicationShutdown",
-                        code: 1,
-                        userInfo: [
-                            NSLocalizedDescriptionKey:
-                                "RUNTIME_STOP_INCOMPLETE: The managed runtime still reports phase \(stopped.phase)."
-                        ]
-                    )
-                }
-                helperStatus = stopped
-            } catch {
-                let runtimeLockExists = FileManager.default.fileExists(
-                    atPath: paths.runtimeLockDirectory.path
-                )
-                let helperSocketExists = FileManager.default.fileExists(
-                    atPath: paths.helperSocket.path
-                )
-                guard !runtimeLockExists && !helperSocketExists else { throw error }
-                logger.warning(
-                    "verified shutdown RPC was unavailable with no helper socket or runtime lock; unloading the inactive service: \(error.localizedDescription, privacy: .public)"
-                )
+        let accepted = await reserveLifecycle(kind: "shutdown", force: force)
+        if !accepted {
+            let paths = await resolvedPaths()
+            if !FileManager.default.fileExists(atPath: paths.runtimeLockDirectory.path),
+               !FileManager.default.fileExists(atPath: paths.helperSocket.path) {
+                do {
+                    try await bootstrapper.shutdown(paths: paths)
+                    applicationShutdownCompleted = true
+                    runtimeErrorMessage = nil
+                    cancelAllPolling()
+                } catch { runtimeErrorMessage = localizedApplicationShutdownError(error) }
             }
-
-            try await bootstrapper.shutdown(paths: paths)
-            applicationShutdownCompleted = true
-            cancelAllPolling()
-            setRemotePairingInvitation(nil)
-            helperStatus = nil
-            dashboard = nil
-            settings = nil
-            authStatus = nil
-            return true
-        } catch {
-            let message = localizedApplicationShutdownError(error)
-            runtimeErrorMessage = message
-            logger.error("application shutdown failed: \(message, privacy: .public)")
-            await refreshStatus()
-            await refreshDashboard()
-            return false
         }
+        return applicationShutdownCompleted
     }
 
     func restartRuntime(force: Bool) async -> Bool {
         guard !isRemoteClient else { return false }
-        let succeeded = await performRuntime {
-            let client = await self.helperClient()
-            self.helperStatus = try await client.restartRuntime(
-                force: force,
-                timeoutMilliseconds: 60_000
-            )
-            await self.refreshAll()
-        }
-        if !succeeded {
-            await refreshStatus()
-            await refreshDashboard()
-        }
-        return succeeded
+        return await reserveLifecycle(kind: "restart", force: force)
     }
 
     func repairTunnelProfile(force: Bool = false) async -> Bool {
         guard !isRemoteClient else { return false }
-        let succeeded = await performRuntime {
-            let client = await self.helperClient()
-            self.helperStatus = try await client.repairRuntime(
-                force: force,
-                timeoutMilliseconds: 60_000
-            )
-            await self.refreshAll()
-        }
-        if !succeeded {
-            await refreshStatus()
-            await refreshDashboard()
-        }
-        return succeeded
+        return await reserveLifecycle(kind: "repair", force: force)
     }
 
     private func saveSettings(_ draft: SettingsDraft, autosave: Bool) async -> Bool {
@@ -2168,6 +2085,162 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func reserveLifecycle(kind: String, force: Bool = false,
+                                  configuration: RuntimeLifecycleRequest.Configuration? = nil,
+                                  candidateId: String? = nil) async -> Bool {
+        if let current = lifecycleOperation, current.isPending,
+           current.kind == kind, current.force == force, configuration == nil, candidateId == nil {
+            return true
+        }
+        return await performRuntime {
+            let client = await self.helperClient()
+            let current = self.lifecycleOperation
+            let receipt = try await client.requestLifecycle(.init(kind: kind, force: force,
+                configuration: configuration, candidateId: candidateId,
+                replacesRequestId: force && current?.cancellable == true ? current?.requestId : nil))
+            self.observeLifecycle(receipt)
+            self.beginPolling()
+            self.enqueueRefresh(["status"])
+        }
+    }
+
+    func cancelLifecycle() async {
+        guard let operation = lifecycleOperation, operation.cancellable else { return }
+        _ = await performRuntime {
+            let client = await self.helperClient()
+            self.observeLifecycle(try await client.cancelLifecycle(requestId: operation.requestId))
+            self.enqueueRefresh(["status", "dashboard"])
+        }
+    }
+
+    private func observeLifecycle(_ operation: RuntimeLifecycleOperation?) {
+        guard let operation else { lifecycleOperation = nil; return }
+        if lifecycleOperation != operation { lifecycleOperation = operation }
+        let update = "\(operation.requestId):\(operation.updatedAt):\(operation.phase)"
+        if operation.phase == "failed", handledLifecycleUpdate != update {
+            runtimeErrorMessage = BridgeAppLocalization.lifecycleFailureDescription(operation.error, locale: interfaceLocale)
+            handledLifecycleUpdate = update
+        }
+        if operation.phase == "completed", handledLifecycleUpdate != update {
+            handledLifecycleUpdate = update
+            enqueueRefresh(["status", "dashboard", "settings", "codex", "auth"])
+        }
+        guard operation.needsHandoff, lifecycleHandoffTask == nil, handledLifecycleUpdate != update else { return }
+        lifecycleHandoffTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.lifecycleHandoffTask = nil }
+            await self.finishLifecycleHandoff(operation)
+        }
+    }
+
+    private func finishLifecycleHandoff(_ operation: RuntimeLifecycleOperation) async {
+        let paths = await resolvedPaths()
+        let client = await helperClient()
+        var failureStage = "LIFECYCLE_SETTINGS_SAVE_FAILED"
+        do {
+            guard await flushSettingsAutosave() else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            failureStage = "LIFECYCLE_HANDOFF_CONNECTION_FAILED"
+            let current = try await client.status()
+            guard current.lifecycle?.requestId == operation.requestId,
+                  current.lifecycle?.needsHandoff == true else {
+                // Cancellation or replacement can win while this status read
+                // is in flight. The old native callback no longer owns intent.
+                observeLifecycle(current.lifecycle)
+                return
+            }
+            failureStage = "LIFECYCLE_RUNTIME_NOT_STOPPED"
+            guard current.phase == "stopped", current.pid == nil else {
+                throw NSError(domain: "RuntimeLifecycle", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "LIFECYCLE_NOT_READY: The runtime has not stopped."])
+            }
+            if operation.kind == "helper-replace" {
+                failureStage = "HELPER_REPLACEMENT_FAILED"
+                guard operation.targetBuildId == paths.runtimeBuildID else {
+                    throw HelperBootstrapError.incompatibleHelper
+                }
+                try await bootstrapper.ensureRunning(paths: paths)
+                startupErrorMessage = nil
+                enqueueRefresh(["status", "dashboard", "codex", "auth"])
+                return
+            }
+            failureStage = "LIFECYCLE_HANDOFF_CONNECTION_FAILED"
+            let claimed = try await client.acknowledgeLifecycle(requestId: operation.requestId)
+            lifecycleOperation = claimed
+            failureStage = "LIFECYCLE_RECEIPT_SAVE_FAILED"
+            try RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, kind: operation.kind,
+                outcome: "claimed", runtimeLockDirectory: paths.runtimeLockDirectory)
+            applicationShutdownInProgress = true
+            defer { applicationShutdownInProgress = false }
+            failureStage = "HELPER_SHUTDOWN_FAILED"
+            try await bootstrapper.shutdown(paths: paths)
+            failureStage = "LIFECYCLE_RECEIPT_SAVE_FAILED"
+            try RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, kind: operation.kind,
+                outcome: "runtime-stopped", runtimeLockDirectory: paths.runtimeLockDirectory)
+            if operation.kind == "mode-switch" {
+                var next = connectionPreferences
+                next.mode = .remoteClient
+                failureStage = "LIFECYCLE_MODE_SAVE_FAILED"
+                try connectionStore?.save(next)
+                failureStage = "LIFECYCLE_RECEIPT_SAVE_FAILED"
+                try RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, completed: true, runtimeLockDirectory: paths.runtimeLockDirectory)
+                connectionPreferences = next
+                lifecycleOperation = nil
+                resetConnectionContext()
+                beginPolling()
+                await refreshAll()
+            } else {
+                try RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, completed: true, runtimeLockDirectory: paths.runtimeLockDirectory)
+                applicationShutdownCompleted = true
+                cancelAllPolling()
+                setRemotePairingInvitation(nil)
+                helperStatus = nil
+                dashboard = nil
+                settings = nil
+                authStatus = nil
+                lifecycleTerminationHandler?()
+            }
+        } catch {
+            if let latest = lifecycleOperation,
+               latest.requestId != operation.requestId || !latest.isPending { return }
+            if case LocalRPCError.remote(_, let message) = error,
+               message.contains("LIFECYCLE_NOT_READY"),
+               let latest = try? await client.lifecycleStatus(requestId: operation.requestId), !latest.isPending {
+                if lifecycleOperation?.requestId == operation.requestId { observeLifecycle(latest) }
+                return
+            }
+            handledLifecycleUpdate = "\(operation.requestId):\(operation.updatedAt):\(operation.phase)"
+            let failureCode = RuntimeLifecycleHandoffStore.failureCode(for: error, fallback: failureStage)
+            try? RuntimeLifecycleHandoffStore.write(requestId: operation.requestId, kind: operation.kind, outcome: "failed",
+                runtimeLockDirectory: paths.runtimeLockDirectory, failureCode: failureCode)
+            runtimeErrorMessage = BridgeAppLocalization.lifecycleFailureDescription(failureCode, locale: interfaceLocale)
+            // The failed external action is reconciled by the helper. Never
+            // automatically escalate a pending reservation to forced shutdown.
+            enqueueRefresh(["status"])
+        }
+    }
+
+    private func recoverExternalHandoff() async throws {
+        let paths = await resolvedPaths()
+        guard let receipt = try RuntimeLifecycleHandoffStore.read(runtimeLockDirectory: paths.runtimeLockDirectory),
+              ["claimed", "runtime-stopped"].contains(receipt.outcome),
+              ["shutdown", "mode-switch"].contains(receipt.kind ?? ""),
+              !FileManager.default.fileExists(atPath: paths.runtimeLockDirectory.path),
+              !FileManager.default.fileExists(atPath: paths.helperSocket.path) else { return }
+        // The previous app may have exited between verified helper shutdown,
+        // saving the mode and writing its final receipt. Finish that transaction
+        // before choosing which connection to bootstrap on this launch.
+        if receipt.kind == "mode-switch" {
+            var next = connectionPreferences
+            next.mode = .remoteClient
+            try connectionStore?.save(next)
+            connectionPreferences = next
+        }
+        try RuntimeLifecycleHandoffStore.write(requestId: receipt.requestId, completed: true,
+            runtimeLockDirectory: paths.runtimeLockDirectory)
+    }
+
     private func performRuntime(_ operation: () async throws -> Void) async -> Bool {
         isBusy = true
         defer { isBusy = false }
@@ -2214,39 +2287,6 @@ final class AppModel: ObservableObject {
             locale: interfaceLocale,
             localizedErrorDescription(error)
         )
-    }
-
-    private func stopLocalOwnershipForModeSwitch(force: Bool) async throws {
-        let paths = await resolvedPaths()
-        let client = await helperClient()
-        do {
-            let stopped = try await client.prepareApplicationShutdown(
-                force: force,
-                timeoutMilliseconds: 60_000
-            )
-            guard stopped.phase == "stopped", stopped.pid == nil else {
-                throw NSError(
-                    domain: "CodexBridgeModeSwitch",
-                    code: 1,
-                    userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "RUNTIME_STOP_INCOMPLETE: The managed runtime still reports phase \(stopped.phase)."
-                    ]
-                )
-            }
-        } catch {
-            let runtimeLockExists = FileManager.default.fileExists(
-                atPath: paths.runtimeLockDirectory.path
-            )
-            let helperSocketExists = FileManager.default.fileExists(
-                atPath: paths.helperSocket.path
-            )
-            guard !runtimeLockExists && !helperSocketExists else { throw error }
-        }
-        try await bootstrapper.shutdown(paths: paths)
-        helperStatus = nil
-        authStatus = nil
-        setupDiscovery = nil
     }
 
     private func resetConnectionContext() {

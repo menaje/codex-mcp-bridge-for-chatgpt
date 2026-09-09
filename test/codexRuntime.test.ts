@@ -26,6 +26,21 @@ async function fixture() {
 }
 
 describe("Codex installation ownership and selection", () => {
+  it("freezes the activation target across pending CLI application and checks it under the state lock", async () => {
+    const f = await fixture(); await f.manager.install();
+    const lease = await f.manager.acquire();
+    const external = await f.external();
+    const candidate = (await f.manager.discover()).find(item => item.command === external)!;
+    await f.manager.select(candidate.id);
+    const target = await f.manager.activationTarget();
+    await expect(f.manager.applyPending(target)).rejects.toThrow("CODEX_APPLY_PENDING");
+    await lease.release();
+    await f.manager.applyPending(target);
+    expect(await f.manager.activationTarget()).toEqual(target);
+    expect((await f.manager.snapshot()).selection?.command).toBe(external);
+    await f.manager.select(candidate.id);
+    await expect(f.manager.applyPending(target)).rejects.toThrow("LIFECYCLE_TARGET_CHANGED");
+  });
   it("marks a version-valid but permission-incompatible installation unavailable for execution", async () => {
     const f = await fixture(); await f.external();
     const support = inspectClientRequestContract(protocolContract);

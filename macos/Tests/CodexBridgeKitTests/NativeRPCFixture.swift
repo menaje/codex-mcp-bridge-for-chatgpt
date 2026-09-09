@@ -10,15 +10,19 @@ struct NativeFixtureReply: Sendable {
 final class NativeRPCFixture: @unchecked Sendable {
     private let listener: Int32
     private let path: String
-    private let reply: @Sendable (String) -> NativeFixtureReply
+    private let reply: @Sendable (String, String) -> NativeFixtureReply
     private let lock = NSLock()
     private var stopped = false
     private var clients = Set<Int32>()
     private var counts: [String: Int] = [:]
 
-    init(path: String, reply: @escaping @Sendable (String) -> NativeFixtureReply) throws {
+    convenience init(path: String, reply: @escaping @Sendable (String) -> NativeFixtureReply) throws {
+        try self.init(path: path, requestReply: { method, _ in reply(method) })
+    }
+
+    init(path: String, requestReply: @escaping @Sendable (String, String) -> NativeFixtureReply) throws {
         self.path = path
-        self.reply = reply
+        self.reply = requestReply
         listener = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard listener >= 0 else { throw POSIXError(.EIO) }
         var address = sockaddr_un()
@@ -76,7 +80,8 @@ final class NativeRPCFixture: @unchecked Sendable {
         guard let request = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
               let method = request["method"] as? String, let id = request["id"] else { return }
         lock.withLock { counts[method, default: 0] += 1 }
-        let response = reply(method)
+        let parameters = (try? JSONSerialization.data(withJSONObject: request["params"] ?? [:])) ?? Data()
+        let response = reply(method, String(data: parameters, encoding: .utf8) ?? "{}")
         if response.delay > 0 { Thread.sleep(forTimeInterval: response.delay) }
         guard var body = try? JSONSerialization.jsonObject(with: Data(response.body.utf8)) as? [String: Any] else { return }
         body["jsonrpc"] = "2.0"

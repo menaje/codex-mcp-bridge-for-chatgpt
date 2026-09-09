@@ -38,7 +38,7 @@ let shuttingDown = false;
 
 console.log(`Codex MCP Bridge macOS helper ready at ${server.socketPath}`);
 if (!args.noAutoStart) {
-  void supervisor.start().catch((error) => {
+  void supervisor.startOnLaunch().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
   });
 }

@@ -1012,48 +1012,6 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertNotNil(model.runtimeErrorMessage)
     }
 
-    @MainActor
-    func testApplicationShutdownUsesVerifiedHelperPreparation() async throws {
-        let root = URL(fileURLWithPath:
-            "/tmp/cb-quit-\(getpid())-\(UUID().uuidString.prefix(8))",
-            isDirectory: true
-        )
-        defer { try? FileManager.default.removeItem(at: root) }
-        let paths = RuntimePaths(
-            environment: [
-                "XDG_CONFIG_HOME": root.path,
-                "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1",
-                "PATH": ProcessInfo.processInfo.environment["PATH"] ?? ""
-            ],
-            bundle: .main,
-            currentDirectory: root
-        )
-        try FileManager.default.createDirectory(
-            at: paths.helperSocket.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let listener = try makeTestListener(at: paths.helperSocket.path)
-        defer {
-            Darwin.close(listener)
-            unlink(paths.helperSocket.path)
-        }
-        let server = Task.detached {
-            try serveHelperShutdownOnce(listener: listener)
-        }
-        let model = AppModel(
-            paths: paths,
-            loginItemController: TestLoginItemController(status: .notRegistered)
-        )
-
-        let didShutdown = await model.shutdownApplication(force: true)
-        let method = try await server.value
-
-        XCTAssertTrue(didShutdown)
-        XCTAssertTrue(model.applicationShutdownCompleted)
-        XCTAssertEqual(method, "helper.prepare-shutdown")
-        XCTAssertNil(model.runtimeErrorMessage)
-    }
-
     func testDashboardLinksAcceptOnlyExpectedLocalContractShapes() {
         XCTAssertNotNil(DashboardLink.conversation(
             "https://chatgpt.com/c/00000000-0000-4000-8000-000000000001"
