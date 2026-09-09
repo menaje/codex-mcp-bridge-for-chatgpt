@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "메뉴바는 브리지 서비스 상태만 표시하고, 연결 끊김·실패·응답 대기 등 작업 상태는 대시보드에서 안내합니다.",
+  "breaking": false,
+  "migration": null
+}

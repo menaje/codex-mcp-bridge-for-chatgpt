@@ -567,7 +567,7 @@ final class AppPresentationTests: XCTestCase {
         model.authStatus = try loginStatus(installed: false, authenticated: false)
         XCTAssertEqual(model.health, .unavailable)
         model.authStatus = try loginStatus(installed: true, authenticated: true)
-        XCTAssertEqual(model.health, .checking)
+        XCTAssertEqual(model.health, .healthy)
         model.dashboard = try dashboardStatus()
         XCTAssertEqual(model.health, .healthy)
         model.dashboard = try dashboardStatus(runtimeUnknownAgents: 18)
@@ -577,19 +577,56 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testInputAndApprovalWaitDoNotMakeTheBridgeUnhealthy() throws {
-        let model = AppModel()
-        model.helperStatus = try helperStatus()
-        model.authStatus = try loginStatus(installed: true, authenticated: true)
-        for current in [false, true] {
-            var counts = ["inputRequired": 2, "approvalRequired": 3, "needsAttention": 5]
-            if current { counts["responseRequired"] = 5; counts["problems"] = 0 }
-            model.dashboard = try dashboardStatus(countOverrides: counts)
-            XCTAssertEqual(model.dashboard?.counts.responseRequiredCount, 5)
+    func testWorkProblemsStayInDashboardWithoutMakingTheBridgeUnhealthy() async throws {
+        let local = AppModel()
+        local.helperStatus = try helperStatus()
+        local.authStatus = try loginStatus(installed: true, authenticated: true)
+
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "작업실")
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(),
+            settings: try settingsSnapshot(
+                policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                         "constraints": ["allowDelegation": true]],
+                catalogModels: []
+            )
+        )
+        let remote = AppModel(
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile]
+            )),
+            credentialStore: TestCredentialStore([
+                profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+            ]),
+            remoteClientFactory: { _, _ in client }
+        )
+        await remote.refreshStatus()
+        remote.cancelAllPolling()
+        XCTAssertTrue(remote.bridgeConnected)
+
+        for model in [local, remote] {
+            model.dashboard = nil
             XCTAssertEqual(model.health, .healthy)
-            counts["needsAttention"] = 6
-            if current { counts["problems"] = 1 }
-            model.dashboard = try dashboardStatus(countOverrides: counts)
+            for current in [false, true] {
+                var counts = ["inputRequired": 2, "approvalRequired": 3, "needsAttention": 5]
+                if current { counts["responseRequired"] = 5; counts["problems"] = 0 }
+                model.dashboard = try dashboardStatus(countOverrides: counts)
+                XCTAssertEqual(model.dashboard?.counts.responseRequiredCount, 5)
+                XCTAssertEqual(model.health, .healthy)
+
+                for problem in ["orphanedAgents", "failed", "interrupted"] {
+                    var problemCounts = counts
+                    problemCounts[problem] = 1
+                    problemCounts["needsAttention"] = 6
+                    if current { problemCounts["problems"] = 1 }
+                    model.dashboard = try dashboardStatus(countOverrides: problemCounts)
+                    XCTAssertEqual(model.dashboard?.counts.problemCount, 1)
+                    XCTAssertEqual(model.dashboard?.counts.responseRequiredCount, 5)
+                    XCTAssertEqual(model.health, .healthy)
+                }
+            }
+            model.dashboardErrorMessage = "snapshot request failed"
             XCTAssertEqual(model.health, .attention)
         }
     }

@@ -18,7 +18,11 @@ dashboard styling, with an icon and label above each larger number.
 Counts filter current work and run history;
 background processes appear separately when present. Idle Agents have no
 standalone count or section, but their recorded turns remain in run history.
-Input/approval waits alone do not mark the bridge unhealthy. Native snapshot
+The menu-bar icon and header describe bridge service health. Work failures,
+interruptions, orphaned Agents, and input/approval waits appear in the Dashboard
+without marking the bridge unhealthy. Loading the first Dashboard snapshot
+does not delay a healthy service indicator; connection, authentication, and
+snapshot request failures still show a service warning. Native snapshot
 requests explicitly select the modern `statusFilter` projection, so the server
 and native client should be updated together. Immutable older cards retain their
 original projection when that optional parameter is omitted.

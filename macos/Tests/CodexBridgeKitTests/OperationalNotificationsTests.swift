@@ -149,7 +149,7 @@ final class OperationalNotificationsTests: XCTestCase {
             model.helperStatus = try helper(phase: "running", connected: true)
             XCTAssertTrue(model.bridgeConnected)
             XCTAssertEqual(model.operationalObservation, .healthy)
-            XCTAssertEqual(model.health, .checking) // Dashboard is still loading.
+            XCTAssertEqual(model.health, .healthy) // Dashboard loading does not change service health.
             XCTAssertNil(model.operationalProblem)
             await model.refreshOperationalNotifications(at: start.addingTimeInterval(61))
         }

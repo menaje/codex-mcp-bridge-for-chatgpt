@@ -650,6 +650,7 @@ final class AppModel: ObservableObject {
     var selectedCodexAccount: CodexAccountUsage? { codexRuntime?.account }
 
     var health: MenuBarHealth {
+        // Work outcomes belong to the Dashboard; this status describes the bridge service.
         if systemObservationPending { return .checking }
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
@@ -658,8 +659,7 @@ final class AppModel: ObservableObject {
             guard connectionErrorMessage == nil, dashboardErrorMessage == nil else {
                 return .attention
             }
-            guard let counts = dashboard?.counts else { return .checking }
-            return counts.problemCount > 0 ? .attention : .healthy
+            return .healthy
         }
         guard let helperStatus,
               helperStatus.configuration.valid,
@@ -674,8 +674,7 @@ final class AppModel: ObservableObject {
         guard authStatus.installed else { return .unavailable }
         guard authStatus.authenticated else { return .attention }
         guard dashboardErrorMessage == nil else { return .attention }
-        guard let counts = dashboard?.counts else { return .checking }
-        return counts.problemCount > 0 ? .attention : .healthy
+        return .healthy
     }
 
     var needsSetup: Bool {
