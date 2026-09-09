@@ -1,3 +1,4 @@
+import { dashboardHistoryActionInput } from "./workHistory.js";
 import {
   chmodSync,
   existsSync,
@@ -42,6 +43,7 @@ const requestSchema = z.strictObject({
     "companion.hello",
     "changes.wait",
     "dashboard.snapshot",
+    "dashboard.history",
     "thread.handoff",
     "settings.snapshot",
     "settings.update",
@@ -143,6 +145,7 @@ export type RemoteCompanionControl = {
 export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
+  "dashboard.history",
   "settings.snapshot",
   "settings.update",
   "runtime.snapshot"
@@ -317,6 +320,7 @@ async function dispatchRequest(
         },
         capabilities: [
           "dashboard.read",
+          ...(applicationService.historyAction ? ["dashboard.history"] : []),
           "settings.read",
           "settings.write",
           "runtime.drain",
@@ -330,6 +334,10 @@ async function dispatchRequest(
             : [])
         ]
       };
+    case "dashboard.history": {
+      if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
+      return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
+    }
     case "thread.handoff": {
       const params = z.strictObject({ rowKey: z.string().regex(/^[0-9a-f]{32}$/),
         codexThreadUrl: z.string().regex(/^codex:\/\/threads\/[0-9a-f-]{36}$/),

@@ -7,12 +7,12 @@ records remain the execution, ownership and verification model.
 
 ## Current discovery
 
-The new contract has **17 tools: 12 model tools and 5 app-only tools**. During
+The new contract has **18 tools: 12 model tools and 6 app-only tools**. During
 migration, actual discovery also includes **12 app-only compatibility
-descriptors**, for **29 total (12 model, 17 app-only)**. Operator mode
-(`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach, for 31.
-Two old model names remain unadvertised aliases. Thus the server accepts 31
-names by default and 33 in operator mode. All 14 retired names are still tracked
+descriptors**, for **30 total (12 model, 18 app-only)**. Operator mode
+(`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach, for 32.
+Two old model names remain unadvertised aliases. Thus the server accepts 32
+names by default and 34 in operator mode. All 14 retired names are still tracked
 for later removal; this is not a claim that their implementations were deleted.
 
 Actual ChatGPT testing rejected unadvertised calls from retained cards. Keeping
@@ -20,7 +20,7 @@ only their server handlers and immutable resources was insufficient: removing
 the original presenter broke template loading, and keeping that presenter alone
 restored the frame but broke refresh. The compatibility descriptors are private
 to apps and marked `codex/registrationTier: compatibility`. GPT's tool inventory
-remains 12; current cards use the five consolidated contracts below.
+remains 12; current cards use the six consolidated contracts below.
 
 | Model tools | Purpose |
 | --- | --- |
@@ -35,9 +35,10 @@ remains 12; current cards use the five consolidated contracts below.
 
 | App-only tools | Closed operations |
 | --- | --- |
-| `codex_ui_read` | `view: dashboard`, `settings`, `question` or `control` |
+| `codex_ui_read` | `view: dashboard`, `settings`, `question`, `control` or `history` |
 | `codex_update_settings` | Save/reset with existing revision checks |
 | `codex_question_action` | `operation.kind: submit`, `claim` or `ack` |
+| `codex_ui_history` | Acknowledge or archive/restore the selected Agent with a private history proof |
 | `codex_ui_stop` | `kind: job` or `process` with exact private target proof |
 | `codex_interaction_respond` | Respond to the original Codex approval/input request |
 

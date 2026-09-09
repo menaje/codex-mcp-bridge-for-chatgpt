@@ -45,6 +45,7 @@ struct SettingsDraft: Equatable {
     var usePriorityServiceTier: Bool
     var uiLocalePreference: String
     var maxConcurrentJobs: Int
+    var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
     var activityCardVisibility: String
     var completionHandoff: String
@@ -72,6 +73,7 @@ struct SettingsDraft: Equatable {
         usePriorityServiceTier = settings.usePriorityServiceTier
         uiLocalePreference = settings.uiLocalePreference
         maxConcurrentJobs = settings.maxConcurrentJobs
+        historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
         activityCardVisibility = settings.activityCardVisibility
         completionHandoff = settings.completionHandoff
@@ -109,6 +111,7 @@ struct SettingsDraft: Equatable {
         rebased.usePriorityServiceTier = usePriorityServiceTier
         rebased.uiLocalePreference = uiLocalePreference
         rebased.maxConcurrentJobs = maxConcurrentJobs
+        rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
         rebased.activityCardVisibility = activityCardVisibility
         rebased.completionHandoff = completionHandoff
@@ -125,6 +128,7 @@ struct SettingsDraft: Equatable {
             usePriorityServiceTier == other.usePriorityServiceTier &&
             uiLocalePreference == other.uiLocalePreference &&
             maxConcurrentJobs == other.maxConcurrentJobs &&
+            historyRetentionDays == other.historyRetentionDays &&
             showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
             activityCardVisibility == other.activityCardVisibility &&
             completionHandoff == other.completionHandoff
@@ -256,6 +260,8 @@ final class AppModel: ObservableObject {
     @Published var securityNotificationsEnabled = true {
         didSet { operationalNotifications?.securityEnabled = securityNotificationsEnabled }
     }
+    @Published private(set) var notificationPermission: OperationalNotificationPermission = .unknown
+    @Published private(set) var notificationAuthorizationInProgress = false
     private let operationalNotifications: OperationalNotifications?
     private var remoteOperationalProblem: OperationalProblem?
     private var notificationRefreshTask: Task<Void, Never>?
@@ -470,11 +476,26 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func requestNotificationAuthorization() async {
-        if await operationalNotifications?.requestAuthorization() == false,
-           let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+    func refreshNotificationPermission() async {
+        notificationPermission = await operationalNotifications?.permission() ?? .unknown
+    }
+
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func requestNotificationAuthorization() async {
+        guard !notificationAuthorizationInProgress else { return }
+        notificationAuthorizationInProgress = true
+        defer { notificationAuthorizationInProgress = false }
+        await refreshNotificationPermission()
+        if notificationPermission == .authorized { return }
+        if notificationPermission == .denied { openNotificationSettings(); return }
+        _ = await operationalNotifications?.requestAuthorization()
+        await refreshNotificationPermission()
+        if notificationPermission == .denied { openNotificationSettings() }
     }
 
     func showOperationalProblem(_ problem: OperationalProblem, scope: String? = nil) {
@@ -1314,6 +1335,23 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func changeHistory(_ row: DashboardRow, action: String) async {
+        guard let controls = row.historyControls else { return }
+        let connection = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            _ = try await client.historyAction(HistoryAction(
+                rowKey: row.rowKey, expectedRevision: controls.revision, action: action
+            ))
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard()
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = error.localizedDescription
+        }
+    }
+
     func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
         let continueEnrichment = !applyCachedEnrichment && (enrich || dashboardEnrichmentTask != nil)
         dashboardEnrichmentTask?.cancel()
@@ -1473,6 +1511,7 @@ final class AppModel: ObservableObject {
     func setSettingsWindowVisible(_ visible: Bool) {
         settingsWindowVisible = visible
         if visible {
+            Task { await refreshNotificationPermission() }
             settingsInvalidated = true
             enqueueRefresh(["status", "settings", "auth", "codex"])
         } else {
@@ -1974,6 +2013,7 @@ final class AppModel: ObservableObject {
                 usePriorityServiceTier: draft.usePriorityServiceTier,
                 uiLocalePreference: draft.uiLocalePreference,
                 maxConcurrentJobs: draft.maxConcurrentJobs,
+                historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
                 activityCard: ActivityCardPatch(
                     visibility: draft.activityCardVisibility,

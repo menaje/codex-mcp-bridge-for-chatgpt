@@ -98,6 +98,17 @@ describe("native companion server", () => {
     });
   });
 
+  it("validates history actions before forwarding them to the shared application service", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"archive",requestId:"11111111-1111-4111-8111-111111111111"};
+    expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.history",params})).toMatchObject({result:{ok:true}});
+    expect(applicationService.historyAction).toHaveBeenCalledWith(params);
+    expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.history",params:{...params,force:true}})).toHaveProperty("error");
+    expect(applicationService.historyAction).toHaveBeenCalledTimes(1);
+  });
+
   it("routes Dashboard and Settings through the shared application service", async () => {
     const socketPath = temporarySocketPath();
     const applicationService = fakeApplicationService();

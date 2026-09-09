@@ -33,6 +33,7 @@ describe("remote native companion", () => {
     const port = await availablePort();
     const endpoint = `https://127.0.0.1:${port}`;
     const applicationService = fakeApplicationService();
+    applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
     const manager = new RemoteCompanionManager({ stateFile, applicationService });
     managers.push(manager);
 
@@ -166,6 +167,13 @@ describe("remote native companion", () => {
       inspectRuntime: false
     });
     expect(manager.status().devices[0]?.lastSeenAt).not.toBeNull();
+
+    const historyParams = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
+    const history = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"history",method:"dashboard.history",params:historyParams},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(history).toMatchObject({status:200,body:{result:{ok:true}}});
+    expect(applicationService.historyAction).toHaveBeenCalledWith(historyParams);
 
     const forbiddenControl = await jsonRequest(
       `${endpoint}/remote-companion/v1/rpc`,

@@ -50,6 +50,10 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
+        try await rpc.call("dashboard.history", params: action, timeout: 15)
+    }
+
     public func runtimeStatus(
         inspectBackgroundProcesses: Bool = false
     ) async throws -> RuntimeAdmissionSnapshot {

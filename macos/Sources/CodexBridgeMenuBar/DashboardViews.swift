@@ -378,6 +378,9 @@ struct DashboardPopoverView: View {
                     hasMore: dashboard.pagination.terminal.hasNext,
                     loadMore: { Task { await model.loadMoreRecent() } }
                 )
+                if let policy = dashboard.historyPolicy {
+                    WorkHistoryPolicyView(policy: policy)
+                }
             }
             .padding(14)
         }
@@ -1048,6 +1051,7 @@ private struct DashboardRowView: View {
     let presentation: DashboardRowPresentation
     let enclosingActivityTitle: String?
     @State private var historyExpanded = false
+    @State private var changingHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1134,6 +1138,16 @@ private struct DashboardRowView: View {
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+            if let controls = row.historyControls {
+                HStack {
+                    if controls.canAcknowledge { historyButton("확인함", action: "acknowledge") }
+                    if controls.canArchive { historyButton("에이전트 보관", action: "archive") }
+                    if controls.canRestore { historyButton("에이전트 복원", action: "restore") }
+                    if changingHistory { ProgressView().controlSize(.mini) }
+                }
+                .font(.caption2)
+                .disabled(changingHistory)
+            }
             if !model.isRemoteClient,
                let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
                handoff.requested && !handoff.canOpen {
@@ -1269,49 +1283,23 @@ private struct DashboardRowView: View {
     }
 
     private var rowTimeText: String {
-        let workTime: String
-        if row.bucket == "active" {
-            workTime = BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(row.elapsedMs, locale: model.interfaceLocale)
-            )
-        } else if let duration = row.latestTurn?.durationMs {
-            workTime = BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(duration, locale: model.interfaceLocale)
-            )
-        } else {
-            workTime = BridgeAppLocalization.string(
-                "작업시간 확인 불가",
-                locale: model.interfaceLocale
-            )
-        }
-        guard row.bucket != "active" else { return workTime }
-        let lastWorkedAt = row.latestTurn?.endedAt ?? row.latestTurn?.updatedAt ?? row.updatedAt
-        return "\(workTime) · \(DisplayFormat.relative(lastWorkedAt, locale: model.interfaceLocale))"
+        DashboardTimePresentation.text(turn: row.latestTurn, fallbackUpdatedAt: row.updatedAt, locale: model.interfaceLocale)
     }
 
     private func turnTimeText(_ turn: DashboardTurn) -> String {
-        var values = [StatusPresentation.label(turn.status, locale: model.interfaceLocale)]
-        if let duration = turn.durationMs {
-            values.append(BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(duration, locale: model.interfaceLocale)
-            ))
-        } else {
-            values.append(BridgeAppLocalization.string(
-                "작업시간 확인 불가",
-                locale: model.interfaceLocale
-            ))
+        StatusPresentation.label(turn.status, locale: model.interfaceLocale) + " · " +
+            DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
+    }
+
+    private func historyButton(_ title: LocalizedStringKey, action: String) -> some View {
+        Button(title) {
+            changingHistory = true
+            Task {
+                await model.changeHistory(row, action: action)
+                changingHistory = false
+            }
         }
-        values.append(DisplayFormat.relative(
-            turn.endedAt ?? turn.updatedAt,
-            locale: model.interfaceLocale
-        ))
-        return values.joined(separator: " · ")
+        .buttonStyle(.link)
     }
 }
 

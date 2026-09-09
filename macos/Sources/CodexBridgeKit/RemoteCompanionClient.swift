@@ -267,6 +267,10 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
+        try await call("dashboard.history", params: action, timeout: 15)
+    }
+
     public func runtimeStatus(
         inspectBackgroundProcesses: Bool = false
     ) async throws -> RuntimeAdmissionSnapshot {

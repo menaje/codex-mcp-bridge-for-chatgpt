@@ -627,6 +627,7 @@ function capabilityForMethod(method: string): string {
     case "settings.snapshot":
       return "settings.read";
     case "settings.update":
+    case "dashboard.history":
       return "settings.write";
     case "runtime.snapshot":
       return "runtime.read";

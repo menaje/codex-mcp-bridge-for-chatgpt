@@ -178,7 +178,7 @@ Counts, history, pagination, and runtime enrichment all use the selected scope.
 Scoped project counts include relevant active registrations; weekly usage is
 still account-wide. Scope switching resets cached rows, disclosure and control
 state, rejects obsolete reads, and does not replay any control mutation.
-The card HTML budget is 144 KiB for the selector and its nine-language labels.
+The card HTML budget is 152 KiB for the selector, history controls, retention notice, and nine-language labels.
 
 Dashboard generation 24 displays only each actual turn's execution selection in the overview; saved next-run previews remain available in the compatible snapshot for native and retained clients. Rows add optional `controlKind` (`request`, `manage`, or null), derived only from retained, non-archived Agents with actionable requests, active work, or confirmed background processes. The card offers **Review requests** or **Manage work** only when such a control can be opened. Controls expand directly beneath the selected Agent and collapse in place; overview refreshes move the same form nodes with that Agent, preserving draft answers and input focus. If the Agent leaves the visible page or no longer has controls, the panel closes and invalidates its pending detail reads. A completed detail read with no remaining actions has an explicit empty-state message.
 

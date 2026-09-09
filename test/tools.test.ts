@@ -951,19 +951,19 @@ describe("bridge tools", () => {
 
 
 
-  it("publishes twelve model tools, five current app contracts and retained app-only compatibility", async () => {
+  it("publishes twelve model tools, six current app contracts and retained app-only compatibility", async () => {
     const root = temporaryRoot();
     const catalog = new FakeModelCatalog();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
     try {
       const { tools } = await client.listTools();
       const legacyAppNames = ["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate", "codex_activity_handoff", "codex_job_steer", "codex_activity_job_cancel", "codex_background_process_terminate", "codex_dashboard_snapshot", "codex_settings_snapshot", "codex_question_card", "codex_question_submit", "codex_question_notify"];
-      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_update_settings"];
+      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_ui_history", "codex_update_settings"];
       const modelNames = ["codex_activity_update", "codex_agent", "codex_answer", "codex_ask_user", "codex_cancel", "codex_dashboard", "codex_models", "codex_settings", "codex_status", "codex_steer", "codex_task", "codex_user_answer"];
       expect(tools.map(tool => tool.name).sort()).toEqual([...appNames, ...modelNames].sort());
       expect(catalog.calls).toHaveLength(0);
       const currentTools = tools.filter(tool => !legacyAppNames.includes(tool.name));
-      expect(currentTools).toHaveLength(17);
+      expect(currentTools).toHaveLength(18);
       expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(150_000);
       expect(tools.filter(tool => tool._meta?.["codex/registrationTier"] === "compatibility")
         .map(tool => tool.name).sort()).toEqual(legacyAppNames.sort());
@@ -2621,6 +2621,85 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("reviews failed history without keeping old failures in current work and supports reversible archive", async () => {
+    const root=temporaryRoot(), {jobs,applicationService,rawCallTool,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Review failed run"});
+      async function fail() {
+        const activity=jobs.createActivity({scopeId:SCOPE_A,title:"Failed run"});
+        const job=jobs.start({activityId:activity.activityId,agentId:agent.agentId,operation:"start",cwd:root,sandbox:"read-only",scopeId:SCOPE_A,
+          requestId:nextRequestId(),requestHash:nextRequestId(),requestHashVersion:7,exclusiveKeys:[],
+          sessionDecision:{requestedMode:"new",action:"start",reason:"explicit-new"}},async()=>{throw new Error("historic failure");});
+        await job.promise;return job;
+      }
+      const job=await fail();
+      const snapshot=()=>applicationService.dashboardSnapshot({statusFilter:"all"});
+      const first=await snapshot(),row=first.terminalRows[0]!;
+      expect(first.activeRows).toEqual([]);expect(first.counts.problems).toBe(1);
+      expect(row.historyControls).toMatchObject({canAcknowledge:true,canArchive:true,canRestore:false});
+      const args={rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,widgetInstanceId:"dddddddd-dddd-4ddd-8ddd-000000001599",scopeId:SCOPE_A};
+      const read=await rawCallTool({name:"codex_ui_read",arguments:{view:"history",...args}});
+      expect(read.isError,JSON.stringify(read)).not.toBe(true);
+      const token=(read._meta as any)["codex/historyControl@1"].token;
+      const request={...args,token,action:"acknowledge",requestId:nextRequestId()};
+      const wrongWidget=await rawCallTool({name:"codex_ui_history",arguments:{...request,widgetInstanceId:"dddddddd-dddd-4ddd-8ddd-000000001600"}});
+      expect(wrongWidget.isError).toBe(true);
+      const wrongHost=await rawCallTool({name:"codex_ui_history",arguments:{...request,scopeId:SCOPE_B}});
+      expect(wrongHost.isError).toBe(true);
+      const acknowledged=await rawCallTool({name:"codex_ui_history",arguments:request});
+      expect(acknowledged.isError,JSON.stringify(acknowledged)).not.toBe(true);
+      expect((await snapshot()).counts.problems).toBe(0);expect(job.status).toBe("failed");
+      expect((await rawCallTool({name:"codex_ui_history",arguments:request})).isError).not.toBe(true);
+      now+=1000;await fail();
+      expect((await snapshot()).counts.problems).toBe(1);
+      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
+      const newer=(await snapshot()).terminalRows[0]!;
+      await applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId()});
+      const archived=await snapshot();expect(archived.counts.problems).toBe(0);
+      expect(archived.terminalRows[0].historyControls).toMatchObject({canRestore:true,canArchive:false});
+      await applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:archived.terminalRows[0].historyControls!.revision,action:"restore",requestId:nextRequestId()});
+      expect((await snapshot()).counts.problems).toBe(1);
+      now+=8*86400_000;
+      const old=await snapshot();expect(old.activeRows).toEqual([]);expect(old.counts.problems).toBe(0);
+      expect(old.terminalRows[0].status).toBe("failed");expect(old.terminalRows[0].historyControls!.canAcknowledge).toBe(false);
+    } finally {clock.mockRestore();await close();}
+  });
+
+  it("keeps missing historical Codex threads out of current work even after a legacy probe",async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+    const {client,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      await runTask(client,{prompt:"Finished historical work"});
+      const modern=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(modern.activeRows).toEqual([]);expect(modern.terminalRows).toHaveLength(1);expect(probe).not.toHaveBeenCalled();
+      expect((await applicationService.dashboardSnapshot({inspectRuntime:true})).activeRows[0].status).toBe("orphaned");
+      const refreshed=await applicationService.dashboardSnapshot({statusFilter:"all"});
+      expect(refreshed.activeRows).toEqual([]);expect(refreshed.counts.problems).toBe(0);
+      expect(refreshed.terminalRows[0].status).toBe("completed");
+    }finally{await close();}
+  });
+
+  it("inspects every Agent beyond the 200-candidate batch and retains coverage on structural refresh", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      for(let n=0;n<284;n++){
+        const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:`Old Agent ${n}`});
+        jobs.linkAgentThread({agentId:agent.agentId,threadId:`old-thread-${n}`,backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      }
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all"})).counts.runtimeProbeSkippedAgents).toBe(284);
+      const first=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(first.counts.runtimeProbeSkippedAgents).toBe(84);
+      const second=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(new Set(upstream.loadedTerminalReads).size).toBe(284);
+      expect(second.counts.runtimeProbeSkippedAgents).toBe(0);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all"})).counts.runtimeProbeSkippedAgents).toBe(0);
+      expect(upstream.calls).toEqual([]);
+    }finally{await close();}
+  });
+
   it("unifies archived dashboard history without listing empty idle Agents or changing legacy pages", async () => {
     const root = temporaryRoot();
     const { client, jobs, rawCallTool, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
@@ -2763,6 +2842,10 @@ describe("bridge tools", () => {
       const modern = await applicationService.dashboardSnapshot({ statusFilter: "all", inspectRuntime: true });
       expect(modern.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 1, backgroundProcesses: 1 });
       expect(modern.activeRows).toEqual([expect.objectContaining({ status: "failed", backgroundProcessCount: 1 })]);
+      const row=modern.activeRows[0];
+      expect(row.historyControls!.canArchive).toBe(false);
+      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_BACKGROUND_PROCESS/);
+
       for (const statusFilter of ["problems", "background"] as const) {
         const filtered = await applicationService.dashboardSnapshot({ statusFilter });
         expect(filtered.activeRows.map(row => row.rowKey)).toEqual(modern.activeRows.map(row => row.rowKey));

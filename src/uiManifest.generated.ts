@@ -15,8 +15,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "5c7cbbb24e507b6d1dc9f85e53d2723c0c701bfa0c6c03d2072ddb74c7ff3a22",
-      "uri": "ui://codex-mcp-bridge/settings/5c7cbbb24e50.html",
+      "digest": "1e544fd45e7e7a3d8a5be831272f3d82c0c95d25bc4ab50dc5d9620a57ecc6a2",
+      "uri": "ui://codex-mcp-bridge/settings/1e544fd45e7e.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -39,10 +39,39 @@ export const UI_RESOURCE_MANIFEST = {
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 17
+          "codex/uiContractGeneration": 18
         }
       },
       "previous": [
+        {
+          "digest": "5c7cbbb24e507b6d1dc9f85e53d2723c0c701bfa0c6c03d2072ddb74c7ff3a22",
+          "uri": "ui://codex-mcp-bridge/settings/5c7cbbb24e50.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 17
+            }
+          }
+        },
         {
           "digest": "c6af5cf3b9cadcbac48abd11680eee4666e1b6431558cd640c3f8fceab2a7342",
           "uri": "ui://codex-mcp-bridge/settings/c6af5cf3b9ca.html",
@@ -3122,8 +3151,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "dashboard": {
-      "digest": "cea27ba2992d145313dd5b859aa079e834a4705db95b3e9561f96d1c3faf142d",
-      "uri": "ui://codex-mcp-bridge/dashboard/cea27ba2992d.html",
+      "digest": "38e7bb80e46210632ac5d4c9494b449229ee1f4a02a5c309de469c0a7c2fde64",
+      "uri": "ui://codex-mcp-bridge/dashboard/38e7bb80e462.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",
@@ -3149,10 +3178,42 @@ export const UI_RESOURCE_MANIFEST = {
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 24
+          "codex/uiContractGeneration": 25
         }
       },
       "previous": [
+        {
+          "digest": "cea27ba2992d145313dd5b859aa079e834a4705db95b3e9561f96d1c3faf142d",
+          "uri": "ui://codex-mcp-bridge/dashboard/cea27ba2992d.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated work controls.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and work controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 24
+            }
+          }
+        },
         {
           "digest": "b9748cf013dc4d81e166064066b52a02ca1be9dfddf60d3330a9c933adbc8a90",
           "uri": "ui://codex-mcp-bridge/dashboard/b9748cf013dc.html",

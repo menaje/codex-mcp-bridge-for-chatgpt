@@ -102,11 +102,23 @@ struct OperationalNotificationPolicy: Codable {
     }
 }
 
+enum OperationalNotificationPermission: Equatable {
+    case unknown, notDetermined, denied, authorized
+}
+
 @MainActor
 protocol OperationalNotificationDelivering: AnyObject {
     func isAuthorized() async -> Bool
+    func permission() async -> OperationalNotificationPermission
     func requestAuthorization() async -> Bool
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws
+}
+
+@MainActor
+extension OperationalNotificationDelivering {
+    func permission() async -> OperationalNotificationPermission {
+        await isAuthorized() ? .authorized : .denied
+    }
 }
 
 @MainActor
@@ -201,6 +213,12 @@ final class OperationalNotifications {
     var securityEnabled: Bool {
         get { defaults.object(forKey: "bridgeOperationalNotifications.security") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "bridgeOperationalNotifications.security") }
+    }
+
+    func permission() async -> OperationalNotificationPermission {
+        let value = await delivery.permission()
+        authorized = value == .authorized
+        return value
     }
 
     func requestAuthorization() async -> Bool {

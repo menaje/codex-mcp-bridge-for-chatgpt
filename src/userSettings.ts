@@ -1,3 +1,4 @@
+import { DEFAULT_HISTORY_RETENTION_DAYS, HISTORY_RETENTION_DAYS, historyRetentionDays, type HistoryRetentionDays } from "./workHistory.js";
 import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -57,6 +58,7 @@ export type BridgeUserSettings = {
   showBridgeThreadsInCodexApp: boolean;
   activityCardVisibility: ActivityCardVisibility;
   completionHandoff: CompletionHandoffMode;
+  historyRetentionDays: HistoryRetentionDays;
 };
 
 export type BridgeUserSettingsPatch = Partial<
@@ -132,12 +134,15 @@ export class UserSettingsStore {
       // Retained cards still interpret this setting. Current presenters do not
       // use it; preserve the default so legacy completion handoff can migrate.
       activityCardVisibility: "always",
-      completionHandoff: "off"
+      completionHandoff: "off",
+      historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
     this.load();
     this.noteUnavailableProjects();
   }
+
+  get historyPolicy() { return this.stateStore.workHistory.policy(this.settings.historyRetentionDays); }
 
   get persistent(): boolean {
     return Boolean(this.stateStore.persistent || this.stateFile);
@@ -287,7 +292,8 @@ export class UserSettingsStore {
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
       activityCardVisibility: this.initial.activityCardVisibility,
-      completionHandoff: this.initial.completionHandoff
+      completionHandoff: this.initial.completionHandoff,
+      historyRetentionDays: this.initial.historyRetentionDays
     };
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
   }
@@ -434,6 +440,9 @@ export class UserSettingsStore {
     }
     if (candidate.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) {
       throw new Error("Invalid settings schema version.");
+    }
+    if (!HISTORY_RETENTION_DAYS.includes(candidate.historyRetentionDays)) {
+      throw new Error("Invalid execution history retention period.");
     }
     candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
     candidate.modelDescriptionOverrides = normalizeModelDescriptionOverrides(candidate.modelDescriptionOverrides);
@@ -727,7 +736,8 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
     "activityCardVisibility",
-    "completionHandoff"
+    "completionHandoff",
+    "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
   if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) return true;
@@ -800,6 +810,7 @@ function readGeneralSettings(
       value.activityCardVisibility === "never"
         ? value.activityCardVisibility
         : "always",
+    historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
     completionHandoff:
       value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
         ? value.completionHandoff
@@ -939,7 +950,8 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
     "activityCardVisibility",
-    "completionHandoff"
+    "completionHandoff",
+    "historyRetentionDays"
   ]);
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));
   if (!unsupported) return;

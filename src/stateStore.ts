@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { WORK_HISTORY_SCHEMA, WorkHistoryStore, historyRetentionDays } from "./workHistory.js";
 import { EVENT_RETENTION_SCHEMA, EventRetention } from "./eventRetention.js";
 import { THREAD_CONNECTION_SCHEMA, ThreadConnectionStore, type ThreadPersistence } from "./threadConnections.js";
 import { QuestionStore, QUESTION_STORE_SCHEMA } from "./questionStore.js";
@@ -82,7 +83,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "14";
+const CURRENT_SCHEMA_VERSION = "15";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -428,6 +429,7 @@ export class BridgeStateStore {
   readonly questions: QuestionStore;
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
+  readonly workHistory: WorkHistoryStore;
   private readonly database: Database.Database;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
@@ -465,6 +467,7 @@ export class BridgeStateStore {
       existingVersion !== "11" &&
       existingVersion !== "12" &&
       existingVersion !== "13" &&
+      existingVersion !== "14" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -473,7 +476,7 @@ export class BridgeStateStore {
 
     try {
       if (existingVersion && existingVersion !== CURRENT_SCHEMA_VERSION && this.persistent) {
-        const backup = `${options.file}.pre-v14-${randomUUID()}.sqlite`;
+        const backup = `${options.file}.pre-v${CURRENT_SCHEMA_VERSION}-${randomUUID()}.sqlite`;
         this.database.prepare("VACUUM INTO ?").run(backup);
         chmodSync(backup, 0o600);
       }
@@ -513,9 +516,16 @@ export class BridgeStateStore {
               AND e.event_type IN ('job-completed','job-failed','job-interrupted','job-cancelled')),
             worker_pid=(SELECT json_extract(payload,'$.workerPid') FROM jobs WHERE thread_id=thread_connections.thread_id
               ORDER BY updated_at DESC LIMIT 1);`);
+          this.setMeta("schema_version", "14");
+        });
+      }
+      if (this.getMeta("schema_version") === "14") {
+        this.transaction(() => {
+          this.database.exec(WORK_HISTORY_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
         });
       }
+      this.workHistory = new WorkHistoryStore(this.database);
       this.threadConnections = new ThreadConnectionStore(this.database);
       this.eventRetention = new EventRetention(this.database);
       this.normalizeLegacyExecutionModes();
@@ -668,6 +678,7 @@ export class BridgeStateStore {
                status, updated_at, payload
           FROM jobs
          WHERE archived_at IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)
            ${scopeId ? "AND scope_id = ?" : ""}
          ORDER BY updated_at DESC, job_id DESC
          LIMIT ?
@@ -816,9 +827,12 @@ export class BridgeStateStore {
       FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
   }
 
-  maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> {
+  maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> & {historyRemoved:number} {
     return this.transaction(() => {
       const result = this.eventRetention.sweep(now);
+      const settings = this.getSettingsRecord()?.payload;
+      const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
+      const historyRemoved = this.workHistory.sweep(days, jobId => this.retentionProtection(jobId, now).length > 0, now);
       const candidates = this.database.prepare(`SELECT a.agent_id,c.thread_id FROM agents a JOIN thread_connections c ON c.agent_id=a.agent_id AND c.thread_id=a.current_thread_id
         WHERE a.lifecycle='idle' AND a.current_job_id IS NULL AND c.phase='released'
         AND c.last_finished_at<? AND a.updated_at<? LIMIT 50`).all(now - 30 * 86400_000, now - 30 * 86400_000) as Array<{agent_id:string;thread_id:string}>;
@@ -827,7 +841,7 @@ export class BridgeStateStore {
         const jobs = this.database.prepare("SELECT job_id FROM jobs WHERE agent_id=? AND archived_at IS NULL").all(candidate.agent_id) as Array<{job_id:string}>;
         if (!jobs.some(job => this.retentionProtection(job.job_id, now).length)) this.archiveAgent(candidate.agent_id, now);
       }
-      return result;
+      return {...result,historyRemoved};
     });
   }
 
@@ -4000,6 +4014,9 @@ export class BridgeStateStore {
     job: JobRowInput,
     allowLegacyUnattributedCancellation = false
   ): void {
+    // Late snapshots cannot resurrect expired display data or release the
+    // original request reservation.
+    if (this.workHistory?.expired(job.jobId)) return;
     if (!valueIsOneOf(ACTIVITY_JOB_STATUSES, job.status)) {
       throw new Error(`Invalid Codex job status for Activity storage: ${job.status}.`);
     }

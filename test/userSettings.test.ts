@@ -25,6 +25,18 @@ import {
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 
 describe("user settings and project registry", () => {
+  it("validates and persists history retention while migrating legacy settings to thirty days", () => {
+    const stateFile=path.join(temporaryDirectory("settings-history-"),"settings.json"),config=configFor();
+    const store=new UserSettingsStore(config,{stateFile});
+    expect(store.current.historyRetentionDays).toBe(30);
+    for(const invalid of [1, -1, 31, "7", null])expect(()=>store.update({historyRetentionDays:invalid as any},store.current.settingsRevision)).toThrow(/retention/);
+    store.update({historyRetentionDays:0},0);
+    expect(new UserSettingsStore(config,{stateFile}).current.historyRetentionDays).toBe(0);
+    const saved=JSON.parse(readFileSync(stateFile,"utf8"));delete saved.settings.historyRetentionDays;
+    writeFileSync(stateFile,JSON.stringify(saved));
+    expect(new UserSettingsStore(config,{stateFile}).current.historyRetentionDays).toBe(30);
+  });
+
   it("defaults new installations to durable conversations while retaining explicit and legacy hidden settings", () => {
     const stateFile=path.join(temporaryDirectory("settings-storage-"),"settings.json"),config=configFor();
     const fresh=new UserSettingsStore(config,{stateFile});

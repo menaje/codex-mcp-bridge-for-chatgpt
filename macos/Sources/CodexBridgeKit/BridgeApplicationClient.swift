@@ -16,9 +16,17 @@ public protocol BridgeApplicationClient: Sendable {
 
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot
 
+    func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
+
     func runtimeStatus(
         inspectBackgroundProcesses: Bool
     ) async throws -> RuntimeAdmissionSnapshot
+}
+
+public extension BridgeApplicationClient {
+    func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
+        throw NSError(domain: "HISTORY_UNSUPPORTED", code: 1)
+    }
 }
 
 public protocol RemoteBridgeApplicationClient: BridgeApplicationClient {

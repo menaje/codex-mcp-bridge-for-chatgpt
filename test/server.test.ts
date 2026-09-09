@@ -871,7 +871,7 @@ describe("http server", () => {
     expect(diagnostics.storage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 14,
+      schemaVersion: 15,
       activityPersistent: true,
       sessionPersistent: true,
       settingsPersistent: true

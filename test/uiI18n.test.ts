@@ -365,7 +365,7 @@ describe("human-facing UI localization", () => {
     expect(serialized).not.toContain("<");
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
     expect(SETTINGS_CARD_HTML).toContain(
-      serializedUiTranslations(["common", "settings", "effort"])
+      serializedUiTranslations(["common", "settings", "effort", "history"])
     );
     const activityBundles = JSON.parse(ACTIVITY_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
     const referencedActivityKeys = [...ACTIVITY_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
@@ -536,7 +536,7 @@ describe("human-facing UI localization", () => {
       "dashboardHistoryActivityHeading(historicalTurn,previousTurn,enclosingActivity)"
     );
     expect(DASHBOARD_CARD_HTML).toContain(
-      'if(active)return turn.durationMs==null?t["dashboard.time.durationUnknown"]'
+      'elapsed==null?t["dashboard.time.durationUnknown"]'
     );
     expect(DASHBOARD_CARD_HTML).not.toContain(
       'updated=t["dashboard.time.updated"].replace'
