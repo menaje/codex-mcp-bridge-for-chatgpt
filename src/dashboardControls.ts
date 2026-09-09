@@ -6,6 +6,7 @@ export const DASHBOARD_CONTROL_SCRIPT = String.raw`
 let selectedControlRow=null,controlDetail=null,controlBusy=false,controlEpoch=0;
 const controlPanel=document.getElementById("work-details"),controlBody=document.getElementById("work-details-body"),controlMessage=document.getElementById("work-details-message"),controlHeading=document.getElementById("work-details-title"),controlRefresh=document.getElementById("work-details-refresh"),controlClose=document.getElementById("work-details-close");
 function mutationId(){return createWidgetInstanceId()}
+function closeWorkDetails(){selectedControlRow=null;controlDetail=null;++controlEpoch;controlPanel.hidden=true;controlBody.replaceChildren();controlHeading.textContent="";controlMessage.textContent="";setControlBusy(false);scheduleSizeChanged(true)}
 function actionButton(label,action){const button=node("button","",label);button.type="button";button.addEventListener("click",action);return button}
 function controlError(error){const code=String(error?.message||error).match(/\b[A-Z][A-Z0-9_]{2,}\b/);controlMessage.textContent=code?t["common.errorCode"].replace("{code}",code[0]):t["common.error"];controlMessage.classList.add("error");scheduleSizeChanged(true)}
 function setControlBusy(value){controlBusy=value;controlRefresh.disabled=value;for(const field of controlBody.querySelectorAll("input,select,textarea,button"))field.disabled=value||!controlDetail||field.dataset.unavailable==="true"}
@@ -36,7 +37,7 @@ function renderWorkDetails(){
 ${DASHBOARD_STOP_BUTTONS}
  if(detail.backgroundUnavailable)controlBody.appendChild(node("p","message",t["activity.backgroundUnavailable"]));scheduleSizeChanged(true);
 }
-controlRefresh.addEventListener("click",()=>void refreshWorkDetails());controlClose.addEventListener("click",()=>{if(controlBusy)return;selectedControlRow=null;controlDetail=null;++controlEpoch;controlPanel.hidden=true;controlBody.replaceChildren();scheduleSizeChanged(true)});
+controlRefresh.addEventListener("click",()=>void refreshWorkDetails());controlClose.addEventListener("click",()=>{if(controlBusy)return;closeWorkDetails()});
 window.addEventListener("pagehide",()=>{++controlEpoch;controlDetail=null;setControlBusy(false)});
 window.addEventListener("pageshow",event=>{if(event.persisted&&selectedControlRow)void refreshWorkDetails()});
 `;

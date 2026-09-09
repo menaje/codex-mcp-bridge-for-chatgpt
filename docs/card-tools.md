@@ -1,6 +1,6 @@
 # Card tools and migration (issue #69)
 
-Cards are user interfaces. GPT opens Settings or the global overview on request,
+Cards are user interfaces. GPT opens Settings or the status card on request,
 and creates a question card when it needs the user's decision. New Task calls
 and status/history queries never open Activity cards. Activity, Agent and Job
 records remain the execution, ownership and verification model.
@@ -74,6 +74,26 @@ locale/bootstrap metadata. They do not call a settings/dashboard snapshot or
 model catalog. Initial data and refreshes use `codex_ui_read`. Settings retry
 can request a fresh model catalog. Saving Settings returns committed editor
 state in the same response.
+
+The user-facing name is **Codex status** (Korean: **Codex 현황**). Generation 23
+opens with `codex_ui_read` and `{view: "dashboard", scope: "auto"}`. A retained
+Activity or Job in the opening GPT conversation, including completed/archived
+history, selects **This conversation**; no records or missing host identity
+selects **All conversations**. The two buttons allow switching both ways. The
+thin opener also accepts missing host identity, while rejecting malformed
+identity metadata. It still returns no work records or snapshot. The resolved
+choice is then sent explicitly on structural reads, enrichment,
+refresh, and pagination; only a new cold mount chooses automatically. Losing
+host identity while explicitly viewing this conversation fails the read rather
+than silently replacing it with all work.
+
+The server filters Jobs, archived summaries, Agents, threads, runtime probes,
+history and counts before pagination. In the conversation view, tracked
+projects counts relevant active registrations; account usage remains explicitly
+account-wide. Switching scope clears row/page caches and selected work details,
+and obsolete responses cannot repaint the new scope. Omitting `scope` preserves
+all-work behavior for native and immutable older clients. The new card does not
+open or require the retired Activity presenter.
 
 Dashboard retains its structural-first render, bounded enrichment, pagination,
 refresh error recovery and disclosure state. A user deliberately opens **View

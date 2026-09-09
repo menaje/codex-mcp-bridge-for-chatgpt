@@ -133,6 +133,11 @@ describe("human-facing UI localization", () => {
       for (const key of PROJECT_TRANSLATION_KEYS) {
         expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
       }
+      for (const key of ["dashboard.scope.label", "dashboard.scope.conversation", "dashboard.scope.all",
+        "dashboard.scope.conversationNotice", "dashboard.scope.allNotice", "dashboard.scope.unavailable",
+        "dashboard.scope.runtimeNotice"] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
       expect(UI_TRANSLATIONS[locale]["job.interrupted"]).not.toBe(UI_TRANSLATIONS.en["job.interrupted"]);
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).not.toBe(UI_TRANSLATIONS.en["waiting.orchestrator"]);
     }
@@ -152,7 +157,9 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
     expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
     expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
-    expect(UI_TRANSLATIONS.ko["dashboard.title"]).toBe("Codex 전체 현황");
+    expect(UI_TRANSLATIONS.ko["dashboard.title"]).toBe("Codex 현황");
+    expect(UI_TRANSLATIONS.ko["dashboard.scope.conversation"]).toBe("이 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.scope.all"]).toBe("전체 현황");
     expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("새로고침");
     expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("Codex turn 완료");
     expect(UI_TRANSLATIONS.ko["dashboard.status.background-process-running"])

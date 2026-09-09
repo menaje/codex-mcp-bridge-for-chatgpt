@@ -1,3 +1,4 @@
+import { DASHBOARD_SCOPE_TRANSLATIONS } from "./dashboardScopeI18n.js";
 import { QUESTION_UI_TRANSLATIONS } from "./questionI18n.js";
 import { ULTRA_POLICY_TRANSLATIONS } from "./ultraPolicyI18n.js";
 import { LOCALIZATION_AUDIT_OVERRIDES } from "./uiI18nAudit.js";
@@ -276,7 +277,6 @@ const ENGLISH = {
   "waiting.none": "No pending owner", "waiting.codex": "Waiting for Codex", "waiting.orchestrator": "Work complete", "waiting.user": "Waiting for user", "waiting.verification": "Waiting for verification",
   "verification.not-required": "Verification not required", "verification.pending": "Verification pending", "verification.verifying": "Verifying", "verification.verified": "Verified", "verification.failed": "Verification failed",
   "job.running": "Running", "job.terminating": "Force-stopping", "job.termination-failed": "Termination unconfirmed", "job.completed": "Completed", "job.failed": "Failed", "job.interrupted": "Interrupted", "job.cancelled": "Cancelled",
-  "dashboard.title": "Codex overview",
   "dashboard.countsLabel": "Overview counts",
   "dashboard.restoreFailed": "Could not load the Codex overview. Use Refresh to try again.",
   "dashboard.scopeNotice": "Conversations currently known to this personal bridge through retained Jobs, Agents, or threads; not all ChatGPT history.",
@@ -362,7 +362,8 @@ const ENGLISH = {
   "dashboard.status.interrupted": "Interrupted",
   "dashboard.status.cancelled": "Cancelled",
   "dashboard.status.idle": "Idle",
-  "dashboard.status.orphaned": "Thread unavailable"
+  "dashboard.status.orphaned": "Thread unavailable",
+  ...DASHBOARD_SCOPE_TRANSLATIONS.en
 } as const;
 
 export type UiTranslationKey = keyof typeof ENGLISH;
@@ -2200,8 +2201,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
