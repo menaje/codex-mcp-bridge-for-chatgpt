@@ -5,6 +5,7 @@ public struct EmptyParameters: Codable, Sendable {
 }
 
 public struct DashboardSnapshot: Codable, Sendable {
+    public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
     public let scope: String
@@ -23,6 +24,7 @@ public struct DashboardSnapshot: Codable, Sendable {
 }
 
 public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
+    public var reviewUntilRetention: Bool? = nil
     public let retentionDays: Int
     public let issueAttentionDays: Int
     public let lastCleanupAt: String?
@@ -448,6 +450,7 @@ public struct PolicyActivation: Codable, Sendable {
 }
 
 public struct DashboardParameters: Codable, Sendable {
+    public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
     public var idleOffset: Int
@@ -459,9 +462,11 @@ public struct DashboardParameters: Codable, Sendable {
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
         enrich: Bool = false,
-        statusFilter: DashboardStatusFilter = .all
+        statusFilter: DashboardStatusFilter = .all,
+        problems: ProblemQuery? = nil
     ) {
         self.statusFilter = statusFilter
+        self.problems = problems
         self.limit = limit
         self.terminalOffset = terminalOffset
         self.idleOffset = idleOffset

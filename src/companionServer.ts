@@ -1,4 +1,5 @@
 import { dashboardHistoryActionInput } from "./workHistory.js";
+import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
   existsSync,
@@ -44,6 +45,7 @@ const requestSchema = z.strictObject({
     "changes.wait",
     "dashboard.snapshot",
     "dashboard.history",
+    "dashboard.problem",
     "thread.handoff",
     "settings.snapshot",
     "settings.update",
@@ -61,6 +63,7 @@ const requestSchema = z.strictObject({
 
 const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
+  problems: problemQuerySchema.optional(),
   statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -146,6 +149,7 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
   "dashboard.history",
+  "dashboard.problem",
   "settings.snapshot",
   "settings.update",
   "runtime.snapshot"
@@ -321,6 +325,7 @@ async function dispatchRequest(
         capabilities: [
           "dashboard.read",
           ...(applicationService.historyAction ? ["dashboard.history"] : []),
+          ...(applicationService.problemAction ? ["dashboard.problems"] : []),
           "settings.read",
           "settings.write",
           "runtime.drain",
@@ -338,6 +343,10 @@ async function dispatchRequest(
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
       return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
     }
+    case "dashboard.problem": {
+      if (!applicationService.problemAction) throw new Error("PROBLEMS_UNSUPPORTED");
+      return applicationService.problemAction(problemActionSchema.parse(request.params));
+    }
     case "thread.handoff": {
       const params = z.strictObject({ rowKey: z.string().regex(/^[0-9a-f]{32}$/),
         codexThreadUrl: z.string().regex(/^codex:\/\/threads\/[0-9a-f-]{36}$/),
@@ -348,6 +357,7 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
+        problems: params.problems,
         statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,

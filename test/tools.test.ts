@@ -951,20 +951,21 @@ describe("bridge tools", () => {
 
 
 
-  it("publishes twelve model tools, six current app contracts and retained app-only compatibility", async () => {
+  it("publishes twelve model tools, seven current app contracts and retained app-only compatibility", async () => {
     const root = temporaryRoot();
     const catalog = new FakeModelCatalog();
     const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
     try {
       const { tools } = await client.listTools();
       const legacyAppNames = ["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate", "codex_activity_handoff", "codex_job_steer", "codex_activity_job_cancel", "codex_background_process_terminate", "codex_dashboard_snapshot", "codex_settings_snapshot", "codex_question_card", "codex_question_submit", "codex_question_notify"];
-      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_ui_history", "codex_update_settings"];
+      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_ui_history", "codex_ui_problem", "codex_update_settings"];
       const modelNames = ["codex_activity_update", "codex_agent", "codex_answer", "codex_ask_user", "codex_cancel", "codex_dashboard", "codex_models", "codex_settings", "codex_status", "codex_steer", "codex_task", "codex_user_answer"];
       expect(tools.map(tool => tool.name).sort()).toEqual([...appNames, ...modelNames].sort());
       expect(catalog.calls).toHaveLength(0);
       const currentTools = tools.filter(tool => !legacyAppNames.includes(tool.name));
-      expect(currentTools).toHaveLength(18);
-      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(150_000);
+      expect(currentTools).toHaveLength(19);
+      // The seventh app-only contract includes bounded per-execution problem rows.
+      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(165_000);
       expect(tools.filter(tool => tool._meta?.["codex/registrationTier"] === "compatibility")
         .map(tool => tool.name).sort()).toEqual(legacyAppNames.sort());
       for (const tool of tools) {
@@ -2664,6 +2665,133 @@ describe("bridge tools", () => {
       const old=await snapshot();expect(old.activeRows).toEqual([]);expect(old.counts.problems).toBe(0);
       expect(old.terminalRows[0].status).toBe("failed");expect(old.terminalRows[0].historyControls!.canAcknowledge).toBe(false);
     } finally {clock.mockRestore();await close();}
+  });
+
+  it("reviews each retained failure across later success, pagination, scope, undo and stale selections", async () => {
+    const root=temporaryRoot(), {jobs,applicationService,rawCallTool,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Repeated executions"});
+      const outside=jobs.createAgent({scopeId:SCOPE_B,agentName:"Another conversation"});
+      const base=Date.now()-9*86400_000;
+      for(let n=0;n<112;n++){
+        const record={jobId:`review-${n}`,requestId:`review-request-${n}`,scopeId:n===111?SCOPE_B:SCOPE_A,
+          agentId:n===111?outside.agentId:agent.agentId,status:n===110?"completed":"failed",createdAt:base+n*100,updatedAt:base+n*100+1};
+        jobs.admissionStateStore.upsertJob(record);jobs.admissionStateStore.deleteJob(record.jobId);
+      }
+      const query={review:"pending" as const,kind:"failed" as const,offset:0};
+      const first=await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_A,limit:50,problems:query});
+      expect(first.activeRows).toEqual([]);expect(first.terminalRows[0]?.status).toBe("completed");
+      expect(first.problems).toMatchObject({pendingCount:110,reviewableCount:110,page:{total:110,returned:50,hasNext:true}});
+      expect(first.historyPolicy?.reviewUntilRetention).toBe(true);
+      const pages=[first.problems!];
+      for(const offset of [50,100]){
+        const page=await applicationService.dashboardSnapshot({statusFilter:"problems",scopeId:SCOPE_A,limit:50,problems:{...query,offset}});
+        expect(page.activeRows).toEqual([]);expect(page.terminalRows).toEqual([]);expect(page.problems?.revision).toBe(first.problems!.revision);pages.push(page.problems!);
+      }
+      const targets=pages.flatMap(page=>page.rows.map(row=>({problemKey:row.problemKey,expectedRevision:row.revision})));
+      expect(new Set(targets.map(target=>target.problemKey)).size).toBe(110);
+      const widgetInstanceId="dddddddd-dddd-4ddd-8ddd-000000001699";
+      const operation={action:"acknowledge" as const,targets:targets.slice(0,100)};
+      const proof=await rawCallTool({name:"codex_ui_read",arguments:{view:"problem-control",operation,scope:"conversation",scopeId:SCOPE_A,widgetInstanceId}});
+      expect(proof.isError,JSON.stringify(proof)).not.toBe(true);
+      const token=(proof._meta as any)["codex/problemControl@1"].token;
+      const request={...operation,token,scopeId:SCOPE_A,widgetInstanceId,requestId:nextRequestId()};
+      for(const override of [{widgetInstanceId:nextRequestId()},{scopeId:SCOPE_B},{action:"unacknowledge"},{targets:targets.slice(1,2)}]){
+        const rejected=await rawCallTool({name:"codex_ui_problem",arguments:{...request,...override}});
+        expect(rejected.isError).toBe(true);
+      }
+      const acknowledged=await rawCallTool({name:"codex_ui_problem",arguments:request});
+      expect(acknowledged.isError,JSON.stringify(acknowledged)).not.toBe(true);
+      expect(acknowledged.structuredContent).toMatchObject({ok:true,changed:100});
+      expect((await rawCallTool({name:"codex_ui_problem",arguments:request})).structuredContent).toMatchObject({changed:100});
+      await expect(applicationService.problemAction!({...operation,targets:targets.slice(100),requestId:nextRequestId()},SCOPE_A)).resolves.toEqual({ok:true,changed:10});
+      const reviewed=await applicationService.dashboardSnapshot({statusFilter:"problems",scopeId:SCOPE_A,limit:50,problems:{...query,review:"acknowledged"}});
+      expect(reviewed.counts.problems).toBe(0);expect(reviewed.problems).toMatchObject({pendingCount:0,acknowledgedCount:110});
+      expect(reviewed.problems!.rows.every(row=>row.row.status==="failed"&&row.canUnacknowledge)).toBe(true);
+      const row=reviewed.problems!.rows[0]!;
+      await applicationService.problemAction!({action:"unacknowledge",targets:[{problemKey:row.problemKey,expectedRevision:row.revision}],requestId:nextRequestId()},SCOPE_A);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_A,problems:query})).counts.problems).toBe(1);
+      await expect(applicationService.problemAction!({...operation,targets:[targets[0]!],requestId:nextRequestId()},SCOPE_A)).rejects.toThrow(/TARGET_CHANGED/);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_B,problems:query})).counts.problems).toBe(1);
+      expect(jobs.admissionStateStore.listDashboardRetainedJobs().filter(job=>job.status==="failed")).toHaveLength(111);
+    } finally {await close();}
+  });
+
+  it("keeps uninspected Agents out of problems and rechecks unknown status without reviewing active work", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Runtime inspection"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"unknown-runtime",backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      const options={statusFilter:"all" as const,problems:{review:"pending" as const,kind:"all" as const,offset:0}};
+      const initial=await applicationService.dashboardSnapshot(options);
+      expect(initial.counts.runtimeProbeSkippedAgents).toBe(1);expect(initial.problems?.pendingCount).toBe(0);
+      const inspect=vi.spyOn(upstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("inspection unavailable"));
+      const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      const unknown=await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      expect(unknown.problems?.pendingCount).toBe(1);
+      const row=unknown.problems!.rows[0]!;expect(row).toMatchObject({kind:"unknown",canAcknowledge:false,canRecheck:true});
+      const target={problemKey:row.problemKey,expectedRevision:row.revision};
+      await expect(applicationService.problemAction!({action:"acknowledge",targets:[target],requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
+      await applicationService.problemAction!({action:"recheck",targets:[target],requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      inspect.mockResolvedValue(null);
+      probe.mockImplementation(async threadId=>({state:"resumable",runtimeStatus:"notLoaded",threadId}));
+      await applicationService.problemAction!({action:"recheck",targets:[target],requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(0);
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");expect(upstream.calls).toEqual([]);
+    } finally {await close();}
+  });
+
+  it("resolves an orphan only after fresh non-loading checks confirm no running or background work", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Disconnected runtime"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"missing-runtime",backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Missing runtime"});
+      vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+      const options={statusFilter:"all" as const,problems:{review:"pending" as const,kind:"all" as const,offset:0}};
+      const first=await applicationService.dashboardSnapshot(options),row=first.problems!.rows[0]!;
+      expect(first.activeRows).toEqual([]);expect(row.kind).toBe("orphaned");
+      const action={action:"recheck" as const,targets:[{problemKey:row.problemKey,expectedRevision:row.revision}]};
+      upstream.backgroundThreadId="missing-runtime";
+      await applicationService.problemAction!({...action,requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      upstream.backgroundThreadId=undefined;
+      await applicationService.problemAction!({...action,requestId:nextRequestId()});
+      const next=await applicationService.dashboardSnapshot(options);
+      expect(next.problems?.pendingCount).toBe(0);expect(next.problems?.acknowledgedCount).toBe(1);
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("orphaned");expect(upstream.calls).toEqual([]);
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Connection lost again"});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      await expect(applicationService.problemAction!({...action,requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
+    } finally {await close();}
+  });
+
+  it("retries failed termination only for the exact visible shared-worker impact and records provenance",async()=>{
+    const root=temporaryRoot(),upstream=new DeferredUpstream();
+    const {client,jobs,applicationService,close}=await connectTestClient(configFor(root),upstream);
+    try {
+      const first=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"First connected execution",sessionMode:"new"}}));
+      const second=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Second connected execution",sessionMode:"new"}}));
+      const fail=vi.spyOn(upstream,"forceTerminateWorker").mockRejectedValueOnce(new Error("worker still alive"));
+      const job=jobs.get(first.jobId)!;
+      const {intent}=jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:nextRequestId(),actionHash:"d".repeat(64),source:"operator",toolName:"test",actionName:"cancel-job",target:{kind:"job",jobId:job.jobId,activityId:job.activityId,agentId:job.agentId},expectedVersion:job.version,reasonCode:"test-stop"});
+      await jobs.cancel(job.jobId,intent,{acknowledgeAffectedJobIds:[first.jobId,second.jobId]});
+      expect(jobs.get(job.jobId)?.status).toBe("termination-failed");
+      const view=await applicationService.dashboardSnapshot({statusFilter:"problems",problems:{review:"pending",kind:"termination-failed",offset:0}});
+      const problem=view.problems!.rows.find(row=>row.canRetryStop)!;
+      expect(problem.stopImpact?.affectedJobIds.sort()).toEqual([first.jobId,second.jobId].sort());
+      const action={action:"retry-stop" as const,targets:[{problemKey:problem.problemKey,expectedRevision:problem.revision}],requestId:nextRequestId()};
+      await expect(applicationService.problemAction!({...action,acknowledgeAffectedJobIds:[first.jobId]})).rejects.toThrow(/STOP_IMPACT_CHANGED/);
+      expect(fail).toHaveBeenCalledTimes(1);
+      const request={...action,acknowledgeAffectedJobIds:problem.stopImpact!.affectedJobIds};
+      await applicationService.problemAction!(request);await applicationService.problemAction!(request);
+      expect(fail).toHaveBeenCalledTimes(2);expect(upstream.aborts).toBe(1);
+      expect(jobs.listCancellationIntents({requestId:request.requestId})).toEqual(expect.arrayContaining([expect.objectContaining({source:"operator",reasonCode:"problem-termination-retry"})]));
+      expect(jobs.get(first.jobId)?.status).toBe("cancelled");expect(jobs.get(second.jobId)?.status).toBe("interrupted");
+    }finally{await close();}
   });
 
   it("keeps missing historical Codex threads out of current work even after a legacy probe",async()=>{

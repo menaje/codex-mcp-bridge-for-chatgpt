@@ -354,30 +354,38 @@ struct DashboardPopoverView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
-                DashboardSection(
-                    title: "현재 작업",
-                    emptyText: "표시할 현재 작업이 없습니다.",
-                    rows: dashboard.activeRows,
-                    total: dashboard.pagination.active.total,
-                    groupsByActivity: true
-                )
-                if dashboard.pagination.active.hasNext {
-                    Label(
-                        "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
-                        systemImage: "ellipsis.circle"
+                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
+                    DashboardSection(
+                        title: "현재 작업",
+                        emptyText: "표시할 현재 작업이 없습니다.",
+                        rows: dashboard.activeRows,
+                        total: dashboard.pagination.active.total,
+                        groupsByActivity: true
                     )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    if dashboard.pagination.active.hasNext {
+                        Label(
+                            "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
+                            systemImage: "ellipsis.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
                 }
-                DashboardSection(
-                    title: "실행 기록",
-                    emptyText: "보존된 최근 실행이 없습니다.",
-                    rows: dashboard.terminalRows,
-                    total: dashboard.pagination.terminal.total,
-                    groupsByActivity: true,
-                    hasMore: dashboard.pagination.terminal.hasNext,
-                    loadMore: { Task { await model.loadMoreRecent() } }
-                )
+                if let problems = dashboard.problems,
+                   model.dashboardStatusFilter == .all || model.dashboardStatusFilter == .problems {
+                    DashboardProblemsSection(problems: problems)
+                }
+                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
+                    DashboardSection(
+                        title: "실행 기록",
+                        emptyText: "보존된 최근 실행이 없습니다.",
+                        rows: dashboard.terminalRows,
+                        total: dashboard.pagination.terminal.total,
+                        groupsByActivity: true,
+                        hasMore: dashboard.pagination.terminal.hasNext,
+                        loadMore: { Task { await model.loadMoreRecent() } }
+                    )
+                }
                 if let policy = dashboard.historyPolicy {
                     WorkHistoryPolicyView(policy: policy)
                 }
@@ -990,7 +998,7 @@ private struct DashboardActivityGroupView: View {
     }
 }
 
-private enum DashboardRowPresentation {
+enum DashboardRowPresentation {
     case nestedAgent
     case nestedIdleAgent
     case idle
@@ -1045,7 +1053,7 @@ private struct DashboardExecutionLabel: View {
     }
 }
 
-private struct DashboardRowView: View {
+struct DashboardRowView: View {
     @EnvironmentObject private var model: AppModel
     let row: DashboardRow
     let presentation: DashboardRowPresentation
@@ -1710,7 +1718,7 @@ private enum StatusPresentation {
         case "approval-required": key = "승인 필요"
         case "terminating": key = "종료 중"
         case "termination-failed": key = "종료 실패"
-        case "liveness-unknown": key = "상태 불명"
+        case "liveness-unknown": key = "상태 확인 불가"
         case "completed": key = "완료"
         case "failed": key = "실패"
         case "interrupted": key = "중단"

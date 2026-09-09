@@ -1,34 +1,70 @@
 # Execution history and current work
 
-The current dashboard and macOS menu distinguish live work from the outcome of a
-finished run. A failed or interrupted run stays in **Run history**, sorted by its
-last execution time. It contributes to **Issues** for seven days, unless the user
-acknowledges it or archives the Agent. A newer failed run on the same Agent requires
-its own acknowledgement. Acknowledgement never changes the recorded outcome.
+The current dashboard and macOS menu show **Current work**, **Problems**, and
+**Run history**. Problems contains finished failures/interrupted runs, unavailable
+runtime status, disconnected Agents, and failed termination. A probe that has not
+yet run is an inspection notice and is not a failed inspection.
 
-Actual running work, pending responses, uncertain live execution, failed termination,
-and observed background processes remain current. A missing historical Codex thread
-does not make an otherwise idle Agent current. Native and card rows use the same
-rule for time: live turns show elapsed work time and relative start time; terminal
-turns show recorded duration and relative end time. Missing historical start or
-duration information remains unavailable instead of becoming zero or a continuously
-increasing duration.
+Current work contains execution, response waits, termination in progress and
+observed background work. Finished runs keep their original status in history.
+Native and card rows use the same time rule: live turns show elapsed work time and
+relative start time; terminal turns show recorded duration and relative end time.
+Missing historical timing remains unavailable.
 
-## Review and Agent archive
+## Problem review
 
-A history row offers **Acknowledge**, **Archive Agent**, or **Restore Agent** as
-appropriate. Archiving is reversible and only changes the Bridge's Agent state.
-Before archiving, the service checks the current Agent revision and inspects Codex
-without resuming a thread. Live work or unverified background state blocks the
-operation. A changed target after inspection also blocks it. It never stops a turn,
-changes a result to success, or archives/deletes a Codex conversation.
+Both interfaces provide **Needs action** and **Reviewed history**, with filters
+for failure/interruption, unavailable status, failed termination and disconnection.
+The Problems summary opens this dedicated area. Acknowledgement belongs to each
+execution, so a later success or a different failure on the same Agent cannot
+hide the earlier unreviewed failure. Archived Agents' retained failures remain
+reviewable. Every retained failure remains available throughout its configured
+retention period; seven days no longer silently removes an unreviewed item in
+current clients.
 
-The native companion uses `dashboard.history`. The mounted card first reads a
-short-lived history proof through `codex_ui_read`, then calls app-private
-`codex_ui_history`. Proofs bind the row revision, widget and host conversation;
-request IDs make retries idempotent. A history proof cannot authorize execution
-controls. Remote native management requires the existing `settings.write`
-capability in addition to authentication and pinned server identity.
+**Acknowledge** moves a finished failure to Reviewed history, preserving its failed
+outcome. **Undo review** moves it back. The native menu supports individual and
+all-finished-failure review. The card additionally supports selected failures and
+limits bulk review to its chosen conversation/all-work scope. Bulk review collects
+all matching pages before changing anything, then sends at most 100 exact targets
+per atomic request. A changed page revision cancels collection. A changed target
+rejects its whole request, and partial completion across requests is reported.
+Both interfaces read the same durable state and refresh through existing change
+notifications.
+
+Unavailable runtime state cannot be acknowledged. **Check status again** makes a
+fresh, bounded, non-loading inspection. The problem remains while execution or
+background state is unknown. An orphan can be recorded as resolved only when
+there is no active Job and fresh evidence confirms no loaded turn or background
+process. This preserves the Agent and original outcomes. Changed execution
+identity or a later failed inspection invalidates that resolution.
+
+**Retry termination** is offered only for failed termination. The confirmation
+shows the exact number and names of affected executions. A changed impact or
+execution revision rejects the action before termination. A retry records durable
+cancellation provenance and remains idempotent. Remote native clients keep their
+existing non-execution authority and do not offer or permit this stop action.
+
+The native API uses `dashboard.snapshot.problems` and `dashboard.problem`. Cards
+first read `codex_ui_read` with `view: problem-control`, then send the exact action
+to app-private `codex_ui_problem`. A five-minute proof binds the entire target set,
+revision, action, stop impact, widget, host identity and selected scope. Proofs
+cannot authorize an unrelated action; writes never use a fallback transport or
+automatic replay. Local/native review and remote review use existing authenticated
+companion paths; remote review requires `settings.write`.
+
+## Agent archive and compatibility
+
+History separately offers **Archive Agent** / **Restore Agent**. Archiving changes
+only the Bridge Agent lifecycle after fresh non-loading inspection and revision
+checks confirm no active work or unknown background state. It never stops work,
+changes an outcome, or archives/deletes a Codex conversation.
+
+`dashboard.history` and app-private `codex_ui_history` remain for these controls
+and immutable older cards. Snapshots without the optional `problems` query retain
+the prior seven-day/latest-Agent problem projection for compatibility. Current
+clients opt into the per-execution collection. Agent archive and problem review
+remain independent.
 
 ## Retention
 
@@ -72,6 +108,6 @@ links to macOS notification settings. Repeated requests do not prompt again afte
 authorization. The official model-description disclosure uses the shared full-row
 button and leading-aligned, selectable text.
 
-Current resource generations are Dashboard 25 and Settings 18. Prior published
-resource snapshots remain immutable. The Dashboard HTML budget is 152 KiB, including
-history actions and policy copy in all nine supported languages.
+Current resource generations are Dashboard 26, Settings 19, and Activity 30. Prior published
+resource snapshots remain immutable. The Dashboard HTML budget is 184 KiB, including
+problem review, history actions and policy copy in all nine supported languages.

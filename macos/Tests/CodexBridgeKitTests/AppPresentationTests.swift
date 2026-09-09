@@ -2491,3 +2491,89 @@ extension ConnectionObservationRecoveryTests {
         XCTAssertEqual(bridge.count("dashboard.snapshot"), 3)
     }
 }
+
+
+extension AppPresentationTests {
+    @MainActor
+    func testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists() async throws {
+        for changesDuringPaging in [false, true] {
+            let root = URL(fileURLWithPath: "/tmp/cb-problems-\(UUID().uuidString.prefix(8))")
+            let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+            try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let base = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+            let state = ProblemPagingFixture(base: base, changesDuringPaging: changesDuringPaging)
+            let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path, requestReply: { method, params in state.reply(method, params) })
+            let model = AppModel(paths: paths)
+            defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+            model.recordLocalConnectionStatus(try helperStatus())
+            await model.acknowledgeAllFinishedProblems()
+            if changesDuringPaging {
+                XCTAssertEqual(state.batches, [])
+                XCTAssertNotNil(model.dashboardErrorMessage)
+            } else {
+                XCTAssertEqual(state.batches, [100, 12])
+                XCTAssertEqual(state.reviewedCount, 112)
+                XCTAssertNotNil(model.problemActionNotice)
+                await model.selectProblemQuery(review: .acknowledged)
+                XCTAssertEqual(model.dashboard?.problems?.acknowledgedCount, 112)
+                let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
+                XCTAssertEqual(problem.row.status, "failed")
+                await model.changeProblem(problem, action: .unacknowledge)
+                XCTAssertEqual(state.reviewedCount, 111)
+                XCTAssertFalse(model.changingProblems)
+            }
+        }
+    }
+}
+
+private final class ProblemPagingFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let base: String
+    private let changesDuringPaging: Bool
+    private var reviewed = Set<String>()
+    private var recordedBatches: [Int] = []
+    var batches: [Int] { lock.withLock { recordedBatches } }
+    var reviewedCount: Int { lock.withLock { reviewed.count } }
+    init(base: String, changesDuringPaging: Bool) { self.base = base; self.changesDuringPaging = changesDuringPaging }
+    func reply(_ method: String, _ params: String) -> NativeFixtureReply {
+        lock.withLock {
+            do {
+                if method == "dashboard.problem" {
+                    let action = try JSONDecoder().decode(ProblemAction.self, from: Data(params.utf8))
+                    if action.action == .acknowledge {
+                        recordedBatches.append(action.targets.count)
+                        for target in action.targets { reviewed.insert(target.problemKey) }
+                    } else if action.action == .unacknowledge {
+                        for target in action.targets { reviewed.remove(target.problemKey) }
+                    }
+                    return NativeFixtureReply(body: "{\"result\":{\"ok\":true,\"changed\":\(action.targets.count)}}")
+                }
+                guard method == "dashboard.snapshot" else {
+                    return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+                }
+                let args = try JSONSerialization.jsonObject(with: Data(params.utf8)) as! [String: Any]
+                let query = args["problems"] as? [String: Any] ?? [:]
+                let review = query["review"] as? String ?? "pending"
+                let limit = args["limit"] as? Int ?? 12
+                let offset = query["offset"] as? Int ?? 0
+                let ids = (1...112).map { String(format: "%032x", $0) }.filter { reviewed.contains($0) == (review == "acknowledged") }
+                let selected = Array(ids.dropFirst(offset).prefix(limit))
+                let rows: [[String: Any]] = selected.map { id in
+                    ["problemKey": id, "revision": String(repeating: "a", count: 64), "kind": "failed", "source": "execution", "review": review,
+                     "observedAt": "2026-09-09T01:00:00Z", "canAcknowledge": review == "pending", "canUnacknowledge": review == "acknowledged", "canRecheck": false, "canRetryStop": false,
+                     "row": ["rowKey": id, "activityKey": id, "conversationKey": id, "sessionAlias": "Session A", "bucket": "recent", "projectKey": id,
+                             "agentName": "Repeated Agent", "status": "failed", "createdAt": "2026-09-09T01:00:00Z", "updatedAt": "2026-09-09T01:00:01Z", "elapsedMs": 1000, "backgroundProcessCount": 0]]
+                }
+                var snapshot = try JSONSerialization.jsonObject(with: Data(base.utf8)) as! [String: Any]
+                snapshot["problems"] = ["query": ["review": review, "kind": query["kind"] ?? "all", "offset": offset],
+                    "revision": changesDuringPaging && offset > 0 ? "changed" : "stable", "pendingCount": 112 - reviewed.count,
+                    "acknowledgedCount": reviewed.count, "reviewableCount": 112 - reviewed.count, "rows": rows,
+                    "page": ["offset": offset, "limit": limit, "total": ids.count, "returned": selected.count, "hasPrevious": offset > 0, "hasNext": offset + selected.count < ids.count]]
+                let data = try JSONSerialization.data(withJSONObject: ["result": snapshot])
+                return NativeFixtureReply(body: String(decoding: data, as: UTF8.self))
+            } catch {
+                return NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"fixture failure"}}"#)
+            }
+        }
+    }
+}

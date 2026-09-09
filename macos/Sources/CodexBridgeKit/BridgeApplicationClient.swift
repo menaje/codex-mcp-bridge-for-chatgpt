@@ -18,12 +18,25 @@ public protocol BridgeApplicationClient: Sendable {
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
+    func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                               statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot
+    func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult
+
     func runtimeStatus(
         inspectBackgroundProcesses: Bool
     ) async throws -> RuntimeAdmissionSnapshot
 }
 
 public extension BridgeApplicationClient {
+    func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                               statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
+        try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)
+    }
+
+    func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult {
+        throw NSError(domain: "PROBLEMS_UNSUPPORTED", code: 1)
+    }
+
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         throw NSError(domain: "HISTORY_UNSUPPORTED", code: 1)
     }

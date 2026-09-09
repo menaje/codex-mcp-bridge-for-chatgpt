@@ -31,7 +31,11 @@ struct WorkHistoryPolicyView: View {
             } else {
                 Text(BridgeAppLocalization.format("종료한 실행 기록은 %d일 뒤 자동 정리됩니다.", locale: model.interfaceLocale, policy.retentionDays))
             }
-            Text("실패·중단은 최근 7일 동안 확인이 필요합니다. 확인함을 누르면 문제 집계에서 제외됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다.")
+            if policy.reviewUntilRetention == true {
+                Text("문제는 보관 기간 동안 확인할 수 있습니다. 확인함을 눌러도 실패 결과는 유지됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다.")
+            } else {
+                Text("실패·중단은 최근 7일 동안 확인이 필요합니다. 확인함을 누르면 문제 집계에서 제외됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다.")
+            }
             if let date = policy.lastCleanupAt {
                 Text(BridgeAppLocalization.format("최근 정리: %@ · %d건", locale: model.interfaceLocale,
                     DisplayFormat.dateTime(date, locale: model.interfaceLocale), policy.lastCleanupCount))

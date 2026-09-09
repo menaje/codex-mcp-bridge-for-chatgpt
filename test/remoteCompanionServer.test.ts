@@ -34,6 +34,7 @@ describe("remote native companion", () => {
     const endpoint = `https://127.0.0.1:${port}`;
     const applicationService = fakeApplicationService();
     applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
+    applicationService.problemAction = vi.fn(async () => ({ok:true as const,changed:1}));
     const manager = new RemoteCompanionManager({ stateFile, applicationService });
     managers.push(manager);
 
@@ -174,6 +175,16 @@ describe("remote native companion", () => {
       {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
     expect(history).toMatchObject({status:200,body:{result:{ok:true}}});
     expect(applicationService.historyAction).toHaveBeenCalledWith(historyParams);
+
+    const problemParams={action:"acknowledge",targets:[{problemKey:"a".repeat(32),expectedRevision:"b".repeat(64)}],requestId:"22222222-2222-4222-8222-222222222222"};
+    const review=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"problem",method:"dashboard.problem",params:problemParams},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(review).toMatchObject({status:200,body:{result:{ok:true,changed:1}}});
+    const deniedStop=await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",
+      {jsonrpc:"2.0",id:"stop",method:"dashboard.problem",params:{...problemParams,action:"retry-stop",acknowledgeAffectedJobIds:["job"]}},
+      {authorization:`Bearer ${credential}`,"x-codex-bridge-server-id":enabled.serverId});
+    expect(deniedStop.status).toBe(403);expect(applicationService.problemAction).toHaveBeenCalledTimes(1);
 
     const forbiddenControl = await jsonRequest(
       `${endpoint}/remote-companion/v1/rpc`,

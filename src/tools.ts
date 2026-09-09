@@ -1,5 +1,8 @@
 import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
 import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
+import { problemActionSchema, problemActionResultSchema, problemQuerySchema, problemOperationSchema,
+  problemKey, problemRevision, problemOperationDigest, problemReviewProofs,
+  type ProblemQuery, type ProblemAction, type ProblemOperation, type ProblemActionResult } from "./problemReview.js";
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
 import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
 import { objectSchemaUnion } from "./objectSchemaUnion.js";
@@ -561,6 +564,7 @@ const dashboardCodexThreadUrlOutputSchema = z.string().regex(
 
 const workHistoryPolicyOutputSchema = z.strictObject({
   retentionDays: z.number().int().min(0), issueAttentionDays: z.number().int().positive(),
+  reviewUntilRetention: z.boolean().optional(),
   lastCleanupAt: z.string().nullable(), lastCleanupCount: z.number().int().min(0), totalRemoved: z.number().int().min(0)
 });
 const dashboardHistoryControlsSchema = z.strictObject({
@@ -592,6 +596,24 @@ const dashboardRowOutputSchema = z.strictObject({
   latestTurn: dashboardTurnOutputSchema.nullable().optional(),
   history: z.array(dashboardTurnOutputSchema).optional(),
   historyCount: z.number().int().min(0).optional()
+});
+
+const dashboardProblemOutputSchema = z.strictObject({
+  problemKey: z.string().regex(/^[a-f0-9]{32}$/), revision: z.string().regex(/^[a-f0-9]{64}$/),
+  kind: z.enum(["failed", "unknown", "termination-failed", "orphaned"]),
+  source: z.enum(["execution", "runtime"]), review: z.enum(["pending", "acknowledged"]),
+  acknowledgedAt: z.string().nullable(), observedAt: z.string(), reason: z.string().max(1000).nullable(),
+  canAcknowledge: z.boolean(), canUnacknowledge: z.boolean(), canRecheck: z.boolean(), canRetryStop: z.boolean(),
+  stopImpact: z.strictObject({ affectedJobIds: z.array(z.string()).max(100), agentNames: z.array(z.string()).max(100) }).optional(),
+  row: dashboardRowOutputSchema
+});
+const dashboardProblemsOutputSchema = z.strictObject({
+  query: problemQuerySchema, revision: z.string(), pendingCount: z.number().int().min(0),
+  reviewableCount: z.number().int().min(0),
+  acknowledgedCount: z.number().int().min(0),
+  rows: z.array(dashboardProblemOutputSchema),
+  page: z.strictObject({ offset:z.number().int().min(0),limit:z.number().int().positive(),
+    total:z.number().int().min(0),returned:z.number().int().min(0),hasPrevious:z.boolean(),hasNext:z.boolean() })
 });
 
 const dashboardConversationOutputSchema = z.strictObject({
@@ -702,6 +724,7 @@ const cardEnrichmentOutputSchema = z.strictObject({
 });
 
 const dashboardViewOutputSchema = z.strictObject({
+  problems: dashboardProblemsOutputSchema.optional(),
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
   kind: z.literal("dashboard"),
   generatedAt: z.string(),
@@ -1746,6 +1769,7 @@ export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_question_action: objectSchemaUnion([QUESTION_APP_OUTPUT_SCHEMAS.codex_question_card, QUESTION_APP_OUTPUT_SCHEMAS.codex_question_notify]),
   codex_ui_stop: mutationOutputSchema,
   codex_ui_history: z.strictObject({ok:z.literal(true)}),
+  codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
 });
@@ -2971,6 +2995,18 @@ export class CodexJobRegistry {
   acknowledgeHistoryIssue(jobId: string, scopeId: string): void {
     this.activityStore.workHistory.acknowledge(jobId);
     this.notifyScope(scopeId);
+  }
+
+  reviewHistoryIssues(targets: Array<{jobId:string;scopeId:string}>, acknowledged: boolean): void {
+    this.activityStore.transaction(() => {
+      for (const target of targets) this.activityStore.workHistory.setAcknowledged(target.jobId, acknowledged);
+    });
+    for (const scope of new Set(targets.map(target => target.scopeId))) this.notifyScope(scope);
+  }
+
+  resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
+    this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
+    this.notifyScope(agent.scopeId);
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -4782,6 +4818,88 @@ export function registerBridgeTools(
     return {agent,job,revision:dashboardHistoryRevision(agent,job)};
   };
   const applicationService: BridgeApplicationService = {
+    async problemAction(rawInput, scopeId, source = "operator") {
+      const input = problemActionSchema.parse(rawInput);
+      const firstKey = input.targets[0]!.problemKey;
+      const scope = scopeId || (["acknowledge", "unacknowledge"].includes(input.action)
+        ? jobs.admissionStateStore.workHistory.problemJobs().find(job => job.problemKey === firstKey)?.scopeId
+        : listAllDashboardAgents(jobs, undefined, true).find(agent => problemKey("runtime", agent.agentId) === firstKey)?.scopeId);
+      if (!scope) throw new Error("PROBLEM_TARGET_CHANGED: Refresh the selected problems.");
+      const digest = problemOperationDigest(input);
+      return runIdempotentMutation(scope,input.requestId,digest,async () => {
+        if (input.action === "acknowledge" || input.action === "unacknowledge") {
+          const available = new Map(jobs.admissionStateStore.workHistory.problemJobs(scopeId).map(job => [job.problemKey,job]));
+          const targets = input.targets.map(target => {
+            const job = available.get(target.problemKey);
+            if (!job || job.revision !== target.expectedRevision ||
+              Boolean(job.acknowledgedAt) !== (input.action === "unacknowledge")) {
+              throw new Error("PROBLEM_TARGET_CHANGED: Refresh the selected executions. No problems were changed.");
+            }
+            return job;
+          });
+          jobs.reviewHistoryIssues(targets,input.action === "acknowledge");
+          return {ok:true,changed:targets.length};
+        }
+        const target = input.targets[0]!;
+        const agent = listAllDashboardAgents(jobs,scopeId).find(agent => problemKey("runtime",agent.agentId) === target.problemKey);
+        if (!agent) throw new Error("PROBLEM_TARGET_CHANGED: Refresh the selected runtime problem.");
+        const requireCurrent = () => {
+          const current = jobs.getAgent(agent.agentId);
+          if (!current || current.lifecycle === "archived" || dashboardRuntimeProblemIdentity(jobs,current).revision !== target.expectedRevision) {
+            throw new Error("PROBLEM_TARGET_CHANGED: The work changed. Refresh before trying again.");
+          }
+          return current;
+        };
+        const current = requireCurrent();
+        if (input.action === "retry-stop") {
+          const job = current.currentJobId ? jobs.get(current.currentJobId) : undefined;
+          if (!job || job.status !== "termination-failed") throw new Error("PROBLEM_TARGET_CHANGED: Only a failed termination can be retried here.");
+          const impact = jobs.terminationImpact(job.jobId).affectedJobIds.slice().sort();
+          if (JSON.stringify(impact) !== JSON.stringify(input.acknowledgeAffectedJobIds?.slice().sort())) {
+            throw new Error("PROBLEM_STOP_IMPACT_CHANGED: Review every affected execution before retrying termination.");
+          }
+          return jobs.runCancellationMutation(job.scopeId,input.requestId,digest,async () => {
+            requireCurrent();
+            const {intent} = jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:input.requestId,actionHash:digest,
+              source,toolName:"dashboard.problem",actionName:"retry-stop",target:cancellationTargetForJob(job),
+              expectedVersion:job.version,reasonCode:"problem-termination-retry"});
+            await jobs.cancel(job.jobId,intent,{acknowledgeAffectedJobIds:input.acknowledgeAffectedJobIds});
+            const result = {ok:true,changed:1};
+            jobs.completeCancellationOperation(job.scopeId,input.requestId,result);
+            return result;
+          });
+        }
+        const thread = jobs.listAgentThreads(current.agentId).find(thread => thread.isCurrent);
+        if (!thread || !backendSupports(thread.backendKind,"supportsThreadInspection")) {
+          throw new Error("PROBLEM_INSPECTION_UNAVAILABLE: The current thread cannot be inspected.");
+        }
+        const latestJob = jobs.listForAgent(current.agentId).at(-1);
+        const inspect = async (inspectLiveness: boolean) => {
+          const candidate = {agentId:current.agentId,thread,stamp:dashboardRuntimeStamp(current,latestJob),inspectLiveness};
+          const read = runtimeReadPool(upstream).start(`problem\0${current.agentId}\0${target.expectedRevision}\0${inspectLiveness}`,
+            isCurrent => inspectDashboardRuntime(upstream,candidate,isCurrent), (result,deferred) => {
+              if (jobs.getAgent(current.agentId)?.version !== current.version) return;
+              const cache = dashboardRuntimeCaches.get(upstream) || new Map<string,DashboardRuntimeCacheEntry>();
+              dashboardRuntimeCaches.set(upstream,cache);
+              cacheDashboardRuntime(cache,candidate,result,deferred);
+              notifyCardObservation(upstream);
+            });
+          const result = read ? await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS) : {pending:true as const};
+          if (result.pending || read?.invalidated) throw new Error("PROBLEM_INSPECTION_PENDING: Process inspection is still pending. Refresh to see its result.");
+          return result.value.observation;
+        };
+        let observation = await inspect(true);
+        if (observation.state === "orphaned") observation = await inspect(false);
+        const fresh = requireCurrent();
+        const activeJob = jobs.listForAgent(fresh.agentId).some(job => isActiveActivityJobStatus(job.status));
+        if (fresh.lifecycle === "orphaned" && !fresh.currentJobId && !activeJob &&
+          ["idle","not-loaded"].includes(observation.state) && observation.backgroundProcessState === "confirmed" && observation.backgroundProcessCount === 0) {
+          jobs.resolveHistoryRuntimeProblem(fresh,target.expectedRevision);
+          return {ok:true,changed:1};
+        }
+        return {ok:true,changed:0};
+      }) as Promise<ProblemActionResult>;
+    },
     async historyAction(input) {
       input = dashboardHistoryActionInput.parse(input);
       const initial = historyTarget(input.rowKey);
@@ -4870,7 +4988,8 @@ export function registerBridgeTools(
         undefined,
         undefined,
         options.scopeId,
-        options.statusFilter
+        options.statusFilter,
+        options.problems
       );
       if (config.codexService) {
         const service = config.codexService;
@@ -5107,6 +5226,43 @@ export function registerBridgeTools(
       _meta:{"codex/historyControl@1":{rowKey:args.rowKey,revision:target.revision,token}}};
   };
 
+  const reviewProofs = problemReviewProofs(jobs);
+  const problemControlDetailInput = z.strictObject({view:z.literal("problem-control"),operation:problemOperationSchema,
+    widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional(),scope:z.enum(["conversation","all"])});
+  const readProblemControl: ToolCallback<typeof problemControlDetailInput> = async (args,extra) => {
+    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
+    const widget = mountedWidgetInstanceId(args,extra._meta);
+    if (!widget) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the mounted problem list.");
+    if (args.scope === "conversation" && !host) throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the card in its conversation.");
+    const selectedScopeId = args.scope === "conversation" ? host!.scopeId : undefined;
+    if (["acknowledge","unacknowledge"].includes(args.operation.action)) {
+      const available = new Map(jobs.admissionStateStore.workHistory.problemJobs(selectedScopeId).map(job => [job.problemKey,job]));
+      for (const target of args.operation.targets) {
+        const job = available.get(target.problemKey);
+        if (!job || job.revision !== target.expectedRevision || Boolean(job.acknowledgedAt) !== (args.operation.action === "unacknowledge")) {
+          throw new Error("PROBLEM_TARGET_CHANGED: Refresh the selected executions.");
+        }
+      }
+    } else {
+      const target = args.operation.targets[0]!;
+      const agent = listAllDashboardAgents(jobs,selectedScopeId).find(agent => problemKey("runtime",agent.agentId) === target.problemKey);
+      if (!agent || dashboardRuntimeProblemIdentity(jobs,agent).revision !== target.expectedRevision) {
+        throw new Error("PROBLEM_TARGET_CHANGED: Refresh the selected runtime problem.");
+      }
+      if (args.operation.action === "retry-stop") {
+        const job = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+        if (!job || job.status !== "termination-failed" ||
+          JSON.stringify(jobs.terminationImpact(job.jobId).affectedJobIds.slice().sort()) !== JSON.stringify(args.operation.acknowledgeAffectedJobIds?.slice().sort())) {
+          throw new Error("PROBLEM_STOP_IMPACT_CHANGED: Review the current termination impact.");
+        }
+      }
+    }
+    const operationDigest = problemOperationDigest(args.operation);
+    const token = reviewProofs.issue({widgetInstanceId:widget,hostScopeId:host?.scopeId || null,selectedScopeId:selectedScopeId || null,operationDigest});
+    return {content:[{type:"text",text:"Problem action ready."}],structuredContent:{kind:"control",ready:true},
+      _meta:{"codex/problemControl@1":{token,operationDigest}}};
+  };
+
   const codexDashboardRuntimeInput = z.strictObject({
     scopeId: scopeIdSchema()
       .optional()
@@ -5114,6 +5270,7 @@ export function registerBridgeTools(
   });
   const codexDashboardPublicInput = z.strictObject({});
   const dashboardSnapshotInput = z.strictObject({
+    problems: problemQuerySchema.optional(),
     scopeId: scopeIdSchema().optional(),
     statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional().describe(
       "Select the current three-category overview and filter its rows. Omission preserves retained cards' layout. Counts cover the full selected conversation scope before filtering and pagination."
@@ -5183,6 +5340,7 @@ export function registerBridgeTools(
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: This host did not identify the opening conversation. Select all work or reopen the status card.");
       }
       const view = await applicationService.dashboardSnapshot({
+        problems: args.problems,
         scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
         statusFilter: args.statusFilter,
         limit: args.limit || 20,
@@ -8607,17 +8765,34 @@ export function registerBridgeTools(
       settingsSnapshotInput.extend({ view: z.literal("settings") }),
       questions.questionCardInputSchema.extend({ view: z.literal("question") }),
       controlDetailInput,
-      historyDetailInput
+      historyDetailInput,
+      problemControlDetailInput
     ]),
     outputSchema: APP_ONLY_OUTPUT_SCHEMAS.codex_ui_read,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
   }, async (args, extra) => {
+    if (args.view === "problem-control") return readProblemControl(args,extra);
     if (args.view === "history") return readHistoryControl(args, extra);
     if (args.view === "control") return readControl(args, extra);
     if (args.view === "dashboard") { const { view, ...input } = args; return readDashboard(input, extra); }
     if (args.view === "settings") { const { view, ...input } = args; return readSettings(input, extra); }
     const { view, ...input } = args; return questions.readCard(input, extra);
+  });
+  server.registerTool("codex_ui_problem", {
+    title:"Review Problems",description:"App-only execution review, undo, non-loading status recheck, or an explicitly confirmed retry of failed termination. The complete selection and action require a fresh mounted-card proof.",
+    inputSchema:problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
+    outputSchema:problemActionResultSchema,
+    annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false},
+    _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
+  },async (args,extra) => {
+    const host = scopeResolver.resolve(extra._meta as ToolCallMetadata,args.scopeId);
+    const widget = mountedWidgetInstanceId(args,extra._meta);
+    if (!widget) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the problem list.");
+    const claims = reviewProofs.require(args.token,widget,host?.scopeId,args);
+    const {token,widgetInstanceId,scopeId,...input} = args;
+    const result = await applicationService.problemAction!(input,claims.selectedScopeId || undefined,"widget-control");
+    return {content:[{type:"text",text:"Problem action completed."}],structuredContent:result};
   });
   server.registerTool("codex_ui_history", {
     title:"Manage Execution History",description:"App-only acknowledgement and reversible Agent archive/restore from a selected history row. No execution is started or stopped.",
@@ -10879,6 +11054,7 @@ type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
 export type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
 
 export type BridgeDashboardSnapshotOptions = {
+  problems?: ProblemQuery;
   statusFilter?: DashboardStatusFilter;
   /** Internal resolved conversation filter. Native and retained clients omit it. */
   scopeId?: string;
@@ -10938,6 +11114,7 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
+  problemAction?(input: ProblemAction, scopeId?: string, source?: "operator" | "widget-control"): Promise<ProblemActionResult>;
   historyAction?(input: DashboardHistoryActionInput): Promise<{ok: true}>;
   threadHandoff?(input: { rowKey: string; codexThreadUrl: string; action: "request" | "cancel" | "status" }): Promise<{ phase: string; reason?: string; requested: boolean; canOpen: boolean }>;
   subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
@@ -11306,6 +11483,18 @@ function dashboardHistoryRevision(agent: Pick<BridgeAgent, "agentId" | "version"
   job?: {jobId:string;status:string;updatedAt:number}): string {
   return createHash("sha256").update(JSON.stringify([agent.agentId,agent.version,
     job?.jobId || null,job?.status || null,job?.updatedAt || null])).digest("hex");
+}
+
+function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {
+  const job = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+  const latest = jobs.admissionStateStore.workHistory.latestJob(agent.agentId);
+  const affected = job?.status === "termination-failed" ? jobs.terminationImpact(job.jobId).affectedJobIds.slice().sort() : [];
+  return { revision:problemRevision(["runtime",agent.agentId,agent.version,agent.currentJobId || null,
+    latest?.jobId,latest?.status,latest?.updatedAt,job?.version,affected.map(id => [id,jobs.get(id)?.version])]),
+    stopImpact:affected.length > 0 && affected.length <= 100 ? {
+      affectedJobIds:affected,
+      agentNames:affected.map(id => {const item=jobs.get(id);return item?.agentId ? jobs.getAgent(item.agentId)?.agentName || "" : "";})
+    } : undefined };
 }
 
 function dashboardProjectKey(
@@ -12208,8 +12397,10 @@ async function buildDashboardView(
   visibleAgentIdsOut?: Set<string>,
   enrichment?: DashboardEnrichmentInput,
   scopeId?: string,
-  statusFilter?: DashboardStatusFilter
+  statusFilter?: DashboardStatusFilter,
+  problemQuery?: ProblemQuery
 ): Promise<DashboardView> {
+  if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
   if (inspectRuntime && !enrichment) {
     const visibleAgentIds = new Set<string>();
@@ -12229,7 +12420,8 @@ async function buildDashboardView(
       visibleAgentIds,
       undefined,
       scopeId,
-      statusFilter
+      statusFilter,
+      problemQuery
     );
     const allAgents = listAllDashboardAgents(jobs, scopeId, statusFilter !== undefined);
     const currentThreads = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
@@ -12331,7 +12523,8 @@ async function buildDashboardView(
         }
       },
       scopeId,
-      statusFilter
+      statusFilter,
+      problemQuery
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
@@ -12889,12 +13082,92 @@ async function buildDashboardView(
   };
   const responseRequired = [...overviewRows.values()]
     .filter(row => categoryFor(row) === "response-required").length;
-  const problems = [...overviewRows.values()]
+  const legacyProblems = [...overviewRows.values()]
     .filter(row => categoryFor(row) === "problems").length;
+  let problemCollection: z.infer<typeof dashboardProblemsOutputSchema> | undefined;
+  if (problemQuery) {
+    type Entry = Omit<z.infer<typeof dashboardProblemOutputSchema>, "row"> & {projectRow:()=>DashboardRow};
+    const entries: Entry[] = [];
+    const fullJobs = new Map(allJobs.map(job => [job.jobId,job]));
+    const archivedById = new Map(archivedJobs.map(job => [job.jobId,job]));
+    for (const record of jobs.admissionStateStore.workHistory.problemJobs(scopeId)) {
+      const job = fullJobs.get(record.jobId);
+      const acknowledgedAt = record.acknowledgedAt ? new Date(record.acknowledgedAt).toISOString() : null;
+      entries.push({problemKey:record.problemKey,revision:record.revision,kind:"failed",source:"execution",
+        review:acknowledgedAt ? "acknowledged" : "pending",acknowledgedAt,observedAt:new Date(record.updatedAt).toISOString(),
+        reason:job?.error ? redactSensitiveText(job.error).slice(0,1000) : null,
+        canAcknowledge:!acknowledgedAt,canUnacknowledge:Boolean(acknowledgedAt),canRecheck:false,canRetryStop:false,
+        projectRow:() => {
+          if (job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0,historyControls:undefined};
+          const retained: DashboardRetainedJobSummary = archivedById.get(record.jobId) || {
+            jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId || undefined,
+            status:record.status,updatedAt:record.updatedAt
+          };
+          const agent = record.agentId ? agentById.get(record.agentId) : undefined;
+          const thread = currentThreadFor(record.agentId || undefined);
+          const session = currentSessionFor(record.agentId || undefined);
+          const turn = turnForArchivedJob(retained);
+          return {rowKey:dashboardRowKey(record.agentId || undefined,record.jobId),activityKey:turn.activityKey!,
+            conversationKey:dashboardConversationKey(record.scopeId),sessionAlias:dashboardSessionAlias(record.scopeId),
+            conversationUrl:scopeResolver.conversationUrl(record.scopeId),codexThreadUrl:codexThreadUrlFor(thread,session),
+            bucket:"recent",...dashboardProjectIdentity(thread),agentName:dashboardAgentName(agent?.agentName),
+            activityTitle:turn.activityTitle,status:turn.status,createdAt:turn.startedAt || turn.updatedAt,updatedAt:turn.updatedAt,
+            elapsedMs:turn.durationMs || 0,backgroundProcessCount:0,controlKind:null,latestTurn:turn,history:[],historyCount:0};
+        }});
+    }
+    const rowByAgent = new Map([...activeRows,...terminalRows,...idleRows].map(row => [row.rowKey,row]));
+    for (const agent of allAgents) {
+      if (agent.lifecycle === "archived") continue;
+      let row = rowByAgent.get(dashboardRowKey(agent.agentId));
+      const runtime = runtimeByAgent.get(agent.agentId);
+      const runtimeProblem = row && ["liveness-unknown","orphaned","termination-failed"].includes(row.status);
+      const inspectionFailed = runtime && (runtime.state === "unknown" || runtime.backgroundProcessState === "unknown");
+      if (!runtimeProblem && !inspectionFailed) continue;
+      if (!row) {
+        const thread = currentThreadFor(agent.agentId);
+        row = {rowKey:dashboardRowKey(agent.agentId),activityKey:dashboardActivityKey(undefined,agent.agentId),
+          conversationKey:dashboardConversationKey(agent.scopeId),sessionAlias:dashboardSessionAlias(agent.scopeId),
+          conversationUrl:scopeResolver.conversationUrl(agent.scopeId),bucket:"active",...dashboardProjectIdentity(thread),
+          agentName:dashboardAgentName(agent.agentName),activityTitle:null,status:"liveness-unknown",
+          createdAt:new Date(agent.createdAt).toISOString(),updatedAt:new Date(agent.updatedAt).toISOString(),
+          elapsedMs:0,backgroundProcessCount:runtime?.backgroundProcessCount || 0,controlKind:null};
+      }
+      const identity = dashboardRuntimeProblemIdentity(jobs,agent);
+      const resolvedAt = agent.lifecycle === "orphaned" && !agent.currentJobId && !inspectionFailed && runtime?.state !== "busy" && !(runtime?.backgroundProcessCount || 0)
+        ? jobs.admissionStateStore.workHistory.runtimeResolution(agent.agentId,identity.revision) : null;
+      const kind = row.status === "termination-failed" ? "termination-failed" as const
+        : row.status === "orphaned" ? "orphaned" as const : "unknown" as const;
+      const currentJob = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+      const thread = currentThreadFor(agent.agentId);
+      const observed = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread))?.observedAt : undefined;
+      const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
+        history:[],historyCount:0,historyControls:undefined};
+      entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
+        review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
+        observedAt:new Date(observed || agent.updatedAt).toISOString(),
+        reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
+        canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
+        canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
+        ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});
+    }
+    entries.sort((a,b) => Date.parse(b.observedAt)-Date.parse(a.observedAt) || a.problemKey.localeCompare(b.problemKey));
+    const filtered = entries.filter(entry => entry.review === problemQuery.review && (problemQuery.kind === "all" || entry.kind === problemQuery.kind));
+    const maximumOffset = filtered.length ? Math.floor((filtered.length-1)/limit)*limit : 0;
+    const offset = Math.min(problemQuery.offset,maximumOffset);
+    const page = filtered.slice(offset,offset+limit).map(({projectRow,...entry}) => ({...entry,row:projectRow()}));
+    problemCollection = {query:{...problemQuery,offset},revision:problemRevision(filtered.map(entry => [entry.problemKey,entry.revision,entry.review])),
+      reviewableCount:entries.filter(entry => entry.canAcknowledge).length,
+      pendingCount:entries.filter(entry => entry.review === "pending").length,
+      acknowledgedCount:entries.filter(entry => entry.review === "acknowledged").length,rows:page,
+      page:{offset,limit,total:filtered.length,returned:page.length,hasPrevious:offset>0,hasNext:offset+page.length<filtered.length}};
+  }
+  const problems = problemCollection?.pendingCount ?? legacyProblems;
+  const currentRows = problemQuery ? activeRows.filter(row => dashboardSummaryCategory(row.status) !== "problems") : activeRows;
   const overviewActive: DashboardRow[] = [];
   const overviewTerminal: DashboardRow[] = [];
   for (const row of overviewRows.values()) {
     const category = categoryFor(row);
+    if (problemQuery && (statusFilter === "problems" || row.bucket === "active" && dashboardSummaryCategory(row.status) === "problems")) continue;
     if (statusFilter && statusFilter !== "all" &&
       (statusFilter === "background" ? row.backgroundProcessCount <= 0 : category !== statusFilter)) continue;
     if (row.bucket === "active") {
@@ -12929,7 +13202,7 @@ async function buildDashboardView(
       const latest = jobs.admissionStateStore.workHistory.latestJob(agent.agentId);
       row.historyControls = {
         revision: dashboardHistoryRevision(agent, latest),
-        canAcknowledge: Boolean(latest && ["failed", "interrupted"].includes(row.status) && ["failed", "interrupted"].includes(latest.status) &&
+        canAcknowledge: Boolean(!problemQuery && latest && ["failed", "interrupted"].includes(row.status) && ["failed", "interrupted"].includes(latest.status) &&
           !acknowledgedJobs.has(latest.jobId) && latest.updatedAt >= now - ISSUE_ATTENTION_DAYS * 86400_000 && agent.lifecycle !== "archived"),
         canArchive: !agent.currentJobId && !["active", "waiting-input", "archived"].includes(agent.lifecycle) && row.backgroundProcessCount === 0,
         canRestore: agent.lifecycle === "archived", archived: agent.lifecycle === "archived"
@@ -12951,6 +13224,7 @@ async function buildDashboardView(
 
   return dashboardViewOutputSchema.parse({
     kind: "dashboard",
+    ...(problemCollection ? {problems:problemCollection} : {}),
     historyPolicy: jobs.admissionStateStore.workHistory.policy(preferences.historyRetentionDays),
     generatedAt: new Date(now).toISOString(),
     scope: scopeId ? "conversation" : "bridge-wide",
@@ -12963,7 +13237,7 @@ async function buildDashboardView(
       trackedProjects,
       trackedConversations: scopeIds.size,
       retainedJobs: allJobs.length + archivedJobs.length,
-      active: activeRows.length,
+      active: currentRows.length,
       running: activeRows.filter((row) => row.status === "running").length,
       inputRequired: activeRows.filter((row) => row.status === "input-required").length,
       approvalRequired: activeRows.filter((row) => row.status === "approval-required").length,

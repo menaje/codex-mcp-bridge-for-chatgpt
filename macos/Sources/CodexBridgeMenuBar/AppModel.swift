@@ -316,6 +316,9 @@ final class AppModel: ObservableObject {
     @Published var logsErrorMessage: String?
     @Published var settingsConflictMessage: String?
     @Published var isBusy = false { didSet { scheduleOperationalObservation() } }
+    @Published private(set) var dashboardProblemQuery = ProblemQuery()
+    @Published private(set) var changingProblems = false
+    @Published var problemActionNotice: String?
     @Published var loginInProgress = false { didSet { scheduleOperationalObservation() } }
     @Published var lastDashboardRefresh: Date?
     @Published var runtimeImpact: RuntimeAdmissionSnapshot?
@@ -1265,10 +1268,99 @@ final class AppModel: ObservableObject {
     }
 
     func selectDashboardStatus(_ filter: DashboardStatusFilter) async {
+        guard !changingProblems else { return }
         guard filter != dashboardStatusFilter else { return }
         dashboardStatusFilter = filter
         dashboard = nil
         await refreshDashboard()
+    }
+
+    func selectProblemQuery(review: ProblemReview? = nil, kind: ProblemKind? = nil, offset: Int = 0) async {
+        guard !changingProblems else { return }
+        dashboardProblemQuery = ProblemQuery(review: review ?? dashboardProblemQuery.review,
+                                             kind: kind ?? dashboardProblemQuery.kind, offset: offset)
+        problemActionNotice = nil
+        await refreshDashboard()
+    }
+
+    func changeProblem(_ problem: DashboardProblem, action: ProblemActionKind) async {
+        guard !changingProblems, action != .retryStop || !isRemoteClient else { return }
+        changingProblems = true
+        problemActionNotice = nil
+        defer { changingProblems = false }
+        let connection = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            _ = try await client.problemAction(ProblemAction(action: action, targets: [problem.target],
+                acknowledgeAffectedJobIds: action == .retryStop ? problem.stopImpact?.affectedJobIds : nil))
+            guard connection == connectionGeneration else { return }
+            dashboardProblemQuery.offset = 0
+            if action == .recheck {
+                problemActionNotice = BridgeAppLocalization.string("상태를 다시 확인했습니다. 남아 있는 문제는 추가 조치가 필요합니다.", locale: interfaceLocale)
+            }
+            await refreshDashboard()
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = problemErrorDescription(error)
+        }
+    }
+
+    func acknowledgeAllFinishedProblems() async {
+        guard !changingProblems else { return }
+        changingProblems = true
+        problemActionNotice = nil
+        defer { changingProblems = false }
+        let connection = connectionGeneration
+        var changed = 0
+        do {
+            let client = try await bridgeClient()
+            var targets: [ProblemTarget] = []
+            var offset = 0
+            var revision: String?
+            repeat {
+                let snapshot = try await client.dashboardWithProblems(limit: 50, terminalOffset: 0, idleOffset: 0,
+                    enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset))
+                guard connection == connectionGeneration else { return }
+                guard let problems = snapshot.problems, problems.page.offset == offset,
+                      revision == nil || revision == problems.revision else {
+                    throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1)
+                }
+                revision = problems.revision
+                targets += problems.rows.filter(\.canAcknowledge).map(\.target)
+                guard problems.page.hasNext else { break }
+                guard problems.page.returned > 0 else { throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1) }
+                offset += problems.page.returned
+            } while true
+            for start in stride(from: 0, to: targets.count, by: 100) {
+                guard connection == connectionGeneration else { return }
+                let result = try await client.problemAction(ProblemAction(action: .acknowledge,
+                    targets: Array(targets[start..<min(start + 100, targets.count)])))
+                changed += result.changed
+            }
+            guard connection == connectionGeneration else { return }
+            dashboardProblemQuery.offset = 0
+            await refreshDashboard()
+            problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = problemErrorDescription(error)
+            if changed > 0 {
+                problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+            }
+        }
+    }
+
+    private func problemErrorDescription(_ error: Error) -> String {
+        let text = String(describing: error)
+        if text.contains("PROBLEM_TARGET_CHANGED") || text.contains("PROBLEM_REVIEW_STALE") || text.contains("PROBLEM_STOP_IMPACT_CHANGED") {
+            return BridgeAppLocalization.string("문제 목록이나 실행 상태가 변경되었습니다. 갱신된 항목을 다시 선택해 주세요.", locale: interfaceLocale)
+        }
+        if text.contains("PROBLEM_INSPECTION_PENDING") {
+            return BridgeAppLocalization.string("상태 점검이 진행 중입니다. 잠시 후 다시 확인해 주세요.", locale: interfaceLocale)
+        }
+        return localizedErrorDescription(error)
     }
 
     private func scheduleConnectionRecoveryExpiry(at now: Date = Date()) {
@@ -1367,16 +1459,18 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         do {
             let client = try await bridgeClient()
-            let next = try await client.dashboard(
+            let next = try await client.dashboardWithProblems(
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = next
+            if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
             }
@@ -1413,12 +1507,13 @@ final class AppModel: ObservableObject {
             }
             do {
                 let client = try await self.bridgeClient()
-                let enriched = try await client.dashboard(
+                let enriched = try await client.dashboardWithProblems(
                     limit: self.pageLimit,
                     terminalOffset: terminalOffset,
                     idleOffset: idleOffset,
                     enrich: true,
-                    statusFilter: self.dashboardStatusFilter
+                    statusFilter: self.dashboardStatusFilter,
+                    problems: self.dashboardProblemQuery
                 )
                 guard !Task.isCancelled,
                       generation == self.dashboardRequestGeneration,
@@ -2088,12 +2183,13 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboard(
+            let page = try await client.dashboardWithProblems(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
@@ -2122,12 +2218,13 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboard(
+            let page = try await client.dashboardWithProblems(
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }

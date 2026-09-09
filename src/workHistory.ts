@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import type Database from "better-sqlite3";
+import { problemKey, problemRevision } from "./problemReview.js";
 
 export const HISTORY_RETENTION_DAYS = [7, 30, 90, 0] as const;
 export type HistoryRetentionDays = (typeof HISTORY_RETENTION_DAYS)[number];
@@ -31,6 +32,12 @@ export type WorkHistoryPolicy = {
   lastCleanupAt: string | null;
   lastCleanupCount: number;
   totalRemoved: number;
+  reviewUntilRetention: boolean;
+};
+
+export type HistoryProblemJob = HistoryJobIdentity & {
+  scopeId: string; agentId: string | null; acknowledgedAt: number | null;
+  problemKey: string; revision: string;
 };
 
 /** Presentation/outcome retention never removes the authoritative replay receipt,
@@ -53,12 +60,57 @@ export class WorkHistoryStore {
   }
 
   acknowledge(jobId: string, now = Date.now()): void {
+    this.setAcknowledged(jobId, true, now);
+  }
+
+  setAcknowledged(jobId: string, acknowledged: boolean, now = Date.now()): void {
     const job = this.db.prepare("SELECT status FROM jobs WHERE job_id=?").get(jobId) as {status:string} | undefined;
     if (!job || !["failed", "interrupted"].includes(job.status) || this.expired(jobId)) {
       throw new Error("HISTORY_TARGET_CHANGED: Refresh this execution before acknowledging it.");
     }
+    const previous = this.db.prepare("SELECT acknowledged_at FROM work_history_state WHERE job_id=?").get(jobId) as {acknowledged_at:number|null} | undefined;
+    if (Boolean(previous?.acknowledged_at) === acknowledged) return;
     this.db.prepare(`INSERT INTO work_history_state(job_id,acknowledged_at) VALUES (?,?)
-      ON CONFLICT(job_id) DO UPDATE SET acknowledged_at=COALESCE(work_history_state.acknowledged_at,excluded.acknowledged_at)`).run(jobId, now);
+      ON CONFLICT(job_id) DO UPDATE SET acknowledged_at=excluded.acknowledged_at`).run(jobId, acknowledged ? now : null);
+    this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES ('work_history_review_revision',?)")
+      .run(String(this.reviewRevision() + 1));
+    this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES (?,?)")
+      .run(`work_history_review_seq:${jobId}`,String(this.reviewRevision()));
+  }
+
+  reviewRevision(): number {
+    const row = this.db.prepare("SELECT value FROM bridge_meta WHERE key='work_history_review_revision'").get() as {value:string} | undefined;
+    return Number(row?.value || 0);
+  }
+
+  runtimeResolution(agentId: string, revision: string): number | null {
+    const row = this.db.prepare("SELECT value FROM bridge_meta WHERE key=?")
+      .get(`runtime_problem_resolved:${agentId}`) as {value:string} | undefined;
+    if (!row) return null;
+    const value = JSON.parse(row.value) as {revision:string;at:number};
+    return value.revision === revision ? value.at : null;
+  }
+
+  resolveRuntimeProblem(agentId: string, revision: string, now = Date.now()): void {
+    if (this.runtimeResolution(agentId,revision)) return;
+    this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES (?,?)")
+      .run(`runtime_problem_resolved:${agentId}`,JSON.stringify({revision,at:now}));
+    this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES ('work_history_review_revision',?)")
+      .run(String(this.reviewRevision() + 1));
+  }
+
+  problemJobs(scopeId?: string): HistoryProblemJob[] {
+    const rows = this.db.prepare(`SELECT j.job_id,j.scope_id,j.agent_id,j.activity_id,j.status,j.updated_at,h.acknowledged_at,r.value AS review_seq
+      FROM jobs j LEFT JOIN work_history_state h ON h.job_id=j.job_id
+      LEFT JOIN bridge_meta r ON r.key='work_history_review_seq:' || j.job_id
+      WHERE j.status IN ('failed','interrupted') AND h.expired_at IS NULL ${scopeId ? "AND j.scope_id=?" : ""}
+      ORDER BY j.updated_at DESC,j.job_id`).all(...(scopeId ? [scopeId] : [])) as Array<{
+        job_id:string;scope_id:string;agent_id:string|null;activity_id:string;status:string;updated_at:number;acknowledged_at:number|null;review_seq:string|null;
+      }>;
+    return rows.map(row => ({jobId:row.job_id,scopeId:row.scope_id,agentId:row.agent_id,activityId:row.activity_id,
+      status:row.status,updatedAt:row.updated_at,acknowledgedAt:row.acknowledged_at,
+      problemKey:problemKey("execution",row.job_id),
+      revision:problemRevision(["execution",row.job_id,row.status,row.updated_at,row.acknowledged_at,row.review_seq || "0"])}));
   }
 
   expired(jobId: string): boolean {
@@ -70,7 +122,7 @@ export class WorkHistoryStore {
     const cleanup = row ? JSON.parse(row.value) as {at:number;count:number;total:number} : undefined;
     return { retentionDays: days, issueAttentionDays: ISSUE_ATTENTION_DAYS,
       lastCleanupAt: cleanup ? new Date(cleanup.at).toISOString() : null,
-      lastCleanupCount: cleanup?.count || 0, totalRemoved: cleanup?.total || 0 };
+      lastCleanupCount: cleanup?.count || 0, totalRemoved: cleanup?.total || 0, reviewUntilRetention: true };
   }
 
   /** Bounded maintenance. Protected results and live work remain intact. */
@@ -100,6 +152,7 @@ export class WorkHistoryStore {
       this.db.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(JSON.stringify(receipt),row.job_id);
       this.db.prepare("DELETE FROM job_summaries WHERE job_id=?").run(row.job_id);
       this.db.prepare("DELETE FROM job_events WHERE job_id=?").run(row.job_id);
+      this.db.prepare("DELETE FROM bridge_meta WHERE key=?").run(`work_history_review_seq:${row.job_id}`);
       this.db.prepare(`INSERT INTO work_history_state(job_id,expired_at) VALUES (?,?)
         ON CONFLICT(job_id) DO UPDATE SET expired_at=excluded.expired_at`).run(row.job_id,now);
       removed++;

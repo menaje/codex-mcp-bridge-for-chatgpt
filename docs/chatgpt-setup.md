@@ -1,6 +1,6 @@
 # Connect Codex MCP Bridge for ChatGPT
 
-Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 5 app-only tools, plus 12 app-only compatibility descriptors during migration (29 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
+Issue #69 current contract: [Card tools and migration](card-tools.md). The current contract has 12 model tools and 7 app-only tools, plus 12 app-only compatibility descriptors during migration (31 discovered in total). Activity presentation, watch, rehydration and handoff contracts below apply only to cached pre-consolidation cards during the migration window; they are not instructions to open Activity for new work.
 
 The bridge uses the selected Codex CLI's App Server for execution. ChatGPT connects to the bridge through MCP.
 
@@ -709,3 +709,12 @@ Official guidance:
 ## GPT가 질문을 처리하는 방식
 
 일반 Codex 질문은 GPT가 먼저 읽고 답합니다. 사용자 의견이 필요할 때 GPT가 질문 카드를 호출하며, 카드의 답변은 GPT가 회수해 다음 행동을 판단합니다. 질문과 승인 요청은 구분합니다. 새 도구 메타데이터를 반영한 뒤 실제 ChatGPT에서 후속 처리가 재개되는지 확인해야 합니다. 자세한 내용은 [질문 처리 흐름](gpt-questions.md)을 참고하세요.
+
+
+Dashboard generation 26 and the current menu bar provide a dedicated Problems
+area with Needs action / Reviewed history, failure-type filters, individual and
+bulk review, and undo. Failed executions remain reviewable throughout history
+retention even after the same Agent succeeds later. Unavailable runtime state
+requires a fresh recheck; failed termination requires confirmation of affected
+executions. Review never changes the recorded outcome. See
+[execution history and review](work-history.md) for details.

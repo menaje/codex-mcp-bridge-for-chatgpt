@@ -365,7 +365,7 @@ describe("human-facing UI localization", () => {
     expect(serialized).not.toContain("<");
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
     expect(SETTINGS_CARD_HTML).toContain(
-      serializedUiTranslations(["common", "settings", "effort", "history"])
+      serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice"])
     );
     const activityBundles = JSON.parse(ACTIVITY_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
     const referencedActivityKeys = [...ACTIVITY_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
