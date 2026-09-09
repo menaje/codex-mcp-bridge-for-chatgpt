@@ -43,7 +43,7 @@ await Promise.all([client.connect(a), server.connect(b)]);
 const meta = { "openai/session": "isolated-question-browser" };
 const call = async (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args, _meta: meta }) as Promise<any>;
 const records = new Map<string, { bootstrap: any; calls: string[]; followUps: number }>();
-for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired", ...(!legacyRenderer ? ["read-retry"] : [])]) {
+for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired", ...(!legacyRenderer ? ["read-retry", "storage-denied"] : [])]) {
   const bootstrap = await call("codex_ask_user", { requestId: randomUUID(), title: "화면 색상 선택", questions: [{
     id: "color", header: "색상", question: "어떤 색상을 사용할까요?", isOther: true,
     options: [{ label: "파랑", description: "기본 색상" }, { label: "빨강", description: "강조 색상" }]
@@ -76,6 +76,7 @@ const http = createServer(async (request, response) => {
     response.setHeader("Content-Type", "text/html; charset=utf-8");
     if (url.pathname === "/card") {
       const prelude = `<script>window.__errors=[];window.addEventListener('error',e=>window.__errors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__errors.push(String(e.reason)));
+        ${mode === "storage-denied" ? `Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Storage blocked','SecurityError')}});` : ""}
         ${mode === "compatibility" ? `window.openai={locale:"ko-KR",toolOutput:${JSON.stringify(record.bootstrap.structuredContent)},toolResponseMetadata:${JSON.stringify(record.bootstrap._meta)},callTool:async(name,args)=>(await fetch('/call?mode=${mode}',{method:'POST',body:JSON.stringify({name,arguments:args})})).json(),sendFollowUpMessage:async({prompt})=>(await fetch('/followup?mode=${mode}',{method:'POST',body:JSON.stringify({role:'user',content:[{type:'text',text:prompt}]})})).json(),notifyIntrinsicHeight:()=>{}};` : ""}
       </script>`;
       response.end(CARD_HTML.replace("</head>", prelude + "</head>")); return;
@@ -95,7 +96,11 @@ const http = createServer(async (request, response) => {
 await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
 const port = (http.address() as { port: number }).port;
 const exec = promisify(execFile), session = `question-card-${process.pid}`;
-const cli = async (...args: string[]) => (await exec("npx", ["--yes", "--package", "@playwright/cli@0.1.19", "playwright-cli", "--session", session, "--raw", ...args], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
+const cli = async (...args: string[]) => {
+  const output = (await exec("npx", ["--yes", "--package", "@playwright/cli@0.1.19", "playwright-cli", "--session", session, "--raw", ...args], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
+  if (/Error:|TimeoutError:/.test(output)) throw new Error(output);
+  return output;
+};
 const results: unknown[] = [];
 try {
   await cli("open", `http://127.0.0.1:${port}/?mode=standard`);
@@ -111,6 +116,38 @@ try {
       if (mode === "standard") {
         await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:/새로고침/}).click();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Refresh lost the selected answer');if(${!legacyRenderer}){await page.frames().find(f=>f.url().includes('/card')).evaluate(()=>{window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}))});await frame.getByRole('button',{name:/새로고침/}).waitFor();await frame.getByLabel('어떤 색상을 사용할까요?').waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Restoration lost the selected answer')}await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'en-US'}},'*')});await frame.getByRole('button',{name:'Send to GPT',exact:true}).waitFor();if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Locale change lost the selected answer');await frame.getByRole('heading',{name:'화면 색상 선택',exact:true}).waitFor();await page.evaluate(()=>{const frame=document.getElementById('card');frame.contentWindow.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{locale:'ko-KR'}},'*')});await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor()}`);
         await cli("screenshot", "--filename", path.join(artifacts, "question.png"));
+        if (!legacyRenderer) {
+          // Changing the actual ChatGPT language reloads the document, unlike
+          // a host-context notification. Exercise that distinct failure mode.
+          await cli("run-code", `async page=>{
+            const frame=page.frameLocator('#card');await page.reload();
+            await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+            if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='0')throw new Error('Document reload lost the selected answer');
+            await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('other');
+            await frame.locator('input:not([hidden])').fill('locale-draft-0910');
+            await page.reload();await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+            if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='other'||await frame.locator('input:not([hidden])').inputValue()!=='locale-draft-0910')throw new Error('Document reload lost the free-text draft');
+            await page.goto(${JSON.stringify(`http://127.0.0.1:${port}/?mode=compatibility`)});
+            await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+            if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='')throw new Error('A different question inherited the draft');
+            await page.goto(${JSON.stringify(`http://127.0.0.1:${port}/?mode=standard`)});
+            await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+            if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='other'||await frame.locator('input:not([hidden])').inputValue()!=='locale-draft-0910')throw new Error('Re-entry lost the question draft');
+            for(const defect of ['scope','revision','expiry']){
+              await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');
+              await page.frames().find(f=>f.url().includes('/card')).evaluate(defect=>{
+                const key=Object.keys(sessionStorage).find(key=>key.startsWith('codex.question.draft.v1:'));
+                if(!key)throw new Error('Draft was not saved');const draft=JSON.parse(sessionStorage.getItem(key));
+                if(defect==='scope')draft.scopeId='different-scope';
+                if(defect==='revision')draft.revision+=1;
+                if(defect==='expiry')draft.expiresAt=Date.now()-1;
+                sessionStorage.setItem(key,JSON.stringify(draft));
+              },defect);
+              await page.reload();await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+              if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='')throw new Error('Restored invalid draft: '+defect);
+            }
+          }`);
+        }
       }
       await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).click();await frame.getByText(${JSON.stringify(mode === "uncertain" ? "응답은 저장됐습니다. 이 대화에서 GPT에게 계속 진행을 요청해 주세요." : mode === "denied" ? "답변을 저장했습니다." : "GPT에 후속 처리를 요청했습니다.")},{exact:true}).waitFor()}`);
       if (mode === "denied") {
@@ -125,6 +162,7 @@ try {
       if (mode === "standard") {
         await cli("snapshot");
         await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByRole('button',{name:/새로고침/}).click();await frame.getByText('GPT가 답변을 확인했습니다.',{exact:true}).waitFor()}`);
+        if (!legacyRenderer) await cli("run-code", `async page=>{const frame=page.frames().find(f=>f.url().includes('/card'));if(await frame.evaluate(()=>Object.keys(sessionStorage).some(key=>key.startsWith('codex.question.draft.v1:'))))throw new Error('Submitted draft remains in browser storage')}`);
       }
     }
     await cli("run-code", "async page=>{const frame=page.frames().find(f=>f.url().includes('/card'));const errors=await frame.evaluate(()=>window.__errors);if(errors.length)throw new Error(JSON.stringify(errors))}");

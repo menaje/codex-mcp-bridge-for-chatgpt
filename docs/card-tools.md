@@ -187,7 +187,7 @@ old cards; they do not trigger new presenters. Projects, execution/model/access
 policy, questions, results, idempotency records and running work are retained.
 There is no new database schema migration in #69 (the #68 baseline is schema 13).
 
-## Completion-flow rollout gate
+## Completion-flow acceptance
 
 The subsequent [PR #71 actual-host run](audits/2026-09-08-pr-71-runtime-acceptance.md)
 verified the current active-response path: background execution, leaving the
@@ -199,9 +199,12 @@ fixed the sandboxed confirmation defect and verified actual overview Job stop,
 original approval rejection and idle process termination. The [original-input
 retry](audits/2026-09-08-issue-69-input-retry.md) reached the real form and resolved
 its request, but the fixture had already timed out. A further attempt after
-extending the fixture timeout was blocked before Job creation. #69 stays open
-until the submitted value reaches the same Job's result. Native banner tests
-belong to #15, and a new
+extending the fixture timeout was blocked before Job creation. These are
+historical observations: the user subsequently confirmed the remaining
+same-Job input result and explicitly accepted completion, so
+[#69 closed on 2026-09-08](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/69#issuecomment-5580775771).
+The earlier failed and blocked attempts remain in their dated audit records.
+Native banner tests belong to #15, and a new
 unsupported already-ended-response wake is explicitly outside #69's mandatory
 scope. Earlier residual lists that made those unconditional #69 gates were too broad.
 
@@ -216,9 +219,8 @@ through bounded input waits and exact terminal result retrieval. This supports
 leaving the work conversation while processing continues, but instructions and
 local protocol tests alone do not prove ChatGPT's notification behavior.
 
-**Local implementation is not authorization to claim the existing ChatGPT
-completion flow preserved.** Before deployment/issue closure, verify on the
-actual ChatGPT host: leave the work conversation, allow Codex to finish, observe
+Future changes to this flow should repeat the applicable actual-host regression:
+leave the work conversation, allow Codex to finish, observe
 retained result retrieval, GPT's final response and the user's notification;
 also reopen the existing separate overview conversation. Record Codex terminal
 state, retained result, GPT execution and notification separately. An already
@@ -229,7 +231,9 @@ regression before rollout. A new unsupported card-free wake mechanism is not
 implicitly included as a separate feature in #69.
 
 See the [implementation audit](audits/2026-09-08-card-tool-consolidation.md) for
-measured discovery/call changes, tests and remaining host evidence.
+the earlier discovery/call measurements, and the [current evaluation plan](chatgpt-evaluation.md)
+for the remaining #9/#68 device and host-fault checks. Completed #69 acceptance
+is not reopened by those separate requirements.
 
 ## Bridge-owned execution permissions
 
