@@ -120,8 +120,13 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     }
 
     func isAuthorized() async -> Bool {
-        let status = await center.notificationSettings().authorizationStatus
-        return status == .authorized || status == .provisional
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                // Older SDKs do not mark the settings object Sendable; pass only the result across actors.
+                let status = settings.authorizationStatus
+                continuation.resume(returning: status == .authorized || status == .provisional)
+            }
+        }
     }
 
     func requestAuthorization() async -> Bool {

@@ -68,7 +68,7 @@ fi
 CODE_SIGN_IDENTITY="-"
 export CODE_SIGN_IDENTITY
 export MACOS_TARGET_ARCHITECTURE="$target_architecture"
-"$script_directory/build-app.sh" >/dev/null
+"$script_directory/build-app.sh" >&2
 
 app_bundle="$script_directory/build/Codex MCP Bridge for ChatGPT.app"
 actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_bundle/Contents/Info.plist")"
