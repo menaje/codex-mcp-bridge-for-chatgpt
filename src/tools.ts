@@ -4688,7 +4688,7 @@ export function registerBridgeTools(
     failed: boolean;
   };
   const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
-  let accountCompletion: { revision: string; failed: boolean; until: number } | undefined;
+  let accountCompletion: { revision: string; failed: boolean } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
     if (!service) return { pending: false as const, value: { value: null, failed: false } };
@@ -4701,7 +4701,7 @@ export function registerBridgeTools(
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
-      accountCompletion = { revision, failed: value.failed, until: Date.now() + CARD_RUNTIME_CACHE_TTL_MS };
+      accountCompletion = { revision, failed: value.failed };
       if (deferred) notifyCardObservation(upstream);
     });
     const result = read ? await waitForDisplay(read, CARD_USAGE_TIMEOUT_MS) : { pending: true as const };
@@ -4747,7 +4747,7 @@ export function registerBridgeTools(
         } else {
           const revision = service.cacheRevision();
           view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + accountDisplayReads.observePending(key => key === revision);
-          if (accountCompletion?.revision === revision && accountCompletion.until > Date.now() && accountCompletion.failed) {
+          if (accountCompletion?.revision === revision && accountCompletion.failed) {
             view.enrichment.usageUnavailable = true;
           }
         }
@@ -10934,6 +10934,7 @@ async function readCodexWeeklyUsageBounded(
         retainUntil: now + CARD_USAGE_STALE_TTL_MS,
         value
       });
+      cardUsageCompletions.delete(upstream);
     }
     if (!value) cardUsageCompletions.set(upstream, { revision, until: Date.now() + CARD_RUNTIME_CACHE_TTL_MS, failed });
     if (deferred) notifyCardObservation(upstream);
@@ -11729,7 +11730,7 @@ function cachedDashboardEnrichment(
     timeouts: 0, durationMs: 0, usageTimedOut: false,
     pendingReads: runtimePending + usagePending,
     runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
-    usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.until > now && usageCompletion.failed),
+    usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.failed),
     oldestObservationAt: dates.sort()[0]
   };
 }

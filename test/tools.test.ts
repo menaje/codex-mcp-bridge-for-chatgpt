@@ -1717,6 +1717,24 @@ describe("bridge tools", () => {
     }
   });
 
+  it("keeps a usage failure visible after the retry cooldown until an actual recovery", async () => {
+    const upstream = new WeeklyUsageUpstream();
+    const usage = await upstream.readAccountRateLimits();
+    const read = vi.spyOn(upstream, "readAccountRateLimits").mockRejectedValue(new Error("usage unavailable"));
+    const { applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(true);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockResolvedValue(usage);
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
   it("reports pending account reads and their late success or failure in cached snapshots", async () => {
     for (const outcome of ["success", "failure", "replaced"]) {
       const fails = outcome === "failure", replaced = outcome === "replaced";
@@ -1748,6 +1766,17 @@ describe("bridge tools", () => {
         if (!fails && !replaced) expect(complete.enrichment.oldestObservationAt).toBe(new Date(value.observedAt).toISOString());
         expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(replaced ? 0 : 1);
         expect(read).toHaveBeenCalledTimes(1);
+        if (fails) {
+          const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16_000);
+          try {
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+            expect(read).toHaveBeenCalledTimes(1);
+            read.mockResolvedValue(value);
+            expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+            expect(read).toHaveBeenCalledTimes(2);
+          } finally { clock.mockRestore(); }
+        }
       } finally { unsubscribe(); await close(); }
     }
   });
