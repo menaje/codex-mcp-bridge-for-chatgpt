@@ -16,6 +16,7 @@ export type ModelSelection = ModelChoice & {
 };
 
 export type ModelPolicyConstraints = {
+  /** Legacy wire name: controls Ultra eligibility, not every form of agent delegation. */
   allowDelegation: boolean;
 };
 
@@ -145,7 +146,7 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
   if (value.mode === "fixed") {
     const selection = readModelChoice(value.selection, "fixed model selection");
     if (!constraints.allowDelegation && selection.reasoningEffort === "ultra") {
-      throw new Error("Ultra reasoning requires model-policy delegation to be enabled.");
+      throw new Error("Ultra is disabled. Choose another reasoning level for the fixed model.");
     }
     return { mode: "fixed", selection, constraints };
   }
@@ -164,9 +165,8 @@ export function validateModelPolicy(value: unknown): ModelPolicy {
     if (selections.length > 500) throw new Error("An explicit model allowlist cannot exceed 500 selections.");
     const unique = new Set(selections.map(modelChoiceKey));
     if (unique.size !== selections.length) throw new Error("Explicit model selections must be unique.");
-    if (!constraints.allowDelegation && selections.some((entry) => entry.reasoningEffort === "ultra")) {
-      throw new Error("Ultra reasoning cannot be allowed while delegation is disabled.");
-    }
+    // Keep the user's saved choices when Ultra is disabled. Discovery and
+    // admission intersect them with the current constraint on every request.
     allowedSelections = { kind: "explicit", selections };
   } else {
     throw new Error("Invalid allowed model selections.");
@@ -187,6 +187,26 @@ export function validateModelSelection(value: unknown, label = "model selection"
   return readSelection(value, label);
 }
 
+export const ULTRA_DISABLED_NO_SELECTION_WARNING =
+  "Ultra is disabled and no saved model and reasoning choice can currently run. " +
+  "Saved Ultra choices are retained but inactive. Select another available reasoning level in Settings.";
+
+export function hasDisabledUltraSelections(policy: ModelPolicy): boolean {
+  return policy.mode === "automatic" &&
+    !policy.constraints.allowDelegation &&
+    policy.allowedSelections.kind === "explicit" &&
+    policy.allowedSelections.selections.some((selection) => selection.reasoningEffort === "ultra");
+}
+
+export function isModelPolicySuspended(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling?: ModelChoice[]
+): boolean {
+  return hasDisabledUltraSelections(policy) &&
+    listAllowedModelSelections(policy, catalog, operatorCeiling).length === 0;
+}
+
 export function validatePolicyAgainstCatalog(
   policy: ModelPolicy,
   catalog: CodexModelCatalogSnapshot,
@@ -200,6 +220,9 @@ export function validatePolicyAgainstCatalog(
   }
   const allowed = listAllowedModelSelections(normalized, catalog, operatorCeiling);
   if (allowed.length > 0) return;
+  // Disabling Ultra is a valid restrictive save even when it suspends all
+  // remaining choices. No implicit model is added and execution stays closed.
+  if (hasDisabledUltraSelections(normalized)) return;
 
   const catalogAllowed = listAllowedModelSelections(normalized, catalog);
   if (operatorCeiling && catalogAllowed.length > 0) {
@@ -224,6 +247,10 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDec
       input.policyRevision,
       `The request used policy revision ${input.requestedPolicyRevision}, but revision ${input.policyRevision} is active.`,
     );
+  }
+
+  if (isModelPolicySuspended(policy, input.catalog, input.operatorCeiling)) {
+    throw unavailable(input.policyRevision, ULTRA_DISABLED_NO_SELECTION_WARNING);
   }
 
   let effectiveSelection: ModelSelection;

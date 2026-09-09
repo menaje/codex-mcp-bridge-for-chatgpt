@@ -5,6 +5,7 @@ import {
   listAllowedModelSelections,
   resolveModelPolicy,
   sameModelPolicy,
+  validateModelPolicy,
   validatePolicyAgainstCatalog,
   type BackendCapabilities,
   type ModelPolicy,
@@ -50,6 +51,48 @@ const AUTOMATIC_POLICY: ModelPolicy = {
 };
 
 describe("model policy resolver", () => {
+  it("retains saved Ultra choices while filtering and rejecting disabled execution, including inheritance", () => {
+    const ultra = { model: SOL_MAX.model, reasoningEffort: "ultra" };
+    const policy = validateModelPolicy({
+      mode: "automatic",
+      allowedSelections: { kind: "explicit", selections: [SOL_MAX, ultra] },
+      constraints: { allowDelegation: false }
+    });
+    expect(policy).toHaveProperty("allowedSelections.selections", [SOL_MAX, ultra]);
+    expect(() => validatePolicyAgainstCatalog(policy, catalog(), undefined, 7)).not.toThrow();
+    expect(listAllowedModelSelections(policy, catalog())).toEqual([SOL_MAX]);
+    expect(decide({ policy, requestedSelection: SOL_MAX }).effectiveSelection).toEqual(SOL_MAX);
+    expectPolicyError(() => decide({ policy, requestedSelection: ultra }), "MODEL_POLICY_CHANGED");
+    expectPolicyError(() => decide({ policy, operation: "continue", currentSelection: ultra }), "MODEL_POLICY_CHANGED");
+    expect(listAllowedModelSelections({ ...policy, constraints: { allowDelegation: true } }, catalog()))
+      .toEqual([SOL_MAX, ultra]);
+  });
+
+  it("saves a suspended Ultra-only policy without inventing an executable fallback", () => {
+    const ultra = { model: SOL_MAX.model, reasoningEffort: "ultra" };
+    const policy: ModelPolicy = {
+      mode: "automatic",
+      allowedSelections: { kind: "explicit", selections: [ultra] },
+      constraints: { allowDelegation: false }
+    };
+    expect(() => validatePolicyAgainstCatalog(policy, catalog(), undefined, 7)).not.toThrow();
+    expect(listAllowedModelSelections(policy, catalog())).toEqual([]);
+    for (const requestedSelection of [undefined, ultra, SOL_MAX]) {
+      const error = expectPolicyError(() => decide({ policy, requestedSelection }), "MODEL_UNAVAILABLE");
+      expect(error.message).toContain("retained but inactive");
+    }
+    expectPolicyError(() => decide({ policy, operation: "continue", currentSelection: ultra }), "MODEL_UNAVAILABLE");
+    expect(() => validateModelPolicy({ ...policy, allowedSelections: { kind: "explicit", selections: [] } }))
+      .toThrow("cannot be empty");
+  });
+
+  it("requires a deliberate replacement for fixed Ultra when Ultra is disabled", () => {
+    expect(() => decide({ policy: {
+      mode: "fixed", selection: { model: SOL_MAX.model, reasoningEffort: "ultra" },
+      constraints: { allowDelegation: false }
+    } })).toThrow("Choose another reasoning level for the fixed model");
+  });
+
   it("enforces a fixed exact selection and rejects every caller override", () => {
     const decision = decide({ policy: FIXED_POLICY, operation: "start" });
     expect(decision).toMatchObject({

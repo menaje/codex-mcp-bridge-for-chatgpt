@@ -61,6 +61,8 @@ import {
   MODEL_POLICY_SCHEMA_VERSION,
   backendSupports,
   ModelPolicyError,
+  ULTRA_DISABLED_NO_SELECTION_WARNING,
+  isModelPolicySuspended,
   listAllowedModelSelections,
   modelChoiceKey,
   modelSelectionKey,
@@ -7489,7 +7491,7 @@ export function registerBridgeTools(
     {
       title: "List Codex Models",
       description:
-        "Read the model and reasoning choices allowed by current bridge policy and backend availability.",
+        "Read the model and reasoning choices allowed by current bridge policy and backend availability. Model, reasoning, and service-tier descriptions come from the installed Codex catalog. The bridge filters executable choices and may return an empty list with a policy warning.",
       inputSchema: z.strictObject({
         contractVersion: z.literal("2").optional().describe(
           "Opt in to selectionMode alongside the allowed catalog from the same settings snapshot. Omission preserves the legacy catalog-only result."
@@ -7560,7 +7562,12 @@ export function registerBridgeTools(
         ...(args.contractVersion === "2" ? { contractVersion: "2" as const, selectionMode: preferences.modelPolicy.mode } : {}),
         source: catalog.source,
         stale: catalog.stale,
-        warning: catalog.warning || null,
+        warning: [
+          catalog.warning,
+          isModelPolicySuspended(preferences.modelPolicy, catalog,
+            effectiveModelCeiling(catalog, config.operatorModelCeiling, preferences.usePriorityServiceTier))
+            ? ULTRA_DISABLED_NO_SELECTION_WARNING : undefined
+        ].filter(Boolean).join(" ") || null,
         models
       };
       return contractedToolResult(
@@ -14809,6 +14816,10 @@ async function buildSettingsView(
         userSettings.current.usePriorityServiceTier,
         userSettings.current.revision
       );
+      if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog,
+        effectiveModelCeiling(catalog, config.operatorModelCeiling, userSettings.current.usePriorityServiceTier))) {
+        modelPolicyWarning = ULTRA_DISABLED_NO_SELECTION_WARNING;
+      }
     } catch (error) {
       modelPolicyWarning = error instanceof Error ? error.message : String(error);
     }
@@ -15101,6 +15112,9 @@ function assertPriorityCompatibility(
   requestedSelection?: ModelChoice
 ): void {
   if (!usePriorityServiceTier) return;
+  // A deliberately suspended Ultra allowlist remains saveable with Fast on.
+  // The model policy resolver rejects execution before any upstream turn.
+  if (isModelPolicySuspended(policy, catalog, effectiveModelCeiling(catalog, operatorCeiling, true))) return;
   if (requestedSelection && !priorityServiceTierForModel(catalog, requestedSelection.model)) {
     throw priorityUnavailable(policyRevision, requestedSelection.model);
   }

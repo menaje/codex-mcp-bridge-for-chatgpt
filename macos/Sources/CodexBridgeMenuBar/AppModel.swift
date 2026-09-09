@@ -88,6 +88,16 @@ struct SettingsDraft: Equatable {
         policyState != originalPolicyState
     }
 
+    func isUltraDisabled(_ choice: ModelChoice) -> Bool {
+        !allowDelegation && choice.reasoningEffort == "ultra"
+    }
+
+    func canRetainExplicitChoice(_ choice: ModelChoice, in snapshot: SettingsSnapshot) -> Bool {
+        isUltraDisabled(choice) || Self.selectableChoices(
+            in: snapshot, allowDelegation: allowDelegation
+        ).contains(choice)
+    }
+
     func rebased(on snapshot: SettingsSnapshot) -> SettingsDraft {
         var rebased = SettingsDraft(snapshot: snapshot)
         rebased.accessStrategy = accessStrategy
@@ -1925,6 +1935,13 @@ final class AppModel: ObservableObject {
         var policy: ModelPolicy?
         if draft.modelPolicyDirty {
             if draft.policyMode == "fixed" {
+                if let choice = displayedChoices[draft.fixedSelectionKey], draft.isUltraDisabled(choice) {
+                    settingsErrorMessage = BridgeAppLocalization.string(
+                        "Ultra가 비활성화되어 있습니다. 고정 모델에 사용할 다른 추론 수준을 선택해 주세요.",
+                        locale: interfaceLocale
+                    )
+                    return false
+                }
                 guard let choice = displayedChoices[draft.fixedSelectionKey],
                       selectableKeys.contains(choice.key) else {
                     settingsErrorMessage = BridgeAppLocalization.string(
@@ -1942,7 +1959,10 @@ final class AppModel: ObservableObject {
                 let allowed: AllowedSelections
                 if draft.allowedKind == "explicit" {
                     let selectedKeys = draft.explicitSelectionKeys
-                    guard selectedKeys.allSatisfy(selectableKeys.contains) else {
+                    guard selectedKeys.allSatisfy({ key in
+                        guard let choice = displayedChoices[key] else { return false }
+                        return draft.canRetainExplicitChoice(choice, in: snapshot)
+                    }) else {
                         settingsErrorMessage = BridgeAppLocalization.string(
                             "현재 사용할 수 없는 저장된 모델 조합을 허용 목록에서 해제해 주세요.",
                             locale: interfaceLocale

@@ -160,6 +160,14 @@ Ask ChatGPT to open the Codex MCP Bridge for ChatGPT settings. The card saves sh
 
 For an automatic policy with an explicit range, the card selects models first and then reasoning efforts per model. A model's **All** control expands the currently allowed efforts into exact saved model/effort choices; it does not add an `all` value to the tool schema and does not automatically include efforts discovered later. The separate catalog-visible range remains dynamic.
 
+**Allow Ultra reasoning** controls the `ultra` effort, which includes automatic
+task delegation. Turning it off retains explicit saved Ultra choices but removes
+them from GPT's executable list. If no executable choice remains, Settings can
+save the restriction and shows that work is paused until another valid choice
+is available. A fixed Ultra choice must be replaced before saving OFF. This
+switch does not control other agent features. See [model selection](model-selection.md)
+for source attribution, inheritance, fallback and the precise policy scope.
+
 In automatic mode, GPT chooses one exact allowed model/effort pair for every
 new Activity, new Agent, or fresh context. The bridge publishes no preferred
 pair, default, fallback, or task-to-model mapping. Omission for new work returns

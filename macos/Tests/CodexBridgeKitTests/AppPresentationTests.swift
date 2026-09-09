@@ -672,6 +672,31 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    func testDisabledUltraRemainsSavedWithoutBeingExecutable() throws {
+        let ultra = ModelChoice(model: "gpt-current", reasoningEffort: "ultra")
+        let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "explicit", "selections": [choiceObject(ultra)]],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high", "ultra"])]
+        )
+        var draft = SettingsDraft(snapshot: snapshot)
+        draft.allowDelegation = false
+        XCTAssertEqual(draft.explicitSelectionKeys, [ultra.key])
+        XCTAssertTrue(draft.canRetainExplicitChoice(ultra, in: snapshot))
+        XCTAssertTrue(draft.isUltraDisabled(ultra))
+        XCTAssertEqual(SettingsDraft.selectableChoices(in: snapshot, allowDelegation: false), [high])
+        XCTAssertTrue(SettingsDraft.displayedChoices(in: snapshot, allowDelegation: false).contains(ultra))
+        XCTAssertFalse(draft.canRetainExplicitChoice(ModelChoice(model: "removed", reasoningEffort: "high"), in: snapshot))
+        draft.allowDelegation = true
+        XCTAssertFalse(draft.isUltraDisabled(ultra))
+        XCTAssertTrue(SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true).contains(ultra))
+        XCTAssertEqual(draft.explicitSelectionKeys, [ultra.key])
+    }
+
     func testHidingActivityCardAlsoDisablesAutomaticHandoff() throws {
         let snapshot = try settingsSnapshot(
             policy: [
@@ -788,6 +813,74 @@ final class AppPresentationTests: XCTestCase {
         model.scheduleSettingsAutosave(SettingsDraft(snapshot: snapshot))
 
         XCTAssertEqual(model.generalSettingsSaveState, .idle)
+    }
+
+    @MainActor
+    func testUltraOffAutosavePreservesAutomaticChoicesAndRequiresFixedReplacement() async throws {
+        for mode in ["automatic-mixed", "automatic-ultra-only", "fixed"] {
+            let ultra = ModelChoice(model: "gpt-current", reasoningEffort: "ultra")
+            let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+            let savedChoices = mode == "automatic-mixed" ? [high, ultra] : [ultra]
+            var policy: [String: Any] = [
+                "mode": mode == "fixed" ? "fixed" : "automatic",
+                "constraints": ["allowDelegation": true]
+            ]
+            if mode == "fixed" {
+                policy["selection"] = choiceObject(ultra)
+            } else {
+                policy["allowedSelections"] = ["kind": "explicit", "selections": savedChoices.map(choiceObject)]
+            }
+            let catalog = [catalogModel(id: ultra.model, efforts: ["high", "ultra"])]
+            let snapshot = try settingsSnapshot(policy: policy, catalogModels: catalog)
+            policy["constraints"] = ["allowDelegation": false]
+            if mode == "fixed" { policy["selection"] = choiceObject(high) }
+            let updated = try settingsSnapshot(settingsRevision: 5, policy: policy, catalogModels: catalog)
+            let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Ultra test")
+            let client = TestRemoteClient(
+                profile: profile, dashboard: try dashboardStatus(scope: "ultra-test"),
+                settings: snapshot, settingsAfterUpdate: updated
+            )
+            let model = AppModel(
+                loginItemController: TestLoginItemController(status: .notRegistered),
+                connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                    mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile]
+                )),
+                credentialStore: TestCredentialStore([
+                    profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"
+                ]),
+                remoteClientFactory: { _, _ in client }
+            )
+            await model.start()
+            var draft = SettingsDraft(snapshot: snapshot)
+            draft.allowDelegation = false
+            if mode == "fixed" {
+                model.scheduleSettingsAutosave(draft)
+                let invalidSaved = await model.flushSettingsAutosave()
+                XCTAssertFalse(invalidSaved)
+                XCTAssertEqual(client.settingsUpdateCallCount, 0)
+                XCTAssertNotNil(model.settingsErrorMessage)
+                XCTAssertEqual(draft.fixedSelectionKey, ultra.key)
+                draft.fixedSelectionKey = high.key
+            }
+            model.scheduleSettingsAutosave(draft)
+            let saved = await model.flushSettingsAutosave()
+            XCTAssertTrue(saved, mode)
+            XCTAssertEqual(client.settingsUpdateCallCount, 1)
+            let mutation = try XCTUnwrap(client.lastSettingsMutation)
+            guard case .patch(let patch) = mutation.operation else {
+                return XCTFail("Expected a policy patch")
+            }
+            let savedPolicy = try XCTUnwrap(patch.modelPolicy)
+            XCTAssertFalse(savedPolicy.constraints.allowDelegation)
+            if mode == "fixed" {
+                XCTAssertEqual(savedPolicy.selection, high)
+            } else {
+                XCTAssertEqual(Set(savedPolicy.allowedSelections?.selections ?? []), Set(savedChoices))
+            }
+            XCTAssertEqual(model.settings?.settings.settingsRevision, 5)
+            let stopped = await model.shutdownApplication(force: false)
+            XCTAssertTrue(stopped)
+        }
     }
 
     @MainActor
@@ -1407,11 +1500,13 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private let helloValue: RemoteCompanionHello
     private let dashboardValue: DashboardSnapshot
     private let settingsValue: SettingsSnapshot
+    private let settingsAfterUpdate: SettingsSnapshot?
     private let dashboardDelayNanoseconds: UInt64
     private let helloDelayNanoseconds: UInt64
     private let lock = NSLock()
     private var runtimeCalls = 0
     private var settingsUpdateCalls = 0
+    private var latestSettingsMutation: SettingsMutation?
     private var factoryCalls = 0
     private var closeCalls = 0
     private var remainingHelloFailures: Int
@@ -1421,6 +1516,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         profile: RemoteServerProfile,
         dashboard: DashboardSnapshot,
         settings: SettingsSnapshot,
+        settingsAfterUpdate: SettingsSnapshot? = nil,
         dashboardDelayNanoseconds: UInt64 = 0,
         helloFailures: Int = 0,
         helloDelayNanoseconds: UInt64 = 0
@@ -1445,6 +1541,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         )
         dashboardValue = dashboard
         settingsValue = settings
+        self.settingsAfterUpdate = settingsAfterUpdate
         self.dashboardDelayNanoseconds = dashboardDelayNanoseconds
         self.helloDelayNanoseconds = helloDelayNanoseconds
         remainingHelloFailures = helloFailures
@@ -1453,6 +1550,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     var runtimeStatusCallCount: Int { lock.withLock { runtimeCalls } }
     var helloCallCount: Int { lock.withLock { helloCalls } }
     var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
+    var lastSettingsMutation: SettingsMutation? { lock.withLock { latestSettingsMutation } }
     var factoryCallCount: Int { lock.withLock { factoryCalls } }
     var closeCallCount: Int { lock.withLock { closeCalls } }
 
@@ -1493,8 +1591,11 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     }
 
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot {
-        lock.withLock { settingsUpdateCalls += 1 }
-        return settingsValue
+        lock.withLock {
+            settingsUpdateCalls += 1
+            latestSettingsMutation = mutation
+        }
+        return settingsAfterUpdate ?? settingsValue
     }
 
     func runtimeStatus(inspectBackgroundProcesses: Bool) async throws -> RuntimeAdmissionSnapshot {

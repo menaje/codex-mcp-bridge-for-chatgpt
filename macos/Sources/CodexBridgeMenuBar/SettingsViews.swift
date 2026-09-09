@@ -950,6 +950,7 @@ private struct GeneralSettingsPane: View {
                     Picker("추론 수준", selection: fixedEffortBinding) {
                         ForEach(choicesForFixedModel, id: \.key) { choice in
                             Text(effortLabel(choice)).tag(choice.reasoningEffort)
+                                .disabled(draft.isUltraDisabled(choice))
                         }
                     }
                 } else {
@@ -975,8 +976,9 @@ private struct GeneralSettingsPane: View {
                                                         isOn: explicitBinding(choice.key)
                                                     )
                                                     .disabled(
-                                                        !selectableChoiceKeys.contains(choice.key) &&
-                                                        !draft.explicitSelectionKeys.contains(choice.key)
+                                                        draft.isUltraDisabled(choice) ||
+                                                        (!selectableChoiceKeys.contains(choice.key) &&
+                                                        !draft.explicitSelectionKeys.contains(choice.key))
                                                     )
                                                 }
                                             }
@@ -991,12 +993,23 @@ private struct GeneralSettingsPane: View {
                 }
 
                 Toggle(
-                    "Ultra 추론 및 하위 에이전트 위임 허용",
+                    "Ultra 추론 허용",
                     isOn: $draft.allowDelegation
                 )
-                Text("끄면 Ultra 추론이 모델 목록에서 제외되고 하위 에이전트 위임이 차단됩니다.")
+                Text("Ultra에는 자동 작업 위임이 포함됩니다. 끄면 저장된 선택을 포함해 GPT가 실행할 수 있는 조합에서 Ultra가 제외됩니다. 다른 추론 수준이나 에이전트 기능은 이 설정의 제어 대상이 아닙니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if draft.policyMode == "fixed", let choice = selectedFixedChoice, draft.isUltraDisabled(choice) {
+                    Text("Ultra가 비활성화되어 있습니다. 고정 모델에 사용할 다른 추론 수준을 선택해 주세요.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if draft.policyMode == "automatic", draft.allowedKind == "explicit",
+                          choices.contains(where: { draft.explicitSelectionKeys.contains($0.key) && draft.isUltraDisabled($0) }),
+                          draft.explicitSelectionKeys.isDisjoint(with: selectableChoiceKeys) {
+                    Text("Ultra가 꺼져 있어 현재 선택한 모델과 추론 조합으로 작업을 실행할 수 없습니다. 저장된 선택은 유지됩니다. 작업을 실행하려면 사용 가능한 다른 추론 수준을 선택해 주세요.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 Toggle("빠른 처리 (Fast)", isOn: $draft.usePriorityServiceTier)
                 Text("지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.")
                     .font(.caption)
@@ -1231,7 +1244,11 @@ private struct GeneralSettingsPane: View {
             $0.effort == choice.reasoningEffort
         }
         let unavailable: String
-        if selectableChoiceKeys.contains(choice.key) {
+        if draft.isUltraDisabled(choice) {
+            unavailable = " (" + BridgeAppLocalization.string(
+                "Ultra 비활성화로 사용 불가", locale: model.interfaceLocale
+            ) + ")"
+        } else if selectableChoiceKeys.contains(choice.key) {
             unavailable = ""
         } else if SettingsDraft.savedChoiceKeys(in: snapshot).contains(choice.key) {
             unavailable = BridgeAppLocalization.string(
