@@ -365,6 +365,13 @@ final class AppPresentationTests: XCTestCase {
         let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
             NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "dashboard.snapshot" ? 0.2 : 0)
         }
+        func waitForSnapshotCount(_ expected: Int) async throws {
+            for _ in 0..<150 {
+                if bridge.count("dashboard.snapshot") >= expected { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail("Expected at least \(expected) dashboard requests before the next visibility transition.")
+        }
         defer { helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
         let model = AppModel(paths: paths)
         model.recordLocalConnectionStatus(try helperStatus())
@@ -373,7 +380,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(bridge.count("dashboard.snapshot"), 0)
         XCTAssertEqual(bridge.count("settings.snapshot"), 0)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(500))
+        try await waitForSnapshotCount(1)
         XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
         model.setDashboardVisible(false)
         let before = bridge.count("dashboard.snapshot")
@@ -381,12 +388,13 @@ final class AppPresentationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(bridge.count("dashboard.snapshot"), before)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(320))
+        try await waitForSnapshotCount(before + 1)
         model.setDashboardVisible(false)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(50))
+        // Both requests belong to the same debounce window regardless of runner speed.
         model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
-        try await Task.sleep(for: .milliseconds(650))
+        try await waitForSnapshotCount(before + 2)
+        try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(bridge.count("dashboard.snapshot"), before + 2)
         model.setDashboardVisible(false)
         model.cancelAllPolling()
