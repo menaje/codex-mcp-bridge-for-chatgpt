@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "복구 판단을 원래의 열린 foreground 호출에 제한하고, 상태 불명 재발을 별도 사건으로 점검하며 이전 해결 표시가 새 문제에 붙지 않도록 수정합니다.",
+  "breaking": false,
+  "migration": "DB v17 전환 전 비공개 백업을 만들고 기존 복구 기록과 시도 한도를 보존합니다. GPT 응답 식별 신호가 없는 연결에서는 호출 간 복구 권한을 전달하지 않습니다. waitContext는 null이며 과거 waitToken은 상태 조회 호환성만 유지하고 권한을 부여하지 않습니다. 최신 계약을 보려면 도구 정의를 갱신하세요."
+}

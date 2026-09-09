@@ -63,9 +63,9 @@ describe("bounded automatic recovery", () => {
     state.upsertJob({jobId:"original-failure",requestId:"original-request",scopeId:"11111111-1111-4111-8111-111111111111",status:"failed",updatedAt:Date.now()});
     state.close();
     const old=new Database(file);old.exec("DROP TABLE automatic_recovery;UPDATE bridge_meta SET value='15' WHERE key='schema_version'");old.close();
-    state=new BridgeStateStore({file});expect(state.getMeta("schema_version")).toBe("16");
+    state=new BridgeStateStore({file});expect(state.getMeta("schema_version")).toBe("17");
     expect(state.listJobs()[0]).toMatchObject({jobId:"original-failure",status:"failed"});
-    const backups=readdirSync(directory).filter(name=>name.includes("pre-v16"));expect(backups).toHaveLength(1);
+    const backups=readdirSync(directory).filter(name=>name.includes("pre-v17"));expect(backups).toHaveLength(1);
     expect(statSync(path.join(directory,backups[0])).mode & 0o777).toBe(0o600);
     const backup=new Database(path.join(directory,backups[0]),{readonly:true});
     expect(backup.pragma("quick_check",{simple:true})).toBe("ok");backup.close();state.close();
@@ -79,5 +79,60 @@ describe("bounded automatic recovery", () => {
     expect(state.automaticRecovery.get(candidate.key)).toMatchObject({state:"blocked",attempts:1,reason:"work-changed"});
     expect(state.automaticRecovery.get(candidate.key)?.evidence).toBeUndefined();
     await controller.close();state.close();
+  });
+
+  it("opens a new incident only after confirmed recovery, preserves old evidence, and retains the new budget across restart", () => {
+    const file=path.join(mkdtempSync(path.join(tmpdir(),"bridge-recovery-recurrence-")),"state.sqlite");
+    let state=new BridgeStateStore({file}),store=state.automaticRecovery;
+    store.observeRecheck(candidate,true,1000);
+    expect(store.recheckCandidate(candidate)).toEqual(candidate);
+    for (const now of [1000,6000,36000]) {
+      const attempt=store.begin(candidate,now)!;
+      store.finish(candidate.key,attempt.attempts,{resolved:false,reason:"unconfirmed"},now);
+      store.observeRecheck(candidate,true,now);
+      expect(store.recheckCandidate(candidate)).toEqual(candidate);
+    }
+    expect(store.get(candidate.key)).toMatchObject({state:"blocked",attempts:3});
+    expect(store.begin(candidate,100000)).toBeUndefined();
+    store.observeRecheck(candidate,false,100000,"runtime-observed");
+    const original=store.get(candidate.key)!;
+    expect(original).toMatchObject({state:"resolved",attempts:3,evidence:"runtime-observed"});
+    expect(store.recheckCandidate(candidate,true)).toBeUndefined();
+    // Equal timestamps are valid: the fresh healthy -> unknown transition,
+    // not a wall-clock gap or Agent version change, starts a new incident.
+    store.observeRecheck(candidate,true,100000);
+    const recurring=store.recheckCandidate(candidate)!;
+    expect(recurring.key).not.toBe(candidate.key);
+    expect(store.get(recurring.key)).toBeUndefined();
+    store.begin(recurring,100000);store.finish(recurring.key,1,{resolved:false,reason:"unconfirmed"},100000);
+    state.close();state=new BridgeStateStore({file});store=state.automaticRecovery;
+    expect(store.recheckCandidate(candidate)).toEqual(recurring);
+    expect(store.begin(recurring,104999)).toBeUndefined();
+    expect(store.begin(recurring,105000)?.attempts).toBe(2);
+    expect(store.get(candidate.key)).toEqual(original);
+    state.close();
+  });
+
+  it("adopts v16 budgets and creates a private backup before adding incident identities", () => {
+    const directory=mkdtempSync(path.join(tmpdir(),"bridge-recovery-v16-")),file=path.join(directory,"state.sqlite");
+    let state=new BridgeStateStore({file});
+    state.automaticRecovery.begin(candidate,1000);
+    state.automaticRecovery.finish(candidate.key,1,{resolved:false,reason:"unconfirmed"},1001);
+    const resolved={...candidate,key:automaticRecoveryKey("recheck",["resolved-agent",1]),agentId:"resolved-agent"};
+    state.automaticRecovery.begin(resolved,1000);
+    state.automaticRecovery.finish(resolved.key,1,{resolved:true,reason:"runtime-confirmed",evidence:"runtime-observed"},1001);
+    state.close();
+    const old=new Database(file);
+    old.exec("DROP TABLE automatic_recovery_incidents;UPDATE bridge_meta SET value='16' WHERE key='schema_version'");old.close();
+    state=new BridgeStateStore({file});
+    expect(state.schemaVersion).toBe(17);
+    expect(readdirSync(directory).filter(name=>name.includes("pre-v17"))).toHaveLength(1);
+    expect(state.automaticRecovery.recheckCandidate(candidate)).toEqual(candidate);
+    expect(state.automaticRecovery.begin(candidate,6000)?.attempts).toBe(2);
+    expect(state.automaticRecovery.recheckCandidate(resolved,true)).toBeUndefined();
+    state.automaticRecovery.observeRecheck(resolved,true,6000);
+    expect(state.automaticRecovery.recheckCandidate(resolved)?.key).not.toBe(resolved.key);
+    expect(state.automaticRecovery.get(resolved.key)).toMatchObject({state:"resolved",attempts:1});
+    state.close();
   });
 });

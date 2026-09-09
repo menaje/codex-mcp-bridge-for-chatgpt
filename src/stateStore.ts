@@ -84,7 +84,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "16";
+const CURRENT_SCHEMA_VERSION = "17";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -471,6 +471,7 @@ export class BridgeStateStore {
       existingVersion !== "13" &&
       existingVersion !== "14" &&
       existingVersion !== "15" &&
+      existingVersion !== "16" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -528,7 +529,7 @@ export class BridgeStateStore {
           this.setMeta("schema_version", "15");
         });
       }
-      if (this.getMeta("schema_version") === "15") {
+      if (["15","16"].includes(this.getMeta("schema_version") || "")) {
         this.transaction(() => {
           this.database.exec(AUTOMATIC_RECOVERY_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);

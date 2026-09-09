@@ -5,7 +5,7 @@ import { problemActionSchema, problemActionResultSchema, problemQuerySchema, pro
   type ProblemQuery, type ProblemAction, type ProblemOperation, type ProblemActionResult } from "./problemReview.js";
 import { AutomaticRecoveryController, automaticRecoveryKey,
   type AutomaticRecoveryCandidate, type AutomaticRecoveryResult } from "./automaticRecovery.js";
-import { OriginWaits, originWaitTokenSchema, originWaitContinuationSchema, liveRecoverySchema,
+import { OriginWaits, originWaitTokenSchema, liveRecoverySchema,
   type OriginWaitLease } from "./originWait.js";
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
 import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
@@ -460,7 +460,7 @@ const activityCardTrackingOutputSchema = z.strictObject({
 });
 
 const codexTaskOutputSchema = z.strictObject({
-  waitContext: originWaitContinuationSchema.nullable().default(null),
+  waitContext: z.null().default(null).describe("Reserved legacy field; always null."),
   recovery: liveRecoverySchema.nullable().default(null),
   contractVersion: z.enum(["1"]),
   kind: z.enum(["task"]),
@@ -1290,8 +1290,6 @@ const statusItemOutputSchema = z.strictObject({
 });
 
 const codexStatusOutputSchema = z.strictObject({
-  waitContext: originWaitContinuationSchema.optional(),
-  recovery: liveRecoverySchema.optional(),
   runtimes: z.array(z.string()).optional(),
   kind: z.enum(["overview", "page", "activity", "thread", "job"]),
   scope: z.strictObject({
@@ -4928,7 +4926,7 @@ export function registerBridgeTools(
               if (jobs.getAgent(current.agentId)?.version !== current.version) return;
               const cache = dashboardRuntimeCaches.get(upstream) || new Map<string,DashboardRuntimeCacheEntry>();
               dashboardRuntimeCaches.set(upstream,cache);
-              cacheDashboardRuntime(cache,candidate,result,deferred);
+              cacheDashboardRuntime(cache,candidate,result,deferred,jobs);
               notifyCardObservation(upstream);
             });
           const result = read ? await waitForDisplay(read,CARD_RUNTIME_BUDGET_MS) : {pending:true as const};
@@ -4941,7 +4939,17 @@ export function registerBridgeTools(
         const activeJob = jobs.listForAgent(fresh.agentId).some(job => isActiveActivityJobStatus(job.status));
         if (fresh.lifecycle === "orphaned" && !fresh.currentJobId && !activeJob &&
           ["idle","not-loaded"].includes(observation.state) && observation.backgroundProcessState === "confirmed" && observation.backgroundProcessCount === 0) {
+          // The second, non-loading inspection confirms that the missing
+          // thread has no remaining work. Clear only this check's uncertainty;
+          // the next fresh failed inspection sets it again.
+          const cached = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+          if (cached?.stamp !== dashboardRuntimeStamp(fresh,latestJob) || cached.inspectedObservation !== observation) {
+            throw new Error("PROBLEM_INSPECTION_CHANGED: A newer inspection replaced this result. Check the current runtime state again.");
+          }
+          cached.observation = observation;
+          cached.unavailable = false;
           jobs.resolveHistoryRuntimeProblem(fresh,target.expectedRevision);
+          jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,fresh),false,Date.now(),"not-loaded-no-background");
           return {ok:true,changed:1};
         }
         return {ok:true,changed:0};
@@ -5227,7 +5235,7 @@ export function registerBridgeTools(
     const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent);
     let processIds: string[] = [], backgroundUnavailable = false;
     if (agent.lifecycle === "idle" && !agent.currentJobId && thread && backendSupports(thread.backendKind, "supportsBackgroundTerminals")) {
-      const inspection = await inspectDashboardRuntimes(upstream, [{ agentId: agent.agentId, thread,
+      const inspection = await inspectDashboardRuntimes(jobs, upstream, [{ agentId: agent.agentId, thread,
         stamp: dashboardRuntimeStamp(agent, job), inspectLiveness: false }]);
       const observation = inspection.observations.get(agent.agentId);
       backgroundUnavailable = !observation || observation.backgroundProcessState !== "confirmed";
@@ -5492,10 +5500,9 @@ export function registerBridgeTools(
           kind: z.literal("job"),
           id: statusJobIdInput,
           waitFor: statusJobWaitForInput,
-          waitMs: statusJobWaitMsInput,
-          waitToken: originWaitTokenSchema.optional()
+          waitMs: statusJobWaitMsInput
         }).describe("Wait on one exact Job; waitFor is required whenever waitMs is sent.")),
-        jsonSchemaBody(z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.shape })),
+        jsonSchemaBody(z.strictObject({ kind: z.literal("input"), ...questions.questionInputSchema.omit({waitToken:true}).shape })),
         jsonSchemaBody(statusActivityQueryInput),
         jsonSchemaBody(statusThreadQueryInput),
         jsonSchemaBody(statusPageQueryInput),
@@ -5579,7 +5586,6 @@ export function registerBridgeTools(
         if (!args.includeAllScopes && initial.scopeId !== scopeId) {
           throw new Error("The requested Codex job belongs to another conversation scope.");
         }
-        const originWait = jobs.originWaits.beginWait(jobQuery.waitToken,initial,scopeId || "",extra.requestId,Boolean(jobQuery.waitFor),signal);
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
           let observedAbort = false;
@@ -5604,22 +5610,18 @@ export function registerBridgeTools(
               jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
               signal
             );
-          } catch (error) {
-            jobs.originWaits.abandon(originWait);
-            throw error;
           } finally {
             signal?.removeEventListener("abort", onAbort);
           }
         }
         const job = wait?.job || initial;
-        if (originWait?.observing && ["failed","interrupted","termination-failed"].includes(job.status)) await jobs.recoverAwaitedJob(job.jobId);
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
         return statusToolResult(
-          {...compactStatusProjection(structured),...jobs.originWaits.finish(originWait,job,jobs.admissionStateStore.automaticRecovery.list(job.scopeId))},
+          compactStatusProjection(structured),
           job,
           config.maxJobResultBytes
         );
@@ -8371,7 +8373,7 @@ export function registerBridgeTools(
       const onTaskAdmitted = () => {
         admittedForCall = true;
         const job = taskScopeId ? jobs.peekRequest(taskScopeId,args.requestId) : undefined;
-        if (job) originWait = jobs.originWaits.beginTask(job,extra.requestId,extra.signal);
+        if (job?.executionMode === "foreground") originWait = jobs.originWaits.beginTask(job,extra.requestId,extra.signal);
         releaseRuntimeAdmission?.();
         releaseRuntimeAdmission = undefined;
       };
@@ -8899,6 +8901,12 @@ export function registerBridgeTools(
   };
 }
 
+function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent): AutomaticRecoveryCandidate {
+  const latest = jobs.listForAgent(agent.agentId).at(-1);
+  return {key:automaticRecoveryKey("recheck",[agent.agentId,agent.version,latest?.jobId]),
+    scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || latest?.jobId,kind:"recheck"};
+}
+
 function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstream, service: BridgeApplicationService): void {
   const store = jobs.admissionStateStore;
   const candidates = (): AutomaticRecoveryCandidate[] => {
@@ -8924,14 +8932,10 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
         (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
       const identity = dashboardRuntimeProblemIdentity(jobs,agent);
       const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
-      const recheckKey = automaticRecoveryKey("recheck",[agent.agentId,agent.version,latest?.jobId]);
-      // A restart clears display observations, not the durable incident or its
-      // remaining retry budget. Reinspect before deciding the incident changed.
-      const pendingRecheck = store.automaticRecovery.get(recheckKey)?.state === "retrying";
-      if (unknown || unresolvedOrphan || pendingRecheck) {
-        result.push({key:recheckKey,
-          scopeId:agent.scopeId,agentId:agent.agentId,jobId:current?.jobId || latest?.jobId,kind:"recheck"});
-      }
+      // A new incident opens only on a fresh failed inspection. Cached unknown
+      // state cannot reopen a verified incident or reset its attempt budget.
+      const recheck = store.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent),Boolean(unknown || unresolvedOrphan));
+      if (recheck) result.push(recheck);
       const connection = store.threadConnections.get(thread.threadId);
       const retained = store.workHistory.latestJob(agent.agentId);
       if (!current && connection?.persistence === "persistent" && connection.lastJobId && !["released","releasing"].includes(connection.phase) &&
@@ -11528,6 +11532,7 @@ type DashboardRuntimeCacheEntry = {
   livenessFreshUntil?: number;
   retainUntil: number;
   observation: DashboardRuntimeObservation;
+  inspectedObservation: DashboardRuntimeObservation;
   unavailable?: boolean;
   observedAt: number;
   attemptedAt: number;
@@ -12334,7 +12339,8 @@ function cacheDashboardRuntime(
   cache: Map<string, DashboardRuntimeCacheEntry>,
   candidate: DashboardRuntimeCandidate,
   result: DashboardRuntimeResult,
-  deferred: boolean
+  deferred: boolean,
+  jobs: CodexJobRegistry
 ): void {
   const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
   const previous = cache.get(cacheKey);
@@ -12369,10 +12375,19 @@ function cacheDashboardRuntime(
       retainUntil: keepPrevious || canRetainLiveness
         ? previous!.retainUntil : Date.now() + CARD_RUNTIME_STALE_TTL_MS,
       observation: retained,
+      inspectedObservation: result.observation,
       attemptedAt: Date.now(),
       unavailable: !stable || !!(canRetainLiveness && previous.unavailable),
       observedAt: keepPrevious || canRetainLiveness ? previous!.observedAt : Date.now()
     });
+    const agent = jobs.getAgent(candidate.agentId);
+    if (agent && dashboardRuntimeStamp(agent,jobs.listForAgent(agent.agentId).at(-1)) === candidate.stamp) {
+      const current = cache.get(cacheKey)!;
+      const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
+        ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
+      jobs.admissionStateStore.automaticRecovery.observeRecheck(recheckRecoveryIdentity(jobs,agent),!confirmed,Date.now(),
+        confirmed ? current.observation.state === "busy" ? "active-turn-observed" : "runtime-observed" : undefined);
+    }
     while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
       const oldestKey = cache.keys().next().value;
       if (typeof oldestKey !== "string") break;
@@ -12382,6 +12397,7 @@ function cacheDashboardRuntime(
 }
 
 async function inspectDashboardRuntimes(
+  jobs: CodexJobRegistry,
   upstream: CodexUpstream,
   candidates: ReadonlyArray<DashboardRuntimeCandidate>
 ): Promise<{
@@ -12453,7 +12469,7 @@ async function inspectDashboardRuntimes(
           return inspectDashboardRuntime(upstream, candidate, isCurrent);
         },
         (value, deferred) => {
-          cacheDashboardRuntime(cache, candidate, value, deferred);
+          cacheDashboardRuntime(cache, candidate, value, deferred, jobs);
           if (deferred) notifyCardObservation(upstream);
         }
       );
@@ -12621,16 +12637,18 @@ async function buildDashboardView(
     const rankedCandidates = appServerAgents
       .map(({ agent, thread }) => {
         const latestJob = latestJobs.get(agent.agentId);
+        const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
+          jobs.admissionStateStore.workHistory.runtimeResolution(agent.agentId,dashboardRuntimeProblemIdentity(jobs,agent).revision);
         return {
           agentId: agent.agentId,
           thread,
           stamp: dashboardRuntimeStamp(agent, latestJob),
-          inspectLiveness:
+          inspectLiveness: !resolvedOrphan && (
             statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
             agent.lifecycle === "active" ||
             agent.lifecycle === "waiting-input" ||
             agent.lifecycle === "orphaned" ||
-            Boolean(agent.currentJobId),
+            Boolean(agent.currentJobId)),
           changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
         };
       })
@@ -12665,7 +12683,7 @@ async function buildDashboardView(
     ];
     const startedAt = Date.now();
     const [runtimeInspection, usage] = await Promise.all([
-      inspectDashboardRuntimes(upstream, candidates),
+      inspectDashboardRuntimes(jobs, upstream, candidates),
       readCodexWeeklyUsageBounded(upstream)
     ]);
     const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
@@ -13230,12 +13248,20 @@ async function buildDashboardView(
     .reduce((total, observation) => total + observation.backgroundProcessCount, 0);
   const backgroundProcessAgents = [...runtimeByAgent.values()]
     .filter((observation) => observation.backgroundProcessCount > 0).length;
-  const runtimeUnknownAgents = [...runtimeByAgent.values()]
+  const runtimeUnknownAgentIds = new Set([...runtimeByAgent]
     .filter(
-      (observation) =>
+      ([,observation]) =>
         observation.state === "unknown" ||
         (observation.state !== "orphaned" && observation.backgroundProcessState === "unknown")
-    ).length;
+    ).map(([agentId]) => agentId));
+  if (problemQuery?.view) for (const agent of allAgents) {
+    if (agent.lifecycle === "archived") continue;
+    const thread = currentThreadFor(agent.agentId);
+    const cached = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread)) : undefined;
+    if (cached?.stamp === dashboardRuntimeStamp(agent,jobs.listForAgent(agent.agentId).at(-1)) &&
+      cached.unavailable && cached.observation.state !== "orphaned") runtimeUnknownAgentIds.add(agent.agentId);
+  }
+  const runtimeUnknownAgents = runtimeUnknownAgentIds.size;
   const dashboardRows = [...activeRows, ...terminalRows, ...idleRows];
   // Keep the immutable cards' buckets intact. Current clients opt into one
   // history list; an idle Agent without a recorded turn has nothing to show.
@@ -13309,8 +13335,13 @@ async function buildDashboardView(
       if (agent.lifecycle === "archived") continue;
       let row = rowByAgent.get(dashboardRowKey(agent.agentId));
       const runtime = runtimeByAgent.get(agent.agentId);
+      const thread = currentThreadFor(agent.agentId);
+      const cachedRuntime = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread)) : undefined;
       const runtimeProblem = row && ["liveness-unknown","orphaned","termination-failed"].includes(row.status);
-      const inspectionFailed = runtime && (runtime.state === "unknown" || runtime.backgroundProcessState === "unknown");
+      // Last-good display details may be retained through an outage. A fresh
+      // failed inspection still makes the current incident actionable now.
+      const inspectionFailed = runtime && (runtime.state === "unknown" || runtime.backgroundProcessState === "unknown") ||
+        cachedRuntime?.stamp === dashboardRuntimeStamp(agent,jobs.listForAgent(agent.agentId).at(-1)) && cachedRuntime.unavailable;
       if (!runtimeProblem && !inspectionFailed) continue;
       if (!row) {
         const thread = currentThreadFor(agent.agentId);
@@ -13327,16 +13358,16 @@ async function buildDashboardView(
       const kind = row.status === "termination-failed" ? "termination-failed" as const
         : row.status === "orphaned" ? "orphaned" as const : "unknown" as const;
       const currentJob = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
-      const thread = currentThreadFor(agent.agentId);
-      const observed = thread ? dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread))?.observedAt : undefined;
+      const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
       const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
         history:[],historyCount:0,historyControls:undefined};
       entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
         review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
         observedAt:new Date(observed || agent.updatedAt).toISOString(),
         reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.agentId === agent.agentId &&
-          automatic.kind === (kind === "termination-failed" ? "retry-stop" : "recheck"))),
+        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === (kind === "termination-failed" && currentJob
+          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
+          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key))),
         canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
         canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
         ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});
@@ -13707,7 +13738,7 @@ async function buildLegacyActivityView(
     })
     .slice(0, CARD_RUNTIME_PROBE_LIMIT);
   const runtimeInspection = inspectRuntime
-    ? await inspectDashboardRuntimes(upstream, runtimeCandidates)
+    ? await inspectDashboardRuntimes(jobs, upstream, runtimeCandidates)
     : {
         unavailable: 0,
         observations: cachedDashboardRuntimes(upstream, runtimeCandidates),

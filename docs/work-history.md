@@ -34,28 +34,42 @@ failed. An automatic stop retry requires the existing failed cancellation intent
 same Job/thread/turn/worker generation, and exact version; it never falls back to
 process-group termination. Another conversation's running Job remains untouched.
 
-Task-level GPT judgment is returned only from a live original `codex_task` callback
-or a live exact-Job/input `codex_status` wait descended from it. `waitContext.token`
-is passed as `waitToken` to the next bounded wait; it is single-use, rotated after
-each wait, expires after a 90-second gap, and binds conversation, Job and original
-task request. It is never persisted or exposed by replay, overview, cards, or
-historical reads. A failure must arise while that callback is observing running
-work. The bridge gives safe recovery a bounded first chance before returning the
+Task-level GPT judgment is returned only while the original foreground
+`codex_task` callback is still open. Its lease binds the conversation, Job, and
+original task request, and a failure must arise while that callback is observing
+running work. Returning or aborting the callback permanently closes its lease.
+The bridge gives safe recovery a bounded first chance before returning the
 failure receipt. Reading the receipt does not resolve the issue or prove success.
 
-The host does not supply a reliable GPT-response-ended signal. A token proves
-continuation provenance, not that a previous GPT response remains alive. Server
-instructions therefore require discarding it when that response ends; server-side
-leases exist only during actual callbacks, and aborted callbacks return no recovery
-directive. There is no queued GPT recovery, generic future-session handoff, or wake
-mechanism. Once the original wait has ended, safe bridge maintenance continues and
+This integration does not receive a reliable GPT response identity or response-ended
+signal. It therefore does not transfer recovery authority between MCP calls.
+Background task results, task replays, all `codex_status` Job/input waits, overview,
+card, audit and historical reads contain ordinary state/results only, with no
+recovery directive. They never acquire a lease even when they run concurrently
+with the original foreground callback. No continuation token is issued;
+`codex_task.waitContext` remains `null` for compatibility. Legacy `waitToken`
+arguments are accepted and ignored, and are omitted from current public discovery.
+
+There is no queued GPT recovery, generic future-session handoff, or wake mechanism.
+Once the original callback has ended, safe bridge maintenance continues and
 remaining operational issues stay in the native menu and dashboard. Any GPT retry
 must stay within the original user's task authorization and verify its result.
 
-Schema 16 adds the automatic action journal and creates a private consistent
-pre-migration backup. Original failed outcomes and cancellation provenance remain
-unchanged. Automatic records follow history retention; unresolved budgets survive
-while their original work is retained.
+A fresh confirmed-to-unknown inspection transition opens a new durable incident,
+even when the Agent, thread and latest Job have not changed. Repeated failed
+inspections preserve that incident's three-attempt budget. Verified recovery closes
+it atomically with its evidence; a later recurrence gets a separate record and
+budget. Restarting preserves both the current incident and older action history.
+The current runtime problem displays only its own incident's automatic result;
+older resolved evidence remains in Automatic processing. A fresh failed inspection
+is actionable immediately, even while older display details remain cached. A confirmed manual or
+display inspection can also close an unresolved inspection incident.
+
+Schema 17 adds persistent incident identities to the schema 16 automatic action
+journal and creates a private consistent pre-migration backup. Existing attempt
+budgets, failed outcomes and cancellation provenance remain unchanged. Automatic
+records follow history retention; unresolved budgets survive while their original
+work is retained.
 
 ## Optional failure review and manual recovery
 

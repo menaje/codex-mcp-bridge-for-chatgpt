@@ -124,12 +124,12 @@
           "codex_dashboard": 408,
           "codex_models": 2963,
           "codex_settings": 232,
-          "codex_status": 9326,
+          "codex_status": 6423,
           "codex_steer": 1360,
-          "codex_task": 3897,
+          "codex_task": 3522,
           "codex_user_answer": 1357
         },
-        "totalBytes": 23499
+        "totalBytes": 20221
       },
       "appOnly": {
         "byTool": {
@@ -330,7 +330,7 @@
   "finalGenerationBudget": {
     "historicalIssue36ReductionTargetPercent": 40,
     "targetModelVisibleSchemaBytes": 24000,
-    "actualModelVisibleSchemaBytes": 23499,
+    "actualModelVisibleSchemaBytes": 20221,
     "dedicatedQuestionTools": [
       "codex_answer",
       "codex_ask_user",
@@ -338,7 +338,7 @@
     ],
     "dedicatedQuestionToolsSchemaBytes": 2290,
     "sharedQuestionInputSchema": "codex_status",
-    "headroomBytes": 501,
+    "headroomBytes": 3779,
     "enforcedAt": "original-wait-automatic-recovery",
     "liveHostEvidenceProducedByThisAudit": false,
     "separateLiveQuestionEvidence": "docs/audits/issue-70-unlocked-host.json",

@@ -315,8 +315,8 @@ npx tsx scripts/output-contract-audit.ts --check
 The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`.
 It retains the historical issue-36/38/40 evidence separately from current schema measurements.
 Issue #68 adds four model-visible question tools and bounded input/capability summaries;
-the current fifteen-tool schema budget is 24,000 bytes, including original-wait provenance and bounded
-automatic-recovery receipts. This budget change does not
+the current model-visible schema budget is 24,000 bytes, including bounded recovery
+receipts from the original foreground call. This budget change does not
 claim additional live ChatGPT verification. Every model-visible output
 `const`/`enum` leaf retains an explicit primitive type, including nullable enum
 nodes. The Task output contract remains the single-value string enum `["1"]`;

@@ -16416,55 +16416,79 @@ describe("automatic recovery and original wait integration", () => {
     } finally {await close();}
   });
 
-  it("delivers failure judgment only through the original exact-Job wait, never replay, another scope or later reads", async () => {
+  it("never transfers recovery judgment to a later Job/input wait, including the same conversation with a legacy token", async () => {
     const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
     const meta={"openai/session":"original-recovery-conversation","openai/subject":"fixture-user"};
     try {
-      const args={prompt:"Original background work",sessionMode:"new",requestId:nextRequestId()};
-      const started=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
-      expect(started.waitContext).toMatchObject({jobId:started.jobId,originRequestId:args.requestId});
-      const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
-      expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
-      const query={kind:"job",id:started.jobId,waitFor:"terminal",waitMs:1000,waitToken:started.waitContext.token};
-      const outside=await rawCallTool({name:"codex_status",arguments:{query},_meta:{...meta,"openai/session":"unrelated-conversation"}});
-      expect(outside.isError).toBe(true);expect((outside.structuredContent as any)?.recovery).toBeUndefined();
-      const invalid=await rawCallTool({name:"codex_status",arguments:{query:{...query,waitToken:"A".repeat(43)}},_meta:meta});
-      expect(invalid.isError).toBe(true);
-      const waitSpy=vi.spyOn(jobs,"wait");
-      const waiting=rawCallTool({name:"codex_status",arguments:{query},_meta:meta});
-      await vi.waitFor(()=>expect(waitSpy).toHaveBeenCalledTimes(1));
-      upstream.rejectNext(new Error("Original turn failed"));
-      const result=(await waiting).structuredContent as any;
-      expect(result.recovery).toMatchObject({jobId:started.jobId,originRequestId:args.requestId,outcome:"failed",actionScope:"original-job-only"});
-      expect(result.waitContext).toBeUndefined();
-      for(const query of [undefined,{kind:"job",id:started.jobId},{kind:"activity",id:started.activityId}]) {
-        const later=await rawCallTool({name:"codex_status",arguments:query?{query}:{},_meta:meta});
-        expect(later.isError,JSON.stringify(later)).not.toBe(true);expect((later.structuredContent as any).recovery).toBeUndefined();
-        expect(JSON.stringify(later)).not.toContain(started.waitContext.token);
+      for (const kind of ["job","input"] as const) {
+        const args={prompt:"Original background work",sessionMode:"new",requestId:nextRequestId()};
+        const started=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+        expect(started.waitContext).toBeNull();expect(started.recovery).toBeNull();
+        const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+        expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
+        // This later callback could be in the next GPT response. Old issued
+        // tokens (or guessed tokens) remain compatible reads, never authority.
+        const query=kind === "job" ? {kind,id:started.jobId,waitFor:"terminal",waitMs:1000,waitToken:"A".repeat(43)}
+          : {kind,jobId:started.jobId,waitMs:1000,waitToken:"A".repeat(43)};
+        const outside=await rawCallTool({name:"codex_status",arguments:{query},_meta:{...meta,"openai/session":"unrelated-conversation"}});
+        expect(outside.isError).toBe(true);
+        const spy=vi.spyOn(jobs,kind === "job" ? "wait" : "waitForInput");
+        const waiting=rawCallTool({name:"codex_status",arguments:{query},_meta:meta});
+        await vi.waitFor(()=>expect(spy).toHaveBeenCalledTimes(1));
+        upstream.rejectNext(new Error("Failure after the original callback returned"));
+        const result=await waiting;
+        expect(result.isError,JSON.stringify(result)).not.toBe(true);
+        expect(result.structuredContent).not.toHaveProperty("recovery");
+        expect(result.structuredContent).not.toHaveProperty("waitContext");
+        spy.mockRestore();
+        await vi.waitFor(()=>expect(jobs.get(started.jobId)?.status).toBe("failed"));
+        const later=await rawCallTool({name:"codex_status",arguments:{query:{kind:"job",id:started.jobId}},_meta:meta});
+        expect(later.structuredContent).not.toHaveProperty("recovery");
       }
-      expect(JSON.stringify(jobs.admissionStateStore.listJobs())).not.toContain(started.waitContext.token);
-      expect(jobs.get(started.jobId)?.status).toBe("failed");
     } finally {await close();}
   });
 
-  it("returns a foreground failure to its live original caller and supports the same guarded input-wait path", async () => {
+  it("returns a foreground failure only to its still-open original caller, not concurrent status waits or replay", async () => {
     const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
     try {
-      const foreground=client.callTool({name:"codex_task",arguments:{prompt:"Foreground failure",sessionMode:"new",executionMode:"foreground"}});
-      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));upstream.rejectNext(new Error("Foreground turn failed"));
+      const args={prompt:"Foreground failure",sessionMode:"new",executionMode:"foreground",requestId:nextRequestId()};
+      const foreground=client.callTool({name:"codex_task",arguments:args});
+      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));
+      const job=jobs.list()[0]!;
+      const waitSpy=vi.spyOn(jobs,"wait");
+      const waiting=rawCallTool({name:"codex_status",arguments:{scopeId:SCOPE_A,query:{kind:"job",id:job.jobId,waitFor:"terminal",waitMs:1000}}});
+      await vi.waitFor(()=>expect(waitSpy).toHaveBeenCalledTimes(1));
+      upstream.rejectNext(new Error("Foreground turn failed"));
       const failed=(await foreground).structuredContent as any;
-      expect(failed).toMatchObject({state:"failed",recovery:{jobId:failed.jobId,outcome:"failed"}});
+      expect(failed).toMatchObject({state:"failed",recovery:{jobId:job.jobId,outcome:"failed"}});
       expect(failed.waitContext).toBeNull();
-      const background=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Input wait failure",sessionMode:"new"}}));
-      const spy=vi.spyOn(jobs,"waitForInput");
-      const waiting=rawCallTool({name:"codex_status",arguments:{scopeId:SCOPE_A,query:{kind:"input",jobId:background.jobId,waitMs:1000,waitToken:background.waitContext.token}}});
-      await vi.waitFor(()=>expect(spy).toHaveBeenCalledTimes(1));upstream.rejectNext(new Error("Input-waited turn failed"));
-      const result=(await waiting).structuredContent as any;
-      expect(result).toMatchObject({kind:"codex-input",active:false,recovery:{jobId:background.jobId,outcome:"failed"}});
+      expect((await waiting).structuredContent).not.toHaveProperty("recovery");
+      const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args}));
+      expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
     } finally {await close();}
   });
 
-  it("automatically rechecks unknown runtime without resuming or terminating it and records actual confirmation", async () => {
+  it("discards recovery judgment when the original foreground MCP callback is aborted", async () => {
+    const upstream=new DeferredUpstream(),{client,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const abort=new AbortController(),finish=vi.spyOn(jobs.originWaits,"finish");
+      const foreground=client.callTool({name:"codex_task",arguments:{prompt:"Detached foreground",sessionMode:"new",executionMode:"foreground"}},undefined,{signal:abort.signal});
+      const detached=expect(foreground).rejects.toThrow(/cancel|abort/i);
+      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));
+      const job=jobs.list()[0]!;
+      abort.abort();await detached;
+      await vi.waitFor(()=>expect(jobs.listTransportObservations("mcp-handler-aborted")).toHaveLength(1));
+      upstream.rejectNext(new Error("Failure after the caller detached"));
+      await vi.waitFor(()=>expect(finish).toHaveBeenCalledTimes(1));
+      expect(finish.mock.results[0]?.value).toEqual({});
+      expect(jobs.get(job.jobId)?.status).toBe("failed");
+      expect(jobs.listCancellationIntents({jobId:job.jobId})).toEqual([]);
+      const later=parseToolJson(await client.callTool({name:"codex_status",arguments:{query:{kind:"job",id:job.jobId}}}));
+      expect(later).not.toHaveProperty("recovery");
+    } finally {await close();}
+  });
+
+  it.each([6000,16*60_000])("rechecks recurring unknown runtime after %i ms without reusing resolved evidence or resuming work", async recurrenceDelay => {
     const upstream=new SelectiveLoadedTerminalUpstream();
     const {jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
     let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
@@ -16487,11 +16511,32 @@ describe("automatic recovery and original wait integration", () => {
       expect(upstream.calls).toEqual([]);
       const automatic=await applicationService.dashboardSnapshot({...options,problems:{...options.problems,view:"automatic"}});
       expect(automatic.problems?.rows[0]).toMatchObject({source:"recovery",review:"automatic",canAcknowledge:false,automatic:{state:"resolved"}});
+      const original=jobs.admissionStateStore.automaticRecovery.list()[0]!;
+      // The Agent and Job identities stay exactly the same when an outage recurs.
+      now+=recurrenceDelay;
+      probe.mockImplementation(async threadId=>({state:"unknown",reason:"unavailable again",threadId,retryable:true}));
+      background.mockRejectedValue(new Error("unavailable again"));
+      const recurring=await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      expect(recurring.problems?.pendingCount).toBe(1);
+      expect(recurring.counts.runtimeUnknownAgents).toBe(1);
+      expect(recurring.problems?.rows[0]?.automatic).toBeUndefined();
+      const before=probe.mock.calls.length;
+      await jobs.sweepAutomaticRecovery();
+      expect(probe.mock.calls.length).toBeGreaterThan(before);
+      const records=jobs.admissionStateStore.automaticRecovery.list();
+      expect(records).toHaveLength(2);
+      expect(records.find(record=>record.key===original.key)).toEqual(original);
+      expect(records.find(record=>record.key!==original.key)).toMatchObject({kind:"recheck",attempts:1,state:"retrying"});
+      const unresolved=await applicationService.dashboardSnapshot(options);
+      expect(unresolved.problems?.rows[0]).toMatchObject({kind:"unknown",review:"pending",automatic:{state:"retrying",attempts:1}});
+      expect(unresolved.problems?.rows[0]?.automatic?.evidence).toBeUndefined();
+      expect(upstream.calls).toEqual([]);
     } finally {clock.mockRestore();await close();}
   });
 
   it("automatically clears a disconnected runtime only with fresh evidence of no remaining work", async () => {
     const upstream=new SelectiveLoadedTerminalUpstream(),{jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
     try {
       const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Automatic disconnection check"});
       jobs.linkAgentThread({agentId:agent.agentId,threadId:"auto-missing",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
@@ -16502,7 +16547,15 @@ describe("automatic recovery and original wait integration", () => {
       expect(view.counts.problems).toBe(0);
       expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({state:"resolved",evidence:"not-loaded-no-background"});
       expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("orphaned");expect(upstream.calls).toEqual([]);
-    } finally {await close();}
+      const original=jobs.admissionStateStore.automaticRecovery.list()[0]!;
+      for (let n=0;n<3;n++) {
+        now+=6000;
+        const refreshed=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true,problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+        await jobs.sweepAutomaticRecovery();
+        expect(refreshed.counts.problems).toBe(0);
+        expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([original]);
+      }
+    } finally {clock.mockRestore();await close();}
   });
 
   it("resumes a persisted unknown-state recheck after restart without requiring a dashboard mount", async () => {
