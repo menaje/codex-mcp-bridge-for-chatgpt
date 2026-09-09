@@ -1,4 +1,5 @@
 import { QUESTION_UI_TRANSLATIONS } from "./questionI18n.js";
+import { ULTRA_POLICY_TRANSLATIONS } from "./ultraPolicyI18n.js";
 import { LOCALIZATION_AUDIT_OVERRIDES } from "./uiI18nAudit.js";
 
 export const SUPPORTED_UI_LOCALES = [
@@ -53,7 +54,7 @@ const ENGLISH = {
   "settings.modelPolicy": "Execution model policy",
   "settings.modelPolicy.fixed": "Fixed",
   "settings.modelPolicy.automatic": "Automatic selection",
-  "settings.allowDelegation": "Allow Ultra reasoning and subagent delegation",
+  ...ULTRA_POLICY_TRANSLATIONS.en,
   "settings.model": "Model",
   "settings.modelDefault": "Codex default model",
   "settings.modelHint": "Exact identifier from the active backend catalog.",
@@ -1255,7 +1256,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "GPT 미지정 시 기본 모델",
     "settings.preferredEffort": "GPT 미지정 시 기본 추론 수준",
     "settings.preferred.none": "GPT 미지정 시 Codex 기본값 사용",
-    "settings.selectionCount": "허용한 모델·에포트 조합 {count}개",
+    "settings.selectionCount": "선택한 모델·에포트 조합 {count}개",
     "settings.automaticNotice": "새 Activity, 새 Agent 또는 fresh context에서는 GPT가 이 범위의 정확한 모델과 추론 수준을 반드시 명시해야 합니다. 기존 작업의 continue/fork에서 생략하면 해당 스레드의 선택을 그대로 상속합니다. 빠른 처리는 브리지가 별도로 적용합니다. ‘사용 가능한 모든 모델·에포트’를 선택하면 새로 추가된 항목도 자동으로 포함됩니다.",
     "settings.warning.automaticFallbackRemoved": "폐기된 자동 모델 기본값을 제거했습니다. 이제 새 작업에는 GPT가 정확한 모델과 추론 수준을 선택해야 합니다.",
     "settings.catalogStatus.valid": "모델 카탈로그 정상",
@@ -1270,7 +1271,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "GPT 未指定時の既定モデル",
     "settings.preferredEffort": "GPT 未指定時の既定推論エフォート",
     "settings.preferred.none": "GPT 未指定時は Codex の既定値を使用",
-    "settings.selectionCount": "許可したモデル・エフォートの組み合わせ: {count} 件",
+    "settings.selectionCount": "選択したモデル・エフォートの組み合わせ: {count} 件",
     "settings.automaticNotice": "新しい Activity、Agent、または fresh context では、GPT がこの範囲から正確なモデルと推論エフォートを明示する必要があります。continue/fork で省略した場合は保持中のスレッド設定を継承します。高速処理 は別途適用されます。",
     "settings.warning.automaticFallbackRemoved": "廃止された自動モデルの既定値を削除しました。新しい作業では GPT が正確なモデルと推論エフォートを選択する必要があります。",
     "settings.catalogStatus.valid": "モデルカタログは有効です",
@@ -1285,7 +1286,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "GPT 未指定时的默认模型",
     "settings.preferredEffort": "GPT 未指定时的默认推理强度",
     "settings.preferred.none": "GPT 未指定时使用 Codex 默认值",
-    "settings.selectionCount": "已允许 {count} 个模型与推理强度组合",
+    "settings.selectionCount": "已选择 {count} 个模型与推理强度组合",
     "settings.automaticNotice": "新建 Activity、Agent 或 fresh context 时，GPT 必须从此范围明确选择准确的模型和推理强度。continue/fork 省略选择时继承保留线程的设置。快速处理 由桥接单独应用。",
     "settings.warning.automaticFallbackRemoved": "已移除停用的自动模型默认值。现在新任务必须由 GPT 选择准确的模型和推理强度。",
     "settings.catalogStatus.valid": "模型目录有效",
@@ -1300,7 +1301,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "GPT 未指定時的預設模型",
     "settings.preferredEffort": "GPT 未指定時的預設推理強度",
     "settings.preferred.none": "GPT 未指定時使用 Codex 預設值",
-    "settings.selectionCount": "已允許 {count} 個模型與推理強度組合",
+    "settings.selectionCount": "已選擇 {count} 個模型與推理強度組合",
     "settings.automaticNotice": "建立 Activity、Agent 或 fresh context 時，GPT 必須從此範圍明確選擇精確的模型與推理強度。continue/fork 省略選擇時會繼承保留執行緒的設定。快速處理 由橋接另外套用。",
     "settings.warning.automaticFallbackRemoved": "已移除停用的自動模型預設值。現在新工作必須由 GPT 選擇精確的模型與推理強度。",
     "settings.catalogStatus.valid": "模型目錄有效",
@@ -1315,7 +1316,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "Modelo predeterminado si GPT no elige",
     "settings.preferredEffort": "Nivel predeterminado si GPT no elige",
     "settings.preferred.none": "Usar el valor predeterminado de Codex si GPT no elige",
-    "settings.selectionCount": "Combinaciones permitidas: {count}",
+    "settings.selectionCount": "Combinaciones seleccionadas: {count}",
     "settings.automaticNotice": "GPT debe indicar un modelo y nivel de razonamiento exactos de este intervalo para cada Activity, Agent o contexto nuevo. continue/fork hereda el hilo conservado si se omite la selección. El puente aplica el modo rápido por separado.",
     "settings.warning.automaticFallbackRemoved": "Se eliminó el valor predeterminado retirado del modelo automático. Ahora GPT debe elegir un modelo y un nivel de razonamiento exactos para el trabajo nuevo.",
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
@@ -1330,7 +1331,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "Modèle par défaut si GPT ne choisit pas",
     "settings.preferredEffort": "Effort par défaut si GPT ne choisit pas",
     "settings.preferred.none": "Utiliser la valeur par défaut de Codex si GPT ne choisit pas",
-    "settings.selectionCount": "Combinaisons autorisées : {count}",
+    "settings.selectionCount": "Combinaisons sélectionnées : {count}",
     "settings.automaticNotice": "GPT doit indiquer un modèle et un effort de raisonnement exacts de cette plage pour toute nouvelle Activity, tout nouvel Agent ou contexte fresh. continue/fork hérite du thread conservé si le choix est omis. Le pont applique le mode rapide séparément.",
     "settings.warning.automaticFallbackRemoved": "La valeur par défaut retirée du modèle automatique a été supprimée. GPT doit désormais choisir un modèle et un effort de raisonnement exacts pour tout nouveau travail.",
     "settings.catalogStatus.valid": "Catalogue de modèles valide",
@@ -1345,7 +1346,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "Standardmodell, wenn GPT nicht auswählt",
     "settings.preferredEffort": "Standard-Reasoning-Stufe, wenn GPT nicht auswählt",
     "settings.preferred.none": "Codex-Standard verwenden, wenn GPT nicht auswählt",
-    "settings.selectionCount": "Zulässige Kombinationen: {count}",
+    "settings.selectionCount": "Ausgewählte Kombinationen: {count}",
     "settings.automaticNotice": "GPT muss für jede neue Activity, jeden neuen Agent oder fresh context ein exaktes Modell und eine Reasoning-Stufe aus diesem Bereich angeben. continue/fork übernimmt bei Auslassung den beibehaltenen Thread. Schnellmodus wird separat angewendet.",
     "settings.warning.automaticFallbackRemoved": "Der eingestellte Standard für die automatische Modellauswahl wurde entfernt. GPT muss für neue Arbeit nun ein exaktes Modell und eine Reasoning-Stufe wählen.",
     "settings.catalogStatus.valid": "Modellkatalog gültig",
@@ -1360,7 +1361,7 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.preferredModel": "Modelo padrão quando o GPT não escolher",
     "settings.preferredEffort": "Nível padrão quando o GPT não escolher",
     "settings.preferred.none": "Usar o padrão do Codex quando o GPT não escolher",
-    "settings.selectionCount": "Combinações permitidas: {count}",
+    "settings.selectionCount": "Combinações selecionadas: {count}",
     "settings.automaticNotice": "O GPT deve indicar um modelo e um nível de raciocínio exatos deste intervalo para cada Activity, Agent ou contexto novo. continue/fork herda o thread retido quando a seleção é omitida. A ponte aplica o modo rápido separadamente.",
     "settings.warning.automaticFallbackRemoved": "O padrão descontinuado do modelo automático foi removido. Agora o GPT deve escolher um modelo e um nível de raciocínio exatos para novos trabalhos.",
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
@@ -2199,8 +2200,8 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
@@ -2284,6 +2285,12 @@ export function localizeSettingsWarning(
     return uiTranslation(locale, "settings.warning.legacyAutomatic");
   }
 
+  if (warning.includes("Ultra is disabled and no saved model and reasoning choice can currently run")) {
+    return uiTranslation(locale, "settings.ultraNoSelection");
+  }
+  if (warning.includes("Ultra is disabled. Choose another reasoning level for the fixed model")) {
+    return uiTranslation(locale, "settings.ultraFixedConflict");
+  }
   const policyCode = warning.match(/\b(MODEL_[A-Z_]+|THREAD_OVERRIDE_UNSUPPORTED)\b/)?.[1];
   if (policyCode || /model policy|Priority/i.test(warning)) {
     return uiTranslation(locale, "settings.warning.modelPolicy", {

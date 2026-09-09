@@ -4889,6 +4889,84 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it.each([false, true])("saves retained Ultra choices with OFF and Fast enabled (Ultra only: %s)", async (ultraOnly) => {
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(temporaryRoot()), upstream, undefined, new TieredModelCatalog());
+    try {
+      const ultra = { model: "gpt-5.6-sol", reasoningEffort: "ultra" };
+      const ordinary = { model: "gpt-5.6-sol", reasoningEffort: "max" };
+      const selections = ultraOnly ? [ultra] : [ordinary, ultra];
+      const policy = {
+        mode: "automatic", allowedSelections: { kind: "explicit", selections },
+        constraints: { allowDelegation: true }
+      };
+      const save = (revision: number, allowDelegation: boolean) => client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedSettingsRevision: revision, operation: { kind: "patch", settings: {
+          modelPolicy: { ...policy, constraints: { allowDelegation } }, usePriorityServiceTier: true
+        } } }
+      });
+      expect((await save(0, true)).isError).not.toBe(true);
+      const off = await save(1, false);
+      expect(off.isError).not.toBe(true);
+      expect(parseToolJson(off).settings.modelPolicy.allowedSelections.selections).toEqual(selections);
+      const result = parseToolJson(await client.callTool({ name: "codex_models", arguments: { contractVersion: "2" } }));
+      expect(result.selectionMode).toBe("automatic");
+      expect(result.models.flatMap((model: any) => model.efforts.map((effort: any) => effort.id)))
+        .toEqual(ultraOnly ? [] : ["max"]);
+      if (ultraOnly) expect(result.warning).toContain("retained but inactive");
+      else {
+        const catalog = await new TieredModelCatalog().getCatalog();
+        expect(result.models[0].description).toBe(catalog.models[0].description);
+        expect(result.models[0].efforts[0].description)
+          .toBe(catalog.models[0].supportedReasoningEfforts.find((entry) => entry.effort === "max")?.description);
+      }
+      const denied = await runTask(client, {
+        prompt: "must not run an inactive Ultra choice", contextMode: "fresh", selection: ultra
+      }) as { isError?: boolean };
+      expect(denied.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(0);
+      expect((await save(2, true)).isError).not.toBe(true);
+      const restored = parseToolJson(await client.callTool({ name: "codex_models", arguments: {} }));
+      expect(restored.models[0].efforts.map((effort: any) => effort.id)).toContain("ultra");
+    } finally { await close(); }
+  });
+
+  it.each(["continue", "fork"] as const)("rechecks disabled Ultra before an inherited %s and restores it only after re-enabling", async (contextMode) => {
+    const upstream = new ForkLifecycleUpstream();
+    const { client, settings, close } = await connectTestClient(
+      configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    const ultra = { model: "gpt-5.6-sol", reasoningEffort: "ultra" };
+    const ordinary = { ...ultra, reasoningEffort: "max" };
+    const save = (allowDelegation: boolean) => client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedSettingsRevision: settings.current.revision, operation: { kind: "patch", settings: {
+        modelPolicy: { mode: "automatic", allowedSelections: { kind: "explicit", selections: [ordinary, ultra] },
+          constraints: { allowDelegation } }
+      } } }
+    });
+    try {
+      expect((await save(true)).isError).not.toBe(true);
+      const started = await runTask(client, { prompt: "seed an Ultra thread", agentName: "Ultra Agent", contextMode: "fresh", selection: ultra });
+      expect((started as { isError?: boolean }).isError).not.toBe(true);
+      const { activityId, agentId } = parseToolJson(started);
+      expect(upstream.calls).toHaveLength(1);
+      expect((await save(false)).isError).not.toBe(true);
+
+      const denied = await runTask(client, { prompt: "inherit the saved thread choice", activityId, agentId, contextMode });
+      expect((denied as { isError?: boolean }).isError).toBe(true);
+      expect(JSON.stringify(denied)).toContain("Ultra reasoning is disabled");
+      expect(upstream.calls).toHaveLength(1);
+
+      expect((await save(true)).isError).not.toBe(true);
+      const restored = await runTask(client, { prompt: "resume after re-enabling Ultra", activityId, agentId, contextMode });
+      expect((restored as { isError?: boolean }).isError).not.toBe(true);
+      expect(upstream.calls).toHaveLength(2);
+      expect(upstream.calls[1].name).toBe(contextMode === "fork" ? "codex-fork" : "codex-reply");
+    } finally { await close(); }
+  });
+
   it("publishes exactly the 17 currently allowed Sol, Terra, and Luna pairs", async () => {
     const root = temporaryRoot();
     const { client, close } = await connectTestClient(

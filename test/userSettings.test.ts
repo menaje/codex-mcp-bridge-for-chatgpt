@@ -25,6 +25,24 @@ import {
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 
 describe("user settings and project registry", () => {
+  it("persists inactive Ultra selections through restart and restores them when enabled", () => {
+    const stateFile = path.join(temporaryDirectory("settings-ultra-"), "settings.json");
+    const config = configFor();
+    const store = new UserSettingsStore(config, { stateFile });
+    const selection = { model: "gpt-saved", reasoningEffort: "ultra" };
+    const policy = {
+      mode: "automatic" as const,
+      allowedSelections: { kind: "explicit" as const, selections: [selection] },
+      constraints: { allowDelegation: false }
+    };
+    store.update({ modelPolicy: policy }, 0);
+    const restarted = new UserSettingsStore(config, { stateFile });
+    expect(restarted.current.modelPolicy).toEqual(policy);
+    expect(restarted.loadWarnings).toEqual([]);
+    restarted.update({ modelPolicy: { ...policy, constraints: { allowDelegation: true } } }, 1);
+    expect(restarted.current.modelPolicy).toHaveProperty("allowedSelections.selections", [selection]);
+  });
+
   it("notifies after committed changes but not rejected or unchanged writes", () => {
     const store = new UserSettingsStore(configFor());
     const revisions: number[] = [];

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { usesFastProcessing } from "../src/executionPresentation.js";
+import { ULTRA_POLICY_TRANSLATIONS } from "../src/ultraPolicyI18n.js";
 import {
   ACTIVITY_CARD_HTML,
   ACTIVITY_CARD_HTML_MAX_BYTES,
@@ -71,6 +72,21 @@ const PROJECT_TRANSLATION_KEYS = [
 ] as const;
 
 describe("human-facing UI localization", () => {
+  it("uses the same Ultra scope and inactive-state copy in the card and native app for every locale", () => {
+    const native = JSON.parse(readFileSync("macos/Resources/Localization/Localizable.xcstrings", "utf8"));
+    for (const [locale, bundle] of Object.entries(ULTRA_POLICY_TRANSLATIONS)) {
+      for (const [key, value] of Object.entries(bundle)) {
+        expect(UI_TRANSLATIONS[locale as keyof typeof UI_TRANSLATIONS][key as keyof typeof bundle]).toBe(value);
+        const korean = ULTRA_POLICY_TRANSLATIONS.ko[key as keyof typeof bundle];
+        expect(native.strings[korean].localizations[locale].stringUnit.value).toBe(value);
+      }
+      expect(localizeSettingsWarning(
+        "Ultra is disabled and no saved model and reasoning choice can currently run.",
+        locale as keyof typeof UI_TRANSLATIONS
+      )).toBe(bundle["settings.ultraNoSelection"]);
+    }
+  });
+
   it("ships complete, shared bundles for every supported locale", () => {
     expect(SUPPORTED_UI_LOCALES).toEqual([
       "en",
@@ -634,7 +650,7 @@ describe("human-facing UI localization", () => {
       'id="policy-effort" required aria-describedby="effort-description effort-compatibility"'
     );
     expect(SETTINGS_CARD_HTML).toContain('id="effort-description" aria-live="polite"');
-    expect(SETTINGS_CARD_HTML).toContain("option(effort,effortPresentation(effort).label)");
+    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="ultra-hint ultra-policy-warning"');
     expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
     expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-model"');
