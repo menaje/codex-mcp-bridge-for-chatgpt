@@ -679,6 +679,7 @@ public struct HelperStatus: Codable, Sendable {
     public let configuration: RuntimeConfigurationStatus
     public let bridge: HelperBridgeStatus
     public let tunnel: HelperTunnelStatus
+    public var lifecycle: RuntimeLifecycleOperation? = nil
 }
 
 public struct HelperHello: Codable, Sendable {

@@ -27,6 +27,8 @@ struct DashboardPopoverView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            RuntimeLifecycleNoticeView()
+                .padding(.horizontal, 12)
             if let problem = model.operationalProblem {
                 Button {
                     model.showOperationalProblem(problem)
@@ -613,7 +615,7 @@ struct DashboardPopoverView: View {
     private func shutdownAndQuit(force: Bool) {
         Task {
             guard await model.shutdownApplication(force: force) else {
-                presentApplicationQuitFailure()
+                if !model.applicationShutdownReserved { presentApplicationQuitFailure() }
                 return
             }
             NSApp.terminate(nil)

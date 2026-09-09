@@ -1,3 +1,5 @@
+import { randomUUID, createHash } from "node:crypto";
+import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { CodexService } from "./codexService.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
@@ -8,7 +10,8 @@ import {
   lstatSync,
   readFileSync,
   unlinkSync,
-  watch
+  watch,
+  type FSWatcher
 } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
@@ -26,7 +29,7 @@ import {
   type PreparedRuntimeEnvUpdate,
   type RuntimeEnvStatus
 } from "../scripts/runtime-env.mjs";
-import { writePrivateFileAtomic } from "../scripts/managed-file.mjs";
+import { readPrivateFile, writePrivateFileAtomic } from "../scripts/managed-file.mjs";
 import {
   readManagedRuntimeStatus,
   type ManagedTunnelStatus
@@ -108,7 +111,11 @@ const helperRequestSchema = z.strictObject({
     "runtime.configure",
     "codex.runtime",
     "runtime.repair",
-    "runtime.logs"
+    "runtime.logs",
+    "lifecycle.request",
+    "lifecycle.status",
+    "lifecycle.cancel",
+    "lifecycle.acknowledge"
   ]),
   params: z.unknown().optional()
 });
@@ -196,6 +203,7 @@ export type MacOSHelperStatus = {
   lastError: string | null;
   lastProblem: StatusProblem | null;
   restartAttempt: number;
+  lifecycle?: LifecycleSnapshot | null;
   configuration: RuntimeEnvStatus;
   codexRuntime?: CliRuntimeSnapshot;
   bridge: {
@@ -231,6 +239,10 @@ export type CodexLoginStatus = {
 };
 
 export type MacOSHelperController = {
+  requestLifecycle?(request: LifecycleRequest): Promise<LifecycleSnapshot>;
+  lifecycleStatus?(requestId?: string): LifecycleSnapshot | null;
+  cancelLifecycle?(requestId: string): LifecycleSnapshot;
+  acknowledgeLifecycle?(requestId: string): LifecycleSnapshot;
   codexRuntime?(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot>;
   snapshot(): Promise<MacOSHelperStatus>;
   health?(): Promise<MacOSHelperStatus>;
@@ -287,6 +299,7 @@ export type MacOSBridgeSupervisorOptions = {
   setupDiscoveryProfileDirectory?: string;
   setupDiscoveryHomeDirectory?: string;
   codexRuntimeManager?: CodexRuntimeManager;
+  lifecycleIntervalMs?: number;
 };
 
 export class MacOSBridgeSupervisor implements MacOSHelperController {
@@ -298,6 +311,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   private changed(topic: string): void {
     if (topic === "configuration") { this.configurationGeneration++; this.healthConfiguration = undefined; }
+    if (topic === "configuration" || topic === "installation") this.lifecycleManager?.signal();
     for (const listener of this.changeListeners) listener(topic);
   }
 
@@ -372,6 +386,13 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private bridgeStatusProbe: Promise<RuntimeAdmissionSnapshot | null> | undefined;
   private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
+  private lifecycleManager?: RuntimeLifecycleCoordinator;
+  private handoffWatcher?: FSWatcher;
+  private closed = false;
+  private readonly lifecycleIntervalMs: number;
+  private lifecyclePhaseReporter?: (phase: "executing" | "reconnecting") => void;
+  private executingLifecycle?: LifecycleRecord;
+  private readonly helperInstance = randomUUID();
   private cliManager?: CodexRuntimeManager;
   private cliInstallation?: Promise<unknown>;
   private cliUpdateCheck?: Promise<unknown>;
@@ -379,6 +400,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   constructor(options: MacOSBridgeSupervisorOptions) {
     this.logEntries = new DiagnosticLog({ maxEntries: HELPER_LOG_LIMIT,
       maxBytes: options.logMaxBytes ?? 1_024 * 1_024, retentionMs: options.logRetentionMs ?? 24 * 60 * 60_000 });
+    this.lifecycleIntervalMs = options.lifecycleIntervalMs ?? 5000;
     this.bridgeRoot = path.resolve(options.bridgeRoot);
     this.envFile = path.resolve(options.envFile || defaultRuntimeEnvFile());
     this.cliManager = options.codexRuntimeManager;
@@ -441,6 +463,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       lastError: this.lastError,
       lastProblem: helperStatusProblem(this.lastError),
       restartAttempt: this.restartAttempt,
+      lifecycle: this.lifecycleStatus(),
       configuration,
       ...(includeDetails && this.cliManager ? { codexRuntime: await this.cliManager.snapshot() } : {}),
       bridge: {
@@ -487,37 +510,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return discoverTunnelSetup(this.setupDiscoveryOptions());
   }
 
-  async importSetup(values: {
-    candidateId: string;
-    mode: "drain" | "force";
-    timeoutMs: number;
-  }): Promise<{
-    configuration: RuntimeEnvStatus;
-    status: MacOSHelperStatus;
-    restarted: boolean;
-    rolledBack: false;
-  }> {
-    const candidate = resolveTunnelSetupCandidate(
-      values.candidateId,
-      this.setupDiscoveryOptions()
-    );
-    if (!candidate) {
-      throw new Error("SETUP_CANDIDATE_UNAVAILABLE: Refresh the discovered settings and try again.");
-    }
-    if (!candidate.apiKey && !this.currentRuntimeApiKeyAvailable()) {
-      throw new Error(
-        "SETUP_API_KEY_UNAVAILABLE: The selected Tunnel ID was found, but its Runtime API key is unavailable."
-      );
-    }
-    return this.applyConfiguration({
-      ...(candidate.apiKey ? { apiKey: candidate.apiKey } : {}),
-      tunnelId: candidate.tunnelId,
-      mode: values.mode,
-      timeoutMs: values.timeoutMs
-    });
-  }
-
-  applyConfiguration(values: {
+  private applyConfigurationImmediate(values: {
     apiKey?: string;
     tunnelId?: string;
     defaultBackend?: "app-server";
@@ -552,7 +545,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       }
 
       if (wasRunning) {
-        if (values.defaultBackend) await this.assertRuntimeChangeSafe();
+        if (values.defaultBackend && values.mode === "drain") await this.assertRuntimeChangeSafe();
         await this.stopUnlocked({ mode: values.mode, timeoutMs: values.timeoutMs, protectMemory: !!values.defaultBackend });
       }
       let committed = false;
@@ -695,6 +688,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
     const manager = this.selectedCliManager();
     this.watchManager(manager);
+    if (!["status", "check-updates"].includes(request.action) &&
+        ["executing", "reconnecting"].includes(this.lifecycleManager?.active?.phase || "")) {
+      throw new Error("LIFECYCLE_BUSY: Runtime activation is in progress.");
+    }
     switch (request.action) {
       case "status": {
         const base = await manager.snapshot();
@@ -792,29 +789,260 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     });
   }
 
-  start(): Promise<MacOSHelperStatus> {
-    return this.exclusive(() => this.startUnlocked(true));
+  private lifecycle(): RuntimeLifecycleCoordinator {
+    if (this.lifecycleManager) return this.lifecycleManager;
+    if (this.closed) throw new Error("LIFECYCLE_CLOSED: The helper is shutting down.");
+    this.lifecycleManager = new RuntimeLifecycleCoordinator(
+      path.join(path.dirname(this.runtimeLockDirectory), "lifecycle.json"), {
+        prepare: async request => {
+          await this.assertEnvironmentLocation();
+          assertRuntimeEnvOutsideProjectRoots(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle.json"), await this.registeredProjectRoots());
+          if (request.candidateId) {
+            const candidate = resolveTunnelSetupCandidate(request.candidateId, this.setupDiscoveryOptions());
+            if (!candidate) throw new Error("SETUP_CANDIDATE_UNAVAILABLE: Refresh the discovered settings.");
+            if (!candidate.apiKey && !this.currentRuntimeApiKeyAvailable()) throw new Error("SETUP_API_KEY_UNAVAILABLE: The selected Runtime API key is unavailable.");
+            request = { ...request, candidateId: undefined, configuration: {
+              ...(candidate.apiKey ? { apiKey: candidate.apiKey } : {}), tunnelId: candidate.tunnelId
+            } };
+          }
+          if (request.configuration) prepareRuntimeEnvUpdate(this.envFile, request.configuration);
+          const changesRuntime = ["start", "restart", "repair", "configure", "helper-replace"].includes(request.kind);
+          const cli = changesRuntime ? await this.selectedCliManager().activationTarget() : undefined;
+          return { request, target: { cli, helperInstance: this.helperInstance,
+            ...(request.configuration ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
+        },
+        inspect: record => this.inspectLifecycle(record),
+        execute: async (record, reportPhase, recoveryAction) => {
+          this.lifecyclePhaseReporter = reportPhase;
+          this.executingLifecycle = record;
+          try {
+            if (recoveryAction === "activate-helper") {
+              const status = await this.exclusive(() => this.startUnlocked(true));
+              if (!status.bridge.connected || !status.tunnel.connected) {
+                throw new Error("LIFECYCLE_RECOVERY_REQUIRED: The replacement runtime is not ready.");
+              }
+              return "completed";
+            }
+            const options = { mode: record.request.force ? "force" as const : "drain" as const,
+              timeoutMs: record.deadlineAt === undefined ? 1000 : Math.max(1000, record.deadlineAt - Date.now()) };
+            switch (record.request.kind) {
+              case "start": await this.exclusive(() => this.startUnlocked(true)); break;
+              case "restart": await this.restartImmediate(options); break;
+              case "stop": await this.stopImmediate(options); break;
+              case "repair": await this.repairImmediate(options); break;
+              case "configure": await this.applyConfigurationImmediate({ ...record.request.configuration, ...options }); break;
+              case "shutdown": case "mode-switch": case "helper-replace": await this.prepareShutdownImmediate(options); break;
+            }
+            return isLifecycleHandoff(record.request.kind) ? "handoff-ready" : "completed";
+          } finally { this.lifecyclePhaseReporter = undefined; this.executingLifecycle = undefined; }
+        },
+        reconcile: record => this.reconcileLifecycle(record),
+        changed: () => { this.watchHandoffReceipt(); this.changed("runtime"); },
+        error: error => safeErrorMessage(error),
+        watch: async (changed, signal) => {
+          let revision: string | undefined;
+          while (!signal.aborted) {
+            try {
+              const notice = await bridgeRequest<{ revision: string; topics: string[] }>(this.bridgeSocketPath, "changes.wait", {
+                ...(revision ? { after: revision } : {}), waitMs: 25000
+              }, 27000, signal);
+              if (signal.aborted) return;
+              revision = notice.revision;
+              if (notice.topics.length) changed();
+              // Older companions and test launchers may not support invalidation notices.
+              if (!revision) await delay(this.lifecycleIntervalMs);
+            } catch {
+              revision = undefined;
+              if (!signal.aborted) await delay(Math.min(5000, this.lifecycleIntervalMs));
+            }
+          }
+        }
+      }, { intervalMs: this.lifecycleIntervalMs }
+    );
+    this.watchHandoffReceipt();
+    return this.lifecycleManager;
   }
 
-  prepareShutdown(options: {
+  private watchHandoffReceipt(): void {
+    if (this.closed || this.handoffWatcher) return;
+    try {
+      const watcher = watch(path.dirname(this.runtimeLockDirectory), { persistent: false }, (_, filename) => {
+        if (!filename || filename === "lifecycle-handoff.json") this.lifecycleManager?.signal();
+      });
+      this.handoffWatcher = watcher;
+      watcher.on("error", () => {
+        watcher.close();
+        if (this.handoffWatcher === watcher) this.handoffWatcher = undefined;
+      });
+    } catch { /* The directory is created on first reservation; the fallback also reconciles receipts. */ }
+  }
+
+  private environmentFingerprint(): string | null {
+    try { return createHash("sha256").update(readPrivateFile(this.envFile)).digest("hex"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  }
+
+  private async inspectLifecycle(record: LifecycleRecord): Promise<{ run: string | null; reasons: LifecycleReason[] }> {
+    this.reconcileManagedRuntime();
+    if (!this.isManagedRuntimeRunning()) await this.adoptExistingRuntime();
+    await this.validateLifecycleTarget(record);
+    const run = this.lifecycleRunIdentity();
+    if (!run || record.request.kind === "start") return { run, reasons: [] };
+    const impact = await bridgeRequest<RuntimeAdmissionSnapshot>(this.bridgeSocketPath, "runtime.snapshot", { inspectBackgroundProcesses: true }, 15000)
+      .catch(() => null);
+    if (!impact) return { run, reasons: [{ code: "runtime-unreachable" }] };
+    const reasons: LifecycleReason[] = [];
+    for (const [code, count] of [
+      ["active-jobs", impact.activeJobs], ["pending-admissions", impact.pendingAdmissions],
+      ["pending-interactions", impact.pendingInteractions], ["memory-only-threads", impact.memoryOnlyThreads],
+      ["background-processes", impact.backgroundProcesses]
+    ] as const) if ((count || 0) > 0) reasons.push({ code, count });
+    if (impact.backgroundProcessState !== "confirmed" || impact.backgroundProcessUnknownAgents > 0) reasons.push({ code: "background-state-unknown" });
+    return { run, reasons };
+  }
+
+  private lifecycleRunIdentity(): string | null {
+    if (!this.isManagedRuntimeRunning()) return null;
+    const owner = readRuntimeLockOwner(this.runtimeLockDirectory);
+    return owner && owner.pid === this.managedPid ? `${owner.pid}:${owner.token}` : `${this.managedPid}:${this.startedAt}`;
+  }
+
+  private async validateLifecycleTarget(record: LifecycleRecord): Promise<void> {
+    const expectedCli = record.target.cli as { revision: number; command: string | null } | undefined;
+    if (expectedCli) {
+      const cli = await this.selectedCliManager().activationTarget();
+      if (cli.revision !== expectedCli.revision || cli.command !== expectedCli.command) {
+        throw new Error("LIFECYCLE_TARGET_CHANGED: The selected CLI changed. Submit a reservation for the current selection.");
+      }
+    }
+    if (record.request.configuration && record.target.environmentFingerprint !== this.environmentFingerprint()) {
+      throw new Error("LIFECYCLE_TARGET_CHANGED: Runtime settings changed after this reservation was accepted.");
+    }
+  }
+
+  private async reconcileLifecycle(record: LifecycleRecord): Promise<LifecycleReconciliation> {
+    if (["waiting", "blocked"].includes(record.phase)) return "retry";
+    let receipt: { requestId?: string; outcome?: string; failureCode?: string } | undefined;
+    try { receipt = JSON.parse(readPrivateFile(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle-handoff.json"), { encoding: "utf8" })); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (receipt?.requestId === record.request.requestId && receipt.outcome === "failed") {
+      const code = typeof receipt.failureCode === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(receipt.failureCode)
+        ? receipt.failureCode : "LIFECYCLE_EXTERNAL_ACTION_FAILED";
+      throw new Error(`LIFECYCLE_HANDOFF_FAILED: ${code}: The application could not finish the prepared action.`);
+    }
+    if (record.request.kind === "helper-replace" && record.request.targetBuildId === BRIDGE_BUILD_INFO.id && record.target.helperInstance !== this.helperInstance) {
+      await this.validateLifecycleTarget(record);
+      return "activate-helper";
+    }
+    this.reconcileManagedRuntime();
+    if (!this.isManagedRuntimeRunning()) await this.adoptExistingRuntime();
+    const run = this.lifecycleRunIdentity();
+    if (isLifecycleHandoff(record.request.kind) || record.request.kind === "stop") {
+      if (record.phase === "handing-off") {
+        if (receipt?.requestId === record.request.requestId && receipt.outcome === "completed") {
+          if (run) throw new Error("LIFECYCLE_RECOVERY_REQUIRED: A runtime is running after the handoff receipt.");
+          return "completed";
+        }
+        return "retry";
+      }
+      if (!run) return isLifecycleHandoff(record.request.kind) ? "handoff-ready" : "completed";
+      if (record.phase === "handoff-ready" || run !== record.beforeRun) throw new Error("LIFECYCLE_RECOVERY_REQUIRED: A different runtime is running. Review the pending shutdown.");
+      return "retry";
+    }
+    if (record.request.configuration && !prepareRuntimeEnvUpdate(this.envFile, record.request.configuration).changed) {
+      record.target.environmentFingerprint = this.environmentFingerprint();
+    }
+    if (run && run !== record.beforeRun) {
+      await this.inspectLifecycle(record);
+      const status = await this.snapshot();
+      if (status.bridge.connected && status.tunnel.connected) return "completed";
+      throw new Error("LIFECYCLE_RECOVERY_REQUIRED: The replacement runtime is not ready.");
+    }
+    return "retry";
+  }
+
+  requestLifecycle(request: LifecycleRequest): Promise<LifecycleSnapshot> { return this.lifecycle().submit(request); }
+  lifecycleStatus(requestId?: string): LifecycleSnapshot | null {
+    return this.closed ? this.lifecycleManager?.snapshot(requestId) ?? null : this.lifecycle().snapshot(requestId);
+  }
+  cancelLifecycle(requestId: string): LifecycleSnapshot { return this.lifecycle().cancel(requestId); }
+  acknowledgeLifecycle(requestId: string): LifecycleSnapshot { return this.lifecycle().acknowledge(requestId); }
+
+  async startOnLaunch(): Promise<MacOSHelperStatus> {
+    const coordinator = this.lifecycle();
+    const recovering = coordinator.active !== null;
+    coordinator.resume();
+    await coordinator.settled();
+    // Recovery owns this launch, including a concurrent cancel or failure.
+    // Do not replace its result with an implicit start reservation.
+    if (recovering || coordinator.active || (["stop", "mode-switch"].includes(coordinator.latest?.kind || "") && coordinator.latest?.phase === "completed")) return this.snapshot();
+    return this.start();
+  }
+
+  private async legacyLifecycle(request: Omit<LifecycleRequest, "requestId">, timeoutMs: number): Promise<MacOSHelperStatus> {
+    const coordinator = this.lifecycle();
+    const accepted = await coordinator.submit({ ...request, requestId: randomUUID() }, timeoutMs);
+    while (true) {
+      const status = coordinator.snapshot(accepted.requestId)!;
+      if (status.phase === "failed") {
+        this.lastError = status.error || "LIFECYCLE_FAILED";
+        this.appendLog("helper", `Graceful runtime stop was blocked: ${this.lastError}`);
+        throw new Error(this.lastError);
+      }
+      if (status.phase === "cancelled") throw new Error("LIFECYCLE_CANCELLED");
+      if (status.phase === "handoff-ready") coordinator.completeLegacyHandoff(status.requestId);
+      if (["completed", "handoff-ready"].includes(status.phase)) return this.snapshot();
+      await delay(250);
+      coordinator.signal();
+    }
+  }
+
+  async importSetup(values: { candidateId: string; mode: "drain" | "force"; timeoutMs: number }) {
+    const status = await this.legacyLifecycle({ kind: "configure", candidateId: values.candidateId, force: values.mode === "force" }, values.timeoutMs);
+    return { configuration: status.configuration, status, restarted: true, rolledBack: false as const };
+  }
+  async applyConfiguration(values: { apiKey?: string; tunnelId?: string; defaultBackend?: "app-server"; maximumAccess?: "read-only" | "workspace-write" | "full-access"; mode: "drain" | "force"; timeoutMs: number }) {
+    const { mode, timeoutMs, ...configuration } = values;
+    const before = this.managedPid;
+    const status = await this.legacyLifecycle({ kind: "configure", configuration, force: mode === "force" }, timeoutMs);
+    return { configuration: status.configuration, status, restarted: status.pid !== before, rolledBack: false as const };
+  }
+  prepareShutdown(options: { mode: "drain" | "force"; timeoutMs: number }) {
+    return this.legacyLifecycle({ kind: "shutdown", force: options.mode === "force" }, options.timeoutMs);
+  }
+  stop(options: { mode: "drain" | "force"; timeoutMs: number }) {
+    return this.legacyLifecycle({ kind: "stop", force: options.mode === "force" }, options.timeoutMs);
+  }
+  restart(options: { mode: "drain" | "force"; timeoutMs: number }) {
+    return this.legacyLifecycle({ kind: "restart", force: options.mode === "force" }, options.timeoutMs);
+  }
+  repair(options: { mode: "drain" | "force"; timeoutMs: number }) {
+    return this.legacyLifecycle({ kind: "repair", force: options.mode === "force" }, options.timeoutMs);
+  }
+
+  start(): Promise<MacOSHelperStatus> {
+    return this.legacyLifecycle({ kind: "start", force: false }, 90_000);
+  }
+
+  private prepareShutdownImmediate(options: {
     mode: "drain" | "force";
     timeoutMs: number;
   }): Promise<MacOSHelperStatus> {
     return this.exclusive(() => this.prepareShutdownUnlocked(options));
   }
 
-  stop(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
+  private stopImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(() => this.stopUnlocked(options));
   }
 
-  restart(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
+  private restartImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
       const cli = await this.selectedCliManager().snapshot();
       const protectMemory = !!(cli.operation?.phase === "pending" || cli.pendingSelection);
-      if (protectMemory) {
+      if (protectMemory && options.mode === "drain") {
         await this.assertRuntimeChangeSafe();
       }
-      await this.stopUnlocked({ ...options, protectMemory });
+      await this.stopUnlocked(options);
       return this.startUnlocked(true);
     });
   }
@@ -827,7 +1055,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
   }
 
-  repair(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
+  private repairImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
       await this.stopUnlocked(options);
       writePrivateFileAtomic(
@@ -844,12 +1072,22 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return this.logEntries.recent(limit);
   }
 
-  async close(): Promise<void> {
+  /** A helper exit releases supervision, preserving the detached runtime for
+   * adoption. Runtime termination is a separate explicit lifecycle operation. */
+  async close(options: { runtime?: "preserve" | "force-stop" } = {}): Promise<void> {
+    this.closed = true;
+    this.manualStop = true;
+    await this.lifecycleManager?.close();
+    this.handoffWatcher?.close();
+    this.handoffWatcher = undefined;
     for (const unsubscribe of this.managerSubscriptions) unsubscribe();
     this.managerSubscriptions.clear();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
-    await this.exclusive(() => this.prepareShutdownUnlocked({ mode: "force", timeoutMs: 5_000 }));
+    await this.exclusive(async () => {
+      if (options.runtime === "force-stop") await this.prepareShutdownUnlocked({ mode: "force", timeoutMs: 5_000 });
+      else await this.stopLoginProcessUnlocked();
+    });
   }
 
   private async prepareShutdownUnlocked(options: {
@@ -899,6 +1137,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async startUnlocked(manualAttempt: boolean): Promise<MacOSHelperStatus> {
+    if (this.closed) throw new Error("LIFECYCLE_CLOSED: The helper is shutting down.");
     await this.finishPendingProcessCleanup();
     this.reconcileManagedRuntime();
     if (this.isManagedRuntimeRunning()) return this.snapshot();
@@ -916,7 +1155,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
     if (await this.adoptExistingRuntime()) return this.snapshot();
 
-    await this.selectedCliManager().applyPending();
+    await this.selectedCliManager().applyPending(this.executingLifecycle?.target.cli as { revision: number; command: string | null } | undefined);
 
     await this.assertEnvironmentLocation();
     const configuration = inspectRuntimeEnvFile(this.envFile);
@@ -932,6 +1171,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
     this.manualStop = false;
     this.phase = "starting";
+    this.lifecyclePhaseReporter?.("reconnecting");
     this.lastError = null;
     this.appendLog("helper", "Starting the app-managed bridge and Secure MCP Tunnel runtime.");
     const launcherArguments = [
@@ -1015,6 +1255,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     timeoutMs: number;
     protectMemory?: boolean;
   }): Promise<MacOSHelperStatus> {
+    options = { ...options, protectMemory: options.mode === "drain" };
+    if (this.executingLifecycle) await this.validateLifecycleTarget(this.executingLifecycle);
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
@@ -1040,6 +1282,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
     this.manualStop = true;
     this.phase = options.mode === "drain" ? "draining" : "stopping";
+    this.changed("runtime");
     let drainStarted = false;
     try {
       const state = await bridgeRequest<RuntimeAdmissionSnapshot>(
@@ -1114,6 +1357,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         }
         this.phase = stillRunning ? "running" : "stopped";
         this.manualStop = stillRunning ? false : this.manualStop;
+        this.changed("runtime");
         throw error;
       }
       this.appendLog("helper", `Force stop continuing without a drain acknowledgement: ${safeErrorMessage(error)}`);
@@ -1269,7 +1513,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     code: number | null,
     signal: NodeJS.Signals | null
   ): void {
-    if (this.child !== child) return;
+    if (this.closed || this.child !== child) return;
     if (this.stabilityTimer) {
       clearTimeout(this.stabilityTimer);
       this.stabilityTimer = undefined;
@@ -1297,6 +1541,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private scheduleAutomaticRestart(): void {
+    if (this.closed) return;
+    if (this.lifecycleManager?.active) { this.lifecycleManager.signal(); return; }
     const now = Date.now();
     this.unexpectedExits = this.unexpectedExits.filter((at) => now - at <= CRASH_WINDOW_MS);
     this.unexpectedExits.push(now);
@@ -1311,6 +1557,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.appendLog("helper", `Retrying the runtime after ${backoffMs / 1_000}s backoff.`);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = undefined;
+      if (this.closed || this.manualStop || this.lifecycleManager?.active) { this.lifecycleManager?.signal(); return; }
       void this.exclusive(() => this.startUnlocked(false)).catch((error) => {
         this.lastError = safeErrorMessage(error);
         if (this.phase !== "safe-mode" && !this.restartTimer) this.scheduleAutomaticRestart();
@@ -1446,6 +1693,7 @@ async function dispatchHelperLine(
           },
           capabilities: [
             "runtime.read",
+            ...(controller.requestLifecycle ? ["lifecycle.reservations.v1"] : []),
             "runtime.start",
             "runtime.stop",
             "runtime.restart",
@@ -1475,6 +1723,23 @@ async function dispatchHelperLine(
         emptyParamsSchema.parse(request.params || {});
         result = await controller.snapshot();
         break;
+      case "lifecycle.request":
+        if (!controller.requestLifecycle) throw new Error("LIFECYCLE_UNSUPPORTED");
+        result = await controller.requestLifecycle(lifecycleRequestSchema.parse(request.params || {}));
+        break;
+      case "lifecycle.status": {
+        if (!controller.lifecycleStatus) throw new Error("LIFECYCLE_UNSUPPORTED");
+        const params = z.strictObject({ requestId: z.string().uuid().optional() }).parse(request.params || {});
+        result = { operation: controller.lifecycleStatus(params.requestId) };
+        break;
+      }
+      case "lifecycle.cancel": case "lifecycle.acknowledge": {
+        const params = z.strictObject({ requestId: z.string().uuid() }).parse(request.params || {});
+        const action = request.method === "lifecycle.cancel" ? controller.cancelLifecycle : controller.acknowledgeLifecycle;
+        if (!action) throw new Error("LIFECYCLE_UNSUPPORTED");
+        result = action.call(controller, params.requestId);
+        break;
+      }
       case "helper.prepare-shutdown":
         result = await controller.prepareShutdown(stopParamsSchema.parse(request.params || {}));
         break;
@@ -1750,7 +2015,7 @@ async function waitForManagedRuntime(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error("Managed runtime exited before the bridge and tunnel became ready.");
+      throw new Error("RUNTIME_READINESS_EXITED: Managed runtime exited before the bridge and tunnel became ready.");
     }
     const bridge = await readBridgeAdmission(socketPath, 2_000);
     const tunnel = normalizeTunnelStatus(
@@ -1761,14 +2026,15 @@ async function waitForManagedRuntime(
     if (bridge && tunnel.connected) return;
     await delay(250);
   }
-  throw new Error("Timed out waiting for the bridge companion and Secure MCP Tunnel readiness.");
+  throw new Error("RUNTIME_READINESS_TIMEOUT: Timed out waiting for the bridge companion and Secure MCP Tunnel readiness.");
 }
 
 function bridgeRequest<T = unknown>(
   socketPath: string,
   method: string,
   params: Record<string, unknown>,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
+  signal?: AbortSignal
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
@@ -1780,10 +2046,14 @@ function bridgeRequest<T = unknown>(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       socket.destroy();
       if (error) reject(error);
       else resolve(value as T);
     };
+    const abort = () => finish(new Error("CHANGE_WAIT_CANCELLED"));
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener("abort", abort, { once: true });
     timer = setTimeout(
       () => finish(new Error("Bridge companion request timed out.")),
       timeoutMs

@@ -120,6 +120,14 @@ process.exit(2);
       runtimeLockDirectory
     });
     expect(initializationCount(initializationLog)).toBe(2);
+
+    // A replacement helper must be able to adopt the detached runtime even
+    // after the old helper's diagnostic pipe readers have disappeared.
+    await runLauncher({
+      envFile, fakeCodex, fakeTunnel, profileMetadataFile, runtimeStatusFile,
+      healthURLFile, tunnelPIDFile, runtimeLockDirectory, controlPlaneReadyFile,
+      detachOutput: true
+    });
   }, 45_000);
 });
 
@@ -245,6 +253,7 @@ async function runLauncher(paths: {
   tunnelPIDFile: string;
   runtimeLockDirectory: string;
   controlPlaneReadyFile?: string;
+  detachOutput?: boolean;
 }): Promise<{ output: string }> {
   const environment = { ...process.env };
   delete environment.CONTROL_PLANE_API_KEY;
@@ -281,6 +290,7 @@ async function runLauncher(paths: {
       path.join(path.dirname(paths.envFile), "run", "launcher.lock")
     )).toBe(true);
     if (paths.controlPlaneReadyFile) {
+      if (paths.detachOutput) { child.stdout?.destroy(); child.stderr?.destroy(); }
       const launcherPid = readStatus(paths.runtimeStatusFile).launcherPid;
       writeFileSync(paths.controlPlaneReadyFile, "fail");
       const failed = await waitForStatus(paths.runtimeStatusFile, child, status => status.tunnel?.phase === "degraded");

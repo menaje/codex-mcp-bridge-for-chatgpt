@@ -31607,6 +31607,2326 @@
           }
         }
       }
+    },
+    "예약 취소": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "예약 취소"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel reservation"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "予約を取り消す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消预约"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消預約"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelar reserva"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler la réservation"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reservierung abbrechen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelar reserva"
+          }
+        }
+      }
+    },
+    "서버 재시작 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버 재시작 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server restart reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバー再起動を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约重启服务器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約重新啟動伺服器"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reinicio del servidor reservado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redémarrage du serveur réservé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serverneustart vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reinicialização do servidor reservada"
+          }
+        }
+      }
+    },
+    "서버 중지 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버 중지 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server stop reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバー停止を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约停止服务器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約停止伺服器"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parada del servidor reservada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrêt du serveur réservé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serverstopp vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parada do servidor reservada"
+          }
+        }
+      }
+    },
+    "설정 적용 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 적용 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings change reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定の適用を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约应用设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約套用設定"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambio de ajustes reservado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application des réglages réservée"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Übernahme der Einstellungen vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aplicação das configurações reservada"
+          }
+        }
+      }
+    },
+    "프로필 복구 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로필 복구 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile repair reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロファイル修復を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约修复配置文件"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約修復設定檔"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reparación del perfil reservada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réparation du profil réservée"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profilreparatur vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reparo do perfil reservado"
+          }
+        }
+      }
+    },
+    "앱 종료 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "앱 종료 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App exit reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリの終了を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约退出应用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約結束應用程式"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cierre de la app reservado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermeture de l’app réservée"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beenden der App vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encerramento do app reservado"
+          }
+        }
+      }
+    },
+    "원격 모드 전환 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 모드 전환 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to remote mode reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモートモードへの切り替えを予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约切换到远程模式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約切換至遠端模式"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambio a modo remoto reservado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passage au mode distant réservé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wechsel zum Fernmodus vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mudança para o modo remoto reservada"
+          }
+        }
+      }
+    },
+    "helper 갱신 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper 갱신 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Helper update reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helperの更新を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约更新 helper"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約更新 helper"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualización del helper reservada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mise à jour du helper réservée"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Helper-Aktualisierung vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualização do helper reservada"
+          }
+        }
+      }
+    },
+    "안전하게 서버를 중지하고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "안전하게 서버를 중지하고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopping the server safely."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバーを安全に停止しています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安全停止服务器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安全停止伺服器。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deteniendo el servidor de forma segura."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrêt du serveur en toute sécurité."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Server wird sicher angehalten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parando o servidor com segurança."
+          }
+        }
+      }
+    },
+    "새 설정으로 연결을 확인하고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 설정으로 연결을 확인하고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking the connection with the new settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しい設定で接続を確認しています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用新设置检查连接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在使用新設定檢查連線。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando la conexión con los nuevos ajustes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification de la connexion avec les nouveaux réglages."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Verbindung mit den neuen Einstellungen wird geprüft."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando a conexão com as novas configurações."
+          }
+        }
+      }
+    },
+    "서버가 멈췄습니다. 앱에서 후속 처리를 마무리하고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버가 멈췄습니다. 앱에서 후속 처리를 마무리하고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server has stopped. The app is finishing the remaining steps."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバーが停止しました。アプリで後続の処理を完了しています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器已停止。应用正在完成后续步骤。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器已停止。應用程式正在完成後續步驟。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El servidor se ha detenido. La app está terminando los pasos restantes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le serveur est arrêté. L’app termine les étapes restantes."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Server wurde angehalten. Die App schließt die verbleibenden Schritte ab."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O servidor parou. O app está concluindo as etapas restantes."
+          }
+        }
+      }
+    },
+    "대기 중 설정이나 CLI 선택이 바뀌었습니다. 현재 선택으로 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대기 중 설정이나 CLI 선택이 바뀌었습니다. 현재 선택으로 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings or the selected CLI changed while waiting. Submit a new request for the current selection."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中に設定またはCLIの選択が変更されました。現在の選択で再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待期间设置或所选 CLI 已更改。请为当前选择重新提交请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待期間設定或所選 CLI 已變更。請為目前選擇重新提交請求。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los ajustes o la CLI seleccionada cambiaron durante la espera. Envía una nueva solicitud con la selección actual."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les réglages ou la CLI sélectionnée ont changé pendant l’attente. Envoyez une nouvelle demande pour la sélection actuelle."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen oder CLI-Auswahl wurden während des Wartens geändert. Stellen Sie eine neue Anfrage für die aktuelle Auswahl."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As configurações ou a CLI selecionada mudaram durante a espera. Envie uma nova solicitação para a seleção atual."
+          }
+        }
+      }
+    },
+    "예약한 작업을 완료하지 못했습니다. 현재 상태를 확인한 뒤 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "예약한 작업을 완료하지 못했습니다. 현재 상태를 확인한 뒤 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reserved operation could not finish. Check the current status and try again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "予約した処理を完了できませんでした。現在の状態を確認して再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能完成预约的操作。请检查当前状态后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法完成預約的操作。請檢查目前狀態後再試。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo completar la operación reservada. Comprueba el estado actual y vuelve a intentarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’opération réservée n’a pas pu aboutir. Vérifiez l’état actuel et réessayez."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der vorgemerkte Vorgang konnte nicht abgeschlossen werden. Prüfen Sie den aktuellen Status und versuchen Sie es erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível concluir a operação reservada. Verifique o estado atual e tente novamente."
+          }
+        }
+      }
+    },
+    "조건이 충족되면 자동으로 진행합니다. 대기 시간 제한은 없습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "조건이 충족되면 자동으로 진행합니다. 대기 시간 제한은 없습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This will proceed automatically when ready. The reservation has no waiting deadline."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "条件が整うと自動で進みます。待機時間の制限はありません。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "条件满足后将自动继续，预约没有等待时限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "條件滿足後將自動繼續，預約沒有等待時限。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuará automáticamente cuando se cumplan las condiciones. La espera no tiene límite."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’opération se poursuivra automatiquement dès que possible. L’attente n’a pas de limite."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Vorgang wird automatisch fortgesetzt, sobald die Bedingungen erfüllt sind. Es gibt keine Wartefrist."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A operação continuará automaticamente quando as condições forem atendidas. Não há limite de espera."
+          }
+        }
+      }
+    },
+    "진행 중이거나 시작 중인 작업: %d개": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "진행 중이거나 시작 중인 작업: %d개"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running or starting tasks: %d"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中または開始中の作業：%d件"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在运行或启动的任务：%d 个"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在執行或啟動的工作：%d 個"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tareas en ejecución o iniciándose: %d"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tâches en cours ou au démarrage : %d"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laufende oder startende Aufgaben: %d"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tarefas em execução ou iniciando: %d"
+          }
+        }
+      }
+    },
+    "저장되지 않은 대화를 보호하고 있습니다. 해당 Agent를 아카이브해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장되지 않은 대화를 보호하고 있습니다. 해당 Agent를 아카이브해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protecting unsaved conversations. Archive the affected Agents to continue."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未保存の会話を保護しています。該当するAgentをアーカイブしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在保护尚未保存的对话。请归档相关 Agent 以继续。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在保護尚未儲存的對話。請封存相關 Agent 以繼續。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se están protegiendo conversaciones sin guardar. Archiva los Agents afectados para continuar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les conversations non enregistrées sont protégées. Archivez les Agents concernés pour continuer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht gespeicherte Unterhaltungen werden geschützt. Archivieren Sie die betroffenen Agents, um fortzufahren."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protegendo conversas não salvas. Arquive os Agents afetados para continuar."
+          }
+        }
+      }
+    },
+    "승인이나 답변을 기다리고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인이나 답변을 기다리고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for approval or a reply."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認または回答を待っています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待批准或回复。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待核准或回覆。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esperando aprobación o una respuesta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente d’une approbation ou d’une réponse."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warten auf eine Genehmigung oder Antwort."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aguardando aprovação ou resposta."
+          }
+        }
+      }
+    },
+    "백그라운드 프로세스가 끝나기를 기다리고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백그라운드 프로세스가 끝나기를 기다리고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for background processes to finish."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドプロセスの終了を待っています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待后台进程结束。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在等待背景程序結束。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esperando a que terminen los procesos en segundo plano."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente de la fin des processus en arrière-plan."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Warten auf das Ende der Hintergrundprozesse."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aguardando o término dos processos em segundo plano."
+          }
+        }
+      }
+    },
+    "백그라운드 실행 상태를 확인하고 있습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "백그라운드 실행 상태를 확인하고 있습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking background process status."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "バックグラウンドの実行状態を確認しています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在检查后台进程状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在檢查背景程序狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando el estado de los procesos en segundo plano."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification de l’état des processus en arrière-plan."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Status der Hintergrundprozesse wird geprüft."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando o estado dos processos em segundo plano."
+          }
+        }
+      }
+    },
+    "실행 상태를 다시 확인하고 있습니다. 예약은 유지됩니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실행 상태를 다시 확인하고 있습니다. 예약은 유지됩니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechecking the runtime. Your reservation is retained."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行状態を再確認しています。予約は維持されています。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重新检查运行状态，预约将继续保留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重新檢查執行狀態，預約將繼續保留。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volviendo a comprobar el estado. La reserva se mantiene."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouvelle vérification de l’état. Votre réservation est conservée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Laufzeitstatus wird erneut geprüft. Ihre Reservierung bleibt erhalten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando o estado novamente. Sua reserva será mantida."
+          }
+        }
+      }
+    },
+    "작업이 끝나면 helper를 갱신하도록 예약했습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업이 끝나면 helper를 갱신하도록 예약했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The helper will update when the current work finishes."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作業が終わるとhelperを更新するよう予約しました。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约在当前任务完成后更新 helper。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約在目前工作完成後更新 helper。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El helper se actualizará cuando termine el trabajo actual."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le helper sera mis à jour à la fin du travail en cours."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Helper wird aktualisiert, sobald die aktuelle Arbeit beendet ist."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O helper será atualizado quando o trabalho atual terminar."
+          }
+        }
+      }
+    },
+    "이미 예약된 작업이 있습니다. 예약을 취소한 뒤 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이미 예약된 작업이 있습니다. 예약을 취소한 뒤 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An operation is already reserved. Cancel it before submitting another request."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すでに予約された処理があります。予約を取り消してから再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有预约操作。请先取消，再提交新请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有預約操作。請先取消，再提交新請求。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ya hay una operación reservada. Cancélala antes de enviar otra solicitud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une opération est déjà réservée. Annulez-la avant d’envoyer une autre demande."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Es ist bereits ein Vorgang vorgemerkt. Brechen Sie ihn ab, bevor Sie eine neue Anfrage stellen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Já existe uma operação reservada. Cancele-a antes de enviar outra solicitação."
+          }
+        }
+      }
+    },
+    "서버 시작 예약": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버 시작 예약"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server start reserved"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバー起動を予約"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已预约启动服务器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已預約啟動伺服器"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inicio del servidor reservado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Démarrage du serveur réservé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serverstart vorgemerkt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inicialização do servidor reservada"
+          }
+        }
+      }
+    },
+    "작업 접수를 다시 열지 못했습니다. 서버 상태를 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 접수를 다시 열지 못했습니다. 서버 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not resume accepting work. Check the server status."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作業の受付を再開できませんでした。サーバーの状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法恢复接收任务。请检查服务器状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法恢復接收工作。請檢查伺服器狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo reanudar la recepción de tareas. Comprueba el estado del servidor."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de reprendre la réception des tâches. Vérifiez l’état du serveur."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Annahme von Aufgaben konnte nicht fortgesetzt werden. Prüfe den Serverstatus."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível retomar a recepção de tarefas. Verifique o estado do servidor."
+          }
+        }
+      }
+    },
+    "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server exited before the connection was ready. Check the installation and connection settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続の準備が完了する前にサーバーが終了しました。インストールと接続設定を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器在连接就绪前已退出。请检查安装和连接设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器在連線就緒前已結束。請檢查安裝與連線設定。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El servidor se cerró antes de que la conexión estuviera lista. Comprueba la instalación y la configuración de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le serveur s’est arrêté avant que la connexion soit prête. Vérifiez l’installation et les paramètres de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Server wurde beendet, bevor die Verbindung bereit war. Prüfe die Installation und die Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O servidor foi encerrado antes de a conexão estar pronta. Verifique a instalação e as configurações de conexão."
+          }
+        }
+      }
+    },
+    "브리지 helper를 종료하지 못했습니다. 관련 프로세스 상태를 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 helper를 종료하지 못했습니다. 관련 프로세스 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not stop the bridge helper. Check the related processes."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジのhelperを終了できませんでした。関連プロセスの状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法停止桥接 helper。请检查相关进程。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法停止橋接 helper。請檢查相關程序。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo detener el helper del puente. Comprueba los procesos relacionados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’arrêter le helper du pont. Vérifiez les processus associés."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Bridge-Helper konnte nicht beendet werden. Prüfe die zugehörigen Prozesse."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível encerrar o helper da ponte. Verifique os processos relacionados."
+          }
+        }
+      }
+    },
+    "관련 프로세스의 확인 또는 종료를 마치지 못했습니다. 서버 상태를 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "관련 프로세스의 확인 또는 종료를 마치지 못했습니다. 서버 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not finish checking or stopping the related processes. Check the server status."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "関連プロセスの確認または終了を完了できませんでした。サーバーの状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能完成相关进程的检查或停止。请检查服务器状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能完成相關程序的檢查或停止。請檢查伺服器狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo completar la comprobación o detención de los procesos relacionados. Comprueba el estado del servidor."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de terminer la vérification ou l’arrêt des processus associés. Vérifiez l’état du serveur."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die zugehörigen Prozesse konnten nicht vollständig geprüft oder beendet werden. Prüfe den Serverstatus."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível concluir a verificação ou o encerramento dos processos relacionados. Verifique o estado do servidor."
+          }
+        }
+      }
+    },
+    "로컬 서비스의 응답을 확인하지 못해 후속 처리를 마치지 못했습니다. 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 서비스의 응답을 확인하지 못해 후속 처리를 마치지 못했습니다. 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not finish the follow-up action because the local service response could not be verified. Submit the request again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカルサービスの応答を確認できず、後続処理を完了できませんでした。再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法确认本地服务的响应，因此未能完成后续操作。请重新提交请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認本機服務的回應，因此未能完成後續操作。請重新提交請求。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo completar la acción posterior porque no se pudo verificar la respuesta del servicio local. Vuelve a enviar la solicitud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de terminer l’action suivante, car la réponse du service local n’a pas pu être vérifiée. Envoyez à nouveau la demande."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Folgeaktion konnte nicht abgeschlossen werden, weil die Antwort des lokalen Dienstes nicht geprüft werden konnte. Sende die Anfrage erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível concluir a ação seguinte porque a resposta do serviço local não pôde ser verificada. Envie a solicitação novamente."
+          }
+        }
+      }
+    },
+    "설정 변경사항을 저장하지 못해 후속 처리를 중단했습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 변경사항을 저장하지 못해 후속 처리를 중단했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The follow-up action stopped because the settings changes could not be saved."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定の変更を保存できなかったため、後続処理を中止しました。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由于无法保存设置更改，后续操作已中止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由於無法儲存設定變更，後續操作已中止。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La acción posterior se detuvo porque no se pudieron guardar los cambios de configuración."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’action suivante a été interrompue, car les modifications des paramètres n’ont pas pu être enregistrées."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Folgeaktion wurde angehalten, weil die Einstellungsänderungen nicht gespeichert werden konnten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A ação seguinte foi interrompida porque as alterações nas configurações não puderam ser salvas."
+          }
+        }
+      }
+    },
+    "연결 모드 설정을 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 모드 설정을 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save the connection mode. Check the save location and permissions."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続モードの設定を保存できませんでした。保存先とアクセス権を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存连接模式。请检查保存位置和权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存連線模式。請檢查儲存位置與權限。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar el modo de conexión. Comprueba la ubicación de guardado y los permisos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’enregistrer le mode de connexion. Vérifiez l’emplacement et les autorisations d’enregistrement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Verbindungsmodus konnte nicht gespeichert werden. Prüfe den Speicherort und die Berechtigungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível salvar o modo de conexão. Verifique o local de salvamento e as permissões."
+          }
+        }
+      }
+    },
+    "처리 결과를 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "처리 결과를 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save the action result. Check the save location and permissions."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "処理結果を保存できませんでした。保存先とアクセス権を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存操作结果。请检查保存位置和权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存操作結果。請檢查儲存位置與權限。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar el resultado de la acción. Comprueba la ubicación de guardado y los permisos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’enregistrer le résultat de l’action. Vérifiez l’emplacement et les autorisations d’enregistrement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Ergebnis der Aktion konnte nicht gespeichert werden. Prüfe den Speicherort und die Berechtigungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível salvar o resultado da ação. Verifique o local de salvamento e as permissões."
+          }
+        }
+      }
+    },
+    "서버가 아직 실행 중이어서 후속 처리를 진행하지 않았습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버가 아직 실행 중이어서 후속 처리를 진행하지 않았습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The follow-up action did not proceed because the server is still running."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバーがまだ実行中のため、後続処理は行いませんでした。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器仍在运行，因此未执行后续操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器仍在執行，因此未進行後續操作。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La acción posterior no se ejecutó porque el servidor sigue funcionando."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’action suivante n’a pas été exécutée, car le serveur est toujours en cours d’exécution."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Folgeaktion wurde nicht ausgeführt, weil der Server noch läuft."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A ação seguinte não foi executada porque o servidor ainda está em execução."
+          }
+        }
+      }
+    },
+    "복구된 서버 상태가 예약과 일치하지 않습니다. 서버 상태를 확인한 뒤 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "복구된 서버 상태가 예약과 일치하지 않습니다. 서버 상태를 확인한 뒤 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The recovered server state does not match the pending request. Check the server status and submit the request again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復旧したサーバーの状態が予約内容と一致しません。サーバーの状態を確認してから再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复后的服务器状态与待执行请求不一致。请检查服务器状态后重新提交请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復原後的伺服器狀態與待執行請求不一致。請檢查伺服器狀態後重新提交請求。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El estado del servidor recuperado no coincide con la solicitud pendiente. Comprueba el estado del servidor y vuelve a enviar la solicitud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’état du serveur rétabli ne correspond pas à la demande en attente. Vérifiez l’état du serveur et envoyez à nouveau la demande."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der wiederhergestellte Serverzustand stimmt nicht mit der ausstehenden Anfrage überein. Prüfe den Serverstatus und sende die Anfrage erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O estado do servidor recuperado não corresponde à solicitação pendente. Verifique o estado do servidor e envie a solicitação novamente."
+          }
+        }
+      }
+    },
+    "helper 교체와 이전 helper 복구에 실패했습니다. 설치 상태를 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper 교체와 이전 helper 복구에 실패했습니다. 설치 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Both helper replacement and restoring the previous helper failed. Check the installation."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helperの置き換えと以前のhelperの復旧に失敗しました。インストール状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper 更换及旧 helper 恢复均失败。请检查安装状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper 更換及舊 helper 復原均失敗。請檢查安裝狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fallaron tanto la sustitución del helper como la restauración del anterior. Comprueba la instalación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le remplacement du helper et la restauration du précédent ont échoué. Vérifiez l’installation."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sowohl der Austausch des Helpers als auch die Wiederherstellung des vorherigen Helpers sind fehlgeschlagen. Prüfe die Installation."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A substituição do helper e a restauração do helper anterior falharam. Verifique a instalação."
+          }
+        }
+      }
+    },
+    "helper 교체를 마치지 못했습니다. 설치 상태를 확인한 뒤 다시 요청해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helper 교체를 마치지 못했습니다. 설치 상태를 확인한 뒤 다시 요청해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not finish replacing the helper. Check the installation and submit the request again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "helperの置き換えを完了できませんでした。インストール状態を確認してから再度リクエストしてください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能完成 helper 更换。请检查安装状态后重新提交请求。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能完成 helper 更換。請檢查安裝狀態後重新提交請求。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo completar la sustitución del helper. Comprueba la instalación y vuelve a enviar la solicitud."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de terminer le remplacement du helper. Vérifiez l’installation et envoyez à nouveau la demande."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Austausch des Helpers konnte nicht abgeschlossen werden. Prüfe die Installation und sende die Anfrage erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível concluir a substituição do helper. Verifique a instalação e envie a solicitação novamente."
+          }
+        }
+      }
+    },
+    "브리지 helper를 시작하지 못했습니다. 설치 상태를 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 helper를 시작하지 못했습니다. 설치 상태를 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not start the bridge helper. Check the installation."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジのhelperを起動できませんでした。インストール状態を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法启动桥接 helper。请检查安装状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法啟動橋接 helper。請檢查安裝狀態。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo iniciar el helper del puente. Comprueba la instalación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de démarrer le helper du pont. Vérifiez l’installation."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Bridge-Helper konnte nicht gestartet werden. Prüfe die Installation."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível iniciar o helper da ponte. Verifique a instalação."
+          }
+        }
+      }
+    },
+    "설정 적용에 실패했습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정 적용에 실패했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not apply the settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定を適用できませんでした。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法应用设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法套用設定。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo aplicar la configuración."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’appliquer les paramètres."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Einstellungen konnten nicht angewendet werden."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível aplicar as configurações."
+          }
+        }
+      }
+    },
+    "이전 설정을 복원했지만 서버를 다시 시작하지 못했습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 설정을 복원했지만 서버를 다시 시작하지 못했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous settings were restored, but the server could not restart."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前の設定は復元されましたが、サーバーを再起動できませんでした。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已恢复原设置，但服务器无法重新启动。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已復原先前設定，但伺服器無法重新啟動。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se restauró la configuración anterior, pero el servidor no pudo reiniciarse."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les paramètres précédents ont été restaurés, mais le serveur n’a pas pu redémarrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die vorherigen Einstellungen wurden wiederhergestellt, aber der Server konnte nicht neu starten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As configurações anteriores foram restauradas, mas o servidor não pôde reiniciar."
+          }
+        }
+      }
+    },
+    "이전 설정을 복원하지 못했습니다. 연결 설정을 확인해 주세요.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 설정을 복원하지 못했습니다. 연결 설정을 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not restore the previous settings. Check the connection settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前の設定を復元できませんでした。接続設定を確認してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法恢复原设置。请检查连接设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法復原先前設定。請檢查連線設定。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo restaurar la configuración anterior. Comprueba la configuración de conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de restaurer les paramètres précédents. Vérifiez les paramètres de connexion."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die vorherigen Einstellungen konnten nicht wiederhergestellt werden. Prüfe die Verbindungseinstellungen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível restaurar as configurações anteriores. Verifique as configurações de conexão."
+          }
+        }
+      }
+    },
+    "이전 설정을 복원했습니다.": {
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 설정을 복원했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The previous settings were restored."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前の設定を復元しました。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已恢复原设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已復原先前設定。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se restauró la configuración anterior."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les paramètres précédents ont été restaurés."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die vorherigen Einstellungen wurden wiederhergestellt."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As configurações anteriores foram restauradas."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

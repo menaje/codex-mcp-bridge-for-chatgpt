@@ -61,6 +61,7 @@ struct NativeSettingsView: View {
                 }
                 Spacer()
             }
+            RuntimeLifecycleNoticeView()
             if syncState.externalChangeDetected {
                 HStack(spacing: 10) {
                     Label(

@@ -25,6 +25,16 @@ import {
 } from "./tunnel-profile.mjs";
 import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
 
+if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1") {
+  // The helper owns these log pipes, not the runtime's lifetime. A helper exit
+  // closes its read ends while the detached launcher continues serving work.
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", error => {
+      if (error.code !== "EPIPE" && error.code !== "ERR_STREAM_DESTROYED") throw error;
+    });
+  }
+}
+
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Launcher";
 }

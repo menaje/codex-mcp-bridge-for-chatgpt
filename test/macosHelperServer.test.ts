@@ -8,6 +8,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +26,89 @@ import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
 
+import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
+
 const servers: BridgeCompanionServer[] = [];
+
+describe("central runtime lifecycle reservations", () => {
+  it("keeps a running job and its restart reservation for over 60 seconds, then restarts on its event", async () => {
+    const f = await lifecycleFixture();
+    try {
+      const original = await f.supervisor.start();
+      const receipt = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await new Promise(resolve => setTimeout(resolve, 61_000));
+      const waiting = await f.supervisor.health();
+      expect(waiting).toMatchObject({ phase: "running", pid: original.pid, bridge: { connected: true }, lifecycle: { requestId: receipt.requestId, phase: "waiting" } });
+      f.update({ activeJobs: 0 });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), { timeout: 6000, interval: 50 });
+      const completed = await f.supervisor.health();
+      expect(completed.pid).not.toBe(original.pid);
+      expect(completed).toMatchObject({ phase: "running", bridge: { connected: true }, tunnel: { connected: true } });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  }, 75_000);
+
+  it.each(["restart", "stop", "configure", "repair", "shutdown", "mode-switch", "helper-replace"] as const)(
+    "preserves memory-only conversations for %s and lets the user cancel", async kind => {
+      const f = await lifecycleFixture();
+      try {
+        const original = await f.supervisor.start();
+        f.update({ activeJobs: 0, memoryOnlyThreads: 1 });
+        const intent = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind, force: false,
+          ...(kind === "configure" ? { configuration: { maximumAccess: "workspace-write" as const } } : {}),
+          ...(kind === "helper-replace" ? { targetBuildId: "next-build" } : {}) });
+        await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("blocked"));
+        expect((await f.supervisor.health()).pid).toBe(original.pid);
+        expect(f.supervisor.cancelLifecycle(intent.requestId).phase).toBe("cancelled");
+        f.update({ activeJobs: 0, memoryOnlyThreads: 0 });
+        expect((await f.supervisor.health()).pid).toBe(original.pid);
+      } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+    });
+
+  it("rejects a superseded CLI target and leaves the old runtime running", async () => {
+    const f = await lifecycleFixture();
+    try {
+      const original = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.reasons[0]?.code).toBe("active-jobs"));
+      vi.spyOn(f.manager, "activationTarget").mockResolvedValue({ revision: 99, command: "new-cli", description: "changed" });
+      f.update({ activeJobs: 0 });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("failed"));
+      expect(f.supervisor.lifecycleStatus()?.error).toContain("LIFECYCLE_TARGET_CHANGED");
+      expect((await f.supervisor.health()).pid).toBe(original.pid);
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("does not let automatic crash recovery override a pending stop", async () => {
+    const f = await lifecycleFixture(true);
+    try {
+      const original = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "stop", force: false });
+      process.kill(original.pid!, "SIGKILL");
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), { timeout: 6000 });
+      expect(await f.supervisor.health()).toMatchObject({ phase: "stopped", pid: null });
+      const started = await f.supervisor.start();
+      expect(started.phase).toBe("running");
+      expect(f.supervisor.lifecycleStatus()?.kind).toBe("start");
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+});
+
+async function lifecycleFixture(autoRestart = false) {
+  const root = temporaryDirectory(), bridgeRoot = path.join(root, "runtime"), envFile = path.join(root, "c", ".env");
+  const bridgeSocketPath = path.join(root, "c", "run", "bridge.sock"), launcherPath = path.join(bridgeRoot, "launcher.mjs");
+  mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
+  writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "");
+  const admissionFile = path.join(root, "admission.json");
+  const update = (state: Record<string, number>) => writeFileSync(admissionFile, JSON.stringify(state));
+  update({ activeJobs: 1 });
+  writeFakeLauncher(launcherPath, path.join(root, "arguments.json"), { admissionFile, writeRuntimeLock: true });
+  updateRuntimeEnvFile(envFile, { apiKey: "sk-lifecycle-test-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo" });
+  const manager = new CodexRuntimeManager({ root: path.join(root, "cli"), discoverExternal: false });
+  const supervisor = new MacOSBridgeSupervisor({ bridgeRoot, envFile, bridgeSocketPath, launcherPath,
+    runtimeLockDirectory: path.join(root, "c", "run", "launcher.lock"), codexRuntimeManager: manager,
+    registeredProjectRoots: () => [], autoRestart, lifecycleIntervalMs: 60_000, startTimeoutMs: 5000 });
+  return { supervisor, manager, update };
+}
 
 afterEach(async () => {
   await Promise.allSettled(servers.splice(0).map((server) => server.close()));
@@ -327,7 +410,7 @@ describe("macOS runtime helper RPC", () => {
       expect(lstatSync(configDirectory).mode & 0o777).toBe(0o700);
       expect(lstatSync(configFile).mode & 0o777).toBe(0o600);
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -389,7 +472,7 @@ describe("macOS runtime helper RPC", () => {
       expect(readFileSync(configFile, "utf8")).toContain("CONTROL_PLANE_API_KEY=");
       expect(lstatSync(configFile).mode & 0o777).toBe(0o600);
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -432,7 +515,7 @@ describe("macOS runtime helper RPC", () => {
         timeoutMs: 5_000
       })).rejects.toThrow(/SETUP_API_KEY_UNAVAILABLE/);
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -473,7 +556,7 @@ describe("macOS runtime helper RPC", () => {
       expect(applied.configuration.tunnelId).toBe("tunnel_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr");
       expect(JSON.parse(readFileSync(argumentsFile, "utf8"))).toContain("--reuse-profile");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -510,7 +593,7 @@ describe("macOS runtime helper RPC", () => {
       expect(logs).not.toContain("1234567890123456");
       expect(logs).not.toContain("=suffix");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -547,7 +630,7 @@ describe("macOS runtime helper RPC", () => {
       );
       expect((await supervisor.snapshot()).phase).toBe("stopped");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -589,7 +672,7 @@ describe("macOS runtime helper RPC", () => {
       expect(messages.filter(message => message.includes("Bridge status check recovered"))).toHaveLength(1);
     } finally {
       writeFileSync(delayFile, "0");
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   }, 15_000);
 
@@ -628,7 +711,7 @@ describe("macOS runtime helper RPC", () => {
       expect(readFileSync(configFile, "utf8")).toBe(original);
       expect((await supervisor.snapshot()).phase).toBe("running");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -671,7 +754,7 @@ describe("macOS runtime helper RPC", () => {
       const stopped = await supervisor.stop({ mode: "force", timeoutMs: 5_000 });
       expect(stopped).toMatchObject({ phase: "stopped", pid: null });
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -717,7 +800,7 @@ describe("macOS runtime helper RPC", () => {
       const stopped = await supervisor.stop({ mode: "force", timeoutMs: 5_000 });
       expect(stopped).toMatchObject({ phase: "stopped", pid: null, lastError: null });
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -763,7 +846,7 @@ describe("macOS runtime helper RPC", () => {
         if (descendantPid > 1 && processAlive(descendantPid)) {
           try { process.kill(-descendantPid, "SIGKILL"); } catch {}
         }
-        await supervisor.close();
+        await supervisor.close({ runtime: "force-stop" });
       }
     },
     15_000
@@ -808,7 +891,7 @@ describe("macOS runtime helper RPC", () => {
       })).toMatchObject({ result: { acceptingNewJobs: true } });
       expect((await supervisor.snapshot()).phase).toBe("running");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -829,7 +912,7 @@ describe("macOS runtime helper RPC", () => {
       expect(readFileSync(configFile, "utf8")).toBe(original);
       expect((await supervisor.snapshot()).pid).toBe(started.pid);
       expect(await request(bridgeSocket, { jsonrpc: "2.0", id: "check", method: "runtime.snapshot", params: {} })).toMatchObject({ result: { acceptingNewJobs: true } });
-    } finally { await supervisor.close(); }
+    } finally { await supervisor.close({ runtime: "force-stop" }); }
   });
 
   it("rolls back the dotenv and restores the old runtime when new startup fails", async () => {
@@ -871,7 +954,7 @@ describe("macOS runtime helper RPC", () => {
       expect(status.phase).toBe("running");
       expect(status.configuration.tunnelId).toBe("tunnel_oooooooooooooooooooooooooooooooo");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -912,7 +995,7 @@ describe("macOS runtime helper RPC", () => {
       expect(status.phase).toBe("running");
       expect(status.configuration.tunnelId).toBe("tunnel_oooooooooooooooooooooooooooooooo");
     } finally {
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -984,9 +1067,9 @@ describe("macOS runtime helper RPC", () => {
       expect(terminator.logs(20).map((entry) => entry.message).join("\n"))
         .toContain("Adopted the existing app-managed runtime");
     } finally {
-      await terminator.close();
-      await replacement.close();
-      await first.close();
+      await terminator.close({ runtime: "force-stop" });
+      await replacement.close({ runtime: "force-stop" });
+      await first.close({ runtime: "force-stop" });
     }
   });
 
@@ -1040,8 +1123,8 @@ describe("macOS runtime helper RPC", () => {
       expect(readFileSync(configFile, "utf8"))
         .toContain("CONTROL_PLANE_TUNNEL_ID=tunnel_pppppppppppppppppppppppppppppppp");
     } finally {
-      await replacement.close();
-      await first.close();
+      await replacement.close({ runtime: "force-stop" });
+      await first.close({ runtime: "force-stop" });
     }
   // Includes two five-second startup budgets, a drain and cleanup. The test's
   // total ceiling must not expire before those individually bounded operations.
@@ -1079,7 +1162,7 @@ describe("macOS runtime helper RPC", () => {
       await expect(supervisor.start()).rejects.toThrow("LEGACY_RUNTIME_DETECTED");
     } finally {
       legacyLock.release();
-      await supervisor.close();
+      await supervisor.close({ runtime: "force-stop" });
     }
   });
 
@@ -1243,7 +1326,7 @@ setInterval(() => {}, 1_000);
             try { process.kill(-pid, "SIGKILL"); } catch {}
           }
         }
-        await supervisor.close().catch(() => undefined);
+        await supervisor.close({ runtime: "force-stop" }).catch(() => undefined);
       }
     },
     15_000
@@ -1350,162 +1433,6 @@ function temporaryDirectory(): string {
   return mkdtempSync(path.join(tmpdir(), "codex-macos-supervisor-"));
 }
 
-function writeFakeLauncher(
-  file: string,
-  argumentsFile: string,
-  options: {
-    activeJobs?: number;
-    backgroundProcesses?: number;
-    backgroundProcessUnknownAgents?: number;
-    failTunnelId?: string;
-    mutateEnvOnDrain?: string;
-    failSnapshotAfterDrain?: boolean;
-    memoryOnlyAfterDrain?: number;
-    splitRuntimeSecret?: boolean;
-    writeRuntimeLock?: boolean;
-    runtimeProfile?: string;
-    runtimeTransport?: string;
-    detachedDescendantPidFile?: string;
-    snapshotDelayFile?: string;
-    healthDelayFile?: string;
-  } = {}
-): void {
-  writeFileSync(file, `
-import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import path from "node:path";
-const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
-const statusIndex = process.argv.indexOf("--runtime-status-file");
-const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
-const envIndex = process.argv.indexOf("--env-file");
-const envFile = envIndex >= 0 ? process.argv[envIndex + 1] : null;
-const lockIndex = process.argv.indexOf("--runtime-lock-directory");
-const runtimeLockDirectory = lockIndex >= 0 ? process.argv[lockIndex + 1] : null;
-const profileIndex = process.argv.indexOf("--profile");
-const profile = profileIndex >= 0 ? process.argv[profileIndex + 1] : null;
-const transportIndex = process.argv.indexOf("--transport");
-const transport = transportIndex >= 0 ? process.argv[transportIndex + 1] : null;
-let mutatedEnv = false;
-let acceptingNewJobs = true;
-let failedSnapshotAfterDrain = false;
-if (${JSON.stringify(options.detachedDescendantPidFile || "")}) {
-  const descendant = spawn(process.execPath, ["-e", "process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
-    detached: true,
-    stdio: "ignore"
-  });
-  descendant.unref();
-  writeFileSync(${JSON.stringify(options.detachedDescendantPidFile || "")}, String(descendant.pid));
-}
-if (${JSON.stringify(Boolean(options.splitRuntimeSecret))}) {
-  process.stdout.write("credential=sk-split.secret+");
-  setTimeout(() => process.stdout.write("1234567890123456=suffix\\n"), 50);
-}
-if (
-  envFile &&
-  ${JSON.stringify(options.failTunnelId || "")} &&
-  readFileSync(envFile, "utf8").includes(${JSON.stringify(options.failTunnelId || "")})
-) {
-  process.exit(7);
-}
-mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
-try { unlinkSync(socketPath); } catch (error) { if (error.code !== "ENOENT") throw error; }
-if (${JSON.stringify(Boolean(options.writeRuntimeLock))} && runtimeLockDirectory) {
-  mkdirSync(runtimeLockDirectory, { recursive: true, mode: 0o700 });
-  writeFileSync(path.join(runtimeLockDirectory, "owner.json"), JSON.stringify({
-    pid: process.pid,
-    token: "00000000-0000-4000-8000-000000000001",
-    startedAt: new Date().toISOString()
-  }) + "\\n", { mode: 0o600 });
-}
-writeFileSync(${JSON.stringify(argumentsFile)}, JSON.stringify(process.argv.slice(2)));
-if (runtimeStatusFile) {
-  writeFileSync(runtimeStatusFile, JSON.stringify({
-    protocol: "codex-mcp-bridge-launcher-status",
-    version: 1,
-    generatedAt: new Date().toISOString(),
-    launcherPid: process.pid,
-    phase: "running",
-    runtimeBuildId: "development",
-    tunnel: {
-      phase: "connected",
-      profile: ${JSON.stringify(options.runtimeProfile || null)} || profile,
-      transport: ${JSON.stringify(options.runtimeTransport || null)} || transport,
-      doctorPassed: true,
-      processRunning: true,
-      connected: true,
-      lastCheckedAt: new Date().toISOString(),
-      lastError: null,
-      lastProblem: null
-    }
-  }), { mode: 0o600 });
-}
-const server = createServer((socket) => {
-  socket.on("error", () => undefined);
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk) => {
-    buffer += chunk;
-    const newline = buffer.indexOf("\\n");
-    if (newline < 0) return;
-    const request = JSON.parse(buffer.slice(0, newline));
-    const draining = request.method === "runtime.beginDrain";
-    if (draining) acceptingNewJobs = false;
-    if (request.method === "runtime.cancelDrain") acceptingNewJobs = true;
-    if (draining && envFile && !mutatedEnv && ${JSON.stringify(Boolean(options.mutateEnvOnDrain))}) {
-      appendFileSync(envFile, ${JSON.stringify(`${options.mutateEnvOnDrain || ""}\n`)});
-      mutatedEnv = true;
-    }
-    if (
-      request.method === "runtime.snapshot" &&
-      !acceptingNewJobs &&
-      !failedSnapshotAfterDrain &&
-      ${JSON.stringify(Boolean(options.failSnapshotAfterDrain))}
-    ) {
-      failedSnapshotAfterDrain = true;
-      socket.destroy();
-      return;
-    }
-    const result = request.method === "companion.hello" ? {
-      protocol: { name: "codex-mcp-bridge-companion", version: 2 },
-      bridge: { buildId: "development" }
-    } : {
-      acceptingNewJobs,
-      activeJobs: ${options.activeJobs || 0},
-      pendingAdmissions: 0,
-      memoryOnlyThreads: acceptingNewJobs ? 0 : ${options.memoryOnlyAfterDrain || 0},
-      pendingInteractions: 0,
-      backgroundProcessState: ${options.backgroundProcessUnknownAgents || 0} > 0 ? "unknown" : "confirmed",
-      backgroundProcesses: ${options.backgroundProcesses || 0},
-      backgroundProcessAgents: ${options.backgroundProcesses || 0} > 0 ? 1 : 0,
-      backgroundProcessUnknownAgents: ${options.backgroundProcessUnknownAgents || 0}
-    };
-    const delayFile = request.method === "runtime.health"
-      ? ${JSON.stringify(options.healthDelayFile || "")}
-      : request.method === "runtime.snapshot" ? ${JSON.stringify(options.snapshotDelayFile || "")} : "";
-    const responseDelay = delayFile
-      ? Number(readFileSync(delayFile, "utf8")) : 0;
-    setTimeout(() => {
-      if (!socket.destroyed) socket.end(JSON.stringify({
-        jsonrpc: "2.0",
-        id: request.id,
-        result
-      }) + "\\n");
-    }, responseDelay);
-  });
-});
-server.listen(socketPath);
-const stop = () => server.close(() => {
-  if (${JSON.stringify(Boolean(options.writeRuntimeLock))} && runtimeLockDirectory) {
-    try { unlinkSync(path.join(runtimeLockDirectory, "owner.json")); } catch {}
-    try { rmdirSync(runtimeLockDirectory); } catch {}
-  }
-  process.exit(0);
-});
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
-`, { mode: 0o700 });
-}
 
 function processAlive(pid: number): boolean {
   try {

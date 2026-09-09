@@ -8,6 +8,7 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
     case readinessTimeout
     case incompatibleHelper
     case replacementBlocked(String)
+    case replacementPending
     case shutdownFailed(String)
     case shutdownTimeout
 
@@ -25,6 +26,8 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
             return "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요."
         case .replacementBlocked(let message):
             return "실행 중인 작업을 안전하게 마치지 못해 helper 갱신을 중단했습니다: \(message)"
+        case .replacementPending:
+            return "작업이 끝나면 helper를 갱신하도록 예약했습니다."
         case .shutdownFailed(let message):
             return "브리지 helper를 종료하지 못했습니다: \(message)"
         case .shutdownTimeout:
@@ -33,7 +36,12 @@ public enum HelperBootstrapError: LocalizedError, Sendable {
     }
 }
 
-public actor HelperBootstrap {
+public protocol HelperBootstrapping: Sendable {
+    func ensureRunning(paths: RuntimePaths) async throws
+    func shutdown(paths: RuntimePaths) async throws
+}
+
+public actor HelperBootstrap: HelperBootstrapping {
     public static let launchAgentLabel = "com.menaje.codex-mcp-bridge.helper"
     typealias LaunchctlResult = (status: Int32, output: String)
     typealias LaunchctlRunner = @Sendable ([String]) async -> LaunchctlResult
@@ -121,7 +129,7 @@ public actor HelperBootstrap {
             return
         }
         try await stopDevelopmentHelper()
-        try await waitForRuntimeLockRelease(paths.runtimeLockDirectory)
+        try await waitForHelperShutdown(paths: paths)
     }
 
     func stopLaunchAgent(service: String) async throws {
@@ -301,9 +309,12 @@ public actor HelperBootstrap {
                 "기존 helper에 연결할 수 없어 활성 작업 여부를 확인하지 못했습니다."
             )
         }
+        var replacementRequestId: String?
         if loaded && needsRestart && helperIsReachable {
             do {
-                try await client.prepareForReplacement()
+                replacementRequestId = try await client.reserveReplacement(targetBuildID: runtimeBuildID)
+            } catch HelperBootstrapError.replacementPending {
+                throw HelperBootstrapError.replacementPending
             } catch {
                 throw HelperBootstrapError.replacementBlocked(error.localizedDescription)
             }
@@ -329,6 +340,10 @@ public actor HelperBootstrap {
                 }
             )
         } catch {
+            if let replacementRequestId {
+                try? RuntimeLifecycleHandoffStore.write(requestId: replacementRequestId, completed: false, runtimeLockDirectory: runtimeLockDirectory,
+                    failureCode: RuntimeLifecycleHandoffStore.failureCode(for: error, fallback: "HELPER_REPLACEMENT_FAILED"))
+            }
             if loaded && needsRestart && helperIsReachable {
                 _ = try? await client.startRuntime()
             }
