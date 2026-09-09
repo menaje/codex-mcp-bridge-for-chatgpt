@@ -192,14 +192,15 @@ try {
     "GPT-5.6 Sol · high",
     "GPT-5.6 Terra · max",
     "모델 · 추론 확인 불가",
-    "GPT-5.6 Sol · medium",
-    "다음 실행 설정: GPT-5.6 Terra · xhigh"
+    "GPT-5.6 Sol · medium"
   ]) {
     assert(
       dashboardPresentation.executions.includes(execution),
       `Dashboard omitted turn execution detail: ${execution}`
     );
   }
+  assert(!dashboardPresentation.executions.some((execution: string) => execution.startsWith("다음 실행 설정:")),
+    "Dashboard included a saved next-run selection beside actual execution history");
   await cli(["run-code", "async page=>{await page.waitForFunction(()=>document.querySelector('#background-count').textContent==='1',null,{timeout:2500})}"]);
   const dashboardEnriched = JSON.parse(await cli(["eval", "()=>({calls:window.__cardCalls,errors:window.__cardErrors})"]));
   assert(dashboardEnriched.calls.some((call: any) => call.args?.enrich === true), "Dashboard enrichment was not requested");

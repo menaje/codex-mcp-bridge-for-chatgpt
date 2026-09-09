@@ -5,7 +5,8 @@ public protocol BridgeApplicationClient: Sendable {
         limit: Int,
         terminalOffset: Int,
         idleOffset: Int,
-        enrich: Bool
+        enrich: Bool,
+        statusFilter: DashboardStatusFilter
     ) async throws -> DashboardSnapshot
 
     func settings(

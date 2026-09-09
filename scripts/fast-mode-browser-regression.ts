@@ -112,12 +112,14 @@ try {
           if(!await page.locator('#use-priority-service-tier').isChecked())throw new Error('Saved Fast setting is missing');
           if(!await page.getByText(entry.hint,{exact:true}).isVisible())throw new Error('Missing settings explanation');
         }else{
-          await page.locator('.fast-mode').first().waitFor({state:'visible'});
           if(${JSON.stringify(kind)}==="activity"){
+            await page.locator('.fast-mode').first().waitFor({state:'visible'});
             const standard=page.locator('.activity-agent').filter({hasText:'Standard Agent'});
             if(await standard.locator('.fast-mode').count())throw new Error('Standard Agent incorrectly marked Fast');
             if(await page.locator('.activity-agent .fast-mode').count()!==2)throw new Error('Both tier aliases must have a badge');
           }else{
+            await page.locator('#dashboard-content').waitFor({state:'visible'});
+            if(await page.locator('#terminal-list .activity-agent > .execution .fast-mode').count())throw new Error('Saved Fast preference changed the displayed actual run');
             await page.locator('summary.history-toggle').first().click();
             if(await page.locator('.history-list .fast-mode').count()!==1)throw new Error('History must keep its original processing mode');
           }

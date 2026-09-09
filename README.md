@@ -8,7 +8,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 
 - Run and continue local Codex work from a ChatGPT conversation.
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
-- See active, recent, and idle work from the native macOS menu-bar app or the ChatGPT status card. The card starts with this conversation when it has retained work, with a switch to all conversations.
+- See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a count to filter the current work and run history. The card starts with this conversation when it has retained work, with a switch to all conversations.
 - Choose which project folders Codex may use and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.

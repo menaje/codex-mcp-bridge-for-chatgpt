@@ -65,6 +65,7 @@
     "test": "vitest run --dir test --maxWorkers=4",
     "test:activity-browser": "tsx scripts/activity-card-browser-regression.ts",
     "test:dashboard-scope-browser": "tsx scripts/dashboard-scope-browser-regression.ts",
+    "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
     "test:progressive-browser": "tsx scripts/progressive-card-browser-regression.ts",
     "test:card-resilience-browser": "tsx scripts/card-resilience-browser-regression.ts",
     "check": "npm run build && npm run test",

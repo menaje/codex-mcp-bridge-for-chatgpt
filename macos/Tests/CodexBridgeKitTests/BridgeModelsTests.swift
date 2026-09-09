@@ -340,6 +340,8 @@ private func dashboardSnapshot(
             approvalRequired: 0,
             terminating: 0,
             needsAttention: 0,
+            responseRequired: nil,
+            problems: nil,
             backgroundProcesses: 0,
             backgroundProcessAgents: 0,
             runtimeUnknownAgents: 0,

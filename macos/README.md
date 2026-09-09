@@ -12,6 +12,17 @@ that target. The menu-bar login-item preference remains local to this Mac.
 Pairing and the security model are documented in
 [Remote client mode](../docs/remote-client.md).
 
+The Dashboard uses the same **Running / Response needed / Issues** summary as
+the current ChatGPT status card. The three tiles keep the previous menu-bar
+dashboard styling, with an icon and label above each larger number.
+Counts filter current work and run history;
+background processes appear separately when present. Idle Agents have no
+standalone count or section, but their recorded turns remain in run history.
+Input/approval waits alone do not mark the bridge unhealthy. Native snapshot
+requests explicitly select the modern `statusFilter` projection, so the server
+and native client should be updated together. Immutable older cards retain their
+original projection when that optional parameter is omitted.
+
 ## Development
 
 Requirements for local-server development:

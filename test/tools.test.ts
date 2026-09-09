@@ -1470,7 +1470,7 @@ describe("bridge tools", () => {
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
             expect(html).toContain(
-              "function appendExecution(parent,execution,next=false,required=false)"
+              "function appendExecution(parent,execution,required=false)"
             );
             expect(html).toContain(
               "function renderActivityRows(parent,rows,recentActivity=false)"
@@ -1492,16 +1492,16 @@ describe("bridge tools", () => {
             expect(html).not.toContain('id="view-project"');
             expect(html).not.toContain('id="view-conversation"');
             expect(html).not.toContain('id="view-status"');
-            expect(html).toContain('id="status-idle-toggle"');
-            expect(html).toContain('aria-expanded="false"');
-            expect(html).toContain('id="status-idle-panel" hidden');
-            expect(html).toContain("statusIdleExpanded=false");
+            expect(html).not.toContain('id="status-idle-toggle"');
+            expect(html).toContain('aria-pressed="false"');
+            expect(html).toContain('data-status-filter="response-required"');
+            expect(html).toContain('data-status-filter="problems"');
             expect(html).toContain('id="terminal-more"');
-            expect(html).toContain('id="idle-more"');
+            expect(html).not.toContain('id="idle-more"');
             expect(html).toContain('data-i18n="dashboard.loadMore"');
             expect(html).toContain("async function loadMore(bucket)");
             expect(html).toContain("function mergeRows(current,incoming)");
-            expect(html).toContain("function syncDisclosure()");
+            expect(html).toContain("function syncStatusFilter()");
             expect(html).not.toContain("dashboardViewMode");
             expect(html).not.toContain("api.setWidgetState");
             expect(html).toContain("function dispatchDashboardExternalUrl(");
@@ -2621,6 +2621,132 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("unifies archived dashboard history without listing empty idle Agents or changing legacy pages", async () => {
+    const root = temporaryRoot();
+    const { client, jobs, rawCallTool, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      for (let index = 0; index < 7; index++) {
+        now += 100;
+        const result = parseToolJson(await client.callTool({ name: "codex_task", arguments: {
+          scopeId: index === 6 ? SCOPE_B : SCOPE_A,
+          prompt: "Record a completed run", agentName: `History Agent ${index}`,
+          contextMode: "fresh", executionMode: "foreground"
+        } }));
+        expect(jobs.get(result.jobId)?.status).toBe("completed");
+      }
+      jobs.createAgent({ scopeId: SCOPE_A, agentName: "No execution history" });
+      now += 7 * 60 * 60 * 1000;
+      const legacy = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(legacy.terminalRows).toHaveLength(0);
+      expect(legacy.idleRows).toHaveLength(8);
+      const first = await applicationService.dashboardSnapshot({ statusFilter: "all", scopeId: SCOPE_A, limit: 5 });
+      expect(first.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 0 });
+      expect(first.idleRows).toEqual([]);
+      expect(first.pagination.idle.total).toBe(0);
+      expect(first.pagination.terminal).toMatchObject({ total: 6, returned: 5, hasNext: true });
+      expect(first.terminalRows.every(row => row.status === "completed" && row.latestTurn?.status === "completed")).toBe(true);
+      expect(JSON.stringify(first)).not.toContain("No execution history");
+      const second = await applicationService.dashboardSnapshot({ statusFilter: "all", scopeId: SCOPE_A, limit: 5, terminalOffset: 5 });
+      expect(second.terminalRows).toHaveLength(1);
+      expect(new Set([...first.terminalRows, ...second.terminalRows].map(row => row.rowKey)).size).toBe(6);
+      const card = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", statusFilter: "all", scope: "conversation", scopeId: SCOPE_A,
+        widgetInstanceId: "dddddddd-dddd-4ddd-8ddd-000000007800", limit: 5, enrich: false
+      } });
+      expect(card.isError, JSON.stringify(card)).not.toBe(true);
+      expect((card.structuredContent as any).counts).toEqual(first.counts);
+      expect((card.structuredContent as any).terminalRows).toEqual(first.terminalRows);
+    } finally { clock.mockRestore(); await close(); }
+  });
+
+  it("deduplicates response-needed Agents and filters the full dashboard scope before pagination", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const completions: Array<() => void> = [];
+    const progress: Array<(value: CodexProgress) => void> = [];
+    try {
+      for (const name of ["Both requests", "Running"]) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: name });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: name });
+        jobs.start({ activityId: activity.activityId, agentId: agent.agentId, operation: "start",
+          cwd: root, sandbox: "read-only", scopeId: SCOPE_A, requestId: nextRequestId(), requestHash: name,
+          requestHashVersion: 7, exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+        }, (onProgress, onAssigned) => {
+          onAssigned({ backendKind: "app-server", workerId: "summary-worker", workerGeneration: 1 });
+          progress.push(onProgress);
+          return new Promise(resolve => completions.push(() => resolve(fakeCodexResult(name))));
+        });
+        await Promise.resolve();
+      }
+      for (const kind of ["command-approval", "user-input"] as const) {
+        progress[0]!({ progress: 1, event: {
+          eventId: kind, type: kind === "user-input" ? "input-required" : "approval-required",
+          phase: "waiting", createdAt: Date.now(), summary: kind,
+          details: { interaction: { interactionId: kind, kind, threadId: "thread", turnId: "turn", itemId: kind,
+            summary: kind, availableDecisions: ["accept", "decline"],
+            ...(kind === "user-input" ? { questions: [{ id: "choice", header: "Choice", question: "Which?", isSecret: false }] } : {})
+          } }
+        } });
+      }
+      for (let index = 0; index < 7; index++) {
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Problem ${index}` });
+        jobs.setAgentExecutionState(agent.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      }
+      const outside = jobs.createAgent({ scopeId: SCOPE_B, agentName: "Other conversation problem" });
+      jobs.setAgentExecutionState(outside.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      const options = { scopeId: SCOPE_A, limit: 5, inspectRuntime: false };
+      const all = await applicationService.dashboardSnapshot({ ...options, statusFilter: "all" });
+      expect(all.counts).toMatchObject({ running: 1, responseRequired: 1, problems: 7 });
+      expect(all.activeRows[0].status).toBe("input-required");
+      const answers = await applicationService.dashboardSnapshot({ ...options, statusFilter: "response-required" });
+      expect(answers.counts).toEqual(all.counts);
+      expect(answers.activeRows.map(row => row.agentName)).toEqual(["Both requests"]);
+      const problems = await applicationService.dashboardSnapshot({ ...options, statusFilter: "problems" });
+      expect(problems.activeRows).toHaveLength(7);
+      expect(problems.activeRows.every(row => row.status === "orphaned")).toBe(true);
+      const running = await applicationService.dashboardSnapshot({ ...options, statusFilter: "running" });
+      expect(running.activeRows.map(row => row.agentName)).toEqual(["Running"]);
+    } finally { for (const finish of completions) finish(); await Promise.resolve(); await close(); }
+  });
+
+  it("keeps a failed Agent visible as a problem when background processes remain", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    upstream.backgroundThreadId = "failed-background-thread";
+    vi.spyOn(upstream, "probeThread").mockImplementation(async threadId => ({
+      state: "resumable", runtimeStatus: "idle", threadId
+    }));
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    try {
+      const activity = jobs.createActivity({ scopeId: SCOPE_A, title: "Failed with background work" });
+      const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Failed background Agent" });
+      jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+      jobs.linkAgentThread({ agentId: agent.agentId, threadId: upstream.backgroundThreadId,
+        backendKind: "app-server", cwd: root, sandbox: "read-only", contextMode: "fresh" });
+      const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId,
+        operation: "start", cwd: root, sandbox: "read-only", scopeId: SCOPE_A,
+        requestId: nextRequestId(), requestHash: "failed-background", requestHashVersion: 7,
+        exclusiveKeys: [], backendKind: "app-server",
+        sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+      }, async () => { throw new Error("Failure after starting a background process"); });
+      await job.promise;
+      expect(job.status).toBe("failed");
+      const modern = await applicationService.dashboardSnapshot({ statusFilter: "all", inspectRuntime: true });
+      expect(modern.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 1, backgroundProcesses: 1 });
+      expect(modern.activeRows).toEqual([expect.objectContaining({ status: "failed", backgroundProcessCount: 1 })]);
+      for (const statusFilter of ["problems", "background"] as const) {
+        const filtered = await applicationService.dashboardSnapshot({ statusFilter });
+        expect(filtered.activeRows.map(row => row.rowKey)).toEqual(modern.activeRows.map(row => row.rowKey));
+      }
+      const legacy = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(legacy.activeRows[0].status).toBe("background-process-running");
+    } finally { await close(); }
+  });
+
   it.each([false, true])("keeps active Dashboard start order through progress and usage updates (tied starts: %s)", async (tiedStarts) => {
     const root = temporaryRoot();
     const { jobs, rawCallTool, applicationService, close } = await connectTestClient(
@@ -3624,7 +3750,7 @@ describe("bridge tools", () => {
   it("counts only the latest retained outcome per Agent as needing attention", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(configFor(root), upstream);
 
     const failed = parseToolJson(await client.callTool({
       name: "codex_task",
@@ -3644,6 +3770,7 @@ describe("bridge tools", () => {
       arguments: { scopeId: SCOPE_A }
     });
     expect((await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A })).view.counts.needsAttention).toBe(1);
+    expect((await applicationService.dashboardSnapshot({ statusFilter: "all" })).counts.problems).toBe(1);
 
     const retry = parseToolJson(await client.callTool({
       name: "codex_task",
@@ -3685,6 +3812,9 @@ describe("bridge tools", () => {
     upstream.resolveNext(fakeCodexResult("dashboard-retry-thread"));
     await waitForJobStatus(client, retry.jobId, "completed");
     const observedAt = Date.now();
+    const modern = await applicationService.dashboardSnapshot({ statusFilter: "all" });
+    expect(modern.counts.problems).toBe(0);
+    expect(modern.terminalRows[0].history?.[0].status).toBe("failed");
     const failedJob = jobs.get(failed.jobId)!;
     failedJob.createdAt = observedAt - 30 * 60_000;
     failedJob.updatedAt = observedAt - 25 * 60_000;
@@ -3724,6 +3854,20 @@ describe("bridge tools", () => {
       expect.objectContaining({ agentName: "Dashboard retry Agent" })
     ]));
     expect(JSON.stringify(completedView)).not.toContain(failed.agentId);
+
+    // A delayed update to an older failure must not make it newer than the retry,
+    // even when retention moves the retry to an archived summary first.
+    failedJob.updatedAt = observedAt;
+    const clock = vi.spyOn(Date, "now");
+    try {
+      for (const minutes of [359, 361]) {
+        clock.mockReturnValue(observedAt + minutes * 60_000);
+        const retained = await applicationService.dashboardSnapshot({ statusFilter: "all" });
+        expect(retained.counts.problems).toBe(0);
+        expect(retained.terminalRows[0].latestTurn?.status).toBe("completed");
+        expect(retained.terminalRows[0].history?.[0].status).toBe("failed");
+      }
+    } finally { clock.mockRestore(); }
 
     await close();
   });

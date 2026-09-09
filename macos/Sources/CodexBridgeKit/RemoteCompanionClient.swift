@@ -236,7 +236,8 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         limit: Int = 20,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
-        enrich: Bool = false
+        enrich: Bool = false,
+        statusFilter: DashboardStatusFilter = .all
     ) async throws -> DashboardSnapshot {
         try await call(
             "dashboard.snapshot",
@@ -244,7 +245,8 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
                 limit: limit,
                 terminalOffset: terminalOffset,
                 idleOffset: idleOffset,
-                enrich: enrich
+                enrich: enrich,
+                statusFilter: statusFilter
             ),
             timeout: enrich ? 10 : 3
         )

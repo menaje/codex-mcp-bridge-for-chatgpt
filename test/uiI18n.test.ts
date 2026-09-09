@@ -502,12 +502,14 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain('id="project-view"');
     expect(DASHBOARD_CARD_HTML).not.toContain('id="conversation-view"');
     expect(DASHBOARD_CARD_HTML).not.toContain('id="status-view"');
-    expect(DASHBOARD_CARD_HTML).toContain('id="status-idle-panel" hidden');
-    expect(DASHBOARD_CARD_HTML).toContain("statusIdleExpanded=false");
-    expect(DASHBOARD_CARD_HTML).toContain('id="status-idle-toggle"');
-    expect(DASHBOARD_CARD_HTML).toContain('aria-expanded="false"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-panel"');
+    expect(DASHBOARD_CARD_HTML).toContain('selectedStatus="all"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-toggle"');
+    expect(DASHBOARD_CARD_HTML).toContain('aria-pressed="false"');
     expect(DASHBOARD_CARD_HTML).toContain('id="terminal-more"');
-    expect(DASHBOARD_CARD_HTML).toContain('id="idle-more"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="idle-more"');
+    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="response-required"');
+    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="problems"');
     expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.previous"');
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.next"');
@@ -563,7 +565,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardExecution");
     expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardNextExecution");
     expect(DASHBOARD_CARD_HTML).not.toContain("head.append(title,state)");
-    expect(DASHBOARD_CARD_HTML).toContain(
+    expect(DASHBOARD_CARD_HTML).not.toContain(
       "shouldShowDashboardNextExecution(row.execution,turn&&turn.execution)"
     );
     expect(DASHBOARD_CARD_HTML).not.toContain("__name");
@@ -639,8 +641,7 @@ describe("human-facing UI localization", () => {
       .toEqual(["https://chatgpt.com"]);
     expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.active"'))
       .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'));
-    expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'))
-      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.idle"'));
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.idle"');
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
     expect(SETTINGS_CARD_HTML).not.toContain(
@@ -1033,7 +1034,7 @@ describe("human-facing UI localization", () => {
     expect(usesFastProcessing(undefined)).toBe(false);
   });
 
-  it("shows next-run settings only when the current selection differs from the last run", () => {
+  it("keeps next-run comparisons compatible for retained cards", () => {
     const latest = {
       model: "gpt-5.6-sol",
       modelDisplayName: "GPT-5.6 Sol",

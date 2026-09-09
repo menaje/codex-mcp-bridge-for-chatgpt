@@ -107,14 +107,14 @@ try {
   await cli("snapshot");
   await cli("run-code", `async page=>{
     await page.locator('#scope-all').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='2');
+    await page.waitForFunction(()=>document.querySelector('#scope-all').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='2');
     await page.locator('#refresh').click();
     await page.waitForFunction(()=>window.__calls.filter(call=>call.args.view==='dashboard'&&!call.args.enrich&&call.args.scope==='all').length>=2&&document.querySelector('main.card').getAttribute('aria-busy')==='false');
     await page.screenshot({path:${JSON.stringify(path.join(artifacts, "all-desktop.png"))}});
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===32);
     await page.locator('#scope-conversation').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='1'&&document.querySelectorAll('#terminal-list .activity-agent').length===20);
+    await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1'&&document.querySelectorAll('#terminal-list .activity-agent').length===20);
     if((await page.locator('#dashboard-content').innerText()).includes('다른 대화'))throw new Error('Scope switch retained all-work rows');
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===24);
@@ -128,7 +128,7 @@ try {
     await page.locator('#scope-all').click();
     await page.waitForFunction(()=>window.__pending.length===1);
     await page.locator('#scope-conversation').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='1');
+    await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1');
     await page.evaluate(()=>window.__release());
     await page.waitForFunction(()=>document.querySelector('main.card').getAttribute('aria-busy')==='false');
     if((await page.locator('#active-list').innerText()).includes('다른 대화'))throw new Error('Late enrichment replaced the selected scope');
@@ -136,7 +136,7 @@ try {
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>window.__pending.length===1);
     await page.locator('#scope-all').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='2');
+    await page.waitForFunction(()=>document.querySelector('#scope-all').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='2');
     await page.evaluate(()=>window.__release());
     if(await page.locator('#terminal-list .activity-agent').count()!==20)throw new Error('Late scoped page contaminated all-work cache');
   }`);
@@ -145,15 +145,15 @@ try {
 
   await cli("run-code", `async page=>{
     await page.locator('#scope-conversation').click();
-    await page.locator('#active-list').getByRole('button',{name:'상세 보기',exact:true}).click();
+    await page.locator('[data-control-row="here-active"] .work-control-toggle').click();
     await page.locator('#work-details-body button').first().waitFor();
     await page.evaluate(()=>{window.__defer='details'});
     await page.locator('#work-details-refresh').click();
     await page.waitForFunction(()=>window.__pending.length===1);
     await page.locator('#scope-all').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='2');
+    await page.waitForFunction(()=>document.querySelector('#scope-all').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='2');
     await page.evaluate(()=>window.__release());
-    if(await page.locator('#work-details').isVisible()||await page.locator('#work-details-body').innerHTML()!=='')throw new Error('Old detail form reopened in the new scope');
+    if(await page.locator('#work-details').count())throw new Error('Old detail form reopened in the new scope');
     await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
     await page.waitForTimeout(1100);
     const previous=await page.evaluate(()=>window.__calls.length);
@@ -164,9 +164,9 @@ try {
     await page.evaluate(()=>{window.__failRefresh=true});
     await page.locator('#refresh').click();
     await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('마지막'));
-    if(await page.locator('#scope-all').getAttribute('aria-pressed')!=='true'||await page.locator('#scope-count').innerText()!=='2')throw new Error('Failed refresh discarded selection/data');
+    if(await page.locator('#scope-all').getAttribute('aria-pressed')!=='true'||await page.locator('#running-count').innerText()!=='2')throw new Error('Failed refresh discarded selection/data');
     await page.locator('#scope-conversation').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-count').textContent==='1');
+    await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1');
     const result=await page.evaluate(()=>({errors:window.__errors,mutations:window.__calls.filter(call=>call.name!=='codex_ui_read')}));
     if(result.errors.length||result.mutations.length)throw new Error(JSON.stringify(result));
   }`);

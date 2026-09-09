@@ -95,9 +95,35 @@ and obsolete responses cannot repaint the new scope. Omitting `scope` preserves
 all-work behavior for native and immutable older clients. The new card does not
 open or require the retired Activity presenter.
 
+The current card and native menu bar share three Agent counts in a single row
+of tiles, following the previous menu-bar dashboard style. Each tile places a
+muted icon and label above a larger number:
+
+| Summary | Meaning |
+| --- | --- |
+| Running | Agents whose current Codex turn is running |
+| Response needed | Agents waiting for input or approval, counted once even when both are pending |
+| Issues | Unresolved latest failure, interruption, termination failure, unknown liveness, or orphaned Agent; excludes normal input/approval waits |
+
+Counts cover the entire selected conversation scope before pagination or status
+filtering. Selecting a summary filters the rows; **Show all** restores that scope.
+Background processes have a separate conditional link, with unknown/deferred
+inspection still visible. Terminating work keeps its row badge. Current work
+prioritizes responses and problems. **Run history** includes the recorded turns
+of idle Agents, with per-Agent history and conversation links preserved. There is
+no separate idle count/list, and an idle Agent without any recorded turn is hidden.
+A later run clears an earlier failed outcome from **Issues** while retaining it
+in history. Archived Agents remain historical and do not become current issues.
+The menu-bar health indicator does not treat ordinary response waits as a fault.
+
+Generation 24 and the native client opt into this projection with app-private
+`statusFilter: "all" | "running" | "response-required" | "problems" | "background"`.
+Omission preserves the original active/recent/idle pages for immutable older
+cards. This presentation change does not unload threads, hand conversations to
+Codex, or change Agent/Job/database retention; those are tracked in issue #80.
+
 Dashboard retains its structural-first render, bounded enrichment, pagination,
-refresh error recovery and disclosure state. A user deliberately opens **View
-details** on one row to see its project, Activity, Agent and original requests.
+refresh error recovery and disclosure state. A user deliberately opens **Review requests** or **Manage work** on one row to see its project, Activity, Agent and original requests.
 Overview refreshes do not replace that form. Details are reread on refresh and
 page restoration. Stop confirmation appears inside the card (ChatGPT's sandbox
 does not allow native JavaScript dialogs), shows the selected target and preserves

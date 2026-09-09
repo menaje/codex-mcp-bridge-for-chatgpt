@@ -16,6 +16,8 @@ const variants = [DASHBOARD_CARD_HTML, ...retainedUris.map(uri => htmlForUiResou
 const results: unknown[] = [];
 
 function html(index: number, kind: string): string {
+  const view = dashboardView("structural");
+  Object.assign(view.terminalRows[0], { controlKind: "manage", backgroundProcessCount: kind === "process" ? 1 : 0 });
   const detail = { rowKey: "row-a", projectName: "Test project", activityTitle: "Selected work", agentName: "History Agent",
     agentId: "agent-1", jobId: "job-1", jobVersion: 7, agentVersion: 4, status: kind === "job" ? "running" : "completed",
     canStop: kind === "job", affectedJobIds: ["job-1", "job-2"], pendingInteractions: [],
@@ -25,7 +27,7 @@ function html(index: number, kind: string): string {
     window.__calls=[];window.__errors=[];
     window.addEventListener("error",event=>window.__errors.push(String(event.message)));
     window.addEventListener("unhandledrejection",event=>window.__errors.push(String(event.reason)));
-    const view=${JSON.stringify(dashboardView("structural"))},detail=${JSON.stringify(detail)};
+    const view=${JSON.stringify(view)},detail=${JSON.stringify(detail)};
     window.openai={locale:"ko-KR",toolOutput:view,toolResponseMetadata:{},notifyIntrinsicHeight:()=>{},
       callTool:async(name,args)=>{window.__calls.push({name,args});if(name==="codex_ui_stop"){
         await new Promise(resolve=>setTimeout(resolve,100));detail.canStop=false;detail.backgroundProcesses=[];return {structuredContent:{ok:true}};
@@ -54,7 +56,7 @@ try {
     await cli("snapshot");
     const result = JSON.parse(await cli("run-code", `async page=>{
       const frame=page.frameLocator('iframe'),stop=frame.getByRole('button',{name:'에이전트 강제 종료…',exact:true}),confirmation=frame.locator('#work-stop-confirmation');
-      await frame.getByRole('button',{name:'상세 보기',exact:true}).click();
+      await frame.getByRole('button',{name:${JSON.stringify(revision === 0 ? "작업 관리" : "상세 보기")},exact:true}).click();
       await stop.click();await confirmation.waitFor();
       const text=await confirmation.innerText();if(!text.includes('Test project')||!text.includes('Selected work')||!text.includes('History Agent'))throw new Error('Stop target missing');
       const before=await page.frames()[1].evaluate(()=>window.__calls.filter(call=>call.name==='codex_ui_stop').length);

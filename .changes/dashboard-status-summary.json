@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "메뉴바와 현황 카드의 요약을 실행 중·응답 필요·문제로 통일하고 상태별 조회를 제공하며, 유휴 Agent 목록을 실행 기록에 통합합니다.",
+  "breaking": false,
+  "migration": null
+}

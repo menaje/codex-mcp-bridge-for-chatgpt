@@ -15,7 +15,8 @@ public struct BridgeCompanionClient: Sendable {
         limit: Int = 20,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
-        enrich: Bool = false
+        enrich: Bool = false,
+        statusFilter: DashboardStatusFilter = .all
     ) async throws -> DashboardSnapshot {
         try await rpc.call(
             "dashboard.snapshot",
@@ -23,7 +24,8 @@ public struct BridgeCompanionClient: Sendable {
                 limit: limit,
                 terminalOffset: terminalOffset,
                 idleOffset: idleOffset,
-                enrich: enrich
+                enrich: enrich,
+                statusFilter: statusFilter
             ),
             timeout: enrich ? 10 : 2
         )

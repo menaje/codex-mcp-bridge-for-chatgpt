@@ -1,3 +1,4 @@
+import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
 import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
 import { objectSchemaUnion } from "./objectSchemaUnion.js";
@@ -569,6 +570,7 @@ const dashboardRowOutputSchema = z.strictObject({
   updatedAt: z.string(),
   elapsedMs: z.number().int().min(0),
   backgroundProcessCount: z.number().int().min(0),
+  controlKind: z.enum(["request", "manage"]).nullable().optional(),
   latestTurn: dashboardTurnOutputSchema.nullable().optional(),
   history: z.array(dashboardTurnOutputSchema).optional(),
   historyCount: z.number().int().min(0).optional()
@@ -636,6 +638,8 @@ const dashboardCountsOutputSchema = z.strictObject({
   approvalRequired: z.number().int().min(0),
   terminating: z.number().int().min(0),
   needsAttention: z.number().int().min(0),
+  responseRequired: z.number().int().min(0).optional(),
+  problems: z.number().int().min(0).optional(),
   backgroundProcesses: z.number().int().min(0),
   backgroundProcessAgents: z.number().int().min(0),
   runtimeUnknownAgents: z.number().int().min(0),
@@ -683,6 +687,7 @@ const dashboardViewOutputSchema = z.strictObject({
   kind: z.literal("dashboard"),
   generatedAt: z.string(),
   scope: z.enum(["bridge-wide", "conversation"]),
+  statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   filter: z.strictObject({
     mode: z.enum(["conversation", "all"]),
     conversationAvailable: z.boolean(),
@@ -4742,7 +4747,8 @@ export function registerBridgeTools(
         options.legacyGrouping,
         undefined,
         undefined,
-        options.scopeId
+        options.scopeId,
+        options.statusFilter
       );
       if (config.codexService) {
         const service = config.codexService;
@@ -4964,6 +4970,9 @@ export function registerBridgeTools(
   const codexDashboardPublicInput = z.strictObject({});
   const dashboardSnapshotInput = z.strictObject({
     scopeId: scopeIdSchema().optional(),
+    statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional().describe(
+      "Select the current three-category overview and filter its rows. Omission preserves retained cards' layout. Counts cover the full selected conversation scope before filtering and pagination."
+    ),
     widgetInstanceId: widgetInstanceIdSchema.optional(),
     scope: z.enum(["auto", "conversation", "all"]).optional().describe(
       "Initial auto selects this conversation when it has retained Activity or Job records; conversation and all retain an explicit selection. Omission preserves older cards' all-conversation view."
@@ -5030,6 +5039,7 @@ export function registerBridgeTools(
       }
       const view = await applicationService.dashboardSnapshot({
         scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
+        statusFilter: args.statusFilter,
         limit: args.limit || 20,
         terminalOffset: args.terminalOffset || 0,
         idleOffset: args.idleOffset || 0,
@@ -10706,6 +10716,7 @@ type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
 export type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
 
 export type BridgeDashboardSnapshotOptions = {
+  statusFilter?: DashboardStatusFilter;
   /** Internal resolved conversation filter. Native and retained clients omit it. */
   scopeId?: string;
   limit?: number;
@@ -12009,7 +12020,8 @@ async function buildDashboardView(
   legacyGrouping?: { projectOffset: number; conversationOffset: number },
   visibleAgentIdsOut?: Set<string>,
   enrichment?: DashboardEnrichmentInput,
-  scopeId?: string
+  scopeId?: string,
+  statusFilter?: DashboardStatusFilter
 ): Promise<DashboardView> {
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
   if (inspectRuntime && !enrichment) {
@@ -12029,7 +12041,8 @@ async function buildDashboardView(
       legacyGrouping,
       visibleAgentIds,
       undefined,
-      scopeId
+      scopeId,
+      statusFilter
     );
     const allAgents = listAllDashboardAgents(jobs, scopeId);
     const currentThreads = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
@@ -12117,7 +12130,8 @@ async function buildDashboardView(
           oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
         }
       },
-      scopeId
+      scopeId,
+      statusFilter
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
@@ -12209,6 +12223,8 @@ async function buildDashboardView(
   for (const retained of archivedJobsByAgent.values()) {
     retained.sort(
       (left, right) =>
+        (statusFilter === undefined ? 0 :
+          (right.createdAt ?? right.updatedAt) - (left.createdAt ?? left.updatedAt)) ||
         right.updatedAt - left.updatedAt || right.jobId.localeCompare(left.jobId)
     );
   }
@@ -12216,6 +12232,17 @@ async function buildDashboardView(
   for (const [agentId, retained] of archivedJobsByAgent) {
     const latest = retained[0];
     if (latest) latestArchivedJobByAgent.set(agentId, latest);
+  }
+  if (statusFilter !== undefined) {
+    // Retention is based on update time. A late event on an older run can keep
+    // its full Job after the newer run has become an archived summary.
+    for (const [agentId, job] of latestJobByAgent) {
+      const archived = latestArchivedJobByAgent.get(agentId);
+      if (archived && !isActiveActivityJobStatus(job.status) &&
+        (archived.createdAt ?? archived.updatedAt) > job.createdAt) {
+        latestJobByAgent.delete(agentId);
+      }
+    }
   }
 
   const appServerAgents = allAgents
@@ -12354,6 +12381,22 @@ async function buildDashboardView(
 
   const agentIdByRowKey = new Map<string, string>();
 
+  // Advertise only controls that readControl can actually open. Retained
+  // summaries and archived/unassigned Agents cannot supply a control proof.
+  const controlKindForAgent = (
+    agentId: string | undefined,
+    backgroundProcessCount: number
+  ): DashboardRow["controlKind"] => {
+    const agent = agentId ? agentById.get(agentId) : undefined;
+    if (!agent || agent.lifecycle === "archived") return null;
+    const job = agent.currentJobId
+      ? jobs.get(agent.currentJobId)
+      : latestJobByAgent.get(agent.agentId);
+    if (!job || !activityFor(job.activityId)) return null;
+    if (job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction))) return "request";
+    return isActiveActivityJobStatus(job.status) || backgroundProcessCount > 0 ? "manage" : null;
+  };
+
   const jobRow = (job: CodexJob, bucket: DashboardRow["bucket"]): DashboardRow => {
     const agent = job.agentId ? agentById.get(job.agentId) : undefined;
     const thread = currentThreadFor(job.agentId);
@@ -12398,6 +12441,7 @@ async function buildDashboardView(
       updatedAt: latestTurn.updatedAt,
       elapsedMs: latestTurn.durationMs || 0,
       backgroundProcessCount,
+      controlKind: controlKindForAgent(job.agentId, backgroundProcessCount),
       latestTurn,
       history: history.turns,
       historyCount: history.total
@@ -12435,7 +12479,8 @@ async function buildDashboardView(
       status = "input-required";
     } else if (agent.lifecycle === "orphaned" || runtime?.state === "orphaned") {
       status = "orphaned";
-    } else if (agent.lifecycle === "active" || runtime?.state === "busy") {
+    } else if (agent.lifecycle === "active" || runtime?.state === "busy" ||
+      (statusFilter !== undefined && runtime?.state === "unknown")) {
       status = "liveness-unknown";
     } else if (
       agent.lifecycle === "idle" &&
@@ -12486,6 +12531,7 @@ async function buildDashboardView(
       updatedAt: new Date(changedAt).toISOString(),
       elapsedMs: latestTurn?.durationMs ?? Math.max(0, now - changedAt),
       backgroundProcessCount: runtime?.backgroundProcessCount || 0,
+      controlKind: controlKindForAgent(agent.agentId, runtime?.backgroundProcessCount || 0),
       latestTurn,
       history: history.turns,
       historyCount: history.total
@@ -12522,7 +12568,7 @@ async function buildDashboardView(
   const idleRows = allAgents
     .filter(
       (agent) =>
-        agent.lifecycle === "idle" &&
+        (agent.lifecycle === "idle" || statusFilter !== undefined && agent.lifecycle === "archived") &&
         !activeAgentIds.has(agent.agentId) &&
         !recoveryAgentIds.has(agent.agentId) &&
         !representedTerminalAgents.has(agent.agentId)
@@ -12568,6 +12614,7 @@ async function buildDashboardView(
         updatedAt: latestTurn?.updatedAt || new Date(agent.updatedAt).toISOString(),
         elapsedMs: latestTurn?.durationMs || 0,
         backgroundProcessCount: runtimeByAgent.get(agent.agentId)?.backgroundProcessCount || 0,
+        controlKind: controlKindForAgent(agent.agentId, runtimeByAgent.get(agent.agentId)?.backgroundProcessCount || 0),
         latestTurn,
         history: history.turns,
         historyCount: history.total
@@ -12614,19 +12661,59 @@ async function buildDashboardView(
         (observation.state !== "orphaned" && observation.backgroundProcessState === "unknown")
     ).length;
   const dashboardRows = [...activeRows, ...terminalRows, ...idleRows];
+  // Keep the immutable cards' buckets intact. Current clients opt into one
+  // history list; an idle Agent without a recorded turn has nothing to show.
+  const overviewRows = new Map<string, DashboardRow>();
+  for (const row of dashboardRows) {
+    if (row.bucket === "idle" && !row.latestTurn) continue;
+    let normalized: DashboardRow = row.bucket === "idle"
+      ? { ...row, bucket: "recent", status: row.latestTurn!.status }
+      : row;
+    if (row.status === "background-process-running" && row.latestTurn &&
+      dashboardSummaryCategory(row.latestTurn.status) === "problems") {
+      normalized = { ...normalized, status: row.latestTurn.status };
+    }
+    if (!overviewRows.has(row.rowKey)) overviewRows.set(row.rowKey, normalized);
+  }
+  const categoryFor = (row: DashboardRow) => {
+    const agentId = agentIdByRowKey.get(row.rowKey);
+    if (agentId && agentById.get(agentId)?.lifecycle === "archived") return null;
+    return dashboardSummaryCategory(row.status);
+  };
+  const responseRequired = [...overviewRows.values()]
+    .filter(row => categoryFor(row) === "response-required").length;
+  const problems = [...overviewRows.values()]
+    .filter(row => categoryFor(row) === "problems").length;
+  const overviewActive: DashboardRow[] = [];
+  const overviewTerminal: DashboardRow[] = [];
+  for (const row of overviewRows.values()) {
+    const category = categoryFor(row);
+    if (statusFilter && statusFilter !== "all" &&
+      (statusFilter === "background" ? row.backgroundProcessCount <= 0 : category !== statusFilter)) continue;
+    if (row.bucket === "active" || category === "problems") {
+      overviewActive.push({ ...row, bucket: "active" });
+    } else {
+      overviewTerminal.push(row);
+    }
+  }
+  overviewActive.sort((left, right) =>
+    dashboardStatusPriority(left.status) - dashboardStatusPriority(right.status) ||
+    Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.rowKey.localeCompare(right.rowKey));
+  overviewTerminal.sort((left, right) =>
+    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.rowKey.localeCompare(right.rowKey));
   const legacyProjectPage = legacyGrouping
     ? dashboardProjectPage(dashboardRows, legacyGrouping.projectOffset, limit)
     : undefined;
   const legacyConversationPage = legacyGrouping
     ? dashboardConversationPage(dashboardRows, legacyGrouping.conversationOffset, limit)
     : undefined;
-  const activePage = dashboardActivityPage(activeRows, 0, 100);
+  const activePage = dashboardActivityPage(statusFilter === undefined ? activeRows : overviewActive, 0, 100);
   const terminalPage = dashboardActivityPage(
-    terminalRows,
+    statusFilter === undefined ? terminalRows : overviewTerminal,
     terminalOffset,
     limit
   );
-  const idlePage = dashboardActivityPage(idleRows, idleOffset, limit);
+  const idlePage = dashboardActivityPage(statusFilter === undefined ? idleRows : [], idleOffset, limit);
   for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows]) {
     const agentId = agentIdByRowKey.get(row.rowKey);
     if (agentId) visibleAgentIdsOut?.add(agentId);
@@ -12648,6 +12735,7 @@ async function buildDashboardView(
     kind: "dashboard",
     generatedAt: new Date(now).toISOString(),
     scope: scopeId ? "conversation" : "bridge-wide",
+    ...(statusFilter !== undefined ? { statusFilter } : {}),
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
     enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),
@@ -12662,6 +12750,8 @@ async function buildDashboardView(
       approvalRequired: activeRows.filter((row) => row.status === "approval-required").length,
       terminating: activeRows.filter((row) => row.status === "terminating").length,
       needsAttention: attentionKeys.size,
+      responseRequired,
+      problems,
       backgroundProcesses,
       backgroundProcessAgents,
       runtimeUnknownAgents,

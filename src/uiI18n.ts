@@ -1,3 +1,4 @@
+import { DASHBOARD_SUMMARY_TRANSLATIONS } from "./dashboardSummaryI18n.js";
 import { DASHBOARD_SCOPE_TRANSLATIONS } from "./dashboardScopeI18n.js";
 import { QUESTION_UI_TRANSLATIONS } from "./questionI18n.js";
 import { ULTRA_POLICY_TRANSLATIONS } from "./ultraPolicyI18n.js";
@@ -77,6 +78,10 @@ const ENGLISH = {
   "settings.usePriority": "Fast mode",
   "settings.usePriorityHint": "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase.",
   "dashboard.execution.fast": "Fast",
+  "dashboard.control.requests": "Review requests",
+  "dashboard.control.manage": "Manage work",
+  "dashboard.control.close": "Collapse",
+  "dashboard.control.empty": "No pending requests or running work to manage.",
   "settings.fixedNotice": "This exact selection is enforced for Codex turns admitted after saving. An already active turn keeps its admission-time decision.",
   "settings.allowedScope": "GPT selection range",
   "settings.allowedScope.catalog": "All available models and efforts",
@@ -306,9 +311,6 @@ const ENGLISH = {
   "dashboard.summary.running": "Running {count}",
   "dashboard.summary.recent": "Recent {count}",
   "dashboard.summary.idle": "Idle {count}",
-  "dashboard.active": "Active Codex work",
-  "dashboard.noActive": "No active Codex work.",
-  "dashboard.recent": "Recent Codex turn outcomes",
   "dashboard.noRecent": "No recent Codex turn outcomes.",
   "dashboard.idle": "Idle Codex agents",
   "dashboard.noIdle": "No idle Codex agents.",
@@ -363,7 +365,8 @@ const ENGLISH = {
   "dashboard.status.cancelled": "Cancelled",
   "dashboard.status.idle": "Idle",
   "dashboard.status.orphaned": "Thread unavailable",
-  ...DASHBOARD_SCOPE_TRANSLATIONS.en
+  ...DASHBOARD_SCOPE_TRANSLATIONS.en,
+  ...DASHBOARD_SUMMARY_TRANSLATIONS.en
 } as const;
 
 export type UiTranslationKey = keyof typeof ENGLISH;
@@ -2195,14 +2198,65 @@ const FAST_MODE_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTr
   }
 };
 
+const DASHBOARD_CONTROL_OVERRIDES: Partial<Record<SupportedUiLocale, Partial<UiTranslationBundle>>> = {
+  ko: {
+    "dashboard.control.requests": "요청 확인",
+    "dashboard.control.manage": "작업 관리",
+    "dashboard.control.close": "접기",
+    "dashboard.control.empty": "처리할 요청이나 실행 중인 작업이 없습니다."
+  },
+  ja: {
+    "dashboard.control.requests": "リクエストを確認",
+    "dashboard.control.manage": "作業を管理",
+    "dashboard.control.close": "折りたたむ",
+    "dashboard.control.empty": "対応が必要なリクエストや実行中の作業はありません。"
+  },
+  "zh-Hans": {
+    "dashboard.control.requests": "查看请求",
+    "dashboard.control.manage": "管理任务",
+    "dashboard.control.close": "收起",
+    "dashboard.control.empty": "没有待处理的请求或正在运行的任务。"
+  },
+  "zh-Hant": {
+    "dashboard.control.requests": "查看請求",
+    "dashboard.control.manage": "管理工作",
+    "dashboard.control.close": "收合",
+    "dashboard.control.empty": "沒有待處理的請求或執行中的工作。"
+  },
+  es: {
+    "dashboard.control.requests": "Revisar solicitudes",
+    "dashboard.control.manage": "Gestionar trabajo",
+    "dashboard.control.close": "Contraer",
+    "dashboard.control.empty": "No hay solicitudes pendientes ni trabajos en ejecución que gestionar."
+  },
+  fr: {
+    "dashboard.control.requests": "Examiner les demandes",
+    "dashboard.control.manage": "Gérer le travail",
+    "dashboard.control.close": "Replier",
+    "dashboard.control.empty": "Aucune demande en attente ni aucun travail en cours à gérer."
+  },
+  de: {
+    "dashboard.control.requests": "Anfragen prüfen",
+    "dashboard.control.manage": "Arbeit verwalten",
+    "dashboard.control.close": "Zuklappen",
+    "dashboard.control.empty": "Keine offenen Anfragen oder laufenden Arbeiten zu verwalten."
+  },
+  pt: {
+    "dashboard.control.requests": "Revisar solicitações",
+    "dashboard.control.manage": "Gerenciar trabalho",
+    "dashboard.control.close": "Recolher",
+    "dashboard.control.empty": "Não há solicitações pendentes nem trabalhos em execução para gerenciar."
+  }
+};
+
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
   SUPPORTED_UI_LOCALES.map((locale) => [
     locale,
     locale === "en"
       ? { ...ENGLISH }
       : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale] }
+        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...DASHBOARD_CONTROL_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale], ...DASHBOARD_SUMMARY_TRANSLATIONS[locale] }
+        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...DASHBOARD_CONTROL_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale], ...DASHBOARD_SUMMARY_TRANSLATIONS[locale] }
   ])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
