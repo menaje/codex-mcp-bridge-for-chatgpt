@@ -10,5 +10,8 @@ if (process.argv.includes("generate-json-schema")) {
   );
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(directory, "ClientRequest.json"), JSON.stringify(schema));
+  mkdirSync(path.join(directory, "v2"), { recursive: true });
+  writeFileSync(path.join(directory, "v2", "ConfigReadResponse.json"),
+    readFileSync(new URL("./app-server-config-contract.json", import.meta.url), "utf8"));
   process.exit(0);
 }

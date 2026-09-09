@@ -447,9 +447,12 @@ without migration is a deliberate scope reset.
 ## Plugin approval boundary
 
 ChatGPT's four plugin-permission choices control host-side confirmation before
-an MCP tool call. They do not change the Codex sandbox. A private deployment may
-set Codex approval policy to `never` so the plugin permission is the single
-approval boundary, but doing so removes Codex's independent command prompt.
+an MCP tool call. They do not change the Codex sandbox. The saved always-full
+strategy uses `never` plus the thread-scoped connector default `approve` on
+every CLI installation. Read-only/adaptive retain the configured approval
+default. Explicit per-app/tool exceptions, managed requirements, server-owned
+input/authentication and host review still apply; no pending approval is
+automatically answered. A `never` policy alone is not an MCP approval grant.
 The retained `adaptive` strategy uses the operator-configured default for new
 work (read-only by default). Fixed read-only and full-access settings remain
 authoritative. Current task input has no permission fields; cached inputs that
@@ -462,15 +465,21 @@ identity.
 
 ## CLI permissions and interactions
 
-Fresh, continued, and forked work all recheck the current operator ceiling.
+`executionPolicy.ts` resolves the shared sandbox, command approval policy,
+reviewer and connector default. Fresh, continued, and forked work all recheck the current operator ceiling.
 Continue and fork retain their existing sandbox; changing sandbox requires a
 fresh context. The adapter passes cwd, sandbox, and approval policy when loading
-or forking a thread, verifies the returned policy before starting a turn, and
+or forking a thread, explicitly passes the reviewer and connector config,
+verifies the returned policy before starting a turn, and
 sends the confirmed policy (including reviewer and named-profile identity) on
 each turn. A loaded in-memory thread reuses its confirmed policy; a reloaded
 thread must confirm it again. A policy mismatch stops before model execution.
 Safe turn evidence records the sandbox, approval policy, reviewer, profile,
 network setting, and writable-root count, without disclosing root paths.
+Connector evidence separately records that the default override was sent;
+App Server's thread response does not expose effective per-tool config.
+A loaded thread cannot silently switch connector defaults. CLI protocol checks
+cover reviewer/config inputs as well as sandbox and command approvals.
 
 CLI compatibility is checked against the generated public request contracts
 used by the bridge, followed by initialization. New versions and additive

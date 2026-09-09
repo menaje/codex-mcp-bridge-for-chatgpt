@@ -1,15 +1,19 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import type { ApprovalPolicy, SandboxMode } from "./config.js";
+import type { ApprovalPolicy, ApprovalsReviewer, SandboxMode } from "./config.js";
+
+export type AppToolApprovalMode = "auto" | "approve";
 
 export type ExecutionAccessRequest = {
   cwd: string;
   sandbox: SandboxMode;
   approvalPolicy: ApprovalPolicy;
+  approvalsReviewer?: ApprovalsReviewer;
+  appToolApprovalMode?: AppToolApprovalMode;
 };
 
 /** Private worker evidence. Keep complete policy details out of public logs. */
-export type VerifiedExecutionAccess = ExecutionAccessRequest & {
+export type VerifiedExecutionAccess = Omit<ExecutionAccessRequest, "approvalsReviewer"> & {
   sandboxPolicy: Record<string, unknown>;
   approvalsReviewer: string;
   activePermissionProfile: { id: string; extends?: string | null } | null;
@@ -18,20 +22,34 @@ export type VerifiedExecutionAccess = ExecutionAccessRequest & {
 export function executionAccessRequest(args: Record<string, unknown>): ExecutionAccessRequest {
   const { cwd, sandbox } = args;
   const approvalPolicy = args["approval-policy"];
+  const approvalsReviewer = args["approvals-reviewer"];
+  const appToolApprovalMode = args["app-tool-approval-mode"];
   if (typeof cwd !== "string" || !path.isAbsolute(cwd) ||
       typeof sandbox !== "string" || !["read-only", "workspace-write", "danger-full-access"].includes(sandbox) ||
-      typeof approvalPolicy !== "string" || !["untrusted", "on-request", "never"].includes(approvalPolicy)) {
+      typeof approvalPolicy !== "string" || !["untrusted", "on-request", "never"].includes(approvalPolicy) ||
+      (approvalsReviewer !== undefined && approvalsReviewer !== "user" && approvalsReviewer !== "auto_review") ||
+      (appToolApprovalMode !== undefined && appToolApprovalMode !== "auto" && appToolApprovalMode !== "approve")) {
     throw new Error("EXECUTION_ACCESS_REQUIRED: A known cwd, sandbox, and approval policy are required before executing a Codex turn.");
   }
-  return { cwd, sandbox: sandbox as SandboxMode, approvalPolicy: approvalPolicy as ApprovalPolicy };
+  return { cwd, sandbox: sandbox as SandboxMode, approvalPolicy: approvalPolicy as ApprovalPolicy,
+    ...(approvalsReviewer !== undefined ? { approvalsReviewer } : {}),
+    ...(appToolApprovalMode !== undefined ? { appToolApprovalMode } : {}) };
 }
 
 export function executionAccessArguments(access: ExecutionAccessRequest): Record<string, unknown> {
-  return { cwd: access.cwd, sandbox: access.sandbox, "approval-policy": access.approvalPolicy };
+  return { cwd: access.cwd, sandbox: access.sandbox, "approval-policy": access.approvalPolicy,
+    ...(access.approvalsReviewer !== undefined ? { "approvals-reviewer": access.approvalsReviewer } : {}),
+    ...(access.appToolApprovalMode !== undefined ? { "app-tool-approval-mode": access.appToolApprovalMode } : {}) };
 }
 
-export function threadAccessParams(access: ExecutionAccessRequest): Record<string, unknown> {
-  return { cwd: access.cwd, sandbox: access.sandbox, approvalPolicy: access.approvalPolicy };
+export function threadAccessParams(access: ExecutionAccessRequest, config?: Record<string, unknown>): Record<string, unknown> {
+  return { cwd: access.cwd, sandbox: access.sandbox, approvalPolicy: access.approvalPolicy,
+    ...(access.approvalsReviewer !== undefined ? { approvalsReviewer: access.approvalsReviewer } : {}),
+    ...(config || access.appToolApprovalMode !== undefined ? { config: {
+      ...config,
+      ...(access.appToolApprovalMode !== undefined
+        ? { "apps._default.default_tools_approval_mode": access.appToolApprovalMode } : {})
+    } } : {}) };
 }
 
 export function verifyExecutionAccess(
@@ -53,6 +71,14 @@ export function verifyExecutionAccess(
       canonicalPath(response.cwd) !== canonicalPath(expected.cwd)) mismatches.push("cwd");
   if (typeof response.approvalsReviewer !== "string" || !["user", "auto_review", "guardian_subagent"].includes(response.approvalsReviewer)) {
     mismatches.push("approvalsReviewer");
+  }
+  if (expected.approvalsReviewer !== undefined && response.approvalsReviewer !== expected.approvalsReviewer) {
+    mismatches.push("approvalsReviewer");
+  }
+  // Loaded threads retain their original connector configuration. Do not
+  // claim a newly requested default has been applied to an already loaded one.
+  if (method === "loaded thread" && response.appToolApprovalMode !== expected.appToolApprovalMode) {
+    mismatches.push("appToolApprovalMode (start a fresh context to change connector defaults)");
   }
   const profile = response.activePermissionProfile;
   if (profile != null && (!record(profile) || typeof profile.id !== "string" || !profile.id ||
@@ -88,6 +114,10 @@ export function executionAccessEvidence(access: VerifiedExecutionAccess): Record
   return {
     sandbox: access.sandbox, approvalPolicy: access.approvalPolicy,
     approvalsReviewer: access.approvalsReviewer,
+    ...(access.appToolApprovalMode !== undefined ? {
+      appToolApprovalMode: access.appToolApprovalMode,
+      appToolApprovalEvidence: "thread-config-override-sent"
+    } : {}),
     activePermissionProfile: structuredClone(access.activePermissionProfile),
     networkAccess: policy.networkAccess ?? (access.sandbox === "danger-full-access"),
     writableRootCount: Array.isArray(policy.writableRoots) ? policy.writableRoots.length : 0,

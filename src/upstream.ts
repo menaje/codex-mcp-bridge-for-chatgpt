@@ -1,5 +1,5 @@
 import type { CallToolResult, Progress } from "@modelcontextprotocol/sdk/types.js";
-import type { ApprovalPolicy, CodexBackendKind, SandboxMode } from "./config.js";
+import type { CodexBackendKind } from "./config.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
@@ -159,12 +159,9 @@ export type CodexBackgroundTerminal = {
   rssKb?: number;
 };
 
-export type CodexThreadStartRequest = {
+export type CodexThreadStartRequest = ExecutionAccessRequest & {
   backendKind: CodexBackendKind;
   prompt: string;
-  cwd: string;
-  sandbox: SandboxMode;
-  approvalPolicy: ApprovalPolicy;
   selection: ModelSelection;
   /** App Server only: keep the new thread in memory instead of materializing it on disk. */
   contextId?: string;

@@ -4860,6 +4860,70 @@ export const UI_RESOURCE_MANIFEST = {
               "codex/uiContractGeneration": 21
             }
           }
+        },
+        {
+          "digest": "801e7325008692e3563d601479835df92ed36b531a524ae6089df853734a2d2f",
+          "uri": "ui://codex-mcp-bridge/dashboard/801e73250086.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated work controls.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and work controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 23
+            }
+          }
+        },
+        {
+          "digest": "dc0af19df7bca2d37afadc729956e9a093e5d70cb9ff31cd061eda17cb103958",
+          "uri": "ui://codex-mcp-bridge/dashboard/dc0af19df7bc.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Overview",
+              "description": "Read-only, Activity-first Codex runtime overview with nested Agents, project labels, setting-independent GPT conversation links when a UUID-shaped host route candidate was captured, expandable retained turn history, and model/effort selections.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows one read-only, Activity-first Codex overview with nested Agents, derived from retained Codex Jobs, threads, interaction state, model/effort selection, and bounded App Server runtime evidence.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 22
+            }
+          }
         }
       ]
     },

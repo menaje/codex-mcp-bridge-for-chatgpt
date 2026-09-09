@@ -100,6 +100,8 @@ describe("GPT question orchestration", () => {
     const job = jobs.get(jobId)!;
     const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + job.agentId).digest("hex").slice(0, 32);
     const widgetInstanceId = randomUUID();
+    const overview = await ok("codex_ui_read", { view: "dashboard", widgetInstanceId, enrich: false }, otherMeta);
+    expect(overview._meta["codex/dashboardView@1"].view.activeRows[0].controlKind).toBe("request");
     const read = await ok("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta);
     expect(read.structuredContent).toEqual({ kind: "control", ready: true });
     expect(JSON.stringify(read.structuredContent)).not.toContain("approval-1");
@@ -124,6 +126,8 @@ describe("GPT question orchestration", () => {
     question();
     const next = (await ok("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta))._meta["codex/uiControl@1"];
     expect(next.pendingInteractions[0].ordinary).toBe(true);
+    const ordinaryOverview = await ok("codex_ui_read", { view: "dashboard", widgetInstanceId, enrich: false }, otherMeta);
+    expect(ordinaryOverview._meta["codex/dashboardView@1"].view.activeRows[0].controlKind).toBe("manage");
     const refused = await call("codex_interaction_respond", { ...args, card: next.card, expectedJobVersion: next.jobVersion,
       requestId: randomUUID(), interactionId: "fixture:1:question", response: { answers: { color: ["Blue"] } } }, otherMeta);
     expect(JSON.stringify(refused)).toContain("GPT_RESPONSE_REQUIRED");

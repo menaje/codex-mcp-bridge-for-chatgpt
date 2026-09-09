@@ -7267,6 +7267,8 @@ describe("bridge tools", () => {
           sandbox: "read-only",
           ephemeral: true,
           "approval-policy": "on-request",
+          "approvals-reviewer": "user",
+          "app-tool-approval-mode": "auto",
           model: "gpt-5.6-sol",
           config: { model_reasoning_effort: "max" }
         }
@@ -8027,9 +8029,11 @@ describe("bridge tools", () => {
 
   it("stops exact work from a global detail proof and replays without another termination", async () => {
     const upstream = new DeferredUpstream();
-    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
     try {
       const started = parseToolJson(await runTask(client, { prompt: "Global stop fixture", executionMode: "background" }));
+      expect((await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false })).activeRows[0].controlKind)
+        .toBe("manage");
       const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + started.agentId).digest("hex").slice(0, 32);
       const widgetInstanceId = randomUUID();
       const result = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
@@ -8044,6 +8048,8 @@ describe("bridge tools", () => {
       expect(replay.structuredContent).toEqual(first.structuredContent);
       expect(upstream.aborts).toBe(1);
       expect(jobs.get(started.jobId)?.status).toBe("cancelled");
+      expect((await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false })).terminalRows[0].controlKind)
+        .toBeNull();
       expect(jobs.listCancellationIntents({ jobId: started.jobId })).toEqual(expect.arrayContaining([
         expect.objectContaining({ source: "widget-control", toolName: "codex_ui_stop" })
       ]));
@@ -8206,7 +8212,8 @@ describe("bridge tools", () => {
       expect.objectContaining({
         agentName: "Process Agent",
         status: "background-process-running",
-        backgroundProcessCount: 2
+        backgroundProcessCount: 2,
+        controlKind: "manage"
       })
     ]));
     expect(JSON.stringify(dashboard)).not.toContain("background-process-1");
@@ -10184,7 +10191,7 @@ describe("bridge tools", () => {
 
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "follow up", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+      args: { threadId: "thread-1", prompt: "follow up", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", "approvals-reviewer": "user", "app-tool-approval-mode": "auto", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
     expect(jobs.get(parseToolJson(first).jobId)?.sessionDecision).toMatchObject({
       action: "start",
@@ -10508,6 +10515,7 @@ describe("bridge tools", () => {
           threadId: "thread-1",
           prompt: "refine plan",
           cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
+          "approvals-reviewer": "user", "app-tool-approval-mode": "auto",
           _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       },
@@ -10517,6 +10525,7 @@ describe("bridge tools", () => {
           threadId: "thread-2",
           prompt: "continue build",
           cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
+          "approvals-reviewer": "user", "app-tool-approval-mode": "auto",
           _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       }
@@ -13562,7 +13571,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "continue", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+      args: { threadId: "thread-1", prompt: "continue", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", "approvals-reviewer": "user", "app-tool-approval-mode": "auto", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
 
     const unknown = await client.callTool({
@@ -15989,7 +15998,9 @@ describe("bridge-owned task permissions and read-only project discovery", () => 
       const result = await runTask(c.client, { prompt: "permission fixture", agentName: "Owned policy", contextMode: "fresh" });
       expect(result.isError).not.toBe(true);
       expect(upstream.calls).toHaveLength(1);
-      expect(upstream.calls[0]?.args).toMatchObject({ sandbox: expected, "approval-policy": config.defaultApprovalPolicy });
+      expect(upstream.calls[0]?.args).toMatchObject({ sandbox: expected,
+        "approval-policy": strategy === "always-full" ? "never" : config.defaultApprovalPolicy,
+        "approvals-reviewer": "user", "app-tool-approval-mode": strategy === "always-full" ? "approve" : "auto" });
       expect(settings.current.usePriorityServiceTier).toBe(false);
     } finally { await c.close(); }
   });

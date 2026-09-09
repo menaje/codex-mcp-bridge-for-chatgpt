@@ -63,6 +63,19 @@
                 "string",
                 "null"
               ]
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
@@ -111,6 +124,26 @@
             },
             "threadId": {
               "type": "string"
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "config": {
+              "additionalProperties": true,
+              "type": [
+                "object",
+                "null"
+              ]
             }
           },
           "required": [
@@ -165,6 +198,26 @@
             },
             "threadId": {
               "type": "string"
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "config": {
+              "additionalProperties": true,
+              "type": [
+                "object",
+                "null"
+              ]
             }
           },
           "required": [

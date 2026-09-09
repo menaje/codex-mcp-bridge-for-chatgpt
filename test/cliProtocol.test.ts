@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { inspectClientRequestContract, inspectCliProtocol, requireCliProtocol } from "../src/cliProtocol.js";
 import contract from "./fixtures/app-server-request-contract.json";
+import configContract from "./fixtures/app-server-config-contract.json";
 import path from "node:path";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +22,17 @@ describe("CLI operation contracts", () => {
     expect(inspectClientRequestContract(future)).toMatchObject({ compatible: true, unsupported: {} });
   });
 
+  it("rejects a CLI that accepts arbitrary config but cannot apply connector approvals", () => {
+    const missing = structuredClone(configContract) as any;
+    delete missing.properties.config.properties.apps.properties._default.properties.default_tools_approval_mode;
+    expect(inspectClientRequestContract(contract, missing)).toMatchObject({ compatible: false,
+      missingCore: ["config.apps._default.default_tools_approval_mode"] });
+    const unsupported = structuredClone(configContract);
+    unsupported.properties.config.properties.apps.properties._default.properties.default_tools_approval_mode.enum = ["auto"];
+    expect(inspectClientRequestContract(contract, unsupported).compatible).toBe(false);
+    expect(inspectClientRequestContract(contract, configContract).compatible).toBe(true);
+  });
+
   it("reports fork support separately and rejects it before execution", async () => {
     const support = await inspectCliProtocol(path.resolve("test/fixtures/fake-codex-app-server.mjs"), {
       ...process.env, CODEX_TEST_MISSING_METHOD: "thread/fork"
@@ -31,7 +43,7 @@ describe("CLI operation contracts", () => {
     expect(() => requireCliProtocol(support, "fork")).toThrow("thread/fork");
   });
 
-  it.each(["sandbox", "approvalPolicy", "cwd"])("rejects a CLI missing the resume %s field", field => {
+  it.each(["sandbox", "approvalPolicy", "approvalsReviewer", "config", "cwd"])("rejects a CLI missing the resume %s field", field => {
     const changed = structuredClone(contract) as any;
     delete changed.oneOf.find((entry: any) => entry.properties.method.enum[0] === "thread/resume").properties.params.properties[field];
     const support = inspectClientRequestContract(changed);

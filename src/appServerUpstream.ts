@@ -344,9 +344,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return this.callTool(
       "codex",
       requestArguments(input.prompt, input.selection, {
-        cwd: input.cwd,
-        sandbox: input.sandbox,
-        "approval-policy": input.approvalPolicy,
+        ...executionAccessArguments(input),
         ephemeral: input.ephemeral === true
       }),
       onProgress,
@@ -949,10 +947,9 @@ class AppServerConnection {
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/start",
       {
-        ...threadAccessParams(expectedAccess),
+        ...threadAccessParams(expectedAccess, isRecord(args.config) ? args.config : undefined),
         model: optionalString(args.model) || null,
         serviceTier: optionalString(args.serviceTier) || null,
-        config: isRecord(args.config) ? args.config : null,
         experimentalRawEvents: false,
         ephemeral: args.ephemeral === true
       },

@@ -1,0 +1,678 @@
+{
+  "observedAt": "2026-09-08T08:17:12.487Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "checksPassed": true,
+  "scope": "Isolated Codex homes; shared policy resolution, schema compatibility, thread/start policy negotiation and fixture filesystem probes. No model turns or authenticated external writes.",
+  "reports": [
+    {
+      "source": "terminal",
+      "version": "codex-cli 0.153.3",
+      "bridgeProtocol": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "bridgePolicies": [
+        {
+          "accessStrategy": "read-only",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "adaptive",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "always-full",
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "approve",
+          "passed": true
+        }
+      ],
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ]
+    },
+    {
+      "source": "app",
+      "version": "codex-cli 0.153.4",
+      "bridgeProtocol": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "bridgePolicies": [
+        {
+          "accessStrategy": "read-only",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "adaptive",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "always-full",
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "approve",
+          "passed": true
+        }
+      ],
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ]
+    },
+    {
+      "source": "bridge",
+      "version": "codex-cli 0.153.4",
+      "bridgeProtocol": {
+        "compatible": true,
+        "missingCore": [],
+        "capabilities": {
+          "selectionScope": "turn",
+          "supportsModelOverrideOnContinue": true,
+          "supportsEffortOverrideOnContinue": true,
+          "supportsServiceTierOverrideOnContinue": true,
+          "supportsFork": true,
+          "supportsSteering": true,
+          "supportsPreciseCancellation": true,
+          "supportsEphemeralThreads": true,
+          "supportsThreadInspection": true,
+          "supportsBackgroundTerminals": true
+        },
+        "unsupported": {}
+      },
+      "bridgePolicies": [
+        {
+          "accessStrategy": "read-only",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "adaptive",
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "auto",
+          "passed": true
+        },
+        {
+          "accessStrategy": "always-full",
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "approvalsReviewer": "auto_review",
+          "requestedAppToolApprovalMode": "approve",
+          "passed": true
+        }
+      ],
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ]
+    }
+  ]
+}

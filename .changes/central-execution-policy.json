@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "CLI 설치 출처와 새 작업·이어가기·분기의 실행 정책을 중앙화하고, 항상 전체 접근에서 명령 승인과 연결 도구 기본 승인 설정을 함께 적용합니다.",
+  "breaking": false,
+  "migration": "항상 전체 접근은 danger-full-access와 never 및 연결 도구 기본 approve를 함께 적용합니다. read-only/adaptive는 기존 승인 기본값을 사용하며 승인 담당자는 CODEX_MCP_BRIDGE_APPROVALS_REVIEWER로 통일됩니다. 적용 시 브리지 재시작과 연결 새로고침이 필요하고, 기존에 로드된 다른 정책의 작업은 새 문맥을 사용해야 합니다."
+}

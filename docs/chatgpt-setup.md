@@ -98,7 +98,12 @@ npm run bridge:secure -- --allow-write
 npm run bridge:secure -- --allow-full-access
 ```
 
-Use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` only when a trusted private ChatGPT plugin permission is deliberately the single approval boundary.
+`CODEX_MCP_BRIDGE_APPROVAL_POLICY` is the command approval default for read-only
+and bridge-default strategies. Saved **Always full access** applies `never` and
+the connector default `approve` together on all selected CLI installations.
+The shared reviewer is `CODEX_MCP_BRIDGE_APPROVALS_REVIEWER=user` or `auto_review`.
+Explicit per-app/tool exceptions and the host's own approval boundary remain in
+effect. See [central execution policy](codex-runtimes.md#central-execution-policy).
 
 ## 3. Add or refresh the ChatGPT plugin
 

@@ -43,10 +43,11 @@ import type {
   SandboxMode
 } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { resolveExecutionPolicy, resolveTaskSandbox } from "./executionPolicy.js";
+import { executionAccessArguments } from "./executionAccess.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
   isCodexBackendKind,
-  enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
   resolveAllowedCwd
@@ -9311,6 +9312,7 @@ async function startNewSession(input: {
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const { cwd, sandbox, decision: executionDecision } = input.resolved;
+  const access = resolveExecutionPolicy(input.config, input.preferences, cwd, sandbox);
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
   const prompt = input.backendHandoff
@@ -9318,9 +9320,7 @@ async function startNewSession(input: {
     : input.args.prompt;
   const payload: Record<string, unknown> = {
     prompt,
-    cwd,
-    sandbox,
-    "approval-policy": input.config.defaultApprovalPolicy
+    ...executionAccessArguments(access)
   };
   const ephemeralAppServerThread =
     backendSupports(input.config.defaultBackend, "supportsEphemeralThreads") &&
@@ -9368,9 +9368,7 @@ async function startNewSession(input: {
             backendKind: input.config.defaultBackend,
             ...(storage?.contextId ? { contextId: storage.contextId } : {}),
             prompt,
-            cwd,
-            sandbox,
-            approvalPolicy: input.config.defaultApprovalPolicy,
+            ...access,
             selection: executionDecision.effectiveSelection,
             ...(backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")
               ? { ephemeral: ephemeralAppServerThread }
@@ -9483,7 +9481,7 @@ async function continueTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
+  const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
   const currentCwd = resolvePinnedAgentCwd(input);
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
@@ -9546,9 +9544,7 @@ async function continueTrackedSession(input: {
             backendKind: input.session.backendKind,
             threadId: input.session.threadId,
             prompt: input.prompt,
-            cwd: input.session.cwd,
-            sandbox: input.session.sandbox,
-            approvalPolicy: input.config.defaultApprovalPolicy,
+            ...access,
             ...(backendSupports(input.session.backendKind, "supportsTurnSelection")
               ? { selection: input.executionDecision.effectiveSelection }
               : {})
@@ -9560,9 +9556,7 @@ async function continueTrackedSession(input: {
       const payload: Record<string, unknown> = {
         threadId: input.session.threadId,
         prompt: input.prompt,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        "approval-policy": input.config.defaultApprovalPolicy,
+        ...executionAccessArguments(access),
         ...backendRoutingArgument(input.session.backendKind)
       };
       if (backendSupports(input.session.backendKind, "supportsTurnSelection")) {
@@ -9631,7 +9625,7 @@ async function forkTrackedSession(input: {
   projectRequest?: RuntimeProjectSelection;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
-  resolveTaskSandbox(input.config, input.preferences, input.session.sandbox);
+  const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
   if (!backendCapabilities(input.upstream, input.session.backendKind).supportsFork || !input.upstream.forkThread) {
     throw new Error(
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
@@ -9679,9 +9673,7 @@ async function forkTrackedSession(input: {
     run: (onProgress, onAssigned) => input.upstream.forkThread?.(
       {
         backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        approvalPolicy: input.config.defaultApprovalPolicy,
+        ...access,
         threadId: input.session.threadId,
         prompt: input.prompt,
         selection: input.executionDecision.effectiveSelection,
@@ -15081,24 +15073,6 @@ function settingsViewResult(
   );
 }
 
-function resolveTaskSandbox(
-  config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  existing?: SandboxMode
-): SandboxMode {
-  const forced = forcedSandboxForStrategy(config, preferences);
-  // A saved thread never grants authority that the current operator envelope
-  // no longer permits. This applies equally to omission, continue, and fork.
-  if (existing) enforceSandbox(config, existing);
-  const resolved = enforceSandbox(config, forced ?? existing);
-  if (existing && resolved !== existing) {
-    throw new Error(
-      `SANDBOX_CONTEXT_CONFLICT: This existing thread uses '${existing}', but the saved bridge setting requires '${resolved}'. Start a fresh context under the saved setting; task calls cannot change permissions.`
-    );
-  }
-  return resolved;
-}
-
 function admitTaskContractForNewCall(input: {
   args: CodexTaskArgs;
   executionEnvelopeRef: string;
@@ -15148,17 +15122,6 @@ function assertExecutionPolicyAdmission(input: {
 }): void {
   if (input.advertisedRef === input.currentRef) return;
   throw new ExecutionPolicyChangedError(input.currentRef);
-}
-
-function forcedSandboxForStrategy(
-  config: BridgeConfig,
-  preferences: BridgeUserSettings
-): SandboxMode | undefined {
-  if (preferences.accessStrategy === "read-only") return "read-only";
-  if (preferences.accessStrategy === "always-full") {
-    return config.allowDangerFullAccess ? "danger-full-access" : "read-only";
-  }
-  return undefined;
 }
 
 type ResolvedExecutionDecision = {

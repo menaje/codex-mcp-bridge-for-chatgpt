@@ -29,8 +29,11 @@ export async function inspectCliProtocol(command: string, environment: NodeJS.Pr
   const directory = await mkdtemp(path.join(tmpdir(), "codex-protocol-"));
   try {
     await generateSchema(command, directory, environment, timeoutMs);
-    const schema = JSON.parse(await readFile(path.join(directory, "ClientRequest.json"), "utf8"));
-    return inspectClientRequestContract(schema);
+    const [requests, config] = await Promise.all([
+      readFile(path.join(directory, "ClientRequest.json"), "utf8"),
+      readFile(path.join(directory, "v2", "ConfigReadResponse.json"), "utf8")
+    ]);
+    return inspectClientRequestContract(JSON.parse(requests), JSON.parse(config));
   } catch {
     throw new Error("CODEX_PROTOCOL_UNVERIFIED: Could not inspect the selected CLI's App Server request contract. Choose or repair an installation with a working schema generator.");
   } finally {
@@ -57,7 +60,7 @@ async function generateSchema(command: string, directory: string, environment: N
   });
 }
 
-export function inspectClientRequestContract(schema: Schema): CliProtocolSupport {
+export function inspectClientRequestContract(schema: Schema, configSchema?: Schema): CliProtocolSupport {
   // Rust integer formats are annotations; minimum/maximum/type retain their
   // validation meaning. Avoid treating those nonstandard formats as warnings.
   schema = JSON.parse(JSON.stringify(schema, (key, value) => key === "format" && /^(?:u?int)(?:32|64)?$/.test(value) ? undefined : value));
@@ -83,17 +86,20 @@ export function inspectClientRequestContract(schema: Schema): CliProtocolSupport
   };
   const cwd = path.resolve(tmpdir());
   const policies = ["read-only", "workspace-write", "danger-full-access"].flatMap(sandbox =>
-    ["untrusted", "on-request", "never"].map(approvalPolicy => ({ cwd, sandbox, approvalPolicy })));
+    ["untrusted", "on-request", "never"].flatMap(approvalPolicy =>
+      ["user", "auto_review"].map(approvalsReviewer => ({ cwd, sandbox, approvalPolicy, approvalsReviewer,
+        config: { "apps._default.default_tools_approval_mode": approvalPolicy === "never" ? "approve" : "auto" }
+      }))));
   checks.set("start", check("thread/start", policies.map(policy => ({
-    ...policy, model: "bridge-contract-check", serviceTier: null, config: null, experimentalRawEvents: false, ephemeral: false
+    ...policy, model: "bridge-contract-check", serviceTier: null, experimentalRawEvents: false, ephemeral: false
   }))));
   checks.set("continue", check("thread/resume", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check" }))));
   const turn = { threadId: "bridge-contract-check", input: [{ type: "text", text: "contract check", text_elements: [] }],
     cwd, approvalPolicy: "on-request", approvalsReviewer: "user", model: "bridge-contract-check", effort: "high", serviceTier: null };
-  checks.set("turn", check("turn/start", [
-    { ...turn, sandboxPolicy: { type: "readOnly", networkAccess: false } },
-    { ...turn, permissions: ":read-only" }
-  ]));
+  checks.set("turn", check("turn/start", policies.flatMap(({ approvalPolicy, approvalsReviewer }) => [
+    { ...turn, approvalPolicy, approvalsReviewer, sandboxPolicy: { type: "readOnly", networkAccess: false } },
+    { ...turn, approvalPolicy, approvalsReviewer, permissions: ":read-only" }
+  ])));
   checks.set("models", check("model/list", [{ cursor: null, limit: 100, includeHidden: false }]));
   checks.set("archive", check("thread/archive", [{ threadId: "bridge-contract-check" }]));
   checks.set("restore", check("thread/unarchive", [{ threadId: "bridge-contract-check" }]));
@@ -117,8 +123,33 @@ export function inspectClientRequestContract(schema: Schema): CliProtocolSupport
       ...check("thread/backgroundTerminals/terminate", [{ threadId: "bridge-contract-check", processId: "process" }])
     ])
   };
-  const missingCore = [...checks.values()].flat();
+  const missingCore = [...checks.values()].flat().concat(configSchema ? inspectConnectorApprovalConfig(configSchema) : []);
   return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported };
+}
+
+/** `config` accepts arbitrary keys on the wire. Its presence alone does not
+ * prove that a CLI understands the connector approval setting we send. */
+function inspectConnectorApprovalConfig(schema: Schema): string[] {
+  const failure = ["config.apps._default.default_tools_approval_mode"];
+  const resolve = (input: Schema | undefined): Schema | undefined => {
+    let node = input;
+    for (let depth = 0; node && depth < 12; depth += 1) {
+      if (node.$ref?.startsWith("#/definitions/")) node = schema.definitions?.[node.$ref.slice("#/definitions/".length)];
+      else if (node.anyOf) node = node.anyOf.find((entry: Schema) => entry.type !== "null");
+      else if (node.allOf?.length === 1) node = node.allOf[0];
+      else return node;
+    }
+    return undefined;
+  };
+  let node: Schema | undefined = schema;
+  for (const field of ["config", "apps", "_default", "default_tools_approval_mode"]) {
+    node = resolve(node)?.properties?.[field];
+    if (!node) return failure;
+  }
+  try {
+    const validate = new AjvJsonSchemaValidator().getValidator({ ...node, definitions: schema.definitions });
+    return ["auto", "approve"].every(mode => validate(mode).valid) ? [] : failure;
+  } catch { return failure; }
 }
 
 export function requireCliProtocol(support: CliProtocolSupport, contextMode: "fresh" | "continue" | "fork"): void {

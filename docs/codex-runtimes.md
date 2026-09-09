@@ -18,6 +18,45 @@ Symlinks and official npm launchers resolving to the same native executable coun
 
 Terminal-managed servers can set an explicit executable path in their private runtime environment file. Remove that override and restart the helper before changing the saved selection in the app. Authentication, model discovery and execution use the same selected installation.
 
+## Central execution policy
+
+Execution permissions are resolved once in `src/executionPolicy.ts`, independently
+of the selected installation. App-bundled, terminal and bridge-managed Codex all
+receive that policy through the same App Server adapter for start, resume and
+fork. HTTP and stdio bridge entry points use this same path.
+
+| Saved access strategy | Sandbox | Command approvals | Connector default |
+| --- | --- | --- | --- |
+| Always full access | Full access, when allowed by the operator | `never` | `approve` |
+| Read-only | Read-only | Runtime approval default | `auto` |
+| Bridge default | Runtime sandbox default; retained threads keep their sandbox | Runtime approval default | `auto` |
+
+`CODEX_MCP_BRIDGE_APPROVAL_POLICY` supplies the approval default for read-only and
+bridge-default strategies. `CODEX_MCP_BRIDGE_APPROVALS_REVIEWER` selects `user`
+(the default) or `auto_review`. The bridge sends both explicitly; changing CLI
+installation does not substitute that executable's user defaults. Always full
+access now supplies approval-free command execution and the connector default
+together. Setting `never` alone would not approve an MCP elicitation.
+
+Connector defaults use the thread-scoped
+`apps._default.default_tools_approval_mode` override. Explicit app/tool exceptions,
+disabled tools, server authentication/input, managed requirements, and the host's
+own approval boundary remain authoritative. The bridge does not automatically
+answer an approval or retry a rejected action through a different tool.
+
+The adapter compares the returned sandbox, approval policy, reviewer and working
+directory before a model turn. It preserves named permission profiles. Connector
+evidence records that the config override was sent; App Server does not return
+the effective per-tool configuration in its thread response. A loaded thread
+with different connector defaults requires fresh context; it cannot silently
+reuse the old policy. Selecting another CLI or replacing its executable triggers
+protocol checks, including reviewer/config inputs and the generated config
+schema's connector approval field and supported values. A generic `config`
+object alone is insufficient evidence of compatibility.
+
+These settings govern Codex launched through the bridge. They do not rewrite
+`~/.codex/config.toml` or settings for an independently launched Codex app/CLI.
+
 ## Ownership and updates
 
 | Installation | Owner |
