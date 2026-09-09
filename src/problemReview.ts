@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 
 export const PROBLEM_KINDS = ["all", "failed", "unknown", "termination-failed", "orphaned"] as const;
 export const problemQuerySchema = z.strictObject({
+  view: z.enum(["actionable", "history", "automatic"]).optional(),
   review: z.enum(["pending", "acknowledged"]).default("pending"),
   kind: z.enum(PROBLEM_KINDS).default("all"),
   offset: z.number().int().min(0).max(1_000_000_000).default(0)
@@ -33,7 +34,7 @@ export type ProblemAction = z.infer<typeof problemActionSchema>;
 export const problemActionResultSchema = z.strictObject({ ok: z.literal(true), changed: z.number().int().min(0) });
 export type ProblemActionResult = z.infer<typeof problemActionResultSchema>;
 
-export function problemKey(kind: "execution" | "runtime", id: string): string {
+export function problemKey(kind: "execution" | "runtime" | "automatic", id: string): string {
   return createHash("sha256").update(JSON.stringify(["dashboard-problem", kind, id])).digest("hex").slice(0, 32);
 }
 

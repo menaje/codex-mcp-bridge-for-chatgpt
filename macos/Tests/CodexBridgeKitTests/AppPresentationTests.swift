@@ -2496,16 +2496,22 @@ extension ConnectionObservationRecoveryTests {
 extension AppPresentationTests {
     @MainActor
     func testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists() async throws {
-        for changesDuringPaging in [false, true] {
+        for (changesDuringPaging, automaticViews) in [(false, false), (true, false), (false, true), (true, true)] {
             let root = URL(fileURLWithPath: "/tmp/cb-problems-\(UUID().uuidString.prefix(8))")
             let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
             try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
             let base = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
-            let state = ProblemPagingFixture(base: base, changesDuringPaging: changesDuringPaging)
+            let state = ProblemPagingFixture(base: base, changesDuringPaging: changesDuringPaging, automaticViews: automaticViews)
             let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path, requestReply: { method, params in state.reply(method, params) })
             let model = AppModel(paths: paths)
             defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
             model.recordLocalConnectionStatus(try helperStatus())
+            await model.refreshDashboard(enrich: false)
+            if automaticViews {
+                XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
+                await model.selectProblemQuery(view: .history)
+                XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
+            }
             await model.acknowledgeAllFinishedProblems()
             if changesDuringPaging {
                 XCTAssertEqual(state.batches, [])
@@ -2514,7 +2520,11 @@ extension AppPresentationTests {
                 XCTAssertEqual(state.batches, [100, 12])
                 XCTAssertEqual(state.reviewedCount, 112)
                 XCTAssertNotNil(model.problemActionNotice)
-                await model.selectProblemQuery(review: .acknowledged)
+                if automaticViews {
+                    await model.selectProblemQuery(view: .history)
+                    XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
+                    XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
+                } else { await model.selectProblemQuery(review: .acknowledged) }
                 XCTAssertEqual(model.dashboard?.problems?.acknowledgedCount, 112)
                 let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
                 XCTAssertEqual(problem.row.status, "failed")
@@ -2530,11 +2540,14 @@ private final class ProblemPagingFixture: @unchecked Sendable {
     private let lock = NSLock()
     private let base: String
     private let changesDuringPaging: Bool
+    private let automaticViews: Bool
     private var reviewed = Set<String>()
     private var recordedBatches: [Int] = []
     var batches: [Int] { lock.withLock { recordedBatches } }
     var reviewedCount: Int { lock.withLock { reviewed.count } }
-    init(base: String, changesDuringPaging: Bool) { self.base = base; self.changesDuringPaging = changesDuringPaging }
+    init(base: String, changesDuringPaging: Bool, automaticViews: Bool) {
+        self.base = base; self.changesDuringPaging = changesDuringPaging; self.automaticViews = automaticViews
+    }
     func reply(_ method: String, _ params: String) -> NativeFixtureReply {
         lock.withLock {
             do {
@@ -2554,19 +2567,28 @@ private final class ProblemPagingFixture: @unchecked Sendable {
                 let args = try JSONSerialization.jsonObject(with: Data(params.utf8)) as! [String: Any]
                 let query = args["problems"] as? [String: Any] ?? [:]
                 let review = query["review"] as? String ?? "pending"
+                let view = query["view"] as? String ?? "actionable"
                 let limit = args["limit"] as? Int ?? 12
                 let offset = query["offset"] as? Int ?? 0
-                let ids = (1...112).map { String(format: "%032x", $0) }.filter { reviewed.contains($0) == (review == "acknowledged") }
+                let ids = (1...112).map { String(format: "%032x", $0) }.filter {
+                    automaticViews ? view == "history" : reviewed.contains($0) == (review == "acknowledged")
+                }
                 let selected = Array(ids.dropFirst(offset).prefix(limit))
                 let rows: [[String: Any]] = selected.map { id in
-                    ["problemKey": id, "revision": String(repeating: "a", count: 64), "kind": "failed", "source": "execution", "review": review,
-                     "observedAt": "2026-09-09T01:00:00Z", "canAcknowledge": review == "pending", "canUnacknowledge": review == "acknowledged", "canRecheck": false, "canRetryStop": false,
+                    let entryReview = reviewed.contains(id) ? "acknowledged" : "pending"
+                    return ["problemKey": id, "revision": String(repeating: "a", count: 64), "kind": "failed", "source": "execution", "review": entryReview,
+                     "observedAt": "2026-09-09T01:00:00Z", "canAcknowledge": entryReview == "pending", "canUnacknowledge": entryReview == "acknowledged", "canRecheck": false, "canRetryStop": false,
                      "row": ["rowKey": id, "activityKey": id, "conversationKey": id, "sessionAlias": "Session A", "bucket": "recent", "projectKey": id,
                              "agentName": "Repeated Agent", "status": "failed", "createdAt": "2026-09-09T01:00:00Z", "updatedAt": "2026-09-09T01:00:01Z", "elapsedMs": 1000, "backgroundProcessCount": 0]]
                 }
                 var snapshot = try JSONSerialization.jsonObject(with: Data(base.utf8)) as! [String: Any]
-                snapshot["problems"] = ["query": ["review": review, "kind": query["kind"] ?? "all", "offset": offset],
-                    "revision": changesDuringPaging && offset > 0 ? "changed" : "stable", "pendingCount": 112 - reviewed.count,
+                if automaticViews {
+                    snapshot["historyPolicy"] = ["retentionDays": 30, "issueAttentionDays": 7, "lastCleanupCount": 0,
+                                                   "totalRemoved": 0, "reviewUntilRetention": true, "automaticRecovery": true]
+                }
+                snapshot["problems"] = ["query": query,
+                    "revision": changesDuringPaging && offset > 0 ? "changed" : "stable", "pendingCount": automaticViews ? 0 : 112 - reviewed.count,
+                    "historyCount": 112,
                     "acknowledgedCount": reviewed.count, "reviewableCount": 112 - reviewed.count, "rows": rows,
                     "page": ["offset": offset, "limit": limit, "total": ids.count, "returned": selected.count, "hasPrevious": offset > 0, "hasNext": offset + selected.count < ids.count]]
                 let data = try JSONSerialization.data(withJSONObject: ["result": snapshot])

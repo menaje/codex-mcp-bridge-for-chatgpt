@@ -78,8 +78,8 @@ describe("execution history retention",()=>{
     let store=new BridgeStateStore({file});store.upsertJob(job("failed"));store.close();
     const db=new Database(file);db.exec("DROP TABLE work_history_state; UPDATE bridge_meta SET value='14' WHERE key='schema_version'");db.close();
     store=new BridgeStateStore({file});
-    expect(store.schemaVersion).toBe(15);expect(store.countJobs()).toBe(1);
-    expect(readdirSync(directory).filter(name=>name.includes("pre-v15"))).toHaveLength(1);
+    expect(store.schemaVersion).toBe(16);expect(store.countJobs()).toBe(1);
+    expect(readdirSync(directory).filter(name=>name.includes("pre-v16"))).toHaveLength(1);
     store.workHistory.acknowledge("failed",now);store.close();store=new BridgeStateStore({file});
     expect(store.workHistory.acknowledgedJobIds().has("failed")).toBe(true);store.close();
   });

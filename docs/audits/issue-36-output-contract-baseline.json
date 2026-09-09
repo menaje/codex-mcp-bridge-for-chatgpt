@@ -10,7 +10,7 @@
     "measurement": "Buffer.byteLength(JSON.stringify(value), 'utf8')",
     "schemaInventory": {
       "modelTools": 12,
-      "currentAppTools": 5,
+      "currentAppTools": 7,
       "compatibilityDescriptorsIncluded": false,
       "scope": "Current exported output contracts; retained compatibility discovery is measured separately in the issue-69 inventory."
     },
@@ -122,24 +122,26 @@
           "codex_ask_user": 422,
           "codex_cancel": 1495,
           "codex_dashboard": 408,
-          "codex_models": 2595,
+          "codex_models": 2963,
           "codex_settings": 232,
-          "codex_status": 6423,
+          "codex_status": 9326,
           "codex_steer": 1360,
-          "codex_task": 2416,
+          "codex_task": 3897,
           "codex_user_answer": 1357
         },
-        "totalBytes": 18747
+        "totalBytes": 23499
       },
       "appOnly": {
         "byTool": {
           "codex_interaction_respond": 2218,
           "codex_question_action": 552,
-          "codex_ui_read": 54841,
+          "codex_ui_history": 173,
+          "codex_ui_problem": 251,
+          "codex_ui_read": 70962,
           "codex_ui_stop": 2218,
-          "codex_update_settings": 11175
+          "codex_update_settings": 12450
         },
-        "totalBytes": 71004
+        "totalBytes": 88824
       }
     },
     "resultBytes": {
@@ -327,8 +329,8 @@
   },
   "finalGenerationBudget": {
     "historicalIssue36ReductionTargetPercent": 40,
-    "targetModelVisibleSchemaBytes": 19500,
-    "actualModelVisibleSchemaBytes": 18747,
+    "targetModelVisibleSchemaBytes": 24000,
+    "actualModelVisibleSchemaBytes": 23499,
     "dedicatedQuestionTools": [
       "codex_answer",
       "codex_ask_user",
@@ -336,8 +338,8 @@
     ],
     "dedicatedQuestionToolsSchemaBytes": 2290,
     "sharedQuestionInputSchema": "codex_status",
-    "headroomBytes": 753,
-    "enforcedAt": "issue69-tool-consolidation-issue70-guidance",
+    "headroomBytes": 501,
+    "enforcedAt": "original-wait-automatic-recovery",
     "liveHostEvidenceProducedByThisAudit": false,
     "separateLiveQuestionEvidence": "docs/audits/issue-70-unlocked-host.json",
     "passed": true

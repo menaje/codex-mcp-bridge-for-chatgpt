@@ -3719,7 +3719,7 @@ describe("bridge tools", () => {
   it("defers Dashboard runtime probes until mount and reports not-loaded, unknown, and orphaned evidence", async () => {
     const root = temporaryRoot();
     const upstream = new ProbeAwareUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
@@ -3727,6 +3727,10 @@ describe("bridge tools", () => {
       prompt: "create one App Server thread for Dashboard probing"
     }));
     expect(task.status).toBe("completed");
+
+    // Exercise the legacy display cache independently while maintenance is
+    // paused for drain. Automatic rechecks have their own integration coverage.
+    await applicationService.beginDrain();
 
     upstream.probe = {
       state: "resumable",
@@ -15585,6 +15589,7 @@ async function connectTestClient(
     close: async () => {
       await client.close();
       await server.close();
+      if (!jobs) await jobRegistry.closeThreadConnections();
       ownedState?.close();
     }
   };
@@ -16347,6 +16352,207 @@ describe("public v2 permission admission", () => {
   });
 });
 
+
+describe("automatic recovery and original wait integration", () => {
+  it("releases only finished persistent connections and rechecks every eligible peer before shared-worker cleanup", async () => {
+    const upstream: CodexUpstream = new SelectiveLoadedTerminalUpstream();
+    const release = vi.fn<NonNullable<CodexUpstream["releaseThreadConnection"]>>();
+    upstream.releaseThreadConnection = release;
+    const {jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const seed=(name:string,status:string,persistence:"persistent"|"ephemeral",scopeId=SCOPE_A) => {
+        const agent=jobs.createAgent({scopeId,agentName:name}),threadId=`release-${name}`,jobId=`release-job-${name}`,now=Date.now();
+        jobs.linkAgentThread({agentId:agent.agentId,threadId,backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+        const record={jobId,requestId:nextRequestId(),scopeId,agentId:agent.agentId,backendKind:"app-server",threadId,
+          threadPersistence:persistence,upstreamRequestId:`turn-${name}`,status:"running",createdAt:now-2000,updatedAt:now-1000};
+        jobs.admissionStateStore.upsertJob(record);
+        if(status!=="running")jobs.admissionStateStore.upsertJob({...record,status,updatedAt:now});
+        return {agent,threadId,jobId};
+      };
+      const first=seed("failed","failed","persistent"),peer=seed("interrupted","interrupted","persistent",SCOPE_B);
+      const protectedThreads=[seed("success","completed","persistent"),seed("ephemeral","failed","ephemeral"),seed("active","running","persistent")];
+      release.mockImplementation(async (_id,options)=>{
+        expect([...options.eligibleThreadIds].sort()).toEqual([first.threadId,peer.threadId].sort());
+        for(const thread of protectedThreads)expect(options.canRelease(thread.threadId)).toBe(false);
+        for(const id of options.eligibleThreadIds)expect(options.canRelease(id)).toBe(true);
+        jobs.runtimeAdmission.pendingAdmissions=1;
+        for(const id of options.eligibleThreadIds)expect(options.canRelease(id)).toBe(false);
+        jobs.runtimeAdmission.pendingAdmissions=0;
+        return {phase:"released",evidence:"worker-exited",releasedThreadIds:[first.threadId,peer.threadId]};
+      });
+      jobs.runtimeAdmission.pendingAdmissions=1;await jobs.sweepAutomaticRecovery();expect(release).not.toHaveBeenCalled();
+      jobs.runtimeAdmission.pendingAdmissions=0;jobs.runtimeAdmission.acceptingNewJobs=false;
+      await jobs.sweepAutomaticRecovery();expect(release).not.toHaveBeenCalled();
+      jobs.runtimeAdmission.acceptingNewJobs=true;await jobs.sweepAutomaticRecovery();
+      expect(release).toHaveBeenCalledTimes(1);
+      for(const thread of [first,peer])expect(jobs.admissionStateStore.threadConnections.get(thread.threadId)).toMatchObject({phase:"released",evidence:"worker-exited"});
+      for(const thread of protectedThreads)expect(jobs.admissionStateStore.threadConnections.get(thread.threadId)?.phase).toBe("connected");
+      expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({kind:"release",state:"resolved",attempts:1,evidence:"worker-exited"})]);
+      expect(jobs.admissionStateStore.listJobs().find(job=>job.jobId===first.jobId)?.status).toBe("failed");
+      await jobs.sweepAutomaticRecovery();expect(release).toHaveBeenCalledTimes(1);
+    } finally {await close();}
+  });
+
+  it("separates all finished failures from actionable problems without changing review or outcome", async () => {
+    const {jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Retained failures"});
+      for(let n=0;n<3;n++) {
+        const record={jobId:`auto-history-${n}`,requestId:`auto-request-${n}`,scopeId:SCOPE_A,agentId:agent.agentId,
+          status:n===2?"completed":"failed",createdAt:Date.now()-2000+n,updatedAt:Date.now()-1000+n};
+        jobs.admissionStateStore.upsertJob(record);jobs.admissionStateStore.deleteJob(record.jobId);
+      }
+      jobs.admissionStateStore.workHistory.acknowledge("auto-history-0");
+      const query={view:"actionable" as const,review:"pending" as const,kind:"all" as const,offset:0};
+      const live=await applicationService.dashboardSnapshot({statusFilter:"all",problems:query});
+      expect(live.counts).toMatchObject({problems:0,needsAttention:0,running:0});
+      expect(live.problems).toMatchObject({historyCount:2,acknowledgedCount:1,pendingCount:0,rows:[]});
+      const history=await applicationService.dashboardSnapshot({statusFilter:"problems",problems:{...query,view:"history"}});
+      expect(history.problems?.rows).toHaveLength(2);
+      expect(history.problems?.rows.map(row=>row.row.status)).toEqual(["failed","failed"]);
+      expect(history.problems?.rows.filter(row=>row.canAcknowledge)).toHaveLength(1);
+      expect(jobs.admissionStateStore.workHistory.acknowledgedJobIds().size).toBe(1);
+      expect(jobs.admissionStateStore.listDashboardRetainedJobs().filter(job=>job.status==="failed")).toHaveLength(2);
+    } finally {await close();}
+  });
+
+  it("delivers failure judgment only through the original exact-Job wait, never replay, another scope or later reads", async () => {
+    const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    const meta={"openai/session":"original-recovery-conversation","openai/subject":"fixture-user"};
+    try {
+      const args={prompt:"Original background work",sessionMode:"new",requestId:nextRequestId()};
+      const started=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+      expect(started.waitContext).toMatchObject({jobId:started.jobId,originRequestId:args.requestId});
+      const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+      expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
+      const query={kind:"job",id:started.jobId,waitFor:"terminal",waitMs:1000,waitToken:started.waitContext.token};
+      const outside=await rawCallTool({name:"codex_status",arguments:{query},_meta:{...meta,"openai/session":"unrelated-conversation"}});
+      expect(outside.isError).toBe(true);expect((outside.structuredContent as any)?.recovery).toBeUndefined();
+      const invalid=await rawCallTool({name:"codex_status",arguments:{query:{...query,waitToken:"A".repeat(43)}},_meta:meta});
+      expect(invalid.isError).toBe(true);
+      const waitSpy=vi.spyOn(jobs,"wait");
+      const waiting=rawCallTool({name:"codex_status",arguments:{query},_meta:meta});
+      await vi.waitFor(()=>expect(waitSpy).toHaveBeenCalledTimes(1));
+      upstream.rejectNext(new Error("Original turn failed"));
+      const result=(await waiting).structuredContent as any;
+      expect(result.recovery).toMatchObject({jobId:started.jobId,originRequestId:args.requestId,outcome:"failed",actionScope:"original-job-only"});
+      expect(result.waitContext).toBeUndefined();
+      for(const query of [undefined,{kind:"job",id:started.jobId},{kind:"activity",id:started.activityId}]) {
+        const later=await rawCallTool({name:"codex_status",arguments:query?{query}:{},_meta:meta});
+        expect(later.isError,JSON.stringify(later)).not.toBe(true);expect((later.structuredContent as any).recovery).toBeUndefined();
+        expect(JSON.stringify(later)).not.toContain(started.waitContext.token);
+      }
+      expect(JSON.stringify(jobs.admissionStateStore.listJobs())).not.toContain(started.waitContext.token);
+      expect(jobs.get(started.jobId)?.status).toBe("failed");
+    } finally {await close();}
+  });
+
+  it("returns a foreground failure to its live original caller and supports the same guarded input-wait path", async () => {
+    const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const foreground=client.callTool({name:"codex_task",arguments:{prompt:"Foreground failure",sessionMode:"new",executionMode:"foreground"}});
+      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));upstream.rejectNext(new Error("Foreground turn failed"));
+      const failed=(await foreground).structuredContent as any;
+      expect(failed).toMatchObject({state:"failed",recovery:{jobId:failed.jobId,outcome:"failed"}});
+      expect(failed.waitContext).toBeNull();
+      const background=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Input wait failure",sessionMode:"new"}}));
+      const spy=vi.spyOn(jobs,"waitForInput");
+      const waiting=rawCallTool({name:"codex_status",arguments:{scopeId:SCOPE_A,query:{kind:"input",jobId:background.jobId,waitMs:1000,waitToken:background.waitContext.token}}});
+      await vi.waitFor(()=>expect(spy).toHaveBeenCalledTimes(1));upstream.rejectNext(new Error("Input-waited turn failed"));
+      const result=(await waiting).structuredContent as any;
+      expect(result).toMatchObject({kind:"codex-input",active:false,recovery:{jobId:background.jobId,outcome:"failed"}});
+    } finally {await close();}
+  });
+
+  it("automatically rechecks unknown runtime without resuming or terminating it and records actual confirmation", async () => {
+    const upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Automatic inspection"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"auto-unknown",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      const options={statusFilter:"all" as const,problems:{view:"actionable" as const,review:"pending" as const,kind:"all" as const,offset:0}};
+      await jobs.sweepAutomaticRecovery();expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([]);
+      const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      const background=vi.spyOn(upstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("not inspected"));
+      await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      await jobs.sweepAutomaticRecovery();
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({kind:"recheck",attempts:1,state:"retrying"});
+      expect((await applicationService.dashboardSnapshot(options)).counts.problems).toBe(1);
+      expect(upstream.calls).toEqual([]);
+      now+=5000;probe.mockImplementation(async threadId=>({state:"resumable",runtimeStatus:"notLoaded",threadId}));background.mockResolvedValue(null);
+      await jobs.sweepAutomaticRecovery();
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({attempts:2,state:"resolved",evidence:"runtime-observed"});
+      expect((await applicationService.dashboardSnapshot(options)).counts.problems).toBe(0);
+      expect(upstream.calls).toEqual([]);
+      const automatic=await applicationService.dashboardSnapshot({...options,problems:{...options.problems,view:"automatic"}});
+      expect(automatic.problems?.rows[0]).toMatchObject({source:"recovery",review:"automatic",canAcknowledge:false,automatic:{state:"resolved"}});
+    } finally {clock.mockRestore();await close();}
+  });
+
+  it("automatically clears a disconnected runtime only with fresh evidence of no remaining work", async () => {
+    const upstream=new SelectiveLoadedTerminalUpstream(),{jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Automatic disconnection check"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"auto-missing",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"missing"});
+      vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+      await jobs.sweepAutomaticRecovery();
+      const view=await applicationService.dashboardSnapshot({statusFilter:"all",problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+      expect(view.counts.problems).toBe(0);
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({state:"resolved",evidence:"not-loaded-no-background"});
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("orphaned");expect(upstream.calls).toEqual([]);
+    } finally {await close();}
+  });
+
+  it("resumes a persisted unknown-state recheck after restart without requiring a dashboard mount", async () => {
+    const root=temporaryRoot(),config=configFor(root),file=path.join(root,"recovery.sqlite"),firstUpstream=new SelectiveLoadedTerminalUpstream();
+    let state=new BridgeStateStore({file});
+    let bridge=await connectTestClient(config,firstUpstream,undefined,undefined,new UserSettingsStore(config,{stateStore:state})),now=Date.now();
+    const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=bridge.jobs.createAgent({scopeId:SCOPE_A,agentName:"Restarted inspection"});
+      bridge.jobs.linkAgentThread({agentId:agent.agentId,threadId:"restart-unknown",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      vi.spyOn(firstUpstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      vi.spyOn(firstUpstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("unavailable"));
+      await bridge.applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true,problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+      await bridge.jobs.sweepAutomaticRecovery();
+      expect(bridge.jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({attempts:1,state:"retrying"});
+      await bridge.close();state.close();now+=5000;
+      const restartedUpstream=new SelectiveLoadedTerminalUpstream(),probe=vi.spyOn(restartedUpstream,"probeThread");
+      state=new BridgeStateStore({file});
+      bridge=await connectTestClient(config,restartedUpstream,undefined,undefined,new UserSettingsStore(config,{stateStore:state}));
+      await bridge.jobs.sweepAutomaticRecovery();
+      expect(probe).toHaveBeenCalledWith("restart-unknown","app-server");
+      expect(bridge.jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({attempts:2,state:"resolved",evidence:"runtime-observed"})]);
+      expect(restartedUpstream.calls).toEqual([]);
+    } finally {clock.mockRestore();await bridge.close();state.close();}
+  });
+
+  it("automatically retries only the previously requested exact turn and leaves another conversation's shared worker work untouched", async () => {
+    const upstream=new MultiTurnAppUpstream(),{client,jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const first=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Requested stop",sessionMode:"new"}}));
+      const second=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Other conversation work",sessionMode:"new",scopeId:SCOPE_B}}));
+      const job=jobs.get(first.jobId)!,other={...jobs.get(second.jobId)!};
+      const stop=vi.spyOn(upstream,"forceTerminateWorker").mockRejectedValueOnce(new Error("interrupt confirmation timed out"));
+      const {intent}=jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:nextRequestId(),actionHash:"e".repeat(64),source:"operator",toolName:"test",actionName:"stop-job",
+        target:{kind:"job",jobId:job.jobId,activityId:job.activityId,agentId:job.agentId,threadId:job.threadId,turnId:job.upstreamRequestId},expectedVersion:job.version,reasonCode:"explicit-stop"});
+      await jobs.cancel(job.jobId,intent,{interruptOnly:true});expect(job.status).toBe("termination-failed");
+      await jobs.sweepAutomaticRecovery();
+      expect(stop).toHaveBeenCalledTimes(2);
+      expect((stop.mock.calls[1] as unknown[])[3]).toEqual({interruptOnly:true});
+      expect(jobs.get(job.jobId)?.status).toBe("cancelled");
+      expect(jobs.get(second.jobId)).toMatchObject({scopeId:SCOPE_B,status:"running",version:other.version,upstreamRequestId:other.upstreamRequestId});
+      expect(jobs.listCancellationIntents({jobId:second.jobId})).toEqual([]);
+      expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({jobId:first.jobId,state:"resolved",evidence:"turn-interrupt",attempts:1})]);
+      expect(jobs.listCancellationIntents({jobId:first.jobId})).toEqual(expect.arrayContaining([expect.objectContaining({toolName:"bridge.automatic-recovery",reasonCode:"prior-stop-intent-retry"})]));
+      await jobs.sweepAutomaticRecovery();expect(stop).toHaveBeenCalledTimes(2);
+      const view=await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_B,problems:{view:"automatic",review:"pending",kind:"all",offset:0}});
+      expect(view.problems?.automaticCount).toBe(0);
+    } finally {await close();}
+  });
+});
 
 describe("CLI contract and interaction admission", () => {
   it("rejects unsupported execution before creating a Job, Activity, or Agent", async () => {

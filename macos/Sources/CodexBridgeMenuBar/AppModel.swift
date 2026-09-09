@@ -316,7 +316,7 @@ final class AppModel: ObservableObject {
     @Published var logsErrorMessage: String?
     @Published var settingsConflictMessage: String?
     @Published var isBusy = false { didSet { scheduleOperationalObservation() } }
-    @Published private(set) var dashboardProblemQuery = ProblemQuery()
+    @Published private(set) var dashboardProblemQuery = ProblemQuery(view: .actionable)
     @Published private(set) var changingProblems = false
     @Published var problemActionNotice: String?
     @Published var loginInProgress = false { didSet { scheduleOperationalObservation() } }
@@ -1275,10 +1275,10 @@ final class AppModel: ObservableObject {
         await refreshDashboard()
     }
 
-    func selectProblemQuery(review: ProblemReview? = nil, kind: ProblemKind? = nil, offset: Int = 0) async {
+    func selectProblemQuery(review: ProblemReview? = nil, kind: ProblemKind? = nil, offset: Int = 0, view: ProblemView? = nil) async {
         guard !changingProblems else { return }
         dashboardProblemQuery = ProblemQuery(review: review ?? dashboardProblemQuery.review,
-                                             kind: kind ?? dashboardProblemQuery.kind, offset: offset)
+                                             kind: kind ?? dashboardProblemQuery.kind, offset: offset, view: view ?? dashboardProblemQuery.view)
         problemActionNotice = nil
         await refreshDashboard()
     }
@@ -1320,7 +1320,8 @@ final class AppModel: ObservableObject {
             var revision: String?
             repeat {
                 let snapshot = try await client.dashboardWithProblems(limit: 50, terminalOffset: 0, idleOffset: 0,
-                    enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset))
+                    enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset,
+                        view: dashboard?.historyPolicy?.automaticRecovery == true ? .history : nil))
                 guard connection == connectionGeneration else { return }
                 guard let problems = snapshot.problems, problems.page.offset == offset,
                       revision == nil || revision == problems.revision else {

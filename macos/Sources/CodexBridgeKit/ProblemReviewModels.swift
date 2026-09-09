@@ -1,7 +1,11 @@
 import Foundation
 
 public enum ProblemReview: String, Codable, Sendable, CaseIterable {
-    case pending, acknowledged
+    case pending, acknowledged, automatic
+}
+
+public enum ProblemView: String, Codable, Sendable, CaseIterable {
+    case actionable, history, automatic
 }
 
 public enum ProblemKind: String, Codable, Sendable, CaseIterable {
@@ -13,10 +17,12 @@ public struct ProblemQuery: Codable, Sendable, Equatable {
     public var review: ProblemReview
     public var kind: ProblemKind
     public var offset: Int
-    public init(review: ProblemReview = .pending, kind: ProblemKind = .all, offset: Int = 0) {
+    public var view: ProblemView?
+    public init(review: ProblemReview = .pending, kind: ProblemKind = .all, offset: Int = 0, view: ProblemView? = nil) {
         self.review = review
         self.kind = kind
         self.offset = offset
+        self.view = view
     }
 }
 
@@ -26,6 +32,8 @@ public struct DashboardProblems: Codable, Sendable {
     public let pendingCount: Int
     public let acknowledgedCount: Int
     public let reviewableCount: Int
+    public var historyCount: Int? = nil
+    public var automaticCount: Int? = nil
     public let rows: [DashboardProblem]
     public let page: ProblemPage
 }
@@ -54,11 +62,20 @@ public struct DashboardProblem: Codable, Identifiable, Sendable {
     public let canRecheck: Bool
     public let canRetryStop: Bool
     public let stopImpact: ProblemStopImpact?
+    public var automatic: AutomaticRecoverySummary? = nil
     public let row: DashboardRow
 
     public var target: ProblemTarget {
         ProblemTarget(problemKey: problemKey, expectedRevision: revision)
     }
+}
+
+public struct AutomaticRecoverySummary: Codable, Sendable {
+    public let kind: String
+    public let state: String
+    public let attempts: Int
+    public let reason: String
+    public let evidence: String?
 }
 
 public struct ProblemStopImpact: Codable, Sendable {

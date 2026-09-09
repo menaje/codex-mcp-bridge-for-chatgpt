@@ -25,6 +25,7 @@ public struct DashboardSnapshot: Codable, Sendable {
 
 public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
     public var reviewUntilRetention: Bool? = nil
+    public var automaticRecovery: Bool? = nil
     public let retentionDays: Int
     public let issueAttentionDays: Int
     public let lastCleanupAt: String?

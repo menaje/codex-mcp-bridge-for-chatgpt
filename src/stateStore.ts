@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { WORK_HISTORY_SCHEMA, WorkHistoryStore, historyRetentionDays } from "./workHistory.js";
+import { AUTOMATIC_RECOVERY_SCHEMA, AutomaticRecoveryStore } from "./automaticRecovery.js";
 import { EVENT_RETENTION_SCHEMA, EventRetention } from "./eventRetention.js";
 import { THREAD_CONNECTION_SCHEMA, ThreadConnectionStore, type ThreadPersistence } from "./threadConnections.js";
 import { QuestionStore, QUESTION_STORE_SCHEMA } from "./questionStore.js";
@@ -83,7 +84,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "15";
+const CURRENT_SCHEMA_VERSION = "16";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -430,6 +431,7 @@ export class BridgeStateStore {
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
   readonly workHistory: WorkHistoryStore;
+  readonly automaticRecovery: AutomaticRecoveryStore;
   private readonly database: Database.Database;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
@@ -468,6 +470,7 @@ export class BridgeStateStore {
       existingVersion !== "12" &&
       existingVersion !== "13" &&
       existingVersion !== "14" &&
+      existingVersion !== "15" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -522,10 +525,17 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "14") {
         this.transaction(() => {
           this.database.exec(WORK_HISTORY_SCHEMA);
+          this.setMeta("schema_version", "15");
+        });
+      }
+      if (this.getMeta("schema_version") === "15") {
+        this.transaction(() => {
+          this.database.exec(AUTOMATIC_RECOVERY_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
         });
       }
       this.workHistory = new WorkHistoryStore(this.database);
+      this.automaticRecovery = new AutomaticRecoveryStore(this.database);
       this.threadConnections = new ThreadConnectionStore(this.database);
       this.eventRetention = new EventRetention(this.database);
       this.normalizeLegacyExecutionModes();
@@ -833,6 +843,7 @@ export class BridgeStateStore {
       const settings = this.getSettingsRecord()?.payload;
       const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
       const historyRemoved = this.workHistory.sweep(days, jobId => this.retentionProtection(jobId, now).length > 0, now);
+      this.automaticRecovery.prune(days, now);
       const candidates = this.database.prepare(`SELECT a.agent_id,c.thread_id FROM agents a JOIN thread_connections c ON c.agent_id=a.agent_id AND c.thread_id=a.current_thread_id
         WHERE a.lifecycle='idle' AND a.current_job_id IS NULL AND c.phase='released'
         AND c.last_finished_at<? AND a.updated_at<? LIMIT 50`).all(now - 30 * 86400_000, now - 30 * 86400_000) as Array<{agent_id:string;thread_id:string}>;

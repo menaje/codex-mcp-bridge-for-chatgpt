@@ -33,6 +33,7 @@ export type WorkHistoryPolicy = {
   lastCleanupCount: number;
   totalRemoved: number;
   reviewUntilRetention: boolean;
+  automaticRecovery: boolean;
 };
 
 export type HistoryProblemJob = HistoryJobIdentity & {
@@ -122,7 +123,7 @@ export class WorkHistoryStore {
     const cleanup = row ? JSON.parse(row.value) as {at:number;count:number;total:number} : undefined;
     return { retentionDays: days, issueAttentionDays: ISSUE_ATTENTION_DAYS,
       lastCleanupAt: cleanup ? new Date(cleanup.at).toISOString() : null,
-      lastCleanupCount: cleanup?.count || 0, totalRemoved: cleanup?.total || 0, reviewUntilRetention: true };
+      lastCleanupCount: cleanup?.count || 0, totalRemoved: cleanup?.total || 0, reviewUntilRetention: true, automaticRecovery:true };
   }
 
   /** Bounded maintenance. Protected results and live work remain intact. */

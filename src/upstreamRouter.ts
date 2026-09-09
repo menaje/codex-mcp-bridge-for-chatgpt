@@ -283,13 +283,17 @@ export class CodexBackendRouter implements CodexUpstream {
   forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs?: number
+    graceMs?: number,
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult> {
     const backend = this.backend(assignment.backendKind);
     if (!backend.forceTerminateWorker) {
       throw new Error(`Codex backend ${assignment.backendKind} does not support supervised force-stop.`);
     }
-    return backend.forceTerminateWorker(assignment, correlation, graceMs);
+    if (options?.interruptOnly && assignment.backendKind !== "app-server") {
+      throw new Error("PRECISE_INTERRUPTION_REQUIRED: Automatic recovery cannot terminate a shared worker.");
+    }
+    return backend.forceTerminateWorker(assignment, correlation, graceMs, options);
   }
 
   async respondToInteraction(

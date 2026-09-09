@@ -662,14 +662,15 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   async forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs?: number
+    graceMs?: number,
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
-    const result = await worker.connection.interruptOrTerminate(assignment, correlation, graceMs);
+    const result = await worker.connection.interruptOrTerminate(assignment, correlation, graceMs, options);
     if (result.workerExited) {
       worker.connection = undefined;
       this.forgetWorkerThreads(worker.index);
@@ -1478,7 +1479,8 @@ class AppServerConnection {
   async interruptOrTerminate(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs = 1_500
+    graceMs = 1_500,
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const identity = this.rpc.identity;
@@ -1540,6 +1542,9 @@ class AppServerConnection {
       } catch {
         // One UI action automatically falls back to supervised process-group termination.
       }
+    }
+    if (options?.interruptOnly) {
+      throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The original turn could not be confirmed stopped; shared worker termination was not authorized.");
     }
     this.terminationRequested = true;
     return this.rpc.forceTerminate(graceMs);

@@ -1020,6 +1020,27 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it("never falls back to shared-process termination during an automatic interruption retry", async () => {
+    const pool=new CodexAppServerUpstreamPool(FIXTURE,1,{interruptTimeoutMs:40});
+    let first:UpstreamWorkerAssignment|undefined,second:UpstreamWorkerAssignment|undefined;
+    const running=pool.callTool("codex",task("hold and ignore interrupt"),undefined,value=>{first=value;}).catch(error=>error);
+    let other:Promise<unknown>|undefined;
+    try {
+      await eventually(()=>Boolean(first?.upstreamRequestId));
+      other=pool.callTool("codex",task("hold another conversation"),undefined,value=>{second=value;}).catch(error=>error);
+      await eventually(()=>Boolean(second?.upstreamRequestId));
+      expect(first?.workerPid).toBe(second?.workerPid);
+      const correlation={kind:"cancellation-intent" as const,intentId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",requestId:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",source:"operator" as const,reasonCode:"prior-stop-intent-retry"};
+      await expect(pool.forceTerminateWorker(first!,correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
+      await expect(pool.probeThread(second!.threadId!)).resolves.toMatchObject({state:"busy"});
+      await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
+      await expect(pool.forceTerminateWorker({...first!,upstreamRequestId:"obsolete-turn"},correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
+      await expect(pool.forceTerminateWorker(second!,correlation,10,{interruptOnly:true})).resolves.toMatchObject({mode:"turn-interrupt",workerExited:false});
+      await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
+      await other;
+    } finally {await pool.close();await running;await other;}
+  },15_000);
+
   it("confirms exact turn interruption before falling back to process termination", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     let assignment: UpstreamWorkerAssignment | undefined;

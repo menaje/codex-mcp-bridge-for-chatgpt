@@ -386,6 +386,7 @@ lines.on("line", (line) => {
     response(message.id, {});
     if (context) {
       interruptedTurnCounts.set(context.threadId, (interruptedTurnCounts.get(context.threadId) || 0) + 1);
+      if (context.prompt.includes("ignore interrupt")) return;
       if (context.prompt.includes("delayed interrupt")) {
         setTimeout(() => finishTurn(context, "interrupted", "INTERRUPTED"), 150);
       } else {

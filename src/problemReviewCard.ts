@@ -19,6 +19,9 @@ export const PROBLEM_REVIEW_MARKUP = String.raw`
       <div class="problem-tabs" role="group" data-i18n-aria="problem.reviewLabel">
         <button type="button" data-problem-review="pending" aria-pressed="true" data-i18n="problem.pending"></button>
         <button type="button" data-problem-review="acknowledged" aria-pressed="false" data-i18n="problem.acknowledged"></button>
+        <button type="button" data-problem-view="actionable" hidden aria-pressed="true" data-i18n="problem.pending"></button>
+        <button type="button" data-problem-view="history" hidden aria-pressed="false" data-i18n="problem.history"></button>
+        <button type="button" data-problem-view="automatic" hidden aria-pressed="false" data-i18n="problem.automatic"></button>
       </div>
       <label class="problem-kind"><span data-i18n="problem.kindLabel"></span><select id="problem-kind">
         <option value="all" data-i18n="problem.kind.all"></option><option value="failed" data-i18n="problem.kind.failed"></option>
@@ -26,6 +29,7 @@ export const PROBLEM_REVIEW_MARKUP = String.raw`
         <option value="orphaned" data-i18n="problem.kind.orphaned"></option>
       </select></label>
     </div>
+    <p id="problem-policy" class="problem-note" hidden></p>
     <div class="problem-actions"><button type="button" id="problem-ack-all" data-i18n="problem.ackAll"></button><button type="button" id="problem-ack-selected" data-i18n="problem.ackSelected"></button></div>
     <p id="problem-notice" class="problem-note" role="status" aria-live="polite"></p>
     <div id="problem-confirm" class="problem-confirm" hidden role="group"></div>
@@ -35,10 +39,11 @@ export const PROBLEM_REVIEW_MARKUP = String.raw`
 `;
 
 export const PROBLEM_REVIEW_SCRIPT = String.raw`
-    let problemReview="pending",problemKind="all",problemOffset=0,problemMutationInFlight=false,problemNotice="",problemStopCandidate=null;
+    let problemReview="pending",problemView="actionable",problemKind="all",problemOffset=0,problemMutationInFlight=false,problemNotice="",problemStopCandidate=null;
     const selectedProblemKeys=new Set();
     const problemElements={section:document.getElementById("problem-section"),list:document.getElementById("problem-list"),count:document.getElementById("problem-list-count"),kind:document.getElementById("problem-kind"),ackAll:document.getElementById("problem-ack-all"),ackSelected:document.getElementById("problem-ack-selected"),notice:document.getElementById("problem-notice"),confirm:document.getElementById("problem-confirm"),empty:document.getElementById("problem-empty"),page:document.getElementById("problem-page"),previous:document.getElementById("problem-previous"),next:document.getElementById("problem-next"),pageLabel:document.getElementById("problem-page-label")};
-    function problemQuery(){return {review:problemReview,kind:problemKind,offset:problemOffset}}
+    function automaticProblemViews(){return view?.historyPolicy?.automaticRecovery===true}
+    function problemQuery(){return {review:problemReview,kind:problemKind,offset:problemOffset,view:problemView}}
     function problemTarget(problem){return {problemKey:problem.problemKey,expectedRevision:problem.revision}}
     function problemError(error){const message=String(error?.message||error);if(/PROBLEM_TARGET_CHANGED|PROBLEM_REVIEW_STALE|PROBLEM_STOP_IMPACT_CHANGED/.test(message))return t["problem.changed"];if(message.includes("PROBLEM_INSPECTION_PENDING"))return t["problem.inspectPending"];return message}
     function problemButton(parent,title,handler,css=""){const button=node("button",css,title);button.type="button";button.disabled=busy;button.addEventListener("click",handler);parent.appendChild(button);return button}
@@ -54,11 +59,17 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
       document.getElementById("active-list").closest("section").hidden=Boolean(data&&selectedStatus==="problems");
       document.getElementById("terminal-list").closest("section").hidden=Boolean(data&&selectedStatus==="problems");
       if(!data)return;problemOffset=data.page.offset;problemElements.count.textContent=formatNumber(data.page.total);
+      const automatic=next.historyPolicy?.automaticRecovery===true;
+      for(const button of document.querySelectorAll("[data-problem-review]"))button.hidden=automatic;
+      for(const button of document.querySelectorAll("[data-problem-view]")){button.hidden=!automatic;button.setAttribute("aria-pressed",String(button.dataset.problemView===problemView))}
+      const policy=document.getElementById("problem-policy");policy.hidden=!automatic;policy.textContent=t[problemView==="history"?"problem.historyOptional":problemView==="automatic"?"problem.automaticLogNotice":"problem.autoNotice"];
       const reviewable=new Set(data.rows.filter(problem=>problem.canAcknowledge).map(problem=>problem.problemKey));
       for(const key of selectedProblemKeys)if(!reviewable.has(key))selectedProblemKeys.delete(key);
       for(const button of document.querySelectorAll("[data-problem-review]"))button.setAttribute("aria-pressed",String(button.dataset.problemReview===problemReview));
-      problemElements.kind.value=problemKind;problemElements.ackAll.hidden=problemReview!=="pending"||!["all","failed"].includes(problemKind);
-      problemElements.ackSelected.hidden=problemReview!=="pending"||!["all","failed"].includes(problemKind);problemElements.notice.textContent=problemNotice;
+      problemElements.kind.value=problemKind;const mayReview=(automatic?problemView==="history":problemReview==="pending")&&["all","failed"].includes(problemKind);
+      problemElements.ackAll.hidden=!mayReview;problemElements.ackSelected.hidden=!mayReview;problemElements.notice.textContent=problemNotice;
+      problemElements.kind.closest("label").hidden=automatic&&problemView!=="actionable";
+      problemElements.kind.querySelector('option[value="failed"]').hidden=automatic;
       problemElements.list.replaceChildren();
       for(const problem of data.rows){
         const article=node("article","problem-row"),body=node("div","activity-agent");article.dataset.problemKey=problem.problemKey;
@@ -67,6 +78,9 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
         if(problem.reason)article.appendChild(node("p","problem-reason",problem.reason));else if(problem.source==="execution")article.appendChild(node("p","problem-note",t["problem.noDetails"]));
         if(problem.source==="runtime"){article.appendChild(node("p","problem-note",t["problem.observed"].replace("{time}",relativeTime(problem.observedAt))));if(problem.review==="pending")article.appendChild(node("p","problem-note",t["problem.liveNotice"]))}
         if(problem.acknowledgedAt)article.appendChild(node("p","problem-note",t["problem.ackAt"].replace("{time}",relativeTime(problem.acknowledgedAt))));
+        if(problem.automatic){const action=problem.automatic;article.appendChild(node("p","problem-note",t["problem.auto."+action.kind]+" · "+t["problem.auto."+action.state]+" · "+t["problem.auto.attempts"].replace("{count}",formatNumber(action.attempts))));
+          const reason=action.evidence?"confirmed":action.reason==="work-changed"?"changed":/active-work|background|pending-request|shared-worker/.test(action.reason)?"protected":"unconfirmed";
+          if(action.reason!=="inspection-pending")article.appendChild(node("p","problem-note",t["problem.auto."+reason]));if(problem.source==="recovery")article.appendChild(node("p","problem-note",relativeTime(problem.observedAt)))}
         const actions=node("div","problem-actions");
         if(problem.canAcknowledge)problemButton(actions,t["history.acknowledge"],()=>void runProblemAction("acknowledge",[problem]));
         if(problem.canUnacknowledge)problemButton(actions,t["problem.undo"],()=>void runProblemAction("unacknowledge",[problem]));
@@ -74,7 +88,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
         if(problem.canRetryStop)problemButton(actions,t["problem.retryStop"],()=>showProblemStop(problem),"problem-stop");
         article.appendChild(actions);problemElements.list.appendChild(article);
       }
-      problemElements.empty.hidden=data.rows.length>0;problemElements.empty.textContent=t[problemReview==="pending"?"problem.empty":"problem.emptyAcknowledged"];
+      problemElements.empty.hidden=data.rows.length>0;problemElements.empty.textContent=t[automatic?(problemView==="history"?"problem.historyEmpty":problemView==="automatic"?"problem.automaticEmpty":"problem.empty"):problemReview==="pending"?"problem.empty":"problem.emptyAcknowledged"];
       problemElements.page.hidden=!data.page.hasPrevious&&!data.page.hasNext;
       problemElements.pageLabel.textContent=formatNumber(data.page.offset+1)+"–"+formatNumber(data.page.offset+data.page.returned)+" / "+formatNumber(data.page.total);
       if(problemStopCandidate&&!data.rows.some(problem=>problem.problemKey===problemStopCandidate.problemKey&&problem.revision===problemStopCandidate.revision)){problemStopCandidate=null;problemElements.confirm.hidden=true}
@@ -96,7 +110,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
     }
     async function collectFinishedProblems(){
       let offset=0,revision=null;const problems=[];
-      for(;;){const snapshot=unwrap(await callTool("codex_ui_read",{view:"dashboard",widgetInstanceId,scope:selectedScope,statusFilter:"problems",limit:50,enrich:false,problems:{review:"pending",kind:"failed",offset}}));
+      for(;;){const snapshot=unwrap(await callTool("codex_ui_read",{view:"dashboard",widgetInstanceId,scope:selectedScope,statusFilter:"problems",limit:50,enrich:false,problems:{review:"pending",kind:"failed",offset,...(automaticProblemViews()?{view:"history"}:{})}}));
         const data=snapshot.problems;if(!data||data.page.offset!==offset||revision!==null&&revision!==data.revision)throw new Error(t["problem.changed"]);revision=data.revision;
         problems.push(...data.rows.filter(problem=>problem.canAcknowledge));if(!data.page.hasNext)break;if(!data.page.returned)throw new Error(t["problem.changed"]);offset+=data.page.returned;
       }return problems;
@@ -109,8 +123,9 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
       finally{problemMutationInFlight=false;setBusy(false)}
       if(mounted){await reload(true);if(failure)showError(new Error(problemError(failure)))}
     }
-    async function selectProblemQuery({review=problemReview,kind=problemKind,offset=0}){if(busy||!mounted)return;problemReview=review;problemKind=kind;problemOffset=offset;selectedProblemKeys.clear();problemNotice="";problemStopCandidate=null;problemElements.confirm.hidden=true;await reload(true)}
+    async function selectProblemQuery({review=problemReview,kind=problemKind,offset=0,view:nextView=problemView}){if(busy||!mounted)return;problemReview=review;problemView=nextView;problemKind=kind;problemOffset=offset;selectedProblemKeys.clear();problemNotice="";problemStopCandidate=null;problemElements.confirm.hidden=true;await reload(true)}
     for(const button of document.querySelectorAll("[data-problem-review]"))button.addEventListener("click",()=>void selectProblemQuery({review:button.dataset.problemReview}));
+    for(const button of document.querySelectorAll("[data-problem-view]"))button.addEventListener("click",()=>void selectProblemQuery({view:button.dataset.problemView,kind:"all"}));
     problemElements.kind.addEventListener("change",()=>void selectProblemQuery({kind:problemElements.kind.value}));
     problemElements.ackAll.addEventListener("click",()=>void runProblemAction("acknowledge",[],true));
     problemElements.ackSelected.addEventListener("click",()=>void runProblemAction("acknowledge",(view?.problems?.rows||[]).filter(problem=>selectedProblemKeys.has(problem.problemKey)&&problem.canAcknowledge)));

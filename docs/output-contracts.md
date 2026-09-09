@@ -178,7 +178,7 @@ Counts, history, pagination, and runtime enrichment all use the selected scope.
 Scoped project counts include relevant active registrations; weekly usage is
 still account-wide. Scope switching resets cached rows, disclosure and control
 state, rejects obsolete reads, and does not replay any control mutation.
-The Dashboard HTML budget is 184 KiB for scope selection, problem review, history controls, retention notice, and nine-language labels.
+The Dashboard HTML budget is 200 KiB for scope selection, problem review, history controls, retention notice, and nine-language labels.
 
 Dashboard generation 24 displays only each actual turn's execution selection in the overview; saved next-run previews remain available in the compatible snapshot for native and retained clients. Rows add optional `controlKind` (`request`, `manage`, or null), derived only from retained, non-archived Agents with actionable requests, active work, or confirmed background processes. The card offers **Review requests** or **Manage work** only when such a control can be opened. Controls expand directly beneath the selected Agent and collapse in place; overview refreshes move the same form nodes with that Agent, preserving draft answers and input focus. If the Agent leaves the visible page or no longer has controls, the panel closes and invalidates its pending detail reads. A completed detail read with no remaining actions has an explicit empty-state message.
 
@@ -231,7 +231,7 @@ still enforces the read-only, non-owning view contract.
 
 ## Card performance and byte budgets
 
-Every Dashboard and Activity view carries `enrichment: { state, runtimeRequests, cacheHits, timeouts, durationMs, usageTimedOut }`. `codex_diagnostics.performance` reports bounded recent samples for structural projection, enrichment, and serialization with count, p50, p95, max, requests, timeouts, and cache hits. It also reports measured self-contained HTML bytes against fixed caps: Dashboard 184 KiB, Activity 156 KiB, and Settings 224 KiB. The Settings cap includes the model-description editor and its nine-language copy. The existing hydration limits remain runtime-enforced and regression-tested: Dashboard private view 512 KiB, Activity private view 768 KiB, and app-only structured hydration 1 MiB. Sizes are UTF-8 bytes of `JSON.stringify(value)` for data and raw UTF-8 bytes for HTML.
+Every Dashboard and Activity view carries `enrichment: { state, runtimeRequests, cacheHits, timeouts, durationMs, usageTimedOut }`. `codex_diagnostics.performance` reports bounded recent samples for structural projection, enrichment, and serialization with count, p50, p95, max, requests, timeouts, and cache hits. It also reports measured self-contained HTML bytes against fixed caps: Dashboard 200 KiB, Activity 156 KiB, and Settings 224 KiB. The Settings cap includes the model-description editor and its nine-language copy. The existing hydration limits remain runtime-enforced and regression-tested: Dashboard private view 512 KiB, Activity private view 768 KiB, and app-only structured hydration 1 MiB. Sizes are UTF-8 bytes of `JSON.stringify(value)` for data and raw UTF-8 bytes for HTML.
 
 Optional enrichment fields `pendingReads`, `usageUnavailable` and
 `oldestObservationAt` distinguish still-running display reads, failed usage or
@@ -315,7 +315,8 @@ npx tsx scripts/output-contract-audit.ts --check
 The checked artifact is `docs/audits/issue-36-output-contract-baseline.json`.
 It retains the historical issue-36/38/40 evidence separately from current schema measurements.
 Issue #68 adds four model-visible question tools and bounded input/capability summaries;
-the current fifteen-tool schema budget is 19,500 bytes. This budget change does not
+the current fifteen-tool schema budget is 24,000 bytes, including original-wait provenance and bounded
+automatic-recovery receipts. This budget change does not
 claim additional live ChatGPT verification. Every model-visible output
 `const`/`enum` leaf retains an explicit primitive type, including nullable enum
 nodes. The Task output contract remains the single-value string enum `["1"]`;

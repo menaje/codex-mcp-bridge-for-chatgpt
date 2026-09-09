@@ -260,7 +260,9 @@ export type CodexUpstream = {
   forceTerminateWorker?(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs?: number
+    graceMs?: number,
+    /** Automatic recovery may interrupt only the exact previously requested turn. */
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,

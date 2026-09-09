@@ -94,7 +94,7 @@ describe("BridgeStateStore", () => {
     downgradeProjectTableToV9(file);
     const migrated = new BridgeStateStore({ file });
     const migratedProject = migrated.getProjectRegistrySnapshot().projects[0]!;
-    expect(migrated.schemaVersion).toBe(15);
+    expect(migrated.schemaVersion).toBe(16);
     expect(migratedProject).toMatchObject({
       id: project.id,
       name: "Migrated Project",
@@ -182,7 +182,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(15);
+    expect(reopened.schemaVersion).toBe(16);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -250,7 +250,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(15);
+    expect(restored.schemaVersion).toBe(16);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectLabel: "Codex MCP Bridge" })
@@ -503,7 +503,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(15);
+    expect(restored.schemaVersion).toBe(16);
     expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
       source: "model-tool",
       reason: "The user changed direction. Stop the obsolete job."

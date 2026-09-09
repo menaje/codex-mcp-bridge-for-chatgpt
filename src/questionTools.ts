@@ -8,6 +8,7 @@ import { ordinaryCodexQuestion, questionReference } from "./codexInputs.js";
 import { questionHash, type UserQuestionRecord } from "./questionStore.js";
 import { QUESTION_CARD_URI, registerQuestionCardResource } from "./questionCard.js";
 import { defineToolResultContract, projectToolResult } from "./toolResultContracts.js";
+import { originWaitTokenSchema, originWaitContinuationSchema, liveRecoverySchema } from "./originWait.js";
 
 export const USER_QUESTION_META = "codex/userQuestion@1";
 const identifier = z.string().trim().min(1).max(200);
@@ -21,6 +22,7 @@ const answersSchema = z.record(identifier, z.array(z.string().trim().min(1).max(
 const cardAnswersSchema = z.record(identifier, z.array(z.string().trim().min(1).max(2000)).length(1));
 export const QUESTION_MODEL_OUTPUT_SCHEMAS = {
   codex_input: z.strictObject({ kind: z.literal("codex-input"), jobId: identifier, jobVersion: z.number().int().positive(),
+    waitContext:originWaitContinuationSchema.optional(),recovery:liveRecoverySchema.optional(),
     cursor: z.string(), changed: z.boolean(), active: z.boolean(),
     questions: z.array(z.strictObject({ questionRef: z.string(), isBlocking: z.boolean(), questions: z.array(questionField) })),
     approvals: z.array(z.strictObject({ kind: z.string(), isBlocking: z.boolean(), reason: z.string() })),
@@ -62,13 +64,17 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     return job;
   };
 
-  const questionInputSchema = z.strictObject({ jobId: identifier, afterCursor: z.string().regex(/^[a-f0-9]{64}$/).optional(), waitMs: z.number().int().min(0).max(60_000).optional() });
+  const questionInputSchema = z.strictObject({ jobId: identifier, afterCursor: z.string().regex(/^[a-f0-9]{64}$/).optional(), waitMs: z.number().int().min(0).max(60_000).optional(),waitToken:originWaitTokenSchema.optional() });
   const readInput = async (args: z.infer<typeof questionInputSchema>, extra: Parameters<ToolCallback<typeof questionInputSchema>>[1], compatibilityScopeId?: string) => {
     const scopeId = scopeResolver.require(extra._meta as ToolCallMetadata, compatibilityScopeId, "GPT question orchestration").scopeId;
-    ownedJob(scopeId, args.jobId);
-    const result = await jobs.waitForInput(args.jobId, args.afterCursor, args.waitMs, extra.signal);
-    ownedJob(scopeId, args.jobId);
-    return resultOf({ kind: "codex-input", ...result });
+    const initial = ownedJob(scopeId, args.jobId);
+    const lease = jobs.originWaits.beginWait(args.waitToken,initial,scopeId,extra.requestId,Boolean(args.waitMs && args.waitMs > 0),extra.signal);
+    try {
+      const result = await jobs.waitForInput(args.jobId, args.afterCursor, args.waitMs, extra.signal);
+      const job = ownedJob(scopeId, args.jobId);
+      if (lease?.observing && ["failed","interrupted","termination-failed"].includes(job.status)) await jobs.recoverAwaitedJob(job.jobId);
+      return resultOf({ kind: "codex-input", ...result,...jobs.originWaits.finish(lease,job,jobs.admissionStateStore.automaticRecovery.list(scopeId)) });
+    } finally { jobs.originWaits.abandon(lease); }
   };
 
   compatibility.registerTool("codex_input", {

@@ -86,14 +86,14 @@ describe("bounded diagnostic retention",()=>{
     const insert=db.prepare("INSERT INTO job_events(job_id,activity_id,scope_id,scope_version,event_type,status,created_at,payload) VALUES (?,?,?,1,'app-command-completed','completed',?,?)");
     db.transaction(()=>{for(let n=0;n<1250;n++)insert.run(input.jobId,activity,scopeId,Date.now(),JSON.stringify(progress(`old-${n}`,"private transcript text")));})();db.close();
     store=new BridgeStateStore({file});
-    const backups=readdirSync(directory).filter(name=>name.includes("pre-v15"));expect(backups).toHaveLength(1);
+    const backups=readdirSync(directory).filter(name=>name.includes("pre-v16"));expect(backups).toHaveLength(1);
     expect(statSync(path.join(directory,backups[0]!)).mode&0o777).toBe(0o600);
     const backup=new Database(path.join(directory,backups[0]!),{readonly:true});
     expect((backup.prepare("SELECT COUNT(*) count FROM job_events").get() as {count:number}).count).toBe(1251);backup.close();
     store.maintainRetention();store.close();store=new BridgeStateStore({file});
     for(let i=0;i<5;i++)store.maintainRetention();
     expect(JSON.stringify(store.listJobEvents(input.jobId))).not.toContain("private transcript text");
-    expect(readdirSync(directory).filter(name=>name.includes("pre-v15"))).toHaveLength(1);
+    expect(readdirSync(directory).filter(name=>name.includes("pre-v16"))).toHaveLength(1);
     expect(store.countJobs()).toBe(0);store.close();
   });
 
