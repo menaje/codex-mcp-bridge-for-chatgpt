@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Metal
 import XCTest
 import SwiftUI
 @testable import CodexBridgeKit
@@ -109,6 +110,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
         XCTAssertTrue(model.runtimeErrorMessage?.contains("이전 설정을 복원했지만") == true)
+        try XCTSkipIf(MTLCreateSystemDefaultDevice() == nil, "SwiftUI image rendering requires a Metal device.")
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content); renderer.scale = 2
@@ -126,6 +128,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         f.state.setPhase("blocked")
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
+        try XCTSkipIf(MTLCreateSystemDefaultDevice() == nil, "SwiftUI image rendering requires a Metal device.")
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content)
