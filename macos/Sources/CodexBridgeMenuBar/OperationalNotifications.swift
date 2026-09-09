@@ -130,12 +130,22 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     }
 
     func requestAuthorization() async -> Bool {
-        (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        await withCheckedContinuation { continuation in
+            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                continuation.resume(returning: error == nil && granted)
+            }
+        }
     }
 
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws {
-        try await center.add(UNNotificationRequest(identifier: identifier,
-            content: Self.content(problem: problem, scope: scope, locale: locale), trigger: nil))
+        let request = UNNotificationRequest(identifier: identifier,
+            content: Self.content(problem: problem, scope: scope, locale: locale), trigger: nil)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            center.add(request) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
     }
 
     static func content(problem: OperationalProblem, scope: String, locale: Locale) -> UNMutableNotificationContent {
