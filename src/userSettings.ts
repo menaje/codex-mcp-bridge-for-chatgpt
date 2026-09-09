@@ -2,7 +2,8 @@ import { createHmac, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
-import { DEFAULT_USER_MAX_CONCURRENT_JOBS, enforceSandbox } from "./config.js";
+import { DEFAULT_USER_MAX_CONCURRENT_JOBS } from "./config.js";
+import { EXECUTION_POLICY_VERSION, resolveTaskSandbox } from "./executionPolicy.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
@@ -290,12 +291,7 @@ export class UserSettingsStore {
   }
 
   resolveSandbox(): SandboxMode {
-    if (this.settings.accessStrategy === "read-only") return "read-only";
-    if (this.settings.accessStrategy === "always-full") {
-      if (!this.config.allowDangerFullAccess) return "read-only";
-      return enforceSandbox(this.config, "danger-full-access");
-    }
-    return enforceSandbox(this.config);
+    return resolveTaskSandbox(this.config, this.settings);
   }
 
   /** Keep registry verification and Activity/Agent/Job admission in one sync boundary. */
@@ -692,6 +688,7 @@ function canonicalExecutionModelPolicy(policy: ModelPolicy): ModelPolicy {
 
 function canonicalExecutionOperatorEnvelope(config: BridgeConfig): Record<string, unknown> {
   return {
+    executionPolicyVersion: EXECUTION_POLICY_VERSION,
     codexCommand: config.codexCommand,
     backend: config.defaultBackend,
     allowedRoots: [...config.allowedRoots].sort(),
@@ -699,6 +696,7 @@ function canonicalExecutionOperatorEnvelope(config: BridgeConfig): Record<string
     allowWorkspaceWrite: config.allowWorkspaceWrite,
     allowDangerFullAccess: config.allowDangerFullAccess,
     approvalPolicy: config.defaultApprovalPolicy,
+    approvalsReviewer: config.defaultApprovalsReviewer,
     modelCeiling: config.operatorModelCeiling
       ? canonicalModelChoices(config.operatorModelCeiling)
       : null,

@@ -6,6 +6,7 @@ import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
+export type ApprovalsReviewer = "user" | "auto_review";
 export type AccessStrategy = "read-only" | "adaptive" | "always-full";
 /** Includes retired values only to preserve historical records; new execution uses App Server. */
 export type CodexBackendKind = "mcp-server" | "app-server" | "codex-sdk";
@@ -37,6 +38,7 @@ export type BridgeConfig = {
   allowWorkspaceWrite: boolean;
   allowDangerFullAccess: boolean;
   defaultApprovalPolicy: ApprovalPolicy;
+  defaultApprovalsReviewer: ApprovalsReviewer;
   operatorModelCeiling?: ModelChoice[];
   modelCatalogCacheTtlMs: number;
   modelCatalogTimeoutMs: number;
@@ -83,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const allowWorkspaceWrite = parseBool(read("ALLOW_WRITE"));
   const allowDangerFullAccess = parseBool(read("ALLOW_DANGER_FULL_ACCESS"));
   const defaultApprovalPolicy = parseApprovalPolicy(read("APPROVAL_POLICY") || "on-request");
+  const defaultApprovalsReviewer = parseApprovalsReviewer(read("APPROVALS_REVIEWER") || "user");
   const operatorModelCeiling = parseModelSelectionCeiling(read("MODEL_SELECTION_CEILING"));
   const modelCatalogCacheTtlMs = parsePositiveInt(read("MODEL_CATALOG_CACHE_TTL_MS") || "600000");
   const modelCatalogTimeoutMs = parsePositiveInt(read("MODEL_CATALOG_TIMEOUT_MS") || "30000");
@@ -204,6 +207,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     allowWorkspaceWrite,
     allowDangerFullAccess,
     defaultApprovalPolicy,
+    defaultApprovalsReviewer,
     operatorModelCeiling,
     modelCatalogCacheTtlMs,
     modelCatalogTimeoutMs,
@@ -459,6 +463,11 @@ function parseApprovalPolicy(raw: string): ApprovalPolicy {
     return raw;
   }
   throw new Error(`Invalid approval policy: ${raw}`);
+}
+
+function parseApprovalsReviewer(raw: string): ApprovalsReviewer {
+  if (raw === "user" || raw === "auto_review") return raw;
+  throw new Error(`Invalid approvals reviewer: ${raw}`);
 }
 
 function parseAccessStrategy(raw: string): AccessStrategy {

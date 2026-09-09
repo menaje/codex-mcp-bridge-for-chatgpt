@@ -7,6 +7,9 @@ import path from "node:path";
 import { inspectClientRequestContract } from "../src/cliProtocol.js";
 import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 import { normalizeProtocolSchema, validateInitializeResponse } from "../src/runtimeCompatibility.js";
+import { loadConfig } from "../src/config.js";
+import { resolveExecutionPolicy } from "../src/executionPolicy.js";
+import { threadAccessParams, verifyExecutionAccess } from "../src/executionAccess.js";
 
 // Offline audit: no credentials, model turns, user projects, runtime selection,
 // installation, or running service changes. All execution targets are fixtures.
@@ -59,7 +62,10 @@ try {
       execFileSync(command, ["app-server", "generate-json-schema", "--experimental", "--out", schemas],
         { env: environment, timeout: 30_000, stdio: "pipe" });
       for (const file of await files(schemas)) hashes[file] = hash(normalizeProtocolSchema(JSON.parse(await readFile(path.join(schemas, file), "utf8"))));
-      report.bridgeProtocol = inspectClientRequestContract(JSON.parse(await readFile(path.join(schemas, "ClientRequest.json"), "utf8")));
+      report.bridgeProtocol = inspectClientRequestContract(
+        JSON.parse(await readFile(path.join(schemas, "ClientRequest.json"), "utf8")),
+        JSON.parse(await readFile(path.join(schemas, "v2", "ConfigReadResponse.json"), "utf8"))
+      );
       failed ||= !report.bridgeProtocol.compatible || Object.keys(report.bridgeProtocol.unsupported).length > 0;
       report.schemaFiles = Object.keys(hashes).length;
       report.schemaDigest = hash(hashes);
@@ -72,6 +78,17 @@ try {
       const config = await request("config/read", { includeLayers: false, cwd: project });
       report.fixtureDefaults = { sandbox: config.config?.sandbox_mode, approvalPolicy: config.config?.approval_policy };
       let threadId: string | undefined;
+      report.bridgePolicies = [];
+      const bridgeConfig = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+        CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_APPROVALS_REVIEWER: "auto_review" });
+      for (const accessStrategy of ["read-only", "adaptive", "always-full"] as const) {
+        const expected = resolveExecutionPolicy(bridgeConfig, { accessStrategy }, project);
+        const response = await request("thread/start", { ...threadAccessParams(expected), ephemeral: true, experimentalRawEvents: false });
+        const verified = verifyExecutionAccess(response, expected, "thread/start");
+        report.bridgePolicies.push({ accessStrategy, sandbox: verified.sandbox, approvalPolicy: verified.approvalPolicy,
+          approvalsReviewer: verified.approvalsReviewer, requestedAppToolApprovalMode: expected.appToolApprovalMode,
+          passed: true });
+      }
       for (const [sandbox, type] of [["read-only", "readOnly"], ["workspace-write", "workspaceWrite"], ["danger-full-access", "dangerFullAccess"]]) {
         for (const approvalPolicy of ["untrusted", "on-request", "never"]) {
           const response = await request("thread/start", { cwd: project, sandbox, approvalPolicy, ephemeral: true, experimentalRawEvents: false });
@@ -152,5 +169,5 @@ try {
     checksPassed: !failed, reports, comparisons }, null, 2));
   if (failed) process.exitCode = 1;
 } finally {
-  await rm(directory, { recursive: true, force: true });
+  await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

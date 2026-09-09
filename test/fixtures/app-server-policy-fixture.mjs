@@ -3,11 +3,12 @@ import { appendFileSync } from "node:fs";
 
 const policies = new Map();
 export function threadPolicyResponse(method, params, threadId) {
+  if (process.env.CODEX_TEST_POLICY_LOG) appendFileSync(process.env.CODEX_TEST_POLICY_LOG, JSON.stringify({ method, params, threadId }) + "\n");
   const previous = policies.get(params.threadId) || {};
   const response = {
     cwd: params.cwd ?? previous.cwd ?? process.cwd(),
     approvalPolicy: params.approvalPolicy ?? previous.approvalPolicy ?? "on-request",
-    approvalsReviewer: "user",
+    approvalsReviewer: params.approvalsReviewer ?? previous.approvalsReviewer ?? "user",
     sandbox: params.sandbox ? { type: {
       "read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess"
     }[params.sandbox], ...(params.sandbox === "danger-full-access" ? {} : { networkAccess: false }) }
@@ -20,6 +21,7 @@ export function threadPolicyResponse(method, params, threadId) {
   if (method === mismatchMethod) {
     if (field === "sandbox") response.sandbox = { type: "dangerFullAccess" };
     if (field === "approvalPolicy") response.approvalPolicy = "never";
+    if (field === "approvalsReviewer") response.approvalsReviewer = response.approvalsReviewer === "user" ? "auto_review" : "user";
     if (field === "cwd") response.cwd = "/unrequested-workspace";
     if (field === "missing") delete response.sandbox;
   }

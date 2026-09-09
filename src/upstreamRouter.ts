@@ -1,4 +1,5 @@
 import type { CodexBackendKind } from "./config.js";
+import { executionAccessArguments } from "./executionAccess.js";
 import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import { backendSupports } from "./modelPolicy.js";
@@ -91,9 +92,7 @@ export class CodexBackendRouter implements CodexUpstream {
       "codex",
       {
         prompt: input.prompt,
-        cwd: input.cwd,
-        sandbox: input.sandbox,
-        "approval-policy": input.approvalPolicy,
+        ...executionAccessArguments(input),
         ...(backendSupports(input.backendKind, "supportsEphemeralThreads")
           ? { ephemeral: input.ephemeral === true }
           : {}),
@@ -115,9 +114,7 @@ export class CodexBackendRouter implements CodexUpstream {
       {
         threadId: input.threadId,
         prompt: input.prompt,
-        cwd: input.cwd,
-        sandbox: input.sandbox,
-        "approval-policy": input.approvalPolicy,
+        ...executionAccessArguments(input),
         ...(input.selection ? selectionArguments(input.selection, input.backendKind) : {}),
         ...backendRoutingArgument(input.backendKind)
       },

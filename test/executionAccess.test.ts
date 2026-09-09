@@ -6,12 +6,12 @@ import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { executionAccessRequest, verifyExecutionAccess } from "../src/executionAccess.js";
 
 const fixture = path.resolve("test/fixtures/fake-codex-app-server.mjs");
-const access = { cwd: process.cwd(), sandbox: "read-only" as const, approvalPolicy: "on-request" as const };
+const access = { cwd: process.cwd(), sandbox: "read-only" as const, approvalPolicy: "on-request" as const, approvalsReviewer: "user" as const };
 const start = { ...access, backendKind: "app-server" as const, prompt: "hello", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" } };
 
 describe("actual CLI execution policy", () => {
   it.each(["thread/start", "thread/resume", "thread/fork"].flatMap(method =>
-    ["sandbox", "approvalPolicy", "cwd", "missing"].map(field => ({ method, field }))
+    ["sandbox", "approvalPolicy", "approvalsReviewer", "cwd", "missing"].map(field => ({ method, field }))
   ))("never starts a turn after $method returns a mismatched $field", async ({ method, field }) => {
     const directory = mkdtempSync(path.join(tmpdir(), "policy-turn-test-")), log = path.join(directory, "turns");
     writeFileSync(log, "");
@@ -51,6 +51,19 @@ describe("actual CLI execution policy", () => {
 
   it("does not infer an unknown thread's policy from CLI defaults", () => {
     expect(() => executionAccessRequest({ threadId: "untracked", prompt: "continue" })).toThrow("EXECUTION_ACCESS_REQUIRED");
+  });
+
+  it("does not claim a changed connector default was applied to a loaded thread", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "loaded-policy-test-")), log = path.join(directory, "turns");
+    writeFileSync(log, "");
+    const pool = new CodexAppServerUpstreamPool(fixture, 1, { environment: { ...process.env, CODEX_TEST_TURN_LOG: log } });
+    try {
+      const result = await pool.startThread({ ...start, appToolApprovalMode: "auto" });
+      const before = readFileSync(log, "utf8");
+      await expect(pool.continueThread({ ...start, threadId: result.structuredContent!.threadId as string, appToolApprovalMode: "approve" }))
+        .rejects.toThrow("appToolApprovalMode");
+      expect(readFileSync(log, "utf8")).toBe(before);
+    } finally { await pool.close(); rmSync(directory, { recursive: true, force: true }); }
   });
 
   it("rejects missing reviewer evidence and different cwd even with a matching sandbox", () => {
