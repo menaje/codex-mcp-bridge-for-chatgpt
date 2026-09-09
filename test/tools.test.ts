@@ -5568,6 +5568,51 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("overrides only automatic model descriptions through shared settings and restores refreshed catalog guidance", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const store = new UserSettingsStore(config);
+    const catalog = new DescriptionRefreshingModelCatalog();
+    const { client, close } = await connectTestClient(config, new FakeUpstream(), undefined, catalog, store);
+    try {
+      const list = async (args = {}) => parseToolJson(await client.callTool({ name: "codex_models", arguments: args }));
+      const before = await list();
+      const descriptor = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
+      const custom = "Use for a scoped change.\n<script>plain text only</script>";
+      const patched = parseToolJson(await client.callTool({ name: "codex_update_settings", arguments: {
+        expectedSettingsRevision: store.current.settingsRevision,
+        operation: { kind: "patch", settings: { modelDescriptionOverrides: { "gpt-5.6-sol": custom, "missing-model": "Retain this description." } } }
+      } }));
+      expect(patched.settings.modelDescriptionOverrides["gpt-5.6-sol"]).toBe(custom);
+      expect(patched.catalog.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).not.toBe(custom);
+      expect(patched.policyActivation.developerModeRefreshRequired).toBe(false);
+      const selected = (await list()).models;
+      expect(selected).toEqual(before.models.map((entry: { id: string }) => entry.id === "gpt-5.6-sol"
+        ? { ...entry, description: custom, descriptionSource: "user" } : entry));
+      expect(selected.some((entry: { id: string }) => entry.id === "missing-model")).toBe(false);
+      const refreshed = await list({ contractVersion: "2", refresh: true });
+      expect(refreshed.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol")).toMatchObject({ description: custom, descriptionSource: "user" });
+      const settings = parseToolJson(await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } }));
+      expect(settings.catalog.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).toBe("Updated Sol guidance from the refreshed backend catalog.");
+      expect((await client.listTools()).tools.find((entry) => entry.name === "codex_task")).toEqual(descriptor);
+      const automatic = store.current.modelPolicy;
+      store.update({ modelPolicy: { mode: "fixed", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }, constraints: { allowDelegation: true } } }, store.current.settingsRevision);
+      const fixed = (await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol");
+      expect(fixed.description).toBe("Updated Sol guidance from the refreshed backend catalog.");
+      expect(fixed).not.toHaveProperty("descriptionSource");
+      store.update({ modelPolicy: automatic }, store.current.settingsRevision);
+      expect((await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).toBe(custom);
+      await client.callTool({ name: "codex_update_settings", arguments: {
+        expectedSettingsRevision: store.current.settingsRevision,
+        operation: { kind: "patch", settings: { modelDescriptionOverrides: { "gpt-5.6-sol": " \n", "missing-model": "Retain this description." } } }
+      } });
+      const restored = (await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol");
+      expect(restored.description).toBe(fixed.description);
+      expect(restored).not.toHaveProperty("descriptionSource");
+      expect(store.current.modelDescriptionOverrides).toEqual({ "missing-model": "Retain this description." });
+    } finally { await close(); }
+  });
+
   it("keeps the task descriptor stable when only catalog guidance changes", async () => {
     const root = temporaryRoot();
     const catalog = new DescriptionRefreshingModelCatalog();

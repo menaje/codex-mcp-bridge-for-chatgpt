@@ -11,6 +11,7 @@ import {
   type ModelPolicy
 } from "./modelPolicy.js";
 import { isUiLocalePreference, type UiLocalePreference } from "./uiI18n.js";
+import { normalizeModelDescriptionOverrides, type ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_REQUIRED,
@@ -46,6 +47,7 @@ export type BridgeUserSettings = {
   updatedAt: string | null;
   accessStrategy: AccessStrategy;
   modelPolicy: ModelPolicy;
+  modelDescriptionOverrides: ModelDescriptionOverrides;
   usePriorityServiceTier: boolean;
   /** App-private composed registry view. UUID/cwd are stripped from public results. */
   projects: ProjectTarget[];
@@ -119,6 +121,7 @@ export class UserSettingsStore {
       updatedAt: null,
       accessStrategy: config.defaultAccessStrategy,
       modelPolicy: automaticModelPolicy(),
+      modelDescriptionOverrides: {},
       usePriorityServiceTier: false,
       uiLocalePreference: "auto",
       maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
@@ -275,6 +278,7 @@ export class UserSettingsStore {
     const patch: BridgeUserSettingsPatch = {
       accessStrategy: this.initial.accessStrategy,
       modelPolicy,
+      modelDescriptionOverrides: {},
       usePriorityServiceTier: this.initial.usePriorityServiceTier,
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
@@ -434,6 +438,7 @@ export class UserSettingsStore {
       throw new Error("Invalid settings schema version.");
     }
     candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
+    candidate.modelDescriptionOverrides = normalizeModelDescriptionOverrides(candidate.modelDescriptionOverrides);
     if (typeof candidate.usePriorityServiceTier !== "boolean") {
       throw new Error("Invalid Priority service-tier preference.");
     }
@@ -618,7 +623,8 @@ function composeSettings(
 function cloneGeneralSettings(settings: GeneralSettings): GeneralSettings {
   return {
     ...settings,
-    modelPolicy: validateModelPolicy(settings.modelPolicy)
+    modelPolicy: validateModelPolicy(settings.modelPolicy),
+    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides }
   };
 }
 
@@ -777,6 +783,7 @@ function readGeneralSettings(
     updatedAt,
     accessStrategy,
     modelPolicy,
+    modelDescriptionOverrides: normalizeModelDescriptionOverrides(value.modelDescriptionOverrides ?? {}),
     usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
       ? value.usePriorityServiceTier
       : migratedPolicy.usedFastTier,
@@ -925,6 +932,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
   const allowed = new Set([
     "accessStrategy",
     "modelPolicy",
+    "modelDescriptionOverrides",
     "usePriorityServiceTier",
     "projects",
     "uiLocalePreference",

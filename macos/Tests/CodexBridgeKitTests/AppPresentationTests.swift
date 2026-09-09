@@ -770,6 +770,76 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(draft.completionHandoff, "off")
     }
 
+    func testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges() {
+        var edit = ModelDescriptionEdit(officialDescription: "Official v1", override: nil)
+        XCTAssertEqual(edit.text, "Official v1")
+        XCTAssertNil(edit.valueToSave(officialDescription: "Official v2"))
+        edit.text = "  Use for a scoped task.\nKeep the answer short.  "
+        XCTAssertEqual(edit.valueToSave(officialDescription: "Official v2"), "Use for a scoped task.\nKeep the answer short.")
+        edit.text = " \n\t"
+        XCTAssertNil(edit.valueToSave(officialDescription: "Official v2"))
+        edit.text = "Official v2"
+        XCTAssertNil(edit.valueToSave(officialDescription: "Official v2"))
+        edit.text = String(repeating: "x", count: 2_001)
+        XCTAssertTrue(edit.isTooLong)
+        let custom = ModelDescriptionEdit(officialDescription: "Official", override: "User text")
+        XCTAssertEqual(custom.valueToSave(officialDescription: "User text"), "User text")
+    }
+
+    @MainActor
+    func testModelDescriptionSaveAndRestorePatchOnlyUserTextAndPreserveUnavailableModels() async throws {
+        let policy: [String: Any] = [
+            "mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+            "constraints": ["allowDelegation": true]
+        ]
+        for restoring in [false, true] {
+            let initial = restoring ? ["gpt-current": "User text", "missing-model": "Keep this."] : ["missing-model": "Keep this."]
+            let expected = restoring ? ["missing-model": "Keep this."] : ["gpt-current": "User text", "missing-model": "Keep this."]
+            let snapshot = try settingsSnapshot(policy: policy, modelDescriptionOverrides: initial, catalogModels: [])
+            let updated = try settingsSnapshot(settingsRevision: 5, policy: policy, modelDescriptionOverrides: expected, catalogModels: [])
+            let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Description test")
+            let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "description-test"), settings: snapshot, settingsAfterUpdate: updated)
+            let model = AppModel(
+                loginItemController: TestLoginItemController(status: .notRegistered),
+                connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+                credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+                remoteClientFactory: { _, _ in client }
+            )
+            await model.start()
+            let saved = await model.saveModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"])
+            XCTAssertTrue(saved)
+            XCTAssertEqual(client.settingsUpdateCallCount, 1)
+            let mutation = try XCTUnwrap(client.lastSettingsMutation)
+            XCTAssertEqual(mutation.expectedSettingsRevision, 4)
+            guard case .patch(let patch) = mutation.operation else { return XCTFail("Expected a description patch") }
+            XCTAssertEqual(patch.modelDescriptionOverrides, expected)
+            XCTAssertNil(patch.modelPolicy)
+            XCTAssertNil(patch.accessStrategy)
+            XCTAssertNil(patch.projectOperations)
+            XCTAssertEqual(model.settings?.settings.modelDescriptionOverrides, expected)
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(patch)) as? [String: Any]
+            XCTAssertEqual(Set(encoded?.keys.map { $0 } ?? []), ["modelDescriptionOverrides"])
+            let stopped = await model.shutdownApplication(force: false)
+            XCTAssertTrue(stopped)
+        }
+    }
+
+    @MainActor
+    func testModelDescriptionEditRejectsKnownConflictsAndSupportsOlderServers() async throws {
+        let policy: [String: Any] = ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"], "constraints": ["allowDelegation": true]]
+        let legacy = try settingsSnapshot(policy: policy, catalogModels: [])
+        XCTAssertNil(legacy.settings.modelDescriptionOverrides)
+        let model = AppModel()
+        model.settings = try settingsSnapshot(policy: policy, modelDescriptionOverrides: ["gpt-current": "Saved elsewhere"], catalogModels: [])
+        var edit = ModelDescriptionEdit(officialDescription: "Official", override: "Older text")
+        edit.text = "My unsaved draft"
+        let saved = await model.saveModelDescription(modelID: "gpt-current", description: edit.text, expectedOverride: edit.expectedOverride)
+        XCTAssertFalse(saved)
+        XCTAssertEqual(edit.text, "My unsaved draft")
+        XCTAssertEqual(model.settings?.settings.modelDescriptionOverrides?["gpt-current"], "Saved elsewhere")
+        XCTAssertNotNil(model.settingsErrorMessage)
+    }
+
     func testSettingsRefreshPreservesDirtyDraftUntilExplicitReload() throws {
         let original = try settingsSnapshot(
             policy: [
@@ -1776,6 +1846,7 @@ private func settingsSnapshot(
     showBridgeThreadsInCodexApp: Bool = true,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
+    modelDescriptionOverrides: [String: String]? = nil,
     catalogModels: [[String: Any]],
     operatorCeiling: [ModelChoice]? = nil
 ) throws -> SettingsSnapshot {
@@ -1796,6 +1867,9 @@ private func settingsSnapshot(
     ]
     if let legacyPreferredModel {
         settings["legacyPreferredModel"] = legacyPreferredModel
+    }
+    if let modelDescriptionOverrides {
+        settings["modelDescriptionOverrides"] = modelDescriptionOverrides
     }
     var capabilities: [String: Any] = [
         "availableAccessStrategies": ["read-only", "adaptive"],

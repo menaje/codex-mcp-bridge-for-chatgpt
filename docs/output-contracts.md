@@ -220,7 +220,7 @@ still enforces the read-only, non-owning view contract.
 
 ## Card performance and byte budgets
 
-Every Dashboard and Activity view carries `enrichment: { state, runtimeRequests, cacheHits, timeouts, durationMs, usageTimedOut }`. `codex_diagnostics.performance` reports bounded recent samples for structural projection, enrichment, and serialization with count, p50, p95, max, requests, timeouts, and cache hits. It also reports measured self-contained HTML bytes against fixed caps: Dashboard 112 KiB, Activity 152 KiB, and Settings 192 KiB. The existing hydration limits remain runtime-enforced and regression-tested: Dashboard private view 512 KiB, Activity private view 768 KiB, and app-only structured hydration 1 MiB. Sizes are UTF-8 bytes of `JSON.stringify(value)` for data and raw UTF-8 bytes for HTML.
+Every Dashboard and Activity view carries `enrichment: { state, runtimeRequests, cacheHits, timeouts, durationMs, usageTimedOut }`. `codex_diagnostics.performance` reports bounded recent samples for structural projection, enrichment, and serialization with count, p50, p95, max, requests, timeouts, and cache hits. It also reports measured self-contained HTML bytes against fixed caps: Dashboard 112 KiB, Activity 152 KiB, and Settings 224 KiB. The Settings cap includes the model-description editor and its nine-language copy. The existing hydration limits remain runtime-enforced and regression-tested: Dashboard private view 512 KiB, Activity private view 768 KiB, and app-only structured hydration 1 MiB. Sizes are UTF-8 bytes of `JSON.stringify(value)` for data and raw UTF-8 bytes for HTML.
 
 Optional enrichment fields `pendingReads`, `usageUnavailable` and
 `oldestObservationAt` distinguish still-running display reads, failed usage or

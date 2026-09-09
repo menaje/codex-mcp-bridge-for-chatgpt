@@ -15,8 +15,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "c6af5cf3b9cadcbac48abd11680eee4666e1b6431558cd640c3f8fceab2a7342",
-      "uri": "ui://codex-mcp-bridge/settings/c6af5cf3b9ca.html",
+      "digest": "5c7cbbb24e507b6d1dc9f85e53d2723c0c701bfa0c6c03d2072ddb74c7ff3a22",
+      "uri": "ui://codex-mcp-bridge/settings/5c7cbbb24e50.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -39,10 +39,39 @@ export const UI_RESOURCE_MANIFEST = {
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 16
+          "codex/uiContractGeneration": 17
         }
       },
       "previous": [
+        {
+          "digest": "c6af5cf3b9cadcbac48abd11680eee4666e1b6431558cd640c3f8fceab2a7342",
+          "uri": "ui://codex-mcp-bridge/settings/c6af5cf3b9ca.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 16
+            }
+          }
+        },
         {
           "digest": "bfddafa7d1f70388d9c2c9e95bad87d4411682a7d4b554580fcbe05f08d79284",
           "uri": "ui://codex-mcp-bridge/settings/bfddafa7d1f7.html",

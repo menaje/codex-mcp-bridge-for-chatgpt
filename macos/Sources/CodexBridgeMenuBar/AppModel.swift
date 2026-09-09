@@ -317,6 +317,7 @@ final class AppModel: ObservableObject {
     @Published var loginItemOperationInProgress = false
     @Published private(set) var interfaceLocalePreference = "auto"
     @Published private(set) var generalSettingsSaveState: GeneralSettingsSaveState = .idle
+    @Published private(set) var modelDescriptionSaveInProgress = false
     @Published private(set) var lastAutosavedSettingsRevision: Int?
     @Published private(set) var lastAutosavedDraft: SettingsDraft?
     @Published private(set) var applicationShutdownCompleted = false
@@ -1938,6 +1939,39 @@ final class AppModel: ObservableObject {
             tracksGlobalBusyState: !autosave,
             autosavedDraft: autosave ? draft : nil
         )
+    }
+
+    func saveModelDescription(
+        modelID: String,
+        description: String?,
+        expectedOverride: String?
+    ) async -> Bool {
+        guard let snapshot = settings, var overrides = snapshot.settings.modelDescriptionOverrides,
+              !isBusy, !generalSettingsSaveState.isActive else { return false }
+        guard overrides[modelID] == expectedOverride else {
+            settingsErrorMessage = BridgeAppLocalization.string(
+                "다른 화면에서 설정이 변경되었습니다. 입력한 내용은 유지됩니다. 저장된 설명을 확인한 뒤 다시 저장해 주세요.",
+                locale: interfaceLocale
+            )
+            return false
+        }
+        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = trimmed?.isEmpty == false ? trimmed : nil
+        guard (next?.utf16.count ?? 0) <= ModelDescriptionEdit.maximumLength else {
+            settingsErrorMessage = BridgeAppLocalization.string(
+                "설명은 2,000자 이내로 입력해 주세요.", locale: interfaceLocale
+            )
+            return false
+        }
+        if next == overrides[modelID] { return true }
+        overrides[modelID] = next
+        modelDescriptionSaveInProgress = true
+        defer { modelDescriptionSaveInProgress = false }
+        return await performSettingsMutation(SettingsMutation(
+            expectedSettingsRevision: snapshot.settings.settingsRevision,
+            expectedRegistryRevision: nil,
+            operation: .patch(SettingsPatch(modelDescriptionOverrides: overrides))
+        ))
     }
 
     func resetGeneralSettings() async -> Bool {
