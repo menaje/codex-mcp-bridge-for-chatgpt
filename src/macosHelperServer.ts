@@ -463,7 +463,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const pid = this.managedPid;
     const started = Date.now();
     let failure: unknown;
-    const probe = readBridgeAdmission(this.bridgeSocketPath, 2_000, (error) => { failure = error; })
+    const probe = readBridgeHealth(this.bridgeSocketPath, (error) => { failure = error; })
       .then((admission) => {
         if (pid !== this.managedPid) return null;
         const connected = admission !== null;
@@ -1689,6 +1689,24 @@ function helperRequestId(value: unknown): string | number | null {
   return requestIdSchema.safeParse(id).success ? id as string | number : null;
 }
 
+async function readBridgeHealth(
+  socketPath: string,
+  onFailure: (error: unknown) => void
+): Promise<RuntimeAdmissionSnapshot | null> {
+  try {
+    return await bridgeRequest<RuntimeAdmissionSnapshot>(socketPath, "runtime.health", {}, 2_000);
+  } catch (error) {
+    // Only an older companion's explicit method rejection permits the legacy
+    // snapshot fallback. A slow health response must not start heavier work.
+    const code = (error as { code?: number }).code;
+    if (code === -32600 || code === -32601) {
+      return readBridgeAdmission(socketPath, 2_000, onFailure);
+    }
+    onFailure(error);
+    return null;
+  }
+}
+
 async function readBridgeAdmission(
   socketPath: string,
   timeoutMs = 500,
@@ -1792,11 +1810,11 @@ function bridgeRequest<T = unknown>(
           jsonrpc?: unknown;
           id?: unknown;
           result?: T;
-          error?: { message?: string };
+          error?: { message?: string; code?: number };
         };
         if (response.jsonrpc !== "2.0" || response.id !== requestId) {
           finish(new Error("Bridge companion response identity did not match the request."));
-        } else if (response.error) finish(new Error(response.error.message || "Bridge companion request failed."));
+        } else if (response.error) finish(Object.assign(new Error(response.error.message || "Bridge companion request failed."), { code: response.error.code }));
         else finish(undefined, response.result);
       } catch (error) {
         finish(error instanceof Error ? error : new Error(String(error)));

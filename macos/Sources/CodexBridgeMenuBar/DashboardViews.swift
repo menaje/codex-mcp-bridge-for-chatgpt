@@ -194,12 +194,7 @@ struct DashboardPopoverView: View {
                 .font(.headline)
             Text(model.connectionErrorMessage ?? model.helperStatusErrorMessage ??
                  model.runtimeErrorMessage ?? model.statusErrorMessage ??
-                 BridgeAppLocalization.string(
-                    model.isRemoteClient
-                        ? "연결 탭에서 서버를 선택하거나 페어링해 주세요."
-                        : "브리지 서버가 중지되었습니다.",
-                    locale: model.interfaceLocale
-                 ))
+                 model.runtimeUnavailableExplanation)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -213,8 +208,13 @@ struct DashboardPopoverView: View {
                 .disabled(model.isBusy)
             } else {
                 HStack {
-                    Button("시작") { Task { await model.startRuntime() } }
-                        .buttonStyle(.borderedProminent)
+                    if model.helperStatus?.phase == "stopped" {
+                        Button("시작") { Task { await model.startRuntime() } }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("다시 연결") { Task { await model.refreshAll() } }
+                            .buttonStyle(.borderedProminent)
+                    }
                     Button("재시작") { Task { await model.restartRuntime(force: false) } }
                 }
                 .disabled(model.isBusy)
@@ -306,15 +306,25 @@ struct DashboardPopoverView: View {
                     WeeklyUsageView(usage: usage)
                 }
                 CountsGrid(counts: dashboard.counts)
-                if model.dashboardEnrichmentFailed || dashboard.enrichment?.isIncomplete == true {
+                if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
                     Label(
                         "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
                         systemImage: "clock.badge.exclamationmark"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
+                } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
+                    Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                if dashboard.counts.runtimeUnknownAgents > 0 {
+                if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending), let observed = model.dashboardObservationDate {
+                    Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if dashboard.counts.runtimeUnknownAgents > 0,
+                   !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
                     Label(
                         "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
                         systemImage: "questionmark.circle"

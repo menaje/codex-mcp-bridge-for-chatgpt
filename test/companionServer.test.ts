@@ -23,6 +23,21 @@ afterEach(async () => {
 });
 
 describe("native companion server", () => {
+  it("serves lightweight health independently of a stalled admission snapshot", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    service.runtimeSnapshot = vi.fn(() => new Promise(() => undefined));
+    service.runtimeHealth = vi.fn(() => ({
+      acceptingNewJobs: true, activeJobs: 2, pendingAdmissions: 0,
+      backgroundProcessState: "unknown", backgroundProcesses: 0,
+      backgroundProcessAgents: 0, backgroundProcessUnknownAgents: 0
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+    expect(await request(socketPath, { jsonrpc: "2.0", id: 1, method: "runtime.health" }))
+      .toMatchObject({ result: { activeJobs: 2, acceptingNewJobs: true } });
+    expect(service.runtimeSnapshot).not.toHaveBeenCalled();
+  });
+
   it("pushes application invalidations without loading hidden snapshots and releases its subscription", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();

@@ -44,6 +44,7 @@ const requestSchema = z.strictObject({
     "settings.snapshot",
     "settings.update",
     "runtime.snapshot",
+    "runtime.health",
     "runtime.beginDrain",
     "runtime.cancelDrain",
     "remote.status",
@@ -162,7 +163,7 @@ export type PrivateJsonLineServerOptions = {
 export async function startBridgeCompanionServer(
   options: BridgeCompanionServerOptions
 ): Promise<BridgeCompanionServer> {
-  const changes = new ChangeSignal(["dashboard", "settings"]);
+  const changes = new ChangeSignal(["dashboard", "settings", "enrichment"]);
   const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
   const server = await startPrivateJsonLineServer({
     socketPath: options.socketPath,
@@ -349,6 +350,10 @@ async function dispatchRequest(
       );
       return localizeSettingsView(view);
     }
+    case "runtime.health":
+      emptyParamsSchema.parse(request.params || {});
+      if (!applicationService.runtimeHealth) throw new Error("RUNTIME_HEALTH_UNAVAILABLE");
+      return applicationService.runtimeHealth();
     case "runtime.snapshot":
       return applicationService.runtimeSnapshot(
         runtimeSnapshotParamsSchema.parse(request.params || {})

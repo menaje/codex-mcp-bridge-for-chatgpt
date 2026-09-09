@@ -45,13 +45,29 @@ The native Dashboard uses the same progressive application-service contract as
 the ChatGPT card. It publishes an `enrich: false` structural snapshot first,
 then replaces or merges that page with a bounded `enrich: true` result in a
 separate task. Structural RPC has a two-second client ceiling; enrichment has a
-ten-second transport ceiling while the bridge itself bounds runtime work to
-six seconds and usage to 1.5 seconds. Matching last-known usage and runtime
+ten-second transport ceiling. The display waits up to six seconds for runtime
+enrichment, with 1.5 seconds per observation and for usage/account details.
+These are display budgets: pending reads continue under the App Server's final
+RPC deadlines (normally thirty seconds). Matching last-known usage and runtime
 evidence is included in later structural snapshots without an upstream call,
 so polling does not temporarily clear process counts or reorder their rows.
 Refresh and pagination cancel stale
 enrichment generations, and an enrichment failure leaves the structural view
 visible. Swift does not issue App Server runtime probes itself.
+
+Slow details show an updating notice, separately from a failed observation.
+The native menu retains known values and shows their oldest observation time
+when available. Identical ongoing usage, account, and runtime reads are shared
+across snapshots; runtime observations hold one of eight shared slots until
+their actual read settles, including any follow-up process query. Valid late
+results update the cache and emit an `enrichment` invalidation. This bypasses
+the ordinary thirty-second enrichment interval for a visible native window.
+Account revisions, thread stamps and explicit invalidations prevent superseded
+results from replacing current evidence. Late failed observations have a short
+retry cooldown, preserving previous values without an immediate refresh loop.
+Successful runtime observations, including unloaded threads, remain fresh for
+five seconds so a late detail invalidation can reuse the completed batch.
+These display caches never authorize admission, settings changes or shutdown.
 
 The native popover and both retained ChatGPT cards use the same presentation
 rules. Active, recent, and idle sections are Activity-first with one or more
@@ -147,7 +163,11 @@ Connection health has its own ten-second watchdog. `helper.health` omits CLI
 discovery/account details and reuses configuration validation for at most sixty
 seconds; a dotenv change invalidates that display cache immediately. Admission,
 configuration mutations and shutdown still validate their own fresh evidence.
-Detail requests cannot delay this watchdog. Concurrent health requests share one
+The helper uses private `runtime.health` for an in-memory observation, without
+retention pruning, SQLite writes, session enumeration or Codex probes. Only an
+explicit unsupported-method response from an older companion permits the legacy
+`runtime.snapshot` fallback. A health timeout does not start a heavier query.
+Detail requests do not join this watchdog's request. Concurrent health requests share one
 in-flight read and a trailing read when another observation is requested.
 Blocking socket waits use separate I/O workers so a long change wait cannot
 occupy Swift's task executor and delay health requests or cancellation. Cancelled
@@ -168,16 +188,23 @@ exposed through the remote HTTPS application method allowlist.
 | Local connection | Change notices and an independent ten-second watchdog |
 | Tunnel readiness | Asynchronous CLI probe every five seconds, five-second deadline; existing twenty-second heartbeat expiry remains |
 | Dashboard | On opening and changes; thirty-second visible reconciliation, or ten seconds with older/remote servers; no background Dashboard reads when hidden |
-| Dashboard enrichment | At most once per thirty seconds for automatic visible updates |
+| Dashboard enrichment | Every thirty seconds for automatic visible updates; immediately after reconnection or a late-result invalidation |
 | Settings | On opening and changes; sixty-second visible fallback; pending edits are preserved |
 | Authentication | Login completion/auth changes and opening a window; five-minute fallback, two-second bounded browser-login checks |
 | CLI/SDK details | Installation changes and window entry; five-minute background fallback; visible settings reconcile each minute with change support, otherwise thirty seconds or two seconds during installation |
 | Operational notifications | Reevaluate on observed state changes and watchdog observations; existing sixty-second grace/deduplication remains |
 
-The app coalesces bursts of automatic refresh requests over 250 ms. A macOS wake
-or network-path change requests a fresh health observation and relevant content;
-network availability alone never proves tunnel readiness. Sleep interrupts the
-notification recovery observation window. Closing both content windows cancels
+The app coalesces bursts of automatic refresh requests over 250 ms. System wake,
+display wake, session activation, app activation and network-path changes request
+a fresh health observation and relevant content. Until the fresh response, the
+menu shows checking; network availability alone never proves tunnel readiness.
+Sleep/display sleep/session deactivation invalidate prior observation evidence.
+A new recovery window replaces its expiry timer, and an old timer cannot expire
+the new window. Every successful local reconnection schedules visible content
+again even when an earlier content read skipped a disconnected server and the
+change subscription remained open. A failed probe with a running process offers
+reconnection and does not claim the server stopped. No observation failure
+restarts the server or cancels a Codex job. Closing both content windows cancels
 the companion watcher, while helper lifecycle observation remains active. Old
 helpers that do not support the new methods use the existing status RPC and
 periodic fallback. Watch failures retry with bounded exponential backoff and do

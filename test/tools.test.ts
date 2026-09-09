@@ -526,6 +526,7 @@ class RestartAwareUpstream extends FakeUpstream {
 class ProbeAwareUpstream extends FakeUpstream {
   public probeCalls: string[] = [];
   public hangProbe = false;
+  public finishProbeTimeout?: () => void;
   public probe: CodexThreadResumeProbe = {
     state: "resumable",
     runtimeStatus: "idle",
@@ -534,7 +535,9 @@ class ProbeAwareUpstream extends FakeUpstream {
 
   async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
     this.probeCalls.push(threadId);
-    if (this.hangProbe) return new Promise(() => undefined);
+    if (this.hangProbe) return new Promise((_, reject) => {
+      this.finishProbeTimeout = () => reject(new Error("fixture RPC deadline"));
+    });
     return { ...this.probe, threadId } as CodexThreadResumeProbe;
   }
 }
@@ -1675,6 +1678,56 @@ describe("bridge tools", () => {
 
     await close();
   }, 5_000);
+
+  it("publishes late usage once, shares refreshes, and rejects a result from a replaced account", async () => {
+    for (const replaceAccount of [false, true]) {
+      const root = temporaryRoot();
+      const upstream = new WeeklyUsageUpstream();
+      let revision = "account-a";
+      Object.assign(upstream, { accountRevision: () => revision });
+      const usage = await upstream.readAccountRateLimits();
+      let resolve!: (value: CodexWeeklyUsage) => void;
+      const read = vi.spyOn(upstream, "readAccountRateLimits").mockImplementation(() => new Promise(done => { resolve = done; }));
+      const { applicationService, close } = await connectTestClient(configFor(root), upstream);
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const first = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+        expect(first.enrichment).toMatchObject({ usageTimedOut: true, pendingReads: 1, usageUnavailable: false });
+        const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await new Promise<void>(done => setImmediate(done));
+        expect(read).toHaveBeenCalledTimes(1);
+        if (replaceAccount) revision = "account-b";
+        resolve(usage);
+        await repeated;
+        const structural = await applicationService.dashboardSnapshot();
+        if (replaceAccount) {
+          expect(structural.weeklyUsage).toBeNull();
+          expect(notice).not.toHaveBeenCalledWith("enrichment");
+        } else {
+          expect(structural.weeklyUsage).toMatchObject({ remainingPercent: 64.5 });
+          expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(1);
+          expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment)
+            .toMatchObject({ usageTimedOut: false, pendingReads: 0 });
+          expect(read).toHaveBeenCalledTimes(1);
+        }
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("serves health from memory without pruning jobs or probing Codex", async () => {
+    const upstream = new HangingCardEnrichmentUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    const count = vi.spyOn(jobs, "runningCount").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    const list = vi.spyOn(jobs, "list").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    try {
+      expect(applicationService.runtimeHealth!()).toMatchObject({ acceptingNewJobs: true, activeJobs: 0, pendingAdmissions: 0 });
+      expect(count).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+      expect(upstream.probeCalls).toHaveLength(0);
+      await expect(applicationService.runtimeSnapshot()).rejects.toThrow("pruning unavailable");
+    } finally { count.mockRestore(); list.mockRestore(); await close(); }
+  });
 
   it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
     const root = temporaryRoot();
@@ -3044,6 +3097,7 @@ describe("bridge tools", () => {
       runtimeProbeSkippedAgents: 0
     });
 
+    const afterCache = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
     upstream.probe = {
       state: "unknown",
       reason: "transient",
@@ -3069,6 +3123,11 @@ describe("bridge tools", () => {
     expect((timedOut as { structuredContent?: any }).structuredContent?.counts)
       .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 1 });
     upstream.hangProbe = false;
+    upstream.finishProbeTimeout?.();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // The final transport failure briefly retains the last display value;
+    // a later reconciliation can start a new probe.
+    const afterFailure = afterCache.mockReturnValue(Date.now() + 5_100);
 
     upstream.probe = {
       state: "orphaned",
@@ -3081,6 +3140,7 @@ describe("bridge tools", () => {
       arguments: snapshotArguments
     });
     const orphanedView = (orphaned as { structuredContent?: any }).structuredContent;
+    afterFailure.mockRestore();
     expect(orphanedView.counts).toMatchObject({ needsAttention: 1, orphanedAgents: 1 });
     expect(orphanedView.activeRows).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: "orphaned" })
@@ -3117,13 +3177,15 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("does not start a follow-up terminal read after a runtime probe times out", async () => {
+  it("finishes a slow runtime observation, caches it, and invalidates the display without duplicating the probe", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredProbeWithLoadedTerminalUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
     await runTask(client, {
       prompt: "create one App Server thread for a bounded enrichment timeout"
     });
@@ -3146,11 +3208,50 @@ describe("bridge tools", () => {
     });
     expect(upstream.loadedTerminalReads).toBe(0);
 
+    const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(upstream.probeCalls).toHaveLength(1);
+
     upstream.resolveProbe({ state: "resumable", runtimeStatus: "idle" });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(upstream.loadedTerminalReads).toBe(0);
+    expect(upstream.loadedTerminalReads).toBe(1);
+    await repeated;
+    expect(notice).toHaveBeenCalledWith("enrichment");
+    const recovered = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+    expect(recovered.enrichment).toMatchObject({ timeouts: 0, pendingReads: 0, runtimeRequests: 0 });
+    expect(upstream.probeCalls).toHaveLength(1);
+    unsubscribe();
 
     await close();
+  });
+
+  it("discards a late runtime result after a newer Agent version has been requested", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeWithLoadedTerminalUpstream();
+    const resolutions: Array<(value: CodexThreadResumeProbe) => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(() => new Promise(resolve => resolutions.push(resolve)));
+    const { client, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
+    try {
+      await runTask(client, { prompt: "create a thread for versioned observations" });
+      await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      const agent = jobs.listAllAgents()[0]!;
+      jobs.renameAgent(agent.agentId, "New version");
+      const current = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+      resolutions[0]!({ state: "resumable", runtimeStatus: "idle", threadId: "thread-1" });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(upstream.loadedTerminalReads).toBe(0);
+      expect(notice).not.toHaveBeenCalledWith("enrichment");
+      resolutions[1]!({ state: "resumable", runtimeStatus: "notLoaded", threadId: "thread-1" });
+      await current;
+      const cached = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      expect(cached.enrichment).toMatchObject({ pendingReads: 0, runtimeRequests: 0, cacheHits: 1 });
+      expect(probe).toHaveBeenCalledTimes(2);
+    } finally { unsubscribe(); await close(); }
   });
 
   it("marks a retained running Job as liveness-unknown when App Server reports an idle thread", async () => {
