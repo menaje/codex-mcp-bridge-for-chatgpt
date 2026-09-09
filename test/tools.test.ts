@@ -2228,6 +2228,174 @@ describe("bridge tools", () => {
     } finally { await close(); }
   }, 15_000);
 
+  it("counts Activity-only conversations consistently in both status-card scopes", async () => {
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    try {
+      jobs.createActivity({ scopeId: SCOPE_A, title: "A goal before execution" });
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A });
+      for (const { view } of [scoped, all]) {
+        expect(view.counts).toMatchObject({ trackedConversations: 1, retainedJobs: 0, active: 0 });
+        expect([...view.activeRows, ...view.terminalRows, ...view.idleRows]).toEqual([]);
+      }
+      jobs.createActivity({ scopeId: SCOPE_A, title: "Another goal in the same conversation" });
+      jobs.createActivity({ scopeId: SCOPE_B, title: "Another conversation's goal" });
+      expect((await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A })).view.counts.trackedConversations).toBe(1);
+      expect((await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A })).view.counts.trackedConversations).toBe(2);
+      expect((await applicationService.dashboardSnapshot()).counts.trackedConversations).toBe(2);
+    } finally { await close(); }
+  });
+
+  it("selects status-card defaults from retained work and preserves legacy all-conversation reads", async () => {
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    try {
+      await runTask(client, { scopeId: SCOPE_B, prompt: "Other conversation", activityTitle: "Other completed work" });
+      const opened = await rawCallTool({ name: "codex_dashboard", arguments: {} });
+      expect(opened.isError).not.toBe(true);
+      expect(opened.structuredContent).toMatchObject({ kind: "dashboard", readOnly: true });
+      expect(opened._meta).not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+      const empty = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(empty.view).toMatchObject({
+        scope: "bridge-wide", filter: { mode: "all", conversationAvailable: true, conversationHasWork: false },
+        counts: { completed: 1 }
+      });
+      const unidentified = await freshDashboardSnapshot(rawCallTool, { scope: "auto" });
+      expect(unidentified.view.filter).toEqual({ mode: "all", conversationAvailable: false, conversationHasWork: false });
+
+      jobs.createActivity({ scopeId: SCOPE_A, title: "A goal before its first execution" });
+      const goalOnly = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(goalOnly.view).toMatchObject({
+        scope: "conversation", filter: { mode: "conversation", conversationAvailable: true, conversationHasWork: true },
+        counts: { retainedJobs: 0, trackedConversations: 1 }
+      });
+      await runTask(client, { prompt: "Completed here", activityTitle: "This conversation completed work" });
+      const completedOnly = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(completedOnly.view).toMatchObject({ scope: "conversation", counts: { active: 0, completed: 1 } });
+      expect(completedOnly.view.terminalRows.map((row: any) => row.activityTitle)).toEqual(["This conversation completed work"]);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A });
+      const legacy = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+      const native = await applicationService.dashboardSnapshot();
+      for (const view of [all.view, legacy.view, native]) {
+        expect(view).toMatchObject({ scope: "bridge-wide", counts: { completed: 2, trackedConversations: 2 } });
+      }
+      expect(legacy.view).not.toHaveProperty("filter");
+      expect(native).not.toHaveProperty("filter");
+
+      const unavailable = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", scope: "conversation", widgetInstanceId: randomUUID(), enrich: false
+      } });
+      expect(unavailable.isError).toBe(true);
+      expect(JSON.stringify(unavailable)).toContain("DASHBOARD_CONVERSATION_UNAVAILABLE");
+      const malformed = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", scope: "auto", scopeId: SCOPE_A, widgetInstanceId: randomUUID(), enrich: false
+      }, _meta: { "openai/session": "" } });
+      expect(malformed.isError).toBe(true);
+      expect(JSON.stringify(malformed)).toContain("non-empty bounded string");
+      const malformedOpener = await rawCallTool({ name: "codex_dashboard", arguments: {},
+        _meta: { "openai/session": "" }
+      });
+      expect(malformedOpener.isError).toBe(true);
+      expect(JSON.stringify(malformedOpener)).toContain("non-empty bounded string");
+    } finally { await close(); }
+  });
+
+  it("filters status-card counts, projects, history and pages before pagination", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, settings, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    try {
+      const secondRoot = path.join(root, "second-project");
+      mkdirSync(secondRoot);
+      settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Second project", cwd: secondRoot } }],
+        undefined, settings.current.registryRevision);
+      const secondProject = settings.current.projects.find(project => project.name === "Second project")!;
+      for (const scopeId of [SCOPE_A, SCOPE_B]) {
+        for (let index = 0; index < 7; index++) {
+          await runTask(client, { scopeId, prompt: "Private page fixture", activityTitle: `${scopeId === SCOPE_A ? "Here" : "Elsewhere"} ${index}`,
+            agentName: `Page Agent ${index}`, ...(scopeId === SCOPE_B ? { projectId: secondProject.id } : {}) });
+        }
+      }
+      const first = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A, limit: 5 });
+      expect(first.view.counts).toMatchObject({ trackedProjects: 1, trackedConversations: 1, retainedJobs: 7, completed: 7 });
+      expect(first.view.pagination.terminal).toMatchObject({ total: 7, returned: 5, hasNext: true });
+      const next = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A, limit: 5, terminalOffset: 5 });
+      expect(next.view.pagination.terminal).toMatchObject({ offset: 5, total: 7, returned: 2, hasNext: false });
+      const names = [...first.view.terminalRows, ...next.view.terminalRows].map(row => row.activityTitle);
+      expect(new Set(names).size).toBe(7);
+      expect(names.every(name => name.startsWith("Here"))).toBe(true);
+      expect(JSON.stringify(first.view)).not.toContain("Elsewhere");
+      expect(JSON.stringify(next.view)).not.toContain("Second project");
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A, limit: 5 });
+      expect(all.view.counts).toMatchObject({ trackedProjects: 2, trackedConversations: 2, retainedJobs: 14, completed: 14 });
+      expect(all.view.pagination.terminal.total).toBe(14);
+      for (const privateValue of [SCOPE_A, SCOPE_B, root]) expect(JSON.stringify(first.view)).not.toContain(privateValue);
+    } finally { await close(); }
+  });
+
+  it("uses opening host metadata for status-card filtering without expanding ordinary model scope", async () => {
+    const { client, rawCallTool, close } = await connectTestClient(configFor(temporaryRoot()), new FakeUpstream());
+    const metadata = { "openai/session": "status-card-host-conversation" };
+    try {
+      const elsewhere = parseToolJson(await runTask(client, { scopeId: SCOPE_B, prompt: "Other work", activityTitle: "Outside host scope" }));
+      await client.callTool({ name: "codex_task", arguments: {
+        scopeId: SCOPE_B, prompt: "Here", activityTitle: "Host-owned work", executionMode: "foreground"
+      }, _meta: metadata });
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_B, metadata });
+      expect(scoped.view.filter.mode).toBe("conversation");
+      expect(scoped.view.terminalRows.map((row: any) => row.activityTitle)).toEqual(["Host-owned work"]);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_B, metadata });
+      expect(all.view.counts.completed).toBe(2);
+      const outside = await rawCallTool({ name: "codex_status", arguments: { query: { kind: "job", id: elsewhere.jobId } }, _meta: metadata });
+      expect(outside.isError).toBe(true);
+    } finally { await close(); }
+  });
+
+  it("limits status-card runtime enrichment and background counts to the selected conversation", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    vi.spyOn(upstream, "probeThread").mockImplementation(async threadId => {
+      upstream.probeCalls.push(threadId);
+      return { state: "resumable", runtimeStatus: "idle", threadId };
+    });
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    try {
+      const threads = ["scoped-runtime-here", "scoped-runtime-elsewhere"];
+      for (const [index, scopeId] of [SCOPE_A, SCOPE_B].entries()) {
+        const threadId = threads[index]!;
+        const activity = jobs.createActivity({ scopeId, title: `Runtime ${index}` });
+        const agent = jobs.createAgent({ scopeId, agentName: `Runtime Agent ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId, backendKind: "app-server", cwd: root,
+          sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+          scopeId, operation: "start", cwd: root, sandbox: "read-only", requestId: nextRequestId(),
+          requestHash: `scoped-runtime-${index}`, requestHashVersion: 7, exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(threadId));
+        await job.promise;
+      }
+      const [hereThread, elsewhereThread] = threads as [string, string];
+      upstream.backgroundThreadId = elsewhereThread;
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A, enrich: true });
+      expect(scoped.view.counts.backgroundProcesses).toBe(0);
+      expect(upstream.loadedTerminalReads).toContain(hereThread);
+      expect(upstream.loadedTerminalReads).not.toContain(elsewhereThread);
+      expect(upstream.probeCalls).not.toContain(elsewhereThread);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A, enrich: true });
+      expect(all.view.counts.backgroundProcesses).toBe(1);
+      expect(upstream.loadedTerminalReads).toContain(elsewhereThread);
+      const scopedAgain = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A });
+      expect(scopedAgain.view.counts.backgroundProcesses).toBe(0);
+      expect(scopedAgain.view.activeRows).toEqual([]);
+    } finally { await close(); }
+  });
+
   it("shows every bridge-tracked conversation through a read-only Codex-runtime-only Dashboard", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
@@ -15555,19 +15723,25 @@ async function freshDashboardSnapshot(
   }) => Promise<any>,
   options: {
     scopeId?: string;
+    scope?: "auto" | "conversation" | "all";
     metadata?: Record<string, unknown>;
     limit?: number;
     enrich?: boolean;
+    terminalOffset?: number;
+    idleOffset?: number;
   } = {}
 ): Promise<{ result: any; view: Record<string, any> }> {
   dashboardWidgetSequence += 1;
   const widgetSuffix = dashboardWidgetSequence.toString(16).padStart(12, "0");
   const result = await rawCallTool({
-    name: "codex_dashboard_snapshot",
+    name: options.scope ? "codex_ui_read" : "codex_dashboard_snapshot",
     arguments: {
+      ...(options.scope ? { view: "dashboard", scope: options.scope } : {}),
       ...(options.scopeId ? { scopeId: options.scopeId } : {}),
       widgetInstanceId: `dddddddd-dddd-4ddd-8ddd-${widgetSuffix}`,
       limit: options.limit || 20,
+      ...(options.terminalOffset !== undefined ? { terminalOffset: options.terminalOffset } : {}),
+      ...(options.idleOffset !== undefined ? { idleOffset: options.idleOffset } : {}),
       enrich: options.enrich === true
     },
     ...(options.metadata ? { _meta: options.metadata } : {})

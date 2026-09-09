@@ -607,13 +607,23 @@ export class BridgeStateStore {
       .map((row) => hydrateJobPayload(row as JobStorageRow));
   }
 
+  /** Includes completed and archived work when selecting the initial card scope. */
+  hasDashboardWork(scopeId: string): boolean {
+    return Boolean(this.database.prepare(`
+      SELECT 1 FROM activities WHERE scope_id = ?
+      UNION ALL
+      SELECT 1 FROM jobs WHERE scope_id = ?
+      LIMIT 1
+    `).get(scopeId, scopeId));
+  }
+
   /**
-   * Returns only the bounded, result-free fields needed by the global
-   * dashboard after ordinary retained jobs have been pruned. Older archived
-   * rows may not have a start time or execution selection; callers must not
-   * infer those values from the agent's current session.
+   * Returns bounded, result-free status history after ordinary Jobs are pruned.
+   * Filter before the limit so newer work elsewhere cannot hide scoped history.
+   * Older archived rows may lack start time or execution selection; callers
+   * must not infer those values from the Agent's current session.
    */
-  listDashboardRetainedJobs(limit = 10_000): DashboardRetainedJobSummary[] {
+  listDashboardRetainedJobs(limit = 10_000, scopeId?: string): DashboardRetainedJobSummary[] {
     const boundedLimit = Math.max(0, Math.min(100_000, Math.floor(limit)));
     if (boundedLimit === 0) return [];
     const rows = this.database
@@ -622,10 +632,11 @@ export class BridgeStateStore {
                status, updated_at, payload
           FROM jobs
          WHERE archived_at IS NOT NULL
+           ${scopeId ? "AND scope_id = ?" : ""}
          ORDER BY updated_at DESC, job_id DESC
          LIMIT ?
       `)
-      .all(boundedLimit) as Array<{
+      .all(...(scopeId ? [scopeId, boundedLimit] : [boundedLimit])) as Array<{
         job_id: string;
         scope_id: string;
         activity_id: string;
@@ -850,6 +861,12 @@ export class BridgeStateStore {
           .prepare("SELECT * FROM activities ORDER BY updated_at DESC LIMIT ? OFFSET ?")
           .all(boundedLimit, boundedOffset);
     return (rows as ActivityStorageRow[]).map(readActivityRow);
+  }
+
+  /** Counts can include Activity-only conversations without loading their payloads. */
+  listActivityScopeIds(): string[] {
+    return (this.database.prepare("SELECT DISTINCT scope_id FROM activities").all() as Array<{ scope_id: string }>)
+      .map(row => row.scope_id);
   }
 
   countActivities(scopeId?: string): number {

@@ -11,6 +11,22 @@ import { CodexJobRegistry } from "../src/tools.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
 describe("BridgeStateStore", () => {
+  it("finds retained status-card work and filters archived jobs before applying its limit", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const otherScope = "22222222-2222-4222-8222-222222222222";
+    try {
+      expect(store.hasDashboardWork(SCOPE_A)).toBe(false);
+      store.upsertJob({ ...job("older-here", "request-here"), updatedAt: 10 });
+      store.upsertJob({ ...job("newer-elsewhere", "request-elsewhere"), scopeId: otherScope, updatedAt: 20 });
+      store.deleteJob("older-here");
+      store.deleteJob("newer-elsewhere");
+      expect(store.countJobs()).toBe(0);
+      expect(store.hasDashboardWork(SCOPE_A)).toBe(true);
+      expect(store.listDashboardRetainedJobs(1).map(job => job.jobId)).toEqual(["newer-elsewhere"]);
+      expect(store.listDashboardRetainedJobs(1, SCOPE_A).map(job => job.jobId)).toEqual(["older-here"]);
+    } finally { store.close(); }
+  });
+
   it("commits session and job changes atomically and keeps the database private", () => {
     const file = stateFile();
     const store = new BridgeStateStore({ file });

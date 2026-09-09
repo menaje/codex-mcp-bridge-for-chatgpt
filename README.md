@@ -8,7 +8,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 
 - Run and continue local Codex work from a ChatGPT conversation.
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
-- See active, recent, and idle work from the native macOS menu-bar app or ChatGPT Dashboard.
+- See active, recent, and idle work from the native macOS menu-bar app or the ChatGPT status card. The card starts with this conversation when it has retained work, with a switch to all conversations.
 - Choose which project folders Codex may use and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
@@ -169,4 +169,4 @@ MIT
 
 GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT can open a question card with `codex_ask_user` and retrieve the response with `codex_user_answer`. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
 
-The current card/tool consolidation and retained-card migration are described in [Card tools](docs/card-tools.md). Activity screens are retired for new work; open Dashboard for the overview and work details.
+The current card/tool consolidation and retained-card migration are described in [Card tools](docs/card-tools.md). Activity screens are retired for new work; open the status card for this conversation or all work and work details.

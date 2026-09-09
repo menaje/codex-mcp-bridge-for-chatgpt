@@ -682,7 +682,12 @@ const cardEnrichmentOutputSchema = z.strictObject({
 const dashboardViewOutputSchema = z.strictObject({
   kind: z.literal("dashboard"),
   generatedAt: z.string(),
-  scope: z.literal("bridge-wide"),
+  scope: z.enum(["bridge-wide", "conversation"]),
+  filter: z.strictObject({
+    mode: z.enum(["conversation", "all"]),
+    conversationAvailable: z.boolean(),
+    conversationHasWork: z.boolean()
+  }).optional(),
   statusSource: z.literal("codex-runtime-only"),
   coverage: z.literal("bridge-known-retained"),
   enrichment: cardEnrichmentOutputSchema,
@@ -4734,7 +4739,10 @@ export function registerBridgeTools(
         options.terminalOffset || 0,
         options.idleOffset || 0,
         options.inspectRuntime === true,
-        options.legacyGrouping
+        options.legacyGrouping,
+        undefined,
+        undefined,
+        options.scopeId
       );
       if (config.codexService) {
         const service = config.codexService;
@@ -4957,6 +4965,9 @@ export function registerBridgeTools(
   const dashboardSnapshotInput = z.strictObject({
     scopeId: scopeIdSchema().optional(),
     widgetInstanceId: widgetInstanceIdSchema.optional(),
+    scope: z.enum(["auto", "conversation", "all"]).optional().describe(
+      "Initial auto selects this conversation when it has retained Activity or Job records; conversation and all retain an explicit selection. Omission preserves older cards' all-conversation view."
+    ),
     limit: z.number().int().min(5).max(50).optional(),
     projectOffset: z.number().int().min(0).max(1_000_000_000).optional(),
     conversationOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -4970,9 +4981,9 @@ export function registerBridgeTools(
   server.registerTool(
     "codex_dashboard",
     {
-      title: `${PRODUCT_INFO.displayName} Codex Overview`,
+      title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the bridge-wide Codex overview card for retained work across conversations.",
+        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. The user can switch between this conversation and all work in the card.",
       inputSchema: withJsonSchemaProjection(codexDashboardRuntimeInput, codexDashboardPublicInput),
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -4985,12 +4996,10 @@ export function registerBridgeTools(
     },
     async (args, extra) => {
       const { _meta } = extra;
-      scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Bridge-wide Codex overview"
-      );
-      const summary = "The bridge-wide Codex overview is open. The card loads current retained work.";
+      // The card can open without host identity and start in the all-work view.
+      // Supplied metadata must still be validated before returning the opener.
+      scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      const summary = "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
       return contractedToolResult(dashboardModelResultContract, {}, {
         kind: "dashboard", scope: "bridge-wide", readOnly: true,
         statusSource: "codex-runtime-only", summary
@@ -5005,15 +5014,22 @@ export function registerBridgeTools(
       const { _meta } = extra;
       if (!mountedWidgetInstanceId(args, _meta)) {
         throw new Error(
-          "MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex overview before retrying."
+          "MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex status card before retrying."
         );
       }
-      // Dashboard is a personal, bridge-wide, read-only projection. Some hosts
-      // omit conversation metadata when remounting an app across clients, so a
-      // mounted snapshot may recover without it. Supplying either scope form is
-      // still validated and malformed host metadata must never be ignored.
-      scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      // Status reads can use the personal all-work view without host identity.
+      // An explicit conversation selection must retain its scope. Supplied
+      // metadata is still validated, including on cross-client restoration.
+      const openingScope = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      const conversationHasWork = Boolean(openingScope &&
+        jobs.admissionStateStore.hasDashboardWork(openingScope.scopeId));
+      const mode = args.scope === "conversation" || args.scope === "auto" && conversationHasWork
+        ? "conversation" : "all";
+      if (mode === "conversation" && !openingScope) {
+        throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: This host did not identify the opening conversation. Select all work or reopen the status card.");
+      }
       const view = await applicationService.dashboardSnapshot({
+        scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
         limit: args.limit || 20,
         terminalOffset: args.terminalOffset || 0,
         idleOffset: args.idleOffset || 0,
@@ -5029,6 +5045,9 @@ export function registerBridgeTools(
               }
             : undefined
       });
+      if (args.scope !== undefined) {
+        view.filter = { mode, conversationAvailable: Boolean(openingScope), conversationHasWork };
+      }
       return dashboardViewResult(
         view,
         metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
@@ -10687,6 +10706,8 @@ type DashboardProjectPage = z.infer<typeof dashboardProjectPageOutputSchema>;
 export type DashboardView = z.infer<typeof dashboardViewOutputSchema>;
 
 export type BridgeDashboardSnapshotOptions = {
+  /** Internal resolved conversation filter. Native and retained clients omit it. */
+  scopeId?: string;
   limit?: number;
   terminalOffset?: number;
   idleOffset?: number;
@@ -11454,11 +11475,13 @@ function dashboardProjectPage(
   };
 }
 
-function listAllDashboardAgents(jobs: CodexJobRegistry): BridgeAgent[] {
-  const total = jobs.agentCount(undefined, false);
+function listAllDashboardAgents(jobs: CodexJobRegistry, scopeId?: string): BridgeAgent[] {
+  const total = jobs.agentCount(scopeId, false);
   const agents: BridgeAgent[] = [];
   while (agents.length < total) {
-    const page = jobs.listAllAgents(false, 1_000, agents.length);
+    const page = scopeId
+      ? jobs.listAgents(scopeId, false, 1_000, agents.length)
+      : jobs.listAllAgents(false, 1_000, agents.length);
     if (page.length === 0) break;
     agents.push(...page);
   }
@@ -11985,8 +12008,10 @@ async function buildDashboardView(
   inspectRuntime: boolean,
   legacyGrouping?: { projectOffset: number; conversationOffset: number },
   visibleAgentIdsOut?: Set<string>,
-  enrichment?: DashboardEnrichmentInput
+  enrichment?: DashboardEnrichmentInput,
+  scopeId?: string
 ): Promise<DashboardView> {
+  const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
   if (inspectRuntime && !enrichment) {
     const visibleAgentIds = new Set<string>();
     await buildDashboardView(
@@ -12002,12 +12027,14 @@ async function buildDashboardView(
       idleOffset,
       false,
       legacyGrouping,
-      visibleAgentIds
+      visibleAgentIds,
+      undefined,
+      scopeId
     );
-    const allAgents = listAllDashboardAgents(jobs);
+    const allAgents = listAllDashboardAgents(jobs, scopeId);
     const currentThreads = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
     const latestJobs = new Map<string, CodexJob>();
-    for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs))) {
+    for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).filter(inScope)) {
       if (!job.agentId) continue;
       const previous = latestJobs.get(job.agentId);
       if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
@@ -12089,15 +12116,16 @@ async function buildDashboardView(
           usageUnavailable: usage.failed,
           oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
         }
-      }
+      },
+      scopeId
     );
   }
   // Read expensive contextual catalog metadata once per backend for this
   // synchronous projection. A later request/enrichment gets its own fresh read.
   modelCatalog = projectionModelCatalog(modelCatalog);
   const now = Date.now();
-  const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0);
-  const cancellationDisplays = buildCancellationDisplayIndex(jobs);
+  const allJobs = jobs.list(Math.max(jobs.size, config.maxRetainedJobs), 0).filter(inScope);
+  const cancellationDisplays = buildCancellationDisplayIndex(jobs, scopeId);
   const displayedCancellationJobIds = new Set<string>();
   const cancellationForDashboardJob = (jobId: string): CancellationDisplay | undefined => {
     const cancellation = cancellationDisplays.byJobId.get(jobId);
@@ -12110,10 +12138,11 @@ async function buildDashboardView(
     return cancellation;
   };
   const archivedJobs = jobs.admissionStateStore.listDashboardRetainedJobs(
-    DASHBOARD_ARCHIVED_JOB_LIMIT
+    DASHBOARD_ARCHIVED_JOB_LIMIT,
+    scopeId
   );
-  const allAgents = listAllDashboardAgents(jobs);
-  const allSessions = sessions.list(1_000_000, 0);
+  const allAgents = listAllDashboardAgents(jobs, scopeId);
+  const allSessions = sessions.list(1_000_000, 0).filter(inScope);
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const currentThreadByAgent = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
   const sessionById = new Map(allSessions.map(session => [session.threadId, session]));
@@ -12548,7 +12577,8 @@ async function buildDashboardView(
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 
-  const scopeIds = new Set<string>();
+  const scopeIds = new Set<string>(scopeId ? [] : jobs.admissionStateStore.listActivityScopeIds());
+  if (scopeId && jobs.admissionStateStore.hasDashboardWork(scopeId)) scopeIds.add(scopeId);
   for (const job of allJobs) scopeIds.add(job.scopeId);
   for (const job of archivedJobs) scopeIds.add(job.scopeId);
   for (const agent of allAgents) scopeIds.add(agent.scopeId);
@@ -12602,16 +12632,22 @@ async function buildDashboardView(
     if (agentId) visibleAgentIdsOut?.add(agentId);
   }
   const weeklyUsage = enrichment?.weeklyUsage || cachedCodexWeeklyUsage(upstream);
+  const scopedProjectIds = scopeId ? new Set([
+    ...allJobs.map(job => job.projectId),
+    ...listAllScopedActivities(jobs, scopeId).map(activity => activity.projectId),
+    ...allAgents.map(agent => currentThreadFor(agent.agentId)?.projectId)
+  ].filter((id): id is string => Boolean(id))) : undefined;
   const trackedProjects = jobs.admissionStateStore
     .getProjectRegistrySnapshot()
     .projects
-    .filter((project) => project.archivedAt === undefined)
+    .filter((project) => project.archivedAt === undefined &&
+      (!scopedProjectIds || scopedProjectIds.has(project.id)))
     .length;
 
   return dashboardViewOutputSchema.parse({
     kind: "dashboard",
     generatedAt: new Date(now).toISOString(),
-    scope: "bridge-wide",
+    scope: scopeId ? "conversation" : "bridge-wide",
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
     enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),

@@ -5,7 +5,7 @@ Issue #69 current contract: [Card tools and migration](card-tools.md). The curre
 This document defines the output profile established by issue 36, corrected by
 issue 38, extended with the issue-40 active-turn steering contract, refined
 by issue 41's compact/explicit Activity projections, and extended by issue 42's
-bridge-wide read-only Dashboard. ChatGPT is the normative
+status card with conversation and all-work views. ChatGPT is the normative
 client. Public `structuredContent` is authoritative for
 model/orchestrator decisions and carries a bounded final `answer`; `content`
 remains a compatibility copy because some MCP clients consume only that channel.
@@ -144,7 +144,7 @@ Generation 26 retries interrupted structural and enrichment reads up to three ti
 
 Private metadata never grants access. Neither rehydration form grants mutation authority; only a user-triggered refresh from a rehydrated card may establish the existing explicit lease. Snapshot, handoff, cancellation, steering, interaction response, and background-process termination revalidate scope, mounted widget identity, Activity/card generation, presentation lease, ownership, and optimistic versions on the server. Rehydration persists no bootstrap payload and does not extend Job/Activity retention.
 
-## Generation 1 private Dashboard envelope and generation 21 UI
+## Generation 1 private Dashboard envelope and status-card UI
 
 Fast-mode presentation adds optional `execution.serviceTier` to the app-private Dashboard and Activity execution data. The captured Job selection and pruned terminal summary supply this value; changing the global preference never rewrites running or historical executions. Only `priority` and `fast` render the localized lightning badge. Absent legacy evidence has no badge. Supported next-run previews resolve the saved preference separately and compare the two Fast aliases as the same mode. The presentation ships in Dashboard generation 21, Activity generation 29, and Settings generation 16; the existing private envelope versions remain compatible.
 
@@ -164,7 +164,24 @@ Enrichment considers as many as 200 non-archived App Server Agents, independentl
 
 Project labels, Agent names, and Activity titles are user-defined display context and may reveal task meaning across conversations even though identifiers and payload bodies are redacted. This projection is therefore for the bridge's single trusted user. The widget-instance UUID proves only mounted-card correlation and is not authentication or authorization.
 
-The current Dashboard descriptor requires generation 21 at the content-hashed URI recorded in `ui-manifest.lock.json`. Retained immutable Dashboard resources remain registered according to the lock-file compatibility policy; generation-4–6 offset calls receive their conditional grouping projections.
+Status-card generation 23 adds optional app input `scope: "auto" | "conversation" | "all"`.
+Omission keeps older and native clients on the bridge-wide view. The opening host
+metadata is authoritative; an explicit compatibility scope is used only when
+host metadata is absent. Auto selects conversation when Activity or Job records
+exist, including archived terminal records, and otherwise all. An explicit
+conversation read without a resolved identity fails without broadening the view.
+The private view's `scope` is `"conversation"` or `"bridge-wide"`; scope-aware
+reads also include `filter: {mode, conversationAvailable, conversationHasWork}`.
+This adds no raw scope identifiers. The version-1 envelope key and purpose stay
+compatible, and the thin public opener retains its five-field acknowledgment.
+Counts, history, pagination, and runtime enrichment all use the selected scope.
+Scoped project counts include relevant active registrations; weekly usage is
+still account-wide. Scope switching resets cached rows, disclosure and control
+state, rejects obsolete reads, and does not replay any control mutation.
+The card HTML budget is 144 KiB for the selector and its nine-language labels.
+
+
+The current Dashboard descriptor requires generation 23 at the content-hashed URI recorded in `ui-manifest.lock.json`. Retained immutable Dashboard resources remain registered according to the lock-file compatibility policy; generation-4–6 offset calls receive their conditional grouping projections.
 
 The minimum Activity generation for new descriptors is 12. The current immutable resource is generation 29 at the content-hashed URI recorded in `ui-manifest.lock.json`. Every retained immutable Activity URI from generations 7–29 remains registered and refreshes through its compatible app-only path. Retained HTML assets are not rewritten or deleted when the minimum advances. UI generation 19 normalizes supported host-result wrappers and exposes retryable hydration failures. Generation 20 retains the generation-11 private bootstrap/view envelopes and paints structural data first. Generation 21 also requests bounded enrichment for a historical one-shot view through its exact Job/request correlation. Generation 22 retains per-Agent work duration, historically hoisted exact execution details shared by all nested Agents, and groups full-history idle Agents by latest Activity while suppressing copies already nested under a visible Activity. Generation 23 adds bounded recent and distinct idle detail to compact cards, with recent Activities expanded and idle Agents collapsed by default. Generation 24 reconstructs a cold full-history result from its strict public mode and optional Activity identity/version, keeps that reconstruction paginatable but one-shot and non-owning, bounds both host transports, dispatches enrichment before the long watch, rejects stale async responses, coalesces rapid refresh clicks, and retains the last successful structural view when refresh or enrichment fails. Generation 25 keeps actual model/reasoning effort on every nested Agent in compact and full cards, even when sibling selections match, and explicitly marks missing legacy execution evidence. Rehydrated views remain read-only and non-owning: enrichment grants no watcher, handoff, control lease, or mutation authority.
 
