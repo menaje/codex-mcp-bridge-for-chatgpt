@@ -8,6 +8,7 @@ import { ordinaryCodexQuestion, questionReference } from "./codexInputs.js";
 import { questionHash, type UserQuestionRecord } from "./questionStore.js";
 import { QUESTION_CARD_URI, registerQuestionCardResource } from "./questionCard.js";
 import { defineToolResultContract, projectToolResult } from "./toolResultContracts.js";
+import { originWaitTokenSchema } from "./originWait.js";
 
 export const USER_QUESTION_META = "codex/userQuestion@1";
 const identifier = z.string().trim().min(1).max(200);
@@ -62,7 +63,7 @@ export function registerQuestionTools(server: McpServer, jobs: CodexJobRegistry,
     return job;
   };
 
-  const questionInputSchema = z.strictObject({ jobId: identifier, afterCursor: z.string().regex(/^[a-f0-9]{64}$/).optional(), waitMs: z.number().int().min(0).max(60_000).optional() });
+  const questionInputSchema = z.strictObject({ jobId: identifier, afterCursor: z.string().regex(/^[a-f0-9]{64}$/).optional(), waitMs: z.number().int().min(0).max(60_000).optional(),waitToken:originWaitTokenSchema.optional() });
   const readInput = async (args: z.infer<typeof questionInputSchema>, extra: Parameters<ToolCallback<typeof questionInputSchema>>[1], compatibilityScopeId?: string) => {
     const scopeId = scopeResolver.require(extra._meta as ToolCallMetadata, compatibilityScopeId, "GPT question orchestration").scopeId;
     ownedJob(scopeId, args.jobId);

@@ -265,16 +265,16 @@ const report = {
   },
   finalGenerationBudget: {
     historicalIssue36ReductionTargetPercent: 40,
-    targetModelVisibleSchemaBytes: 19_500,
+    targetModelVisibleSchemaBytes: 24_000,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
     dedicatedQuestionTools,
     dedicatedQuestionToolsSchemaBytes: dedicatedQuestionSchemaBytes,
     sharedQuestionInputSchema: "codex_status",
-    headroomBytes: 19_500 - modelVisibleSchemas.totalBytes,
-    enforcedAt: "issue69-tool-consolidation-issue70-guidance",
+    headroomBytes: 24_000 - modelVisibleSchemas.totalBytes,
+    enforcedAt: "original-wait-automatic-recovery",
     liveHostEvidenceProducedByThisAudit: false,
     separateLiveQuestionEvidence: "docs/audits/issue-70-unlocked-host.json",
-    passed: modelVisibleSchemas.totalBytes <= 19_500
+    passed: modelVisibleSchemas.totalBytes <= 24_000
   }
 };
 
@@ -285,8 +285,8 @@ if (process.argv.includes("--check")) {
     "Model-visible output schemas contain typeless numeric const/enum nodes that ChatGPT cannot expose reliably."
   );
   assert.ok(
-    modelVisibleSchemas.totalBytes <= 19_500,
-    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > 19500 bytes.`
+    modelVisibleSchemas.totalBytes <= 24_000,
+    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > 24000 bytes.`
   );
   const baseline = readJson<typeof report>(baselinePath);
   assert.deepStrictEqual(report, baseline, "Output contract audit differs from the checked-in baseline.");

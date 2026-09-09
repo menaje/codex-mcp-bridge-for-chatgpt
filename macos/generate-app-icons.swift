@@ -56,11 +56,11 @@ struct IconArtwork {
         context.translateBy(x: 0, y: CGFloat(pixelSize))
         context.scaleBy(x: CGFloat(pixelSize) / 1024, y: -CGFloat(pixelSize) / 1024)
         context.setFillColor(CGColor(colorSpace: colorSpace,
-                                     components: [21 / 255, 24 / 255, 22 / 255, 1])!)
+                                     components: [CGFloat(21) / 255, CGFloat(24) / 255, CGFloat(22) / 255, 1])!)
         context.addPath(background)
         context.fillPath()
         context.setFillColor(CGColor(colorSpace: colorSpace,
-                                     components: [53 / 255, 220 / 255, 122 / 255, 1])!)
+                                     components: [CGFloat(53) / 255, CGFloat(220) / 255, CGFloat(122) / 255, 1])!)
         context.addPath(mark)
         context.drawPath(using: .eoFill)
         guard let image = context.makeImage(),

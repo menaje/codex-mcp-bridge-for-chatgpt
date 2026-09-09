@@ -71,7 +71,8 @@
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "check": "npm run build && npm run test",
     "macos:remote:check": "tsx scripts/check-native-remote.ts",
-    "test:continuity": "node scripts/check-thread-continuity.mjs"
+    "test:continuity": "node scripts/check-thread-continuity.mjs",
+    "test:launchd-lifecycle": "tsx scripts/check-launchd-lifecycle.ts --run-isolated"
   },
   "keywords": [
     "codex",

@@ -158,6 +158,17 @@ export class CodexBackendRouter implements CodexUpstream {
     await backend.archiveThread(threadId, kind);
   }
 
+  protectThreadFromImplicitResume(threadId: string): void {
+    this.backend("app-server").protectThreadFromImplicitResume?.(threadId);
+  }
+
+  async releaseThreadConnection(threadId: string, options: import("./threadConnections.js").ThreadReleaseOptions) {
+    const kind = this.threadBackends.get(threadId);
+    if (kind && kind !== "app-server") return { phase: "blocked" as const, reason: "retired-backend" };
+    return this.backend("app-server").releaseThreadConnection?.(threadId, options) ||
+      { phase: "blocked" as const, reason: "unsupported" };
+  }
+
   async restoreThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
     const kind = backendKind || this.threadBackends.get(threadId);
     if (!kind) throw new Error("The Agent thread backend is unknown.");
@@ -272,13 +283,17 @@ export class CodexBackendRouter implements CodexUpstream {
   forceTerminateWorker(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs?: number
+    graceMs?: number,
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult> {
     const backend = this.backend(assignment.backendKind);
     if (!backend.forceTerminateWorker) {
       throw new Error(`Codex backend ${assignment.backendKind} does not support supervised force-stop.`);
     }
-    return backend.forceTerminateWorker(assignment, correlation, graceMs);
+    if (options?.interruptOnly && assignment.backendKind !== "app-server") {
+      throw new Error("PRECISE_INTERRUPTION_REQUIRED: Automatic recovery cannot terminate a shared worker.");
+    }
+    return backend.forceTerminateWorker(assignment, correlation, graceMs, options);
   }
 
   async respondToInteraction(

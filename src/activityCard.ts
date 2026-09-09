@@ -19,7 +19,7 @@ import {
 } from "./uiToolCallFallback.js";
 
 export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
-export const ACTIVITY_CARD_CONTRACT_GENERATION = 29;
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 30;
 export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 6;
 export const ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION = 11;
 export const ACTIVITY_BOOTSTRAP_METADATA_KEY = "codex/activityBootstrap@11";

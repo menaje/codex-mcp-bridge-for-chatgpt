@@ -2,6 +2,8 @@
 
 This guide covers the user-facing setup for Codex MCP Bridge for ChatGPT. Choose the path that matches the computer that will actually run Codex.
 
+Conversation connections have an independent six-hour idle grace controlled by `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` (`0` disables automatic release). Job results retain their existing separate six-hour/100-Job policy. See [connection lifetime, app handoff and retention](thread-lifecycle.md) for protection rules, persistent/ephemeral choices and restart recovery.
+
 Official background:
 
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)
@@ -114,10 +116,13 @@ Once the server reports that the Bridge and Tunnel are connected:
 
 Refresh the ChatGPT connection after installing a Bridge release that changes its tools or cards. A normal app, server, Tunnel, or computer restart with the same build does not require Refresh.
 
-The Activity card keeps running and recently completed Agents together without exposing local project paths:
+The status card switches between **This conversation** and **All work**, with
+running work, response requests and problems summarized in the selected scope.
+New tasks do not open Activity cards. Settings and independent question cards
+cover configuration and questions that need your input.
 
 <p align="center">
-  <img src="images/chatgpt-activity-light-en.png" alt="English ChatGPT Activity card in light appearance showing a running background Agent and a recently completed Agent" width="645">
+  <img src="images/chatgpt-dashboard-light-en.png" alt="ChatGPT status card showing work in the bridge" width="645">
 </p>
 
 ## macOS client mode
@@ -259,10 +264,11 @@ Connection settings choose the role of the current Mac:
 
 ### General: access policy
 
-The access strategy is the default requested for new work:
+The Bridge applies the saved access strategy within the server's limits to new
+tasks, continuations and forks. GPT does not select sandbox or approval policy:
 
 - **Read only**: every new task is limited to inspection.
-- **Per task**: a task may request a level within the server's allowed range.
+- **Bridge default**: use the default access level configured in the Bridge.
 - **Always full access**: every new task requests full filesystem and network access.
 
 This choice cannot exceed **Server → Maximum Allowed Access**. For example, selecting Always Full Access while the server ceiling is Read Only still produces read-only work.
@@ -295,8 +301,12 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **App and card language** applies one explicit language to both surfaces. Automatic follows the Mac language in the app and the ChatGPT display language in cards, so they may differ.
 - **Concurrent Agent jobs** limits how many jobs may run at once; it is not the number of registered Agents.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
-- **Activity card visibility** chooses Always, Background only, or Never.
-- **Hand Off to ChatGPT After Completion** can automatically resume the ChatGPT-side flow while a qualifying Activity card is mounted.
+- **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
+
+Current settings hide the old Activity visibility and completion-handoff controls.
+Their saved values remain available to existing compatible cards; they do not
+create new Activity cards. New work uses bounded input waits and exact result
+retrieval in the current GPT response. See [card compatibility](card-tools.md#existing-cards-and-settings).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

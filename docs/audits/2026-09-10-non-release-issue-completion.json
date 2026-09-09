@@ -1,0 +1,167 @@
+{
+  "date": "2026-09-10",
+  "issues": [
+    9,
+    15,
+    44,
+    68,
+    79,
+    80
+  ],
+  "excludedReleaseIssues": [
+    11,
+    52,
+    53
+  ],
+  "devBase": "69d4c01e6c0a22450a5fb4b6605c938d9de8df89",
+  "integratedProductBase": "fd418cb12fde78c021df4afe1bc96d3335707e4c",
+  "builtSource": {
+    "version": "0.3.0",
+    "commit": "fd418cb12fde78c021df4afe1bc96d3335707e4c",
+    "dirty": true,
+    "sourceHash": "38cb8ce3a4d30e0abed2cf757e18a386a6080953a687fae8add03c5502bf1701",
+    "builtAt": "2026-09-09T23:03:59.355Z",
+    "id": "fd418cb12fde-dirty:38cb8ce3a4d3"
+  },
+  "verification": {
+    "node": {
+      "files": 77,
+      "passed": 935,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 111.97
+    },
+    "macos": {
+      "total": 134,
+      "passed": 132,
+      "skipped": 2,
+      "failed": 0,
+      "strings": 718,
+      "languages": 9
+    },
+    "appServer": {
+      "cli": "0.153.3",
+      "jsonSchemas": 416,
+      "typescriptSchemas": 827
+    },
+    "outputContract": "matched",
+    "cardResilience": {
+      "passed": 29,
+      "evidenceKind": "simulated-host"
+    },
+    "automaticRecovery": {
+      "passed": 14,
+      "evidenceKind": "simulated-host"
+    },
+    "questionCards": {
+      "sourceModes": 8,
+      "builtModes": 8,
+      "legacyModes": 6,
+      "failed": 0,
+      "codexCalls": 0,
+      "beforeFix": "Document reload lost the selected answer",
+      "evidenceKind": "simulated-host"
+    },
+    "launchd": {
+      "startedAt": "2026-09-09T22:41:03.114Z",
+      "outcome": "pass",
+      "checks": [
+        "launchd-managed helper preserves work and reservation beyond 60 seconds",
+        "cancelling the waiting reservation preserves the running work",
+        "SIGKILL respawn adopts the same runtime and reservation without a duplicate launch",
+        "completion event applies the reservation once and verifies reconnection",
+        "launchd bootout and bootstrap preserve active work and replacement intent",
+        "replacement completes after the new helper observes bridge and tunnel readiness",
+        "shutdown receipt survives re-entry without an automatic runtime launch",
+        "mode-switch receipt survives re-entry without an automatic runtime launch",
+        "test LaunchAgent, sockets, runtime processes and lock are removed"
+      ],
+      "evidence": "real launchd and production helper; synthetic work/tunnel and native handoff receipt",
+      "installedRuntimeTouched": false,
+      "nativeUiVerified": false
+    }
+  },
+  "liveHost": {
+    "date": "2026-09-10",
+    "build": "fd418cb12fde:78f6830b6cd7",
+    "surface": "actual ChatGPT Web in Codex in-app browser",
+    "cases": [
+      {
+        "alias": "A2",
+        "sameAsOriginalA": true,
+        "jobs": 1,
+        "status": "answered",
+        "notification": "requested"
+      },
+      {
+        "alias": "B",
+        "sameAsOriginalA": false,
+        "jobs": 0,
+        "status": "cancelled",
+        "notification": "requested"
+      }
+    ],
+    "crossScope": {
+      "actualCallInputInspected": true,
+      "modelReportedError": "ANSWER_UNAVAILABLE",
+      "answerBodyShown": false
+    },
+    "originalAnswer": {
+      "value": "Blue",
+      "automaticFollowupObserved": true,
+      "automaticRead": false,
+      "readAfterExplicitFollowup": true
+    },
+    "branch": {
+      "attempts": 2,
+      "outcome": "blocked",
+      "observed": "Loading state persisted; no branch tab. Reopening original retained result and card."
+    },
+    "networkInjection": {
+      "outcome": "blocked",
+      "reason": "CDP unavailable while Browser Use resolves a paused document response",
+      "offlineApplied": false
+    },
+    "cleanup": {
+      "testProjectRemoved": true,
+      "existingProjectsUnchanged": true,
+      "ordinarySettingsUnchanged": true,
+      "testDirectoryEntries": 0,
+      "finalSettingsAndProjectsRestored": true,
+      "activeRuntimeWork": {
+        "activeJobs": 0,
+        "pendingAdmissions": 0,
+        "pendingInteractions": 0,
+        "backgroundProcesses": 0,
+        "backgroundProcessUnknownAgents": 0
+      }
+    },
+    "locale": {
+      "originalHostSetting": "auto-detect",
+      "originalBridgePreference": "ko",
+      "testedHostLanguages": [
+        "en-US",
+        "cs"
+      ],
+      "bridgePreferenceDuringAutomaticTest": "auto",
+      "englishUiObserved": true,
+      "czechFallbackToEnglishObserved": true,
+      "selectionLostOnHostDocumentReload": true,
+      "fixValidatedOnActualInstalledHost": false,
+      "hostSettingRestored": true,
+      "bridgePreferenceRestored": true,
+      "questionStatus": "cancelled",
+      "automaticFollowupReadObserved": true,
+      "finalAnswer": "cancelled; no selection"
+    }
+  },
+  "disposition": {
+    "completedChecklistItems": [
+      "E9-1"
+    ],
+    "issuesClosed": [],
+    "deploymentPerformed": false,
+    "installedAppReplaced": false,
+    "releaseCreated": false
+  }
+}

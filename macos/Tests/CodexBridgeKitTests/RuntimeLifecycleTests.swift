@@ -1,11 +1,19 @@
 import Darwin
 import Foundation
+import Metal
 import XCTest
 import SwiftUI
 @testable import CodexBridgeKit
 @testable import CodexBridgeMenuBar
 
 final class RuntimeLifecycleTests: XCTestCase {
+    @MainActor
+    private func requireImageRendering() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS"] == "1",
+            "Image rendering explicitly disabled for a runner with unsupported Metal graphics.")
+        try XCTSkipIf(MTLCreateSystemDefaultDevice() == nil, "SwiftUI image rendering requires a Metal device.")
+    }
+
     @MainActor
     func testCancellationWinningAtAcknowledgementDoesNotBecomeAHandoffFailure() async throws {
         let f = try LifecycleNativeFixture(); defer { f.remove() }
@@ -109,6 +117,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
         XCTAssertTrue(model.runtimeErrorMessage?.contains("이전 설정을 복원했지만") == true)
+        try requireImageRendering()
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content); renderer.scale = 2
@@ -126,6 +135,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         f.state.setPhase("blocked")
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
+        try requireImageRendering()
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content)

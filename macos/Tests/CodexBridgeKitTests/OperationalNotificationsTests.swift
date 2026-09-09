@@ -7,6 +7,26 @@ final class OperationalNotificationsTests: XCTestCase {
     private let origin = Date(timeIntervalSince1970: 1_000)
     private let scope = OperationalNotificationPolicy.scope("fixture-server")
 
+    func testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain() async throws {
+        let suite = "bridge-permission-test-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let delivery = NotificationDeliveryFixture()
+        let model = AppModel(operationalNotifications: OperationalNotifications(defaults: defaults, delivery: delivery))
+        delivery.authorizationState = .notDetermined
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationPermission, .notDetermined)
+        delivery.authorized = true
+        delivery.authorizationState = .authorized
+        await model.requestNotificationAuthorization()
+        XCTAssertEqual(model.notificationPermission, .authorized)
+        XCTAssertEqual(delivery.authorizationRequests, 0)
+        delivery.authorizationState = .denied
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationPermission, .denied)
+        XCTAssertFalse(model.notificationAuthorizationInProgress)
+    }
+
     func testGraceTransientRecoveryAndRestartDedupe() throws {
         var policy = OperationalNotificationPolicy()
         XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin))
@@ -221,11 +241,14 @@ final class OperationalNotificationsTests: XCTestCase {
 @MainActor
 private final class NotificationDeliveryFixture: OperationalNotificationDelivering {
     var authorized = false
+    var authorizationState: OperationalNotificationPermission?
+    var authorizationRequests = 0
+    func permission() async -> OperationalNotificationPermission { authorizationState ?? (authorized ? .authorized : .denied) }
     var fail = false
     var sent: [OperationalProblem] = []
     var identifiers: [String] = []
     func isAuthorized() async -> Bool { authorized }
-    func requestAuthorization() async -> Bool { authorized }
+    func requestAuthorization() async -> Bool { authorizationRequests += 1; return authorized }
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws {
         if fail { throw CocoaError(.fileWriteUnknown) }
         sent.append(problem)

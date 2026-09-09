@@ -350,7 +350,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
           sendJson(response, 403, { error: "method_not_available_remotely" });
           return;
         }
-        if (!device.capabilities.includes(capabilityForMethod(method))) {
+        if (!device.capabilities.includes(capabilityForMethod(method,payload))) {
           sendJson(response, 403, { error: "capability_denied" });
           return;
         }
@@ -619,7 +619,7 @@ function companionMethod(payload: unknown): string | undefined {
   return typeof method === "string" ? method : undefined;
 }
 
-function capabilityForMethod(method: string): string {
+function capabilityForMethod(method: string, payload?: unknown): string {
   switch (method) {
     case "companion.hello":
     case "dashboard.snapshot":
@@ -627,7 +627,12 @@ function capabilityForMethod(method: string): string {
     case "settings.snapshot":
       return "settings.read";
     case "settings.update":
+    case "dashboard.history":
       return "settings.write";
+    case "dashboard.problem": {
+      const action = (payload as {params?:{action?:unknown}} | undefined)?.params?.action;
+      return action === "retry-stop" ? "unavailable" : "settings.write";
+    }
     case "runtime.snapshot":
       return "runtime.read";
     default:

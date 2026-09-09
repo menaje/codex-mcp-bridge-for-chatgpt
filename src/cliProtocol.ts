@@ -118,6 +118,10 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     supportsPreciseCancellation: supports("supportsPreciseCancellation", check("turn/interrupt", [{ threadId: "bridge-contract-check", turnId: "turn" }])),
     supportsEphemeralThreads: supports("supportsEphemeralThreads", check("thread/start", [{ ...policies[0], ephemeral: true }])),
     supportsThreadInspection: supports("supportsThreadInspection", check("thread/read", [{ threadId: "bridge-contract-check", includeTurns: false }])),
+    supportsThreadUnsubscribe: supports("supportsThreadUnsubscribe", [
+      ...check("thread/unsubscribe", [{ threadId: "bridge-contract-check" }]),
+      ...check("thread/loaded/list", [{ cursor: null, limit: 100 }])
+    ]),
     supportsBackgroundTerminals: supports("supportsBackgroundTerminals", [
       ...check("thread/backgroundTerminals/list", [{ threadId: "bridge-contract-check", cursor: null, limit: 100 }]),
       ...check("thread/backgroundTerminals/terminate", [{ threadId: "bridge-contract-check", processId: "process" }])

@@ -7,6 +7,10 @@ public struct BridgeCompanionClient: Sendable {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
     }
 
+    public func threadHandoff(rowKey: String, codexThreadUrl: String, action: String) async throws -> ThreadHandoffStatus {
+        try await rpc.call("thread.handoff", params: ThreadHandoffParameters(rowKey: rowKey, codexThreadUrl: codexThreadUrl, action: action))
+    }
+
     public func waitForChanges(after: String?) async throws -> ChangeNotice {
         try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
     }
@@ -46,6 +50,20 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
+        try await rpc.call("dashboard.history", params: action, timeout: 15)
+    }
+
+    public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                                      statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
+        try await rpc.call("dashboard.snapshot", params: DashboardParameters(limit: limit, terminalOffset: terminalOffset,
+            idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter, problems: problems), timeout: enrich ? 10 : 3)
+    }
+
+    public func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult {
+        try await rpc.call("dashboard.problem", params: action, timeout: action.action == .retryStop ? 120 : 15)
+    }
+
     public func runtimeStatus(
         inspectBackgroundProcesses: Bool = false
     ) async throws -> RuntimeAdmissionSnapshot {
@@ -57,6 +75,12 @@ public struct BridgeCompanionClient: Sendable {
             timeout: 15
         )
     }
+}
+
+private struct ThreadHandoffParameters: Encodable, Sendable {
+    let rowKey: String
+    let codexThreadUrl: String
+    let action: String
 }
 
 public struct MacOSHelperClient: Sendable {

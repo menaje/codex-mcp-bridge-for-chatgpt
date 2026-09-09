@@ -365,6 +365,13 @@ final class AppPresentationTests: XCTestCase {
         let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
             NativeFixtureReply(body: "{\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", delay: method == "dashboard.snapshot" ? 0.2 : 0)
         }
+        func waitForSnapshotCount(_ expected: Int) async throws {
+            for _ in 0..<150 {
+                if bridge.count("dashboard.snapshot") >= expected { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail("Expected at least \(expected) dashboard requests before the next visibility transition.")
+        }
         defer { helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
         let model = AppModel(paths: paths)
         model.recordLocalConnectionStatus(try helperStatus())
@@ -373,7 +380,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(bridge.count("dashboard.snapshot"), 0)
         XCTAssertEqual(bridge.count("settings.snapshot"), 0)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(500))
+        try await waitForSnapshotCount(1)
         XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
         model.setDashboardVisible(false)
         let before = bridge.count("dashboard.snapshot")
@@ -381,12 +388,13 @@ final class AppPresentationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(bridge.count("dashboard.snapshot"), before)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(320))
+        try await waitForSnapshotCount(before + 1)
         model.setDashboardVisible(false)
         model.setDashboardVisible(true)
-        try await Task.sleep(for: .milliseconds(50))
+        // Both requests belong to the same debounce window regardless of runner speed.
         model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
-        try await Task.sleep(for: .milliseconds(650))
+        try await waitForSnapshotCount(before + 2)
+        try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(bridge.count("dashboard.snapshot"), before + 2)
         model.setDashboardVisible(false)
         model.cancelAllPolling()
@@ -518,7 +526,10 @@ final class AppPresentationTests: XCTestCase {
         let model = AppModel(paths: paths)
         model.recordLocalConnectionStatus(try helperStatus())
         model.scheduleBackgroundRefreshes()
-        try await Task.sleep(for: .milliseconds(350))
+        for _ in 0..<150 {
+            if helper.count("codex.runtime") > 0 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertEqual(helper.count("codex.runtime"), 1)
         let started = Date()
         await withTaskGroup(of: Void.self) { group in
@@ -2478,5 +2489,113 @@ extension ConnectionObservationRecoveryTests {
         XCTAssertFalse(model.dashboardEnrichmentPending)
         XCTAssertFalse(model.dashboardEnrichmentFailed)
         XCTAssertEqual(bridge.count("dashboard.snapshot"), 3)
+    }
+}
+
+
+extension AppPresentationTests {
+    @MainActor
+    func testProblemBulkReviewCollectsEveryPageBeforeWritingAndRejectsChangedLists() async throws {
+        for (changesDuringPaging, automaticViews) in [(false, false), (true, false), (false, true), (true, true)] {
+            let root = URL(fileURLWithPath: "/tmp/cb-problems-\(UUID().uuidString.prefix(8))")
+            let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+            try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let base = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+            let state = ProblemPagingFixture(base: base, changesDuringPaging: changesDuringPaging, automaticViews: automaticViews)
+            let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path, requestReply: { method, params in state.reply(method, params) })
+            let model = AppModel(paths: paths)
+            defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+            model.recordLocalConnectionStatus(try helperStatus())
+            await model.refreshDashboard(enrich: false)
+            if automaticViews {
+                XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
+                await model.selectProblemQuery(view: .history)
+                XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
+            }
+            await model.acknowledgeAllFinishedProblems()
+            if changesDuringPaging {
+                XCTAssertEqual(state.batches, [])
+                XCTAssertNotNil(model.dashboardErrorMessage)
+            } else {
+                XCTAssertEqual(state.batches, [100, 12])
+                XCTAssertEqual(state.reviewedCount, 112)
+                XCTAssertNotNil(model.problemActionNotice)
+                if automaticViews {
+                    await model.selectProblemQuery(view: .history)
+                    XCTAssertEqual(model.dashboard?.problems?.pendingCount, 0)
+                    XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
+                } else { await model.selectProblemQuery(review: .acknowledged) }
+                XCTAssertEqual(model.dashboard?.problems?.acknowledgedCount, 112)
+                let problem = try XCTUnwrap(model.dashboard?.problems?.rows.first)
+                XCTAssertEqual(problem.row.status, "failed")
+                await model.changeProblem(problem, action: .unacknowledge)
+                XCTAssertEqual(state.reviewedCount, 111)
+                XCTAssertFalse(model.changingProblems)
+            }
+        }
+    }
+}
+
+private final class ProblemPagingFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let base: String
+    private let changesDuringPaging: Bool
+    private let automaticViews: Bool
+    private var reviewed = Set<String>()
+    private var recordedBatches: [Int] = []
+    var batches: [Int] { lock.withLock { recordedBatches } }
+    var reviewedCount: Int { lock.withLock { reviewed.count } }
+    init(base: String, changesDuringPaging: Bool, automaticViews: Bool) {
+        self.base = base; self.changesDuringPaging = changesDuringPaging; self.automaticViews = automaticViews
+    }
+    func reply(_ method: String, _ params: String) -> NativeFixtureReply {
+        lock.withLock {
+            do {
+                if method == "dashboard.problem" {
+                    let action = try JSONDecoder().decode(ProblemAction.self, from: Data(params.utf8))
+                    if action.action == .acknowledge {
+                        recordedBatches.append(action.targets.count)
+                        for target in action.targets { reviewed.insert(target.problemKey) }
+                    } else if action.action == .unacknowledge {
+                        for target in action.targets { reviewed.remove(target.problemKey) }
+                    }
+                    return NativeFixtureReply(body: "{\"result\":{\"ok\":true,\"changed\":\(action.targets.count)}}")
+                }
+                guard method == "dashboard.snapshot" else {
+                    return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+                }
+                let args = try JSONSerialization.jsonObject(with: Data(params.utf8)) as! [String: Any]
+                let query = args["problems"] as? [String: Any] ?? [:]
+                let review = query["review"] as? String ?? "pending"
+                let view = query["view"] as? String ?? "actionable"
+                let limit = args["limit"] as? Int ?? 12
+                let offset = query["offset"] as? Int ?? 0
+                let ids = (1...112).map { String(format: "%032x", $0) }.filter {
+                    automaticViews ? view == "history" : reviewed.contains($0) == (review == "acknowledged")
+                }
+                let selected = Array(ids.dropFirst(offset).prefix(limit))
+                let rows: [[String: Any]] = selected.map { id in
+                    let entryReview = reviewed.contains(id) ? "acknowledged" : "pending"
+                    return ["problemKey": id, "revision": String(repeating: "a", count: 64), "kind": "failed", "source": "execution", "review": entryReview,
+                     "observedAt": "2026-09-09T01:00:00Z", "canAcknowledge": entryReview == "pending", "canUnacknowledge": entryReview == "acknowledged", "canRecheck": false, "canRetryStop": false,
+                     "row": ["rowKey": id, "activityKey": id, "conversationKey": id, "sessionAlias": "Session A", "bucket": "recent", "projectKey": id,
+                             "agentName": "Repeated Agent", "status": "failed", "createdAt": "2026-09-09T01:00:00Z", "updatedAt": "2026-09-09T01:00:01Z", "elapsedMs": 1000, "backgroundProcessCount": 0]]
+                }
+                var snapshot = try JSONSerialization.jsonObject(with: Data(base.utf8)) as! [String: Any]
+                if automaticViews {
+                    snapshot["historyPolicy"] = ["retentionDays": 30, "issueAttentionDays": 7, "lastCleanupCount": 0,
+                                                   "totalRemoved": 0, "reviewUntilRetention": true, "automaticRecovery": true]
+                }
+                snapshot["problems"] = ["query": query,
+                    "revision": changesDuringPaging && offset > 0 ? "changed" : "stable", "pendingCount": automaticViews ? 0 : 112 - reviewed.count,
+                    "historyCount": 112,
+                    "acknowledgedCount": reviewed.count, "reviewableCount": 112 - reviewed.count, "rows": rows,
+                    "page": ["offset": offset, "limit": limit, "total": ids.count, "returned": selected.count, "hasPrevious": offset > 0, "hasNext": offset + selected.count < ids.count]]
+                let data = try JSONSerialization.data(withJSONObject: ["result": snapshot])
+                return NativeFixtureReply(body: String(decoding: data, as: UTF8.self))
+            } catch {
+                return NativeFixtureReply(body: #"{"error":{"code":-32603,"message":"fixture failure"}}"#)
+            }
+        }
     }
 }

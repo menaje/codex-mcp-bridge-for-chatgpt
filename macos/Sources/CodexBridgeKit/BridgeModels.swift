@@ -5,6 +5,7 @@ public struct EmptyParameters: Codable, Sendable {
 }
 
 public struct DashboardSnapshot: Codable, Sendable {
+    public var problems: DashboardProblems? = nil
     public let kind: String
     public let generatedAt: String
     public let scope: String
@@ -19,7 +20,42 @@ public struct DashboardSnapshot: Codable, Sendable {
     public var idleRows: [DashboardRow]
     public var pagination: DashboardPagination
     public let uiLocalePreference: String
+    public var historyPolicy: WorkHistoryPolicy? = nil
 }
+
+public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
+    public var reviewUntilRetention: Bool? = nil
+    public var automaticRecovery: Bool? = nil
+    public let retentionDays: Int
+    public let issueAttentionDays: Int
+    public let lastCleanupAt: String?
+    public let lastCleanupCount: Int
+    public let totalRemoved: Int
+}
+
+public struct HistoryControls: Codable, Sendable {
+    public let revision: String
+    public let canAcknowledge: Bool
+    public let canArchive: Bool
+    public let canRestore: Bool
+    public let archived: Bool
+}
+
+public struct HistoryAction: Codable, Sendable {
+    public let rowKey: String
+    public let expectedRevision: String
+    public let action: String
+    public let requestId: String
+
+    public init(rowKey: String, expectedRevision: String, action: String, requestId: String = UUID().uuidString) {
+        self.rowKey = rowKey
+        self.expectedRevision = expectedRevision
+        self.action = action
+        self.requestId = requestId
+    }
+}
+
+public struct HistoryActionResult: Codable, Sendable { public let ok: Bool }
 
 public struct CardEnrichment: Codable, Sendable {
     public let state: String
@@ -58,6 +94,7 @@ public extension DashboardSnapshot {
         bucket: DashboardAppendBucket,
         requestedOffset: Int
     ) -> DashboardSnapshot {
+        guard historyPolicy?.totalRemoved == next.historyPolicy?.totalRemoved else { return next }
         var result = next
         switch bucket {
         case .terminal:
@@ -208,6 +245,8 @@ public struct DashboardTurn: Codable, Sendable {
 }
 
 public struct DashboardRow: Codable, Identifiable, Sendable {
+    public var historyControls: HistoryControls? = nil
+    public var handoff: ThreadHandoffStatus? = nil
     public var id: String { rowKey }
     public let rowKey: String
     public let activityKey: String
@@ -232,7 +271,15 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     public let historyCount: Int?
 }
 
+public struct ThreadHandoffStatus: Codable, Sendable {
+    public let phase: String
+    public let reason: String?
+    public let requested: Bool
+    public let canOpen: Bool
+}
+
 public struct SettingsSnapshot: Codable, Sendable {
+    public var historyPolicy: WorkHistoryPolicy? = nil
     public let settings: BridgeSettings
     public let operatorDefaults: BridgeSettings
     public let capabilities: SettingsCapabilities
@@ -243,6 +290,7 @@ public struct SettingsSnapshot: Codable, Sendable {
 }
 
 public struct BridgeSettings: Codable, Sendable {
+    public var historyRetentionDays: Int? = nil
     public let schemaVersion: Int
     public let settingsRevision: Int
     public let registryRevision: Int
@@ -403,6 +451,7 @@ public struct PolicyActivation: Codable, Sendable {
 }
 
 public struct DashboardParameters: Codable, Sendable {
+    public var problems: ProblemQuery? = nil
     public var limit: Int
     public var terminalOffset: Int
     public var idleOffset: Int
@@ -414,9 +463,11 @@ public struct DashboardParameters: Codable, Sendable {
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
         enrich: Bool = false,
-        statusFilter: DashboardStatusFilter = .all
+        statusFilter: DashboardStatusFilter = .all,
+        problems: ProblemQuery? = nil
     ) {
         self.statusFilter = statusFilter
+        self.problems = problems
         self.limit = limit
         self.terminalOffset = terminalOffset
         self.idleOffset = idleOffset
@@ -475,6 +526,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public var usePriorityServiceTier: Bool?
     public var uiLocalePreference: String?
     public var maxConcurrentJobs: Int?
+    public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
     public var activityCard: ActivityCardPatch?
     public var projectOperations: [ProjectOperation]?
@@ -486,6 +538,7 @@ public struct SettingsPatch: Encodable, Sendable {
         usePriorityServiceTier: Bool? = nil,
         uiLocalePreference: String? = nil,
         maxConcurrentJobs: Int? = nil,
+        historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
         activityCard: ActivityCardPatch? = nil,
         projectOperations: [ProjectOperation]? = nil
@@ -496,6 +549,7 @@ public struct SettingsPatch: Encodable, Sendable {
         self.usePriorityServiceTier = usePriorityServiceTier
         self.uiLocalePreference = uiLocalePreference
         self.maxConcurrentJobs = maxConcurrentJobs
+        self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
         self.activityCard = activityCard
         self.projectOperations = projectOperations

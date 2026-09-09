@@ -23,7 +23,7 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   compatibility conversation aliases, user-defined project labels, display Agent names, optional Activity titles,
   Codex-runtime status, timestamps, and background-process counts. An App Server
   non-ephemeral App Server row may contain a `codex://threads/<uuid>` candidate
-  used by the native macOS **Open Codex conversation** action only when the selected thread has an exact matching
+  used by the native macOS **Continue in Codex** action only when the selected thread has an exact matching
   retained tracked session. That matching session's creation-time visibility
   bit must be explicitly retained as true; a legacy session without provenance
   is omitted rather than inferred from the current preference. The exact thread UUID is preferred over the matching
@@ -355,7 +355,7 @@ the network as the current macOS user.
   from Agent idle state and require exact process termination before archive.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
   unknown; it does not automatically cancel a job.
-- At most 100 retained jobs and one MiB per retained job result by default.
+- Normally 100 retained jobs and one MiB per retained job result by default. Pending delivery, interactions, uncertain responses, cancellation and renewable holds protect results from ordinary pruning; diagnostic event size limits still apply.
 - Upstream stderr disabled unless explicit local debug mode is enabled.
 
 ## Authentication
@@ -494,6 +494,10 @@ in worker memory and app-private hydration; responses are not persisted.
 Nonblocking questions remain visible while the Job and Agent continue running.
 
 ## Remaining risks
+
+Connection release and retained data follow the separate [lifecycle policy](thread-lifecycle.md). The native `thread.handoff` operation is available only on the private local companion socket, validates the exact displayed Agent/thread, and is excluded from remote companion methods. An admission gate prevents overlapping bridge work while release is pending. Only observed thread unload or worker exit permits opening the app; an unsubscribe response alone is insufficient. An external writer lock is never bypassed by archiving, deleting, copying a transcript or stopping a shared application process.
+
+Schema 14 creates a private consistent backup before migration. Diagnostic cleanup removes raw progress after result expiry while keeping minimal outcome/usage and replay/delivery/cancellation identities. Outstanding delivery, blocking interaction, uncertain response, active cancellation and expiring manual holds protect results. The event payload budgets do not cap identity tables or physical SQLite/WAL size. Backups remain source-sensitive and are not automatically erased. Maintenance never edits Codex's original rollout files or runs a live `VACUUM`.
 
 - The project ref/revision tuple guarantees freshness of the selected
   name-to-UUID/cwd mapping. It cannot distinguish an intended project from a

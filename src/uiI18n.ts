@@ -1,3 +1,5 @@
+import { WORK_HISTORY_TRANSLATIONS } from "./workHistoryI18n.js";
+import { PROBLEM_REVIEW_TRANSLATIONS } from "./problemReviewI18n.js";
 import { DASHBOARD_SUMMARY_TRANSLATIONS } from "./dashboardSummaryI18n.js";
 import { DASHBOARD_SCOPE_TRANSLATIONS } from "./dashboardScopeI18n.js";
 import { QUESTION_UI_TRANSLATIONS } from "./questionI18n.js";
@@ -22,6 +24,8 @@ export const UI_LOCALE_PREFERENCES = ["auto", ...SUPPORTED_UI_LOCALES] as const;
 export type UiLocalePreference = (typeof UI_LOCALE_PREFERENCES)[number];
 
 const ENGLISH = {
+  ...PROBLEM_REVIEW_TRANSLATIONS.en,
+  ...WORK_HISTORY_TRANSLATIONS.en,
   ...QUESTION_UI_TRANSLATIONS.en,
   "activity.openRequest": "Open request link",
   "activity.optionalInput": "Work continues while you answer.",
@@ -2070,13 +2074,13 @@ const DASHBOARD_OVERRIDES: Partial<
     "dashboard.status.approval-required": "승인 필요",
     "dashboard.status.terminating": "종료 중",
     "dashboard.status.termination-failed": "종료 실패",
-    "dashboard.status.liveness-unknown": "실행 여부 확인 불가",
+    "dashboard.status.liveness-unknown": "상태 확인 불가",
     "dashboard.status.completed": "Codex turn 완료",
     "dashboard.status.failed": "실패",
     "dashboard.status.interrupted": "중단됨",
     "dashboard.status.cancelled": "취소됨",
     "dashboard.status.idle": "유휴",
-    "dashboard.status.orphaned": "스레드 사용 불가"
+    "dashboard.status.orphaned": "연결 끊김"
   },
   ja: {
     "usage.weeklyRemaining": "アカウント全体の Codex 週間残量",
@@ -2252,14 +2256,12 @@ const DASHBOARD_CONTROL_OVERRIDES: Partial<Record<SupportedUiLocale, Partial<UiT
 };
 
 export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = Object.fromEntries(
-  SUPPORTED_UI_LOCALES.map((locale) => [
-    locale,
-    locale === "en"
-      ? { ...ENGLISH }
-      : locale === "ko"
-        ? { ...ENGLISH, ...OVERRIDES[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...DASHBOARD_CONTROL_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...MODEL_DESCRIPTION_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale], ...DASHBOARD_SUMMARY_TRANSLATIONS[locale] }
-        : { ...ENGLISH, ...OVERRIDES[locale], ...REMAINDER[locale], ...STATE_OVERRIDES[locale], ...ISSUE19_OVERRIDES[locale], ...ISSUE20_OVERRIDES[locale], ...ISSUE41_OVERRIDES[locale], ...ISSUE46_OVERRIDES[locale], ...BACKGROUND_PROCESS_OVERRIDES[locale], ...CURRENT_WORK_OVERRIDES[locale], ...ISSUE21_OVERRIDES[locale], ...MODEL_POLICY_UX_OVERRIDES[locale], ...ISSUE24_OVERRIDES[locale], ...ACTIVITY_EXECUTION_OVERRIDES[locale], ...ISSUE37_OVERRIDES[locale], ...ISSUE22_OVERRIDES[locale], ...ISSUE26_OVERRIDES[locale], ...ISSUE33_OVERRIDES[locale], ...CODEX_APP_THREAD_OVERRIDES[locale], ...DASHBOARD_OVERRIDES[locale], ...CARD_FRESHNESS_OVERRIDES[locale], ...LOCALIZATION_AUDIT_OVERRIDES[locale], ...QUESTION_UI_TRANSLATIONS[locale], ...FAST_MODE_OVERRIDES[locale], ...DASHBOARD_CONTROL_OVERRIDES[locale], ...ULTRA_POLICY_TRANSLATIONS[locale], ...MODEL_DESCRIPTION_TRANSLATIONS[locale], ...DASHBOARD_SCOPE_TRANSLATIONS[locale], ...DASHBOARD_SUMMARY_TRANSLATIONS[locale] }
-  ])
+  SUPPORTED_UI_LOCALES.map((locale) => [locale, Object.assign({}, ENGLISH,
+    ...(locale === "en" ? [] : [OVERRIDES[locale],
+      ...(locale === "ko" ? [] : [REMAINDER[locale]]),
+      STATE_OVERRIDES[locale], ISSUE19_OVERRIDES[locale], ISSUE20_OVERRIDES[locale], ISSUE41_OVERRIDES[locale], ISSUE46_OVERRIDES[locale], BACKGROUND_PROCESS_OVERRIDES[locale], CURRENT_WORK_OVERRIDES[locale], ISSUE21_OVERRIDES[locale], MODEL_POLICY_UX_OVERRIDES[locale], ISSUE24_OVERRIDES[locale], ACTIVITY_EXECUTION_OVERRIDES[locale], ISSUE37_OVERRIDES[locale], ISSUE22_OVERRIDES[locale], ISSUE26_OVERRIDES[locale], ISSUE33_OVERRIDES[locale], CODEX_APP_THREAD_OVERRIDES[locale], DASHBOARD_OVERRIDES[locale], CARD_FRESHNESS_OVERRIDES[locale], LOCALIZATION_AUDIT_OVERRIDES[locale], QUESTION_UI_TRANSLATIONS[locale], FAST_MODE_OVERRIDES[locale], DASHBOARD_CONTROL_OVERRIDES[locale], ULTRA_POLICY_TRANSLATIONS[locale], MODEL_DESCRIPTION_TRANSLATIONS[locale], DASHBOARD_SCOPE_TRANSLATIONS[locale], DASHBOARD_SUMMARY_TRANSLATIONS[locale], WORK_HISTORY_TRANSLATIONS[locale], PROBLEM_REVIEW_TRANSLATIONS[locale]
+    ])
+  )])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
 
 export function uiTranslation(

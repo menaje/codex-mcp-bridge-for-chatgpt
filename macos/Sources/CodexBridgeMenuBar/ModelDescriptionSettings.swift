@@ -144,11 +144,13 @@ private struct ModelDescriptionSettingsRow: View {
                     .textSelection(.enabled)
             }
             if override != nil || edit != nil {
-                DisclosureGroup("공식 설명 보기", isExpanded: $officialExpanded) {
+                FullRowDisclosure("공식 설명 보기", isExpanded: $officialExpanded) {
                     Text(officialText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)
                 }
                 .font(.caption)

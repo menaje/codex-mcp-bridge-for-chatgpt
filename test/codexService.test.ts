@@ -74,8 +74,9 @@ describe("Codex execution context", () => {
     await expect(f.service.sessionPolicy(kind, true, "old-thread")).rejects.toThrow("CODEX_BACKEND_RETIRED");
     expect(await f.service.readAccount(kind)).toBeNull();
     expect(await readFile(file, "utf8")).toBe(original);
-    expect(await f.service.sessionPolicy("app-server", false)).toEqual({ persistent: false, visibleInCodexApp: false });
-    expect(await f.service.sessionPolicy("app-server", true)).toEqual({ persistent: true, visibleInCodexApp: true });
+    expect(await f.service.sessionPolicy("app-server", false)).toEqual({ persistent: false, persistence: "ephemeral", visibleInCodexApp: false, constraint: "hidden-persistent-unsupported" });
+    expect(await f.service.sessionPolicy("app-server", true)).toEqual({ persistent: true, persistence: "persistent", visibleInCodexApp: true });
+    await expect(f.service.sessionPolicy("app-server", false, undefined, "persistent")).rejects.toThrow(/HIDDEN_PERSISTENT_UNSUPPORTED/);
   });
 
   it("keeps account display stable across metadata refreshes but clears it when authentication or selection changes", async () => {

@@ -354,30 +354,41 @@ struct DashboardPopoverView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
-                DashboardSection(
-                    title: "현재 작업",
-                    emptyText: "표시할 현재 작업이 없습니다.",
-                    rows: dashboard.activeRows,
-                    total: dashboard.pagination.active.total,
-                    groupsByActivity: true
-                )
-                if dashboard.pagination.active.hasNext {
-                    Label(
-                        "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
-                        systemImage: "ellipsis.circle"
+                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
+                    DashboardSection(
+                        title: "현재 작업",
+                        emptyText: "표시할 현재 작업이 없습니다.",
+                        rows: dashboard.activeRows,
+                        total: dashboard.pagination.active.total,
+                        groupsByActivity: true
                     )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    if dashboard.pagination.active.hasNext {
+                        Label(
+                            "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
+                            systemImage: "ellipsis.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
                 }
-                DashboardSection(
-                    title: "실행 기록",
-                    emptyText: "보존된 최근 실행이 없습니다.",
-                    rows: dashboard.terminalRows,
-                    total: dashboard.pagination.terminal.total,
-                    groupsByActivity: true,
-                    hasMore: dashboard.pagination.terminal.hasNext,
-                    loadMore: { Task { await model.loadMoreRecent() } }
-                )
+                if let problems = dashboard.problems,
+                   model.dashboardStatusFilter == .all || model.dashboardStatusFilter == .problems {
+                    DashboardProblemsSection(problems: problems)
+                }
+                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
+                    DashboardSection(
+                        title: "실행 기록",
+                        emptyText: "보존된 최근 실행이 없습니다.",
+                        rows: dashboard.terminalRows,
+                        total: dashboard.pagination.terminal.total,
+                        groupsByActivity: true,
+                        hasMore: dashboard.pagination.terminal.hasNext,
+                        loadMore: { Task { await model.loadMoreRecent() } }
+                    )
+                }
+                if let policy = dashboard.historyPolicy {
+                    WorkHistoryPolicyView(policy: policy)
+                }
             }
             .padding(14)
         }
@@ -987,7 +998,7 @@ private struct DashboardActivityGroupView: View {
     }
 }
 
-private enum DashboardRowPresentation {
+enum DashboardRowPresentation {
     case nestedAgent
     case nestedIdleAgent
     case idle
@@ -1042,12 +1053,13 @@ private struct DashboardExecutionLabel: View {
     }
 }
 
-private struct DashboardRowView: View {
+struct DashboardRowView: View {
     @EnvironmentObject private var model: AppModel
     let row: DashboardRow
     let presentation: DashboardRowPresentation
     let enclosingActivityTitle: String?
     @State private var historyExpanded = false
+    @State private var changingHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1116,19 +1128,50 @@ private struct DashboardRowView: View {
                         }
                     }
                     if !model.isRemoteClient,
-                       let url = DashboardLink.availableCodexThread(row.codexThreadUrl) {
+                       DashboardLink.availableCodexThread(row.codexThreadUrl) != nil {
                         Button {
-                            NSWorkspace.shared.open(url)
+                            model.continueInCodex(row)
                         } label: {
-                            Label("Codex 대화 열기", systemImage: "arrow.up.forward.app")
+                            Label("Codex 앱에서 이어가기", systemImage: "arrow.up.forward.app")
                         }
                         .buttonStyle(.link)
-                        .help("Codex 앱에서 이 Agent의 대화를 엽니다.")
+                        .help("진행 중인 작업이 끝나고 연결 해제를 확인하면 Codex 앱을 엽니다.")
+                        if let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
+                           handoff.requested && !handoff.canOpen {
+                            Button("인계 취소") { model.cancelThreadHandoff(row) }
+                                .buttonStyle(.link)
+                        }
                     }
                 }
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+            if let controls = row.historyControls {
+                HStack {
+                    if controls.canAcknowledge { historyButton("확인함", action: "acknowledge") }
+                    if controls.canArchive { historyButton("에이전트 보관", action: "archive") }
+                    if controls.canRestore { historyButton("에이전트 복원", action: "restore") }
+                    if changingHistory { ProgressView().controlSize(.mini) }
+                }
+                .font(.caption2)
+                .disabled(changingHistory)
+            }
+            if !model.isRemoteClient,
+               let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
+               handoff.requested && !handoff.canOpen {
+                Group {
+                    switch handoff.reason {
+                    case "active-work": Text("진행 중인 작업이 끝나기를 기다리고 있습니다.")
+                    case "ephemeral", "persistence-unknown": Text("대화 저장을 확인할 수 없어 연결을 유지합니다.")
+                    case "background-work", "background-unknown": Text("백그라운드 작업 종료를 확인한 뒤 인계합니다.")
+                    case "shared-worker-protected", "upstream-unload-grace": Text("다른 대화와 Codex의 연결 해제를 기다리고 있습니다.")
+                    case "unsupported", "ownership-unconfirmed": Text("연결 해제를 확인하지 못했습니다. 다시 시도해 주세요.")
+                    default: Text("연결 해제를 확인하고 있습니다. 확인되면 Codex 앱을 엽니다.")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
             if let cancellation = row.latestTurn?.cancellation,
                presentation == .idle || cancellation.targetKind != "activity" {
                 CancellationDisclosure(cancellation: cancellation)
@@ -1248,49 +1291,23 @@ private struct DashboardRowView: View {
     }
 
     private var rowTimeText: String {
-        let workTime: String
-        if row.bucket == "active" {
-            workTime = BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(row.elapsedMs, locale: model.interfaceLocale)
-            )
-        } else if let duration = row.latestTurn?.durationMs {
-            workTime = BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(duration, locale: model.interfaceLocale)
-            )
-        } else {
-            workTime = BridgeAppLocalization.string(
-                "작업시간 확인 불가",
-                locale: model.interfaceLocale
-            )
-        }
-        guard row.bucket != "active" else { return workTime }
-        let lastWorkedAt = row.latestTurn?.endedAt ?? row.latestTurn?.updatedAt ?? row.updatedAt
-        return "\(workTime) · \(DisplayFormat.relative(lastWorkedAt, locale: model.interfaceLocale))"
+        DashboardTimePresentation.text(turn: row.latestTurn, fallbackUpdatedAt: row.updatedAt, locale: model.interfaceLocale)
     }
 
     private func turnTimeText(_ turn: DashboardTurn) -> String {
-        var values = [StatusPresentation.label(turn.status, locale: model.interfaceLocale)]
-        if let duration = turn.durationMs {
-            values.append(BridgeAppLocalization.format(
-                "작업시간 %@",
-                locale: model.interfaceLocale,
-                DisplayFormat.duration(duration, locale: model.interfaceLocale)
-            ))
-        } else {
-            values.append(BridgeAppLocalization.string(
-                "작업시간 확인 불가",
-                locale: model.interfaceLocale
-            ))
+        StatusPresentation.label(turn.status, locale: model.interfaceLocale) + " · " +
+            DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
+    }
+
+    private func historyButton(_ title: LocalizedStringKey, action: String) -> some View {
+        Button(title) {
+            changingHistory = true
+            Task {
+                await model.changeHistory(row, action: action)
+                changingHistory = false
+            }
         }
-        values.append(DisplayFormat.relative(
-            turn.endedAt ?? turn.updatedAt,
-            locale: model.interfaceLocale
-        ))
-        return values.joined(separator: " · ")
+        .buttonStyle(.link)
     }
 }
 
@@ -1701,7 +1718,7 @@ private enum StatusPresentation {
         case "approval-required": key = "승인 필요"
         case "terminating": key = "종료 중"
         case "termination-failed": key = "종료 실패"
-        case "liveness-unknown": key = "상태 불명"
+        case "liveness-unknown": key = "상태 확인 불가"
         case "completed": key = "완료"
         case "failed": key = "실패"
         case "interrupted": key = "중단"

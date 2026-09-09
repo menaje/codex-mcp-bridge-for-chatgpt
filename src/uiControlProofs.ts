@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as z from "zod/v4";
 
 const claimsSchema = z.strictObject({
+  purpose: z.enum(["work", "history"]).optional(), historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   version: z.literal(1), expiresAt: z.number().int().positive(), widgetInstanceId: z.string().uuid(),
   hostScopeId: z.string().uuid().nullable(), scopeId: z.string().uuid(),
   activityId: z.string().uuid(), generation: z.number().int().positive(),

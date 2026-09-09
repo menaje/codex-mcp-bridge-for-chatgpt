@@ -267,6 +267,25 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
+        try await call("dashboard.history", params: action, timeout: 15)
+    }
+
+    public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                                      statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
+        do {
+            return try await call("dashboard.snapshot", params: DashboardParameters(limit: limit, terminalOffset: terminalOffset,
+                idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter, problems: problems), timeout: enrich ? 10 : 3)
+        } catch RemoteCompanionError.server(let status, let message) where status == -32602 && message.contains("problems") && message.lowercased().contains("unrecognized") {
+            return try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)
+        }
+    }
+
+    public func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult {
+        guard action.action != .retryStop else { throw RemoteCompanionError.forbidden }
+        return try await call("dashboard.problem", params: action, timeout: 15)
+    }
+
     public func runtimeStatus(
         inspectBackgroundProcesses: Bool = false
     ) async throws -> RuntimeAdmissionSnapshot {

@@ -102,11 +102,23 @@ struct OperationalNotificationPolicy: Codable {
     }
 }
 
+enum OperationalNotificationPermission: Equatable {
+    case unknown, notDetermined, denied, authorized
+}
+
 @MainActor
 protocol OperationalNotificationDelivering: AnyObject {
     func isAuthorized() async -> Bool
+    func permission() async -> OperationalNotificationPermission
     func requestAuthorization() async -> Bool
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws
+}
+
+@MainActor
+extension OperationalNotificationDelivering {
+    func permission() async -> OperationalNotificationPermission {
+        await isAuthorized() ? .authorized : .denied
+    }
 }
 
 @MainActor
@@ -120,17 +132,32 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     }
 
     func isAuthorized() async -> Bool {
-        let status = await center.notificationSettings().authorizationStatus
-        return status == .authorized || status == .provisional
+        await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                // Older SDKs do not mark the settings object Sendable; pass only the result across actors.
+                let status = settings.authorizationStatus
+                continuation.resume(returning: status == .authorized || status == .provisional)
+            }
+        }
     }
 
     func requestAuthorization() async -> Bool {
-        (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        await withCheckedContinuation { continuation in
+            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                continuation.resume(returning: error == nil && granted)
+            }
+        }
     }
 
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws {
-        try await center.add(UNNotificationRequest(identifier: identifier,
-            content: Self.content(problem: problem, scope: scope, locale: locale), trigger: nil))
+        let request = UNNotificationRequest(identifier: identifier,
+            content: Self.content(problem: problem, scope: scope, locale: locale), trigger: nil)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            center.add(request) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
     }
 
     static func content(problem: OperationalProblem, scope: String, locale: Locale) -> UNMutableNotificationContent {
@@ -186,6 +213,12 @@ final class OperationalNotifications {
     var securityEnabled: Bool {
         get { defaults.object(forKey: "bridgeOperationalNotifications.security") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "bridgeOperationalNotifications.security") }
+    }
+
+    func permission() async -> OperationalNotificationPermission {
+        let value = await delivery.permission()
+        authorized = value == .authorized
+        return value
     }
 
     func requestAuthorization() async -> Bool {

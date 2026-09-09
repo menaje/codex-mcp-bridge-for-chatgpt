@@ -43,4 +43,19 @@ Restart and settings reservations continue while the app window is closed. Exit,
 
 ## Verification
 
+On macOS, `npm run build && npm run test:launchd-lifecycle` exercises the built
+helper through a unique temporary launchd service using the production
+KeepAlive, throttle and exit-grace settings. It checks a real 61-second wait,
+cancellation, SIGKILL respawn, adoption of the same running process, one restart
+after the completion event, graceful helper re-entry, and a transition between
+two synthetic build identities. Shutdown/mode-switch receipt recovery must not
+start another runtime. The script verifies removal of its service, processes,
+sockets and lock. It never registers the installed app's service label.
+
+Only launchd and the helper are real in that check: work admission, tunnel
+readiness, bundle identity and the native caller's handoff receipt are fixtures.
+The fixture refreshes launcher status as a live launcher does; stale status
+must refuse adoption. This does not certify native buttons, saved connection
+mode changes, real model continuity, physical sleep/wake or a network outage.
+
 Tests cover a real 61-second running-job wait followed by an event-triggered restart, all seven destructive graceful paths with memory-only conversations, final admission races, duplicate and conflicting requests, cancellation races, CLI target fencing, missing events, helper recovery and crash-restart arbitration. Recovery tests also launch the actual helper entrypoint, send SIGTERM while work is active, restart it, verify adoption of the same launcher and completion of the original reservation, and verify shutdown completion after another re-entry. The production launcher is tested with its output readers disconnected while tunnel diagnostics are emitted. Native socket tests cover receipts, UI availability during waits, re-entry, cancellation, connection presentation, verified quit/mode handoff, pre-acknowledgement failure and retry, error categories, rollback copy, and replacement preparation. Native waiting and failure notices are rendered at popover width. All processes and configuration used for these checks are isolated from the installed user runtime; these checks do not claim that the installed app has been upgraded.

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Align evaluation and setup guidance with current cards and saved execution policy, and provide isolated launchd lifecycle verification.",
+  "breaking": false,
+  "migration": null
+}

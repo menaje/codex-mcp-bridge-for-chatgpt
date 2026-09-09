@@ -10,6 +10,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   private starting?: Promise<CodexUpstream>;
   private closed = false;
   private closing?: Promise<void>;
+  private readonly pendingResumeProtections = new Set<string>();
   constructor(private readonly kind: CodexBackendKind, private readonly features: BackendCapabilities,
     private readonly factory: () => Promise<CodexUpstream>, private readonly dispose?: () => Promise<void>, private readonly guard?: () => void) {}
 
@@ -26,6 +27,11 @@ export class LazyCodexUpstream implements CodexUpstream {
   async archiveThread(...args: Args<"archiveThread">) { return (await this.method("archiveThread"))(...args); }
   async restoreThread(...args: Args<"restoreThread">) { return (await this.method("restoreThread"))(...args); }
   async probeThread(...args: Args<"probeThread">) { return (await this.method("probeThread"))(...args); }
+  async releaseThreadConnection(...args: Args<"releaseThreadConnection">) { return (await this.method("releaseThreadConnection"))(...args); }
+  protectThreadFromImplicitResume(threadId: string): void {
+    if (this.instance) this.instance.protectThreadFromImplicitResume?.(threadId);
+    else this.pendingResumeProtections.add(threadId);
+  }
   async listBackgroundTerminals(...args: Args<"listBackgroundTerminals">) { return (await this.method("listBackgroundTerminals"))(...args); }
   async listLoadedBackgroundTerminals(...args: Args<"listLoadedBackgroundTerminals">) { return this.instance?.listLoadedBackgroundTerminals?.(...args) ?? null; }
   async terminateBackgroundTerminal(...args: Args<"terminateBackgroundTerminal">) { return (await this.method("terminateBackgroundTerminal"))(...args); }
@@ -46,7 +52,12 @@ export class LazyCodexUpstream implements CodexUpstream {
   private async get(): Promise<CodexUpstream> {
     if (this.closed) throw new Error("Codex backend is closed.");
     if (this.instance) return this.instance;
-    if (!this.starting) this.starting = this.factory().then(instance => { this.instance = instance; return instance; })
+    if (!this.starting) this.starting = this.factory().then(instance => {
+      for (const threadId of this.pendingResumeProtections) instance.protectThreadFromImplicitResume?.(threadId);
+      this.pendingResumeProtections.clear();
+      this.instance = instance;
+      return instance;
+    })
       .finally(() => { this.starting = undefined; });
     const instance = await this.starting;
     if (this.closed) throw new Error("Codex backend is closed.");

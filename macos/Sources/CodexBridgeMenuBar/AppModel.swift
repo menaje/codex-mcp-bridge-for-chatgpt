@@ -45,6 +45,7 @@ struct SettingsDraft: Equatable {
     var usePriorityServiceTier: Bool
     var uiLocalePreference: String
     var maxConcurrentJobs: Int
+    var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
     var activityCardVisibility: String
     var completionHandoff: String
@@ -72,6 +73,7 @@ struct SettingsDraft: Equatable {
         usePriorityServiceTier = settings.usePriorityServiceTier
         uiLocalePreference = settings.uiLocalePreference
         maxConcurrentJobs = settings.maxConcurrentJobs
+        historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
         activityCardVisibility = settings.activityCardVisibility
         completionHandoff = settings.completionHandoff
@@ -109,6 +111,7 @@ struct SettingsDraft: Equatable {
         rebased.usePriorityServiceTier = usePriorityServiceTier
         rebased.uiLocalePreference = uiLocalePreference
         rebased.maxConcurrentJobs = maxConcurrentJobs
+        rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
         rebased.activityCardVisibility = activityCardVisibility
         rebased.completionHandoff = completionHandoff
@@ -125,6 +128,7 @@ struct SettingsDraft: Equatable {
             usePriorityServiceTier == other.usePriorityServiceTier &&
             uiLocalePreference == other.uiLocalePreference &&
             maxConcurrentJobs == other.maxConcurrentJobs &&
+            historyRetentionDays == other.historyRetentionDays &&
             showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
             activityCardVisibility == other.activityCardVisibility &&
             completionHandoff == other.completionHandoff
@@ -256,6 +260,8 @@ final class AppModel: ObservableObject {
     @Published var securityNotificationsEnabled = true {
         didSet { operationalNotifications?.securityEnabled = securityNotificationsEnabled }
     }
+    @Published private(set) var notificationPermission: OperationalNotificationPermission = .unknown
+    @Published private(set) var notificationAuthorizationInProgress = false
     private let operationalNotifications: OperationalNotifications?
     private var remoteOperationalProblem: OperationalProblem?
     private var notificationRefreshTask: Task<Void, Never>?
@@ -287,6 +293,8 @@ final class AppModel: ObservableObject {
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
     @Published var dashboard: DashboardSnapshot?
+    @Published var threadHandoffs: [String: ThreadHandoffStatus] = [:]
+    private var threadHandoffTasks: [String: Task<Void, Never>] = [:]
     @Published var dashboardStatusFilter: DashboardStatusFilter = .all
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
@@ -308,6 +316,9 @@ final class AppModel: ObservableObject {
     @Published var logsErrorMessage: String?
     @Published var settingsConflictMessage: String?
     @Published var isBusy = false { didSet { scheduleOperationalObservation() } }
+    @Published private(set) var dashboardProblemQuery = ProblemQuery(view: .actionable)
+    @Published private(set) var changingProblems = false
+    @Published var problemActionNotice: String?
     @Published var loginInProgress = false { didSet { scheduleOperationalObservation() } }
     @Published var lastDashboardRefresh: Date?
     @Published var runtimeImpact: RuntimeAdmissionSnapshot?
@@ -468,11 +479,26 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func requestNotificationAuthorization() async {
-        if await operationalNotifications?.requestAuthorization() == false,
-           let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+    func refreshNotificationPermission() async {
+        notificationPermission = await operationalNotifications?.permission() ?? .unknown
+    }
+
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func requestNotificationAuthorization() async {
+        guard !notificationAuthorizationInProgress else { return }
+        notificationAuthorizationInProgress = true
+        defer { notificationAuthorizationInProgress = false }
+        await refreshNotificationPermission()
+        if notificationPermission == .authorized { return }
+        if notificationPermission == .denied { openNotificationSettings(); return }
+        _ = await operationalNotifications?.requestAuthorization()
+        await refreshNotificationPermission()
+        if notificationPermission == .denied { openNotificationSettings() }
     }
 
     func showOperationalProblem(_ problem: OperationalProblem, scope: String? = nil) {
@@ -1242,10 +1268,100 @@ final class AppModel: ObservableObject {
     }
 
     func selectDashboardStatus(_ filter: DashboardStatusFilter) async {
+        guard !changingProblems else { return }
         guard filter != dashboardStatusFilter else { return }
         dashboardStatusFilter = filter
         dashboard = nil
         await refreshDashboard()
+    }
+
+    func selectProblemQuery(review: ProblemReview? = nil, kind: ProblemKind? = nil, offset: Int = 0, view: ProblemView? = nil) async {
+        guard !changingProblems else { return }
+        dashboardProblemQuery = ProblemQuery(review: review ?? dashboardProblemQuery.review,
+                                             kind: kind ?? dashboardProblemQuery.kind, offset: offset, view: view ?? dashboardProblemQuery.view)
+        problemActionNotice = nil
+        await refreshDashboard()
+    }
+
+    func changeProblem(_ problem: DashboardProblem, action: ProblemActionKind) async {
+        guard !changingProblems, action != .retryStop || !isRemoteClient else { return }
+        changingProblems = true
+        problemActionNotice = nil
+        defer { changingProblems = false }
+        let connection = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            _ = try await client.problemAction(ProblemAction(action: action, targets: [problem.target],
+                acknowledgeAffectedJobIds: action == .retryStop ? problem.stopImpact?.affectedJobIds : nil))
+            guard connection == connectionGeneration else { return }
+            dashboardProblemQuery.offset = 0
+            if action == .recheck {
+                problemActionNotice = BridgeAppLocalization.string("상태를 다시 확인했습니다. 남아 있는 문제는 추가 조치가 필요합니다.", locale: interfaceLocale)
+            }
+            await refreshDashboard()
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = problemErrorDescription(error)
+        }
+    }
+
+    func acknowledgeAllFinishedProblems() async {
+        guard !changingProblems else { return }
+        changingProblems = true
+        problemActionNotice = nil
+        defer { changingProblems = false }
+        let connection = connectionGeneration
+        var changed = 0
+        do {
+            let client = try await bridgeClient()
+            var targets: [ProblemTarget] = []
+            var offset = 0
+            var revision: String?
+            repeat {
+                let snapshot = try await client.dashboardWithProblems(limit: 50, terminalOffset: 0, idleOffset: 0,
+                    enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset,
+                        view: dashboard?.historyPolicy?.automaticRecovery == true ? .history : nil))
+                guard connection == connectionGeneration else { return }
+                guard let problems = snapshot.problems, problems.page.offset == offset,
+                      revision == nil || revision == problems.revision else {
+                    throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1)
+                }
+                revision = problems.revision
+                targets += problems.rows.filter(\.canAcknowledge).map(\.target)
+                guard problems.page.hasNext else { break }
+                guard problems.page.returned > 0 else { throw NSError(domain: "PROBLEM_TARGET_CHANGED", code: 1) }
+                offset += problems.page.returned
+            } while true
+            for start in stride(from: 0, to: targets.count, by: 100) {
+                guard connection == connectionGeneration else { return }
+                let result = try await client.problemAction(ProblemAction(action: .acknowledge,
+                    targets: Array(targets[start..<min(start + 100, targets.count)])))
+                changed += result.changed
+            }
+            guard connection == connectionGeneration else { return }
+            dashboardProblemQuery.offset = 0
+            await refreshDashboard()
+            problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = problemErrorDescription(error)
+            if changed > 0 {
+                problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+            }
+        }
+    }
+
+    private func problemErrorDescription(_ error: Error) -> String {
+        let text = String(describing: error)
+        if text.contains("PROBLEM_TARGET_CHANGED") || text.contains("PROBLEM_REVIEW_STALE") || text.contains("PROBLEM_STOP_IMPACT_CHANGED") {
+            return BridgeAppLocalization.string("문제 목록이나 실행 상태가 변경되었습니다. 갱신된 항목을 다시 선택해 주세요.", locale: interfaceLocale)
+        }
+        if text.contains("PROBLEM_INSPECTION_PENDING") {
+            return BridgeAppLocalization.string("상태 점검이 진행 중입니다. 잠시 후 다시 확인해 주세요.", locale: interfaceLocale)
+        }
+        return localizedErrorDescription(error)
     }
 
     private func scheduleConnectionRecoveryExpiry(at now: Date = Date()) {
@@ -1267,6 +1383,68 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func continueInCodex(_ row: DashboardRow) {
+        guard !isRemoteClient, let rawURL = row.codexThreadUrl,
+              let url = DashboardLink.availableCodexThread(rawURL), threadHandoffTasks[row.rowKey] == nil else { return }
+        let connection = connectionGeneration
+        threadHandoffTasks[row.rowKey] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.threadHandoffTasks[row.rowKey] = nil }
+            do {
+                let client = await self.localBridgeClient()
+                var status = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "request")
+                while !Task.isCancelled && connection == self.connectionGeneration && !self.isRemoteClient {
+                    self.threadHandoffs[row.rowKey] = status
+                    if !status.requested { await self.refreshDashboard(enrich: false); return }
+                    if status.canOpen {
+                        NSWorkspace.shared.open(url)
+                        await self.refreshDashboard(enrich: false)
+                        return
+                    }
+                    if ["ephemeral", "persistence-unknown", "unsupported", "ownership-unconfirmed"].contains(status.reason ?? "") { return }
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    status = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "status")
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.dashboardErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelThreadHandoff(_ row: DashboardRow) {
+        guard !isRemoteClient, let rawURL = row.codexThreadUrl else { return }
+        threadHandoffTasks[row.rowKey]?.cancel()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let client = await self.localBridgeClient()
+                self.threadHandoffs[row.rowKey] = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "cancel")
+                await self.refreshDashboard(enrich: false)
+            } catch {
+                self.dashboardErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func changeHistory(_ row: DashboardRow, action: String) async {
+        guard let controls = row.historyControls else { return }
+        let connection = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            _ = try await client.historyAction(HistoryAction(
+                rowKey: row.rowKey, expectedRevision: controls.revision, action: action
+            ))
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard()
+        } catch {
+            guard connection == connectionGeneration else { return }
+            await refreshDashboard(enrich: false)
+            dashboardErrorMessage = error.localizedDescription
+        }
+    }
+
     func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
         let continueEnrichment = !applyCachedEnrichment && (enrich || dashboardEnrichmentTask != nil)
         dashboardEnrichmentTask?.cancel()
@@ -1282,16 +1460,18 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         do {
             let client = try await bridgeClient()
-            let next = try await client.dashboard(
+            let next = try await client.dashboardWithProblems(
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = next
+            if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
             }
@@ -1328,12 +1508,13 @@ final class AppModel: ObservableObject {
             }
             do {
                 let client = try await self.bridgeClient()
-                let enriched = try await client.dashboard(
+                let enriched = try await client.dashboardWithProblems(
                     limit: self.pageLimit,
                     terminalOffset: terminalOffset,
                     idleOffset: idleOffset,
                     enrich: true,
-                    statusFilter: self.dashboardStatusFilter
+                    statusFilter: self.dashboardStatusFilter,
+                    problems: self.dashboardProblemQuery
                 )
                 guard !Task.isCancelled,
                       generation == self.dashboardRequestGeneration,
@@ -1426,6 +1607,7 @@ final class AppModel: ObservableObject {
     func setSettingsWindowVisible(_ visible: Bool) {
         settingsWindowVisible = visible
         if visible {
+            Task { await refreshNotificationPermission() }
             settingsInvalidated = true
             enqueueRefresh(["status", "settings", "auth", "codex"])
         } else {
@@ -1927,6 +2109,7 @@ final class AppModel: ObservableObject {
                 usePriorityServiceTier: draft.usePriorityServiceTier,
                 uiLocalePreference: draft.uiLocalePreference,
                 maxConcurrentJobs: draft.maxConcurrentJobs,
+                historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
                 activityCard: ActivityCardPatch(
                     visibility: draft.activityCardVisibility,
@@ -2001,12 +2184,13 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboard(
+            let page = try await client.dashboardWithProblems(
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
@@ -2035,12 +2219,13 @@ final class AppModel: ObservableObject {
         let connection = connectionGeneration
         _ = await performDashboard {
             let client = try await self.bridgeClient()
-            let page = try await client.dashboard(
+            let page = try await client.dashboardWithProblems(
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter
+                statusFilter: self.dashboardStatusFilter,
+                problems: self.dashboardProblemQuery
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }

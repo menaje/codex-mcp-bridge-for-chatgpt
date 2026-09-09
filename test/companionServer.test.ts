@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   COMPANION_PROTOCOL_NAME,
   COMPANION_PROTOCOL_VERSION,
+  REMOTE_COMPANION_APPLICATION_METHODS,
   startBridgeCompanionServer,
   type BridgeCompanionServer,
   type RemoteCompanionControl
@@ -23,6 +24,17 @@ afterEach(async () => {
 });
 
 describe("native companion server", () => {
+  it("keeps exact-target conversation handoff on the private local socket", async () => {
+    const socketPath=temporarySocketPath(),service=fakeApplicationService();
+    service.threadHandoff=vi.fn(async () => ({phase:"unsubscribed",reason:"upstream-unload-grace",requested:true,canOpen:false}));
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService:service}));
+    const params={rowKey:"a".repeat(32),codexThreadUrl:"codex://threads/11111111-1111-4111-8111-111111111111",action:"request"};
+    expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"thread.handoff",params})).toMatchObject({result:{canOpen:false,phase:"unsubscribed"}});
+    expect(service.threadHandoff).toHaveBeenCalledWith(params);
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("thread.handoff")).toBe(false);
+    expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"thread.handoff",params:{...params,codexThreadUrl:"https://example.com"}})).toHaveProperty("error");
+    expect(service.threadHandoff).toHaveBeenCalledTimes(1);
+  });
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();
@@ -84,6 +96,17 @@ describe("native companion server", () => {
         capabilities: ["dashboard.read", "settings.read", "settings.write", "runtime.drain"]
       }
     });
+  });
+
+  it("validates history actions before forwarding them to the shared application service", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
+    servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
+    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"archive",requestId:"11111111-1111-4111-8111-111111111111"};
+    expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.history",params})).toMatchObject({result:{ok:true}});
+    expect(applicationService.historyAction).toHaveBeenCalledWith(params);
+    expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.history",params:{...params,force:true}})).toHaveProperty("error");
+    expect(applicationService.historyAction).toHaveBeenCalledTimes(1);
   });
 
   it("routes Dashboard and Settings through the shared application service", async () => {

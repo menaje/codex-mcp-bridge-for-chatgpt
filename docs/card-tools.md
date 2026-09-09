@@ -7,12 +7,12 @@ records remain the execution, ownership and verification model.
 
 ## Current discovery
 
-The new contract has **17 tools: 12 model tools and 5 app-only tools**. During
+The new contract has **19 tools: 12 model tools and 7 app-only tools**. During
 migration, actual discovery also includes **12 app-only compatibility
-descriptors**, for **29 total (12 model, 17 app-only)**. Operator mode
-(`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach, for 31.
-Two old model names remain unadvertised aliases. Thus the server accepts 31
-names by default and 33 in operator mode. All 14 retired names are still tracked
+descriptors**, for **31 total (12 model, 19 app-only)**. Operator mode
+(`ENABLE_RECOVERY_TOOLS=1`) adds diagnostics and recovery detach, for 33.
+Two old model names remain unadvertised aliases. Thus the server accepts 33
+names by default and 35 in operator mode. All 14 retired names are still tracked
 for later removal; this is not a claim that their implementations were deleted.
 
 Actual ChatGPT testing rejected unadvertised calls from retained cards. Keeping
@@ -20,7 +20,7 @@ only their server handlers and immutable resources was insufficient: removing
 the original presenter broke template loading, and keeping that presenter alone
 restored the frame but broke refresh. The compatibility descriptors are private
 to apps and marked `codex/registrationTier: compatibility`. GPT's tool inventory
-remains 12; current cards use the five consolidated contracts below.
+remains 12; current cards use the seven consolidated contracts below.
 
 | Model tools | Purpose |
 | --- | --- |
@@ -35,11 +35,15 @@ remains 12; current cards use the five consolidated contracts below.
 
 | App-only tools | Closed operations |
 | --- | --- |
-| `codex_ui_read` | `view: dashboard`, `settings`, `question` or `control` |
+| `codex_ui_read` | `view: dashboard`, `settings`, `question`, `control`, `history` or `problem-control` |
 | `codex_update_settings` | Save/reset with existing revision checks |
 | `codex_question_action` | `operation.kind: submit`, `claim` or `ack` |
+| `codex_ui_problem` | Review/undo individual failed executions, recheck live problems, or retry failed termination with the exact affected executions |
+| `codex_ui_history` | Acknowledge or archive/restore the selected Agent with a private history proof |
 | `codex_ui_stop` | `kind: job` or `process` with exact private target proof |
 | `codex_interaction_respond` | Respond to the original Codex approval/input request |
+
+The current discovery budget is 165,000 UTF-8 JSON bytes, including the seven app-only contracts; the model-visible inventory remains 12 tools.
 
 These unions contain closed object branches. Unknown fields and mismatched
 branches fail validation. They are not arbitrary-method or free-form routers.
@@ -183,7 +187,7 @@ old cards; they do not trigger new presenters. Projects, execution/model/access
 policy, questions, results, idempotency records and running work are retained.
 There is no new database schema migration in #69 (the #68 baseline is schema 13).
 
-## Completion-flow rollout gate
+## Completion-flow acceptance
 
 The subsequent [PR #71 actual-host run](audits/2026-09-08-pr-71-runtime-acceptance.md)
 verified the current active-response path: background execution, leaving the
@@ -195,9 +199,12 @@ fixed the sandboxed confirmation defect and verified actual overview Job stop,
 original approval rejection and idle process termination. The [original-input
 retry](audits/2026-09-08-issue-69-input-retry.md) reached the real form and resolved
 its request, but the fixture had already timed out. A further attempt after
-extending the fixture timeout was blocked before Job creation. #69 stays open
-until the submitted value reaches the same Job's result. Native banner tests
-belong to #15, and a new
+extending the fixture timeout was blocked before Job creation. These are
+historical observations: the user subsequently confirmed the remaining
+same-Job input result and explicitly accepted completion, so
+[#69 closed on 2026-09-08](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/69#issuecomment-5580775771).
+The earlier failed and blocked attempts remain in their dated audit records.
+Native banner tests belong to #15, and a new
 unsupported already-ended-response wake is explicitly outside #69's mandatory
 scope. Earlier residual lists that made those unconditional #69 gates were too broad.
 
@@ -212,9 +219,8 @@ through bounded input waits and exact terminal result retrieval. This supports
 leaving the work conversation while processing continues, but instructions and
 local protocol tests alone do not prove ChatGPT's notification behavior.
 
-**Local implementation is not authorization to claim the existing ChatGPT
-completion flow preserved.** Before deployment/issue closure, verify on the
-actual ChatGPT host: leave the work conversation, allow Codex to finish, observe
+Future changes to this flow should repeat the applicable actual-host regression:
+leave the work conversation, allow Codex to finish, observe
 retained result retrieval, GPT's final response and the user's notification;
 also reopen the existing separate overview conversation. Record Codex terminal
 state, retained result, GPT execution and notification separately. An already
@@ -225,7 +231,9 @@ regression before rollout. A new unsupported card-free wake mechanism is not
 implicitly included as a separate feature in #69.
 
 See the [implementation audit](audits/2026-09-08-card-tool-consolidation.md) for
-measured discovery/call changes, tests and remaining host evidence.
+the earlier discovery/call measurements, and the [current evaluation plan](chatgpt-evaluation.md)
+for the remaining #9/#68 device and host-fault checks. Completed #69 acceptance
+is not reopened by those separate requirements.
 
 ## Bridge-owned execution permissions
 

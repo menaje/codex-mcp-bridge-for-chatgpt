@@ -139,6 +139,7 @@ export type UpstreamWorkerAssignment = {
     requestedAuthMode?: "chatgpt" | "api-key"; resolvedAuthMode?: "chatgpt" | "api-key" };
   workerId: string;
   workerGeneration: number;
+  threadPersistence?: import("./threadConnections.js").ThreadPersistence;
   workerPid?: number;
   processGroupId?: number;
   upstreamRequestId?: string;
@@ -224,6 +225,8 @@ export type CodexUpstream = {
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult>;
   archiveThread?(threadId: string, backendKind?: CodexBackendKind): Promise<void>;
+  releaseThreadConnection?(threadId: string, options: import("./threadConnections.js").ThreadReleaseOptions): Promise<import("./threadConnections.js").ThreadReleaseResult>;
+  protectThreadFromImplicitResume?(threadId: string): void;
   restoreThread?(threadId: string, backendKind?: CodexBackendKind): Promise<void>;
   listBackgroundTerminals?(
     threadId: string,
@@ -257,7 +260,9 @@ export type CodexUpstream = {
   forceTerminateWorker?(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
-    graceMs?: number
+    graceMs?: number,
+    /** Automatic recovery may interrupt only the exact previously requested turn. */
+    options?: { interruptOnly: true }
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,

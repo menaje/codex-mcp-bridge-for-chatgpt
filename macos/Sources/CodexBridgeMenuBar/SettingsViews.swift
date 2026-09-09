@@ -245,8 +245,26 @@ private struct ConnectionSettingsPane: View {
             Section("이 Mac의 앱 설정") {
                 Toggle("브리지 문제 발생 시 알림", isOn: $model.bridgeProblemNotificationsEnabled)
                 Toggle("보안 및 연결 승인 알림", isOn: $model.securityNotificationsEnabled)
-                Button("macOS 알림 허용 확인") {
-                    Task { await model.requestNotificationAuthorization() }
+                HStack {
+                    switch model.notificationPermission {
+                    case .authorized:
+                        Label("macOS 알림 허용됨", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Spacer()
+                        Button("macOS 알림 설정 열기") { model.openNotificationSettings() }
+                    case .denied:
+                        Label("macOS 알림이 꺼져 있습니다.", systemImage: "bell.slash")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("macOS 알림 설정 열기") { model.openNotificationSettings() }
+                    case .notDetermined:
+                        Button("macOS 알림 허용") {
+                            Task { await model.requestNotificationAuthorization() }
+                        }
+                        .disabled(model.notificationAuthorizationInProgress)
+                    case .unknown:
+                        Text("알림 권한 확인 중…").foregroundStyle(.secondary)
+                    }
                 }
                 Text("알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다.")
                     .font(.caption)
@@ -302,7 +320,11 @@ private struct ConnectionSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.refreshNotificationPermission() }
+        }
         .onAppear {
+            Task { await model.refreshNotificationPermission() }
             synchronizeProfileName()
             guard !model.isRemoteClient else { return }
             Task {
@@ -1082,6 +1104,18 @@ private struct GeneralSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+            }
+
+            if let policy = snapshot.historyPolicy, snapshot.settings.historyRetentionDays != nil {
+                Section("실행 기록 보관") {
+                    Picker("보관 기간", selection: $draft.historyRetentionDays) {
+                        Text("7일").tag(7)
+                        Text("30일").tag(30)
+                        Text("90일").tag(90)
+                        Text("계속 보관").tag(0)
+                    }
+                    WorkHistoryPolicyView(policy: policy)
+                }
             }
 
             if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {

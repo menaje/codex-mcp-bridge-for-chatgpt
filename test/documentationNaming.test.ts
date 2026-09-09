@@ -57,8 +57,8 @@ describe("documentation naming", () => {
       expect(existsSync(path.join(ROOT, "docs/images", image))).toBe(true);
     }
 
-    expect(setup).toContain("images/chatgpt-activity-light-en.png");
-    expect(existsSync(path.join(ROOT, "docs/images", "chatgpt-activity-light-en.png"))).toBe(true);
+    expect(setup).toContain("images/chatgpt-dashboard-light-en.png");
+    expect(existsSync(path.join(ROOT, "docs/images", "chatgpt-dashboard-light-en.png"))).toBe(true);
 
     expect(setup).toContain("## macOS server mode");
     expect(setup).toContain("## macOS client mode");

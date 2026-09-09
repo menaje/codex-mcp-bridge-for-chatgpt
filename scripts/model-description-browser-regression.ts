@@ -114,6 +114,7 @@ try {
     check(await page.evaluate(()=>window.__descriptionCalls.filter(x=>x.name==='codex_update_settings').length)===0,'Untouched official text must not become an override');
     const custom='범위가 넓고 설계 판단이 필요한 작업에 사용합니다.\\n<script>window.__descriptionInjected=true</script>';
     await page.locator('#concurrency').fill('7');
+    await page.locator('#history-retention').selectOption('90');
     await action('edit').click();
     await row.locator('textarea').fill(custom);
     await action('save').click();
@@ -125,12 +126,17 @@ try {
     check(listed.models.find(x=>x.id==='gpt-6-astra').descriptionSource==='user','Mark user source');
     const stored=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
     check(stored.settings.maxConcurrentJobs===30,'Description-only patch must not save unrelated fields');
+    check(stored.settings.historyRetentionDays===30,'Description-only patch must not save history retention');
+    check(await page.locator('#history-retention').inputValue()==='90','Description save preserves retention draft');
     check(stored.catalog.models.find(x=>x.id==='gpt-6-astra').description===official,'Catalog still contains official text');
     await row.locator('summary').click();
     check((await row.locator('details p').textContent())===official,'Compare official text');
     await page.locator('#save').click();
     await page.waitForFunction(()=>!document.querySelector('#save').disabled);
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.maxConcurrentJobs===7,'General save after description save uses current revision');
+    check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.historyRetentionDays===90,'Real settings mutation saves retention');
+    check((await page.locator('#history-settings-policy').innerText()).includes('90일'),'Saved policy updates notice');
+    check(!(await page.locator('#history-settings-policy').innerText()).includes(String.fromCharCode(92)+'n'),'Policy line breaks render correctly');
     await page.reload();
     await row.locator('[data-description-source="user"]').waitFor();
     check((await row.locator('.model-description-text').first().textContent())===custom,'Reload preserves override');

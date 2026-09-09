@@ -77,7 +77,7 @@ describe("tool guidance through production MCP", () => {
   it("keeps settings recovery out of opener descriptions and retains the consolidated tool inventory", async () => {
     const { tools } = await client.listTools();
     const current = tools.filter(tool => tool._meta?.["codex/registrationTier"] !== "compatibility");
-    expect(current).toHaveLength(17);
+    expect(current).toHaveLength(19);
     expect(current.some(tool => ["codex_activity", "codex_input", "codex_activity_cancel", "codex_projects"].includes(tool.name))).toBe(false);
     const settingsTool = current.find(tool => tool.name === "codex_settings")!;
     expect(settingsTool.description).toBe("Open an interactive card for configuring this ChatGPT-to-Codex bridge.");
