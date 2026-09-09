@@ -3089,8 +3089,8 @@
       ]
     },
     "dashboard": {
-      "digest": "be25ddc74c448782a1386dba6ca18945e470482c68575c059ebc610585ed96fe",
-      "uri": "ui://codex-mcp-bridge/dashboard/be25ddc74c44.html",
+      "digest": "cea27ba2992d145313dd5b859aa079e834a4705db95b3e9561f96d1c3faf142d",
+      "uri": "ui://codex-mcp-bridge/dashboard/cea27ba2992d.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",
@@ -3116,10 +3116,106 @@
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 23
+          "codex/uiContractGeneration": 24
         }
       },
       "previous": [
+        {
+          "digest": "b9748cf013dc4d81e166064066b52a02ca1be9dfddf60d3330a9c933adbc8a90",
+          "uri": "ui://codex-mcp-bridge/dashboard/b9748cf013dc.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated work controls.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and work controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 24
+            }
+          }
+        },
+        {
+          "digest": "64d3a80473f63e702deb3145dee69f0f9e3242d1a2b10550e56feb12b6fbd31a",
+          "uri": "ui://codex-mcp-bridge/dashboard/64d3a80473f6.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated work controls.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and work controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 24
+            }
+          }
+        },
+        {
+          "digest": "be25ddc74c448782a1386dba6ca18945e470482c68575c059ebc610585ed96fe",
+          "uri": "ui://codex-mcp-bridge/dashboard/be25ddc74c44.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated work controls.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and work controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 23
+            }
+          }
+        },
         {
           "digest": "8fa4d968a57b836449c771db72fb9a77b1ad962429f1c4a4bb09511a994bb6af",
           "uri": "ui://codex-mcp-bridge/dashboard/8fa4d968a57b.html",

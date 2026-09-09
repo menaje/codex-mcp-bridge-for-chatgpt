@@ -287,6 +287,7 @@ final class AppModel: ObservableObject {
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
     @Published var dashboard: DashboardSnapshot?
+    @Published var dashboardStatusFilter: DashboardStatusFilter = .all
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
     @Published var logs: [HelperLogEntry] = []
@@ -658,7 +659,7 @@ final class AppModel: ObservableObject {
                 return .attention
             }
             guard let counts = dashboard?.counts else { return .checking }
-            return counts.needsAttention > 0 ? .attention : .healthy
+            return counts.problemCount > 0 ? .attention : .healthy
         }
         guard let helperStatus,
               helperStatus.configuration.valid,
@@ -674,7 +675,7 @@ final class AppModel: ObservableObject {
         guard authStatus.authenticated else { return .attention }
         guard dashboardErrorMessage == nil else { return .attention }
         guard let counts = dashboard?.counts else { return .checking }
-        return counts.needsAttention > 0 ? .attention : .healthy
+        return counts.problemCount > 0 ? .attention : .healthy
     }
 
     var needsSetup: Bool {
@@ -1219,6 +1220,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func selectDashboardStatus(_ filter: DashboardStatusFilter) async {
+        guard filter != dashboardStatusFilter else { return }
+        dashboardStatusFilter = filter
+        dashboard = nil
+        await refreshDashboard()
+    }
+
     private func scheduleConnectionRecoveryExpiry(at now: Date = Date()) {
         let deadline = localConnectionRecovery.deadline
         if deadline == connectionRecoveryExpiryDeadline, connectionRecoveryExpiryTask != nil { return }
@@ -1257,7 +1265,8 @@ final class AppModel: ObservableObject {
                 limit: pageLimit,
                 terminalOffset: 0,
                 idleOffset: 0,
-                enrich: false
+                enrich: false,
+                statusFilter: self.dashboardStatusFilter
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
@@ -1302,7 +1311,8 @@ final class AppModel: ObservableObject {
                     limit: self.pageLimit,
                     terminalOffset: terminalOffset,
                     idleOffset: idleOffset,
-                    enrich: true
+                    enrich: true,
+                    statusFilter: self.dashboardStatusFilter
                 )
                 guard !Task.isCancelled,
                       generation == self.dashboardRequestGeneration,
@@ -2045,9 +2055,11 @@ final class AppModel: ObservableObject {
                 limit: self.pageLimit,
                 terminalOffset: nextOffset,
                 idleOffset: 0,
-                enrich: false
+                enrich: false,
+                statusFilter: self.dashboardStatusFilter
             )
-            guard connection == self.connectionGeneration else { return }
+            guard connection == self.connectionGeneration,
+                  generation == self.dashboardRequestGeneration else { return }
             self.dashboard = current.mergingPage(
                 page,
                 bucket: .terminal,
@@ -2077,9 +2089,11 @@ final class AppModel: ObservableObject {
                 limit: self.pageLimit,
                 terminalOffset: 0,
                 idleOffset: nextOffset,
-                enrich: false
+                enrich: false,
+                statusFilter: self.dashboardStatusFilter
             )
-            guard connection == self.connectionGeneration else { return }
+            guard connection == self.connectionGeneration,
+                  generation == self.dashboardRequestGeneration else { return }
             self.dashboard = current.mergingPage(
                 page,
                 bucket: .idle,

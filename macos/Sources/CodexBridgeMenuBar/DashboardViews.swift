@@ -23,7 +23,6 @@ struct DashboardPopoverView: View {
     @State private var showForceRestartConfirmation = false
     @State private var showRepairConfirmation = false
     @State private var showApplicationQuitConfirmation = false
-    @State private var idleSectionExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -305,7 +304,20 @@ struct DashboardPopoverView: View {
                 } else if let usage = dashboard.weeklyUsage, model.shouldShowCodexWeeklyUsage {
                     WeeklyUsageView(usage: usage)
                 }
-                CountsGrid(counts: dashboard.counts)
+                DashboardSummary(counts: dashboard.counts)
+                if dashboard.counts.backgroundProcesses > 0 {
+                    Button {
+                        Task { await model.selectDashboardStatus(.background) }
+                    } label: {
+                        Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
+                    Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
                     Label(
                         "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
@@ -341,8 +353,8 @@ struct DashboardPopoverView: View {
                     .foregroundStyle(.secondary)
                 }
                 DashboardSection(
-                    title: "활성",
-                    emptyText: "현재 활성 Agent가 없습니다.",
+                    title: "현재 작업",
+                    emptyText: "표시할 현재 작업이 없습니다.",
                     rows: dashboard.activeRows,
                     total: dashboard.pagination.active.total,
                     groupsByActivity: true
@@ -356,24 +368,13 @@ struct DashboardPopoverView: View {
                     .foregroundStyle(.orange)
                 }
                 DashboardSection(
-                    title: "최근 활동",
+                    title: "실행 기록",
                     emptyText: "보존된 최근 실행이 없습니다.",
                     rows: dashboard.terminalRows,
                     total: dashboard.pagination.terminal.total,
                     groupsByActivity: true,
                     hasMore: dashboard.pagination.terminal.hasNext,
                     loadMore: { Task { await model.loadMoreRecent() } }
-                )
-                DashboardSection(
-                    title: "유휴 에이전트",
-                    emptyText: "유휴 에이전트가 없습니다.",
-                    rows: dashboard.idleRows,
-                    total: dashboard.pagination.idle.total,
-                    groupsByActivity: true,
-                    marksRecentActivity: true,
-                    hasMore: dashboard.pagination.idle.hasNext,
-                    disclosureExpanded: $idleSectionExpanded,
-                    loadMore: { Task { await model.loadMoreIdle() } }
                 )
             }
             .padding(14)
@@ -755,53 +756,50 @@ private struct CodexMenuPlanDetails: View {
     }
 }
 
-private struct CountsGrid: View {
+private struct DashboardSummary: View {
+    @EnvironmentObject private var model: AppModel
     let counts: DashboardCounts
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            CountTile(title: "실행 중", value: counts.running, symbol: "play.fill")
-            CountTile(title: "입력 필요", value: counts.inputRequired, symbol: "text.bubble.fill")
-            CountTile(title: "승인 필요", value: counts.approvalRequired, symbol: "checkmark.shield.fill")
-            CountTile(title: "종료 중", value: counts.terminating, symbol: "stop.circle.fill")
-            CountTile(title: "주의", value: counts.needsAttention, symbol: "exclamationmark.triangle.fill")
-            CountTile(title: "백그라운드", value: counts.backgroundProcesses, symbol: "terminal.fill")
-            CountTile(title: "유휴", value: counts.idleAgents, symbol: "pause.fill")
+            summaryButton("실행 중", value: counts.running, symbol: "play.fill", filter: .running)
+            summaryButton("응답 필요", value: counts.responseRequiredCount, symbol: "text.bubble.fill", filter: .responseRequired)
+            summaryButton("문제", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", filter: .problems)
         }
-        HStack {
-            Label("프로젝트 \(counts.trackedProjects)", systemImage: "folder")
-            Spacer()
-            Label("대화 \(counts.trackedConversations)", systemImage: "bubble.left.and.bubble.right")
-            Spacer()
-            Label("실행 기록 \(counts.retainedJobs)", systemImage: "clock.arrow.circlepath")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-}
-
-private struct CountTile: View {
-    @Environment(\.locale) private var locale
-    let title: String
-    let value: Int
-    let symbol: String
-
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Image(systemName: symbol)
-                Text(BridgeAppLocalization.string(title, locale: locale)).lineLimit(1)
+        if model.dashboardStatusFilter != .all {
+            Button("전체 보기") {
+                Task { await model.selectDashboardStatus(.all) }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            Text("\(value)")
-                .font(.title3.bold().monospacedDigit())
+            .buttonStyle(.link)
+            .font(.caption)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func summaryButton(_ title: String, value: Int, symbol: String, filter: DashboardStatusFilter) -> some View {
+        let selected = model.dashboardStatusFilter == filter
+        return Button {
+            Task { await model.selectDashboardStatus(selected ? .all : filter) }
+        } label: {
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: symbol)
+                    Text(BridgeAppLocalization.string(title, locale: model.interfaceLocale))
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                Text(value, format: .number)
+                    .font(.title3.bold().monospacedDigit())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(selected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 

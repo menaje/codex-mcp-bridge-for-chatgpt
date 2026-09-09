@@ -129,6 +129,11 @@ public struct WeeklyUsage: Codable, Sendable {
     public let observedAt: String
 }
 
+public enum DashboardStatusFilter: String, Codable, Sendable {
+    case all, running, problems, background
+    case responseRequired = "response-required"
+}
+
 public struct DashboardCounts: Codable, Sendable {
     public let trackedProjects: Int
     public let trackedConversations: Int
@@ -139,6 +144,10 @@ public struct DashboardCounts: Codable, Sendable {
     public let approvalRequired: Int
     public let terminating: Int
     public let needsAttention: Int
+    public let responseRequired: Int?
+    public let problems: Int?
+    public var responseRequiredCount: Int { responseRequired ?? inputRequired + approvalRequired }
+    public var problemCount: Int { problems ?? max(0, needsAttention - responseRequiredCount) }
     public let backgroundProcesses: Int
     public let backgroundProcessAgents: Int
     public let runtimeUnknownAgents: Int
@@ -396,13 +405,16 @@ public struct DashboardParameters: Codable, Sendable {
     public var terminalOffset: Int
     public var idleOffset: Int
     public var enrich: Bool
+    public var statusFilter: DashboardStatusFilter
 
     public init(
         limit: Int = 20,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
-        enrich: Bool = false
+        enrich: Bool = false,
+        statusFilter: DashboardStatusFilter = .all
     ) {
+        self.statusFilter = statusFilter
         self.limit = limit
         self.terminalOffset = terminalOffset
         self.idleOffset = idleOffset

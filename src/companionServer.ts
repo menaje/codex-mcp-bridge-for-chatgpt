@@ -13,6 +13,7 @@ import {
 } from "node:net";
 import path from "node:path";
 import * as z from "zod/v4";
+import { DASHBOARD_STATUS_FILTERS } from "./dashboardPresentation.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -57,6 +58,7 @@ const requestSchema = z.strictObject({
 
 const emptyParamsSchema = z.strictObject({});
 const dashboardParamsSchema = z.strictObject({
+  statusFilter: z.enum(DASHBOARD_STATUS_FILTERS).optional(),
   limit: z.number().int().min(5).max(50).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
@@ -329,6 +331,7 @@ async function dispatchRequest(
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({
+        statusFilter: params.statusFilter,
         limit: params.limit,
         terminalOffset: params.terminalOffset,
         idleOffset: params.idleOffset,

@@ -577,6 +577,24 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testInputAndApprovalWaitDoNotMakeTheBridgeUnhealthy() throws {
+        let model = AppModel()
+        model.helperStatus = try helperStatus()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        for current in [false, true] {
+            var counts = ["inputRequired": 2, "approvalRequired": 3, "needsAttention": 5]
+            if current { counts["responseRequired"] = 5; counts["problems"] = 0 }
+            model.dashboard = try dashboardStatus(countOverrides: counts)
+            XCTAssertEqual(model.dashboard?.counts.responseRequiredCount, 5)
+            XCTAssertEqual(model.health, .healthy)
+            counts["needsAttention"] = 6
+            if current { counts["problems"] = 1 }
+            model.dashboard = try dashboardStatus(countOverrides: counts)
+            XCTAssertEqual(model.health, .attention)
+        }
+    }
+
+    @MainActor
     func testAuthenticationNoticeDistinguishesCheckingFromLoggedOut() throws {
         let model = AppModel()
 
@@ -1578,7 +1596,8 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         limit: Int,
         terminalOffset: Int,
         idleOffset: Int,
-        enrich: Bool
+        enrich: Bool,
+        statusFilter: DashboardStatusFilter
     ) async throws -> DashboardSnapshot {
         if dashboardDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: dashboardDelayNanoseconds)
@@ -1705,9 +1724,10 @@ private func loginStatus(installed: Bool, authenticated: Bool) throws -> CodexLo
 
 private func dashboardStatus(
     runtimeUnknownAgents: Int = 0,
-    scope: String = "bridge-wide"
+    scope: String = "bridge-wide",
+    countOverrides: [String: Int] = [:]
 ) throws -> DashboardSnapshot {
-    let counts: [String: Any] = [
+    var counts: [String: Any] = [
         "trackedProjects": 0,
         "trackedConversations": 0,
         "retainedJobs": 0,
@@ -1728,6 +1748,7 @@ private func dashboardStatus(
         "idleAgents": 0,
         "orphanedAgents": 0
     ]
+    for (key, value) in countOverrides { counts[key] = value }
     let page: [String: Any] = [
         "offset": 0,
         "limit": 12,
