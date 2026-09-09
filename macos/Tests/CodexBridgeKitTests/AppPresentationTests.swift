@@ -518,7 +518,10 @@ final class AppPresentationTests: XCTestCase {
         let model = AppModel(paths: paths)
         model.recordLocalConnectionStatus(try helperStatus())
         model.scheduleBackgroundRefreshes()
-        try await Task.sleep(for: .milliseconds(350))
+        for _ in 0..<150 {
+            if helper.count("codex.runtime") > 0 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertEqual(helper.count("codex.runtime"), 1)
         let started = Date()
         await withTaskGroup(of: Void.self) { group in
