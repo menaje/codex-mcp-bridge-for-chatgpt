@@ -126,7 +126,9 @@ export class UserSettingsStore {
       usePriorityServiceTier: false,
       uiLocalePreference: "auto",
       maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
-      showBridgeThreadsInCodexApp: false,
+      // Durable context is the default for a new installation. Loaded legacy
+      // settings retain their explicit (or historical missing-field) choice.
+      showBridgeThreadsInCodexApp: true,
       // Retained cards still interpret this setting. Current presenters do not
       // use it; preserve the default so legacy completion handoff can migrate.
       activityCardVisibility: "always",

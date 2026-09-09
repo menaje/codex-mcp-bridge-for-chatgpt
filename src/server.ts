@@ -374,6 +374,7 @@ export function createBridgeMcpServer(
   const settingsStore = userSettings || new UserSettingsStore(config, {
     stateStore: fallbackStateStore
   });
+  jobRegistry.configureThreadConnections(upstream, config.threadIdleMs);
   if (settingsStore.admissionStateStore !== jobRegistry.admissionStateStore) {
     throw new Error(
       "PROJECT_ADMISSION_STORE_MISMATCH: Project registry and Activity/Agent/Job admission must share one state store."
@@ -438,7 +439,7 @@ export function createBridgeMcpServer(
   server.close = () => {
     if (!closePromise) {
       toolRegistration.dispose();
-      closePromise = closeServer();
+      closePromise = Promise.all([closeServer(), !jobs ? jobRegistry.closeThreadConnections() : undefined]).then(() => undefined);
     }
     return closePromise;
   };
@@ -475,6 +476,7 @@ export function createHttpServer(
     }
   );
   const modelCatalog = modelCatalogOverride || createModelCatalog(config, upstream);
+  jobs.configureThreadConnections(upstream, config.threadIdleMs);
   const descriptorCoordinator = runtimeOptions.descriptorCoordinator ||
     new SdkToolDescriptorCoordinator();
   // Stateless HTTP creates a short-lived McpServer for every request. Keep
@@ -855,7 +857,7 @@ export function createHttpServer(
     clearInterval(descriptorReconcileTimer);
     unsubscribeCatalog?.();
     if (ownsDescriptorCoordinator) descriptorCoordinator.dispose();
-    if (ownsStateStore) stateStore.close();
+    void jobs.closeThreadConnections().then(() => { if (ownsStateStore) stateStore.close(); });
   });
 
   {
@@ -863,11 +865,12 @@ export function createHttpServer(
     let gracefulClose: Promise<void> | undefined;
     httpServer.close = ((callback?: (error?: Error) => void) => {
       if (!gracefulClose) {
+        const connectionsClosed = jobs.closeThreadConnections();
         const httpClosed = new Promise<void>((resolve, reject) => {
           closeHttp((error?: Error) => (error ? reject(error) : resolve()));
         });
         const sessionsClosed = httpServer.closeMcpSessions().then(() => httpServer.closeIdleConnections());
-        gracefulClose = Promise.allSettled([httpClosed, sessionsClosed, companionMcpServer?.close()]).then((results) => {
+        gracefulClose = Promise.allSettled([httpClosed, sessionsClosed, connectionsClosed, companionMcpServer?.close()]).then((results) => {
           const rejected = results.find(
             (result): result is PromiseRejectedResult => result.status === "rejected"
           );

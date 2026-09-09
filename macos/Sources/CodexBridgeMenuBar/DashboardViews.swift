@@ -1116,19 +1116,40 @@ private struct DashboardRowView: View {
                         }
                     }
                     if !model.isRemoteClient,
-                       let url = DashboardLink.availableCodexThread(row.codexThreadUrl) {
+                       DashboardLink.availableCodexThread(row.codexThreadUrl) != nil {
                         Button {
-                            NSWorkspace.shared.open(url)
+                            model.continueInCodex(row)
                         } label: {
-                            Label("Codex 대화 열기", systemImage: "arrow.up.forward.app")
+                            Label("Codex 앱에서 이어가기", systemImage: "arrow.up.forward.app")
                         }
                         .buttonStyle(.link)
-                        .help("Codex 앱에서 이 Agent의 대화를 엽니다.")
+                        .help("진행 중인 작업이 끝나고 연결 해제를 확인하면 Codex 앱을 엽니다.")
+                        if let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
+                           handoff.requested && !handoff.canOpen {
+                            Button("인계 취소") { model.cancelThreadHandoff(row) }
+                                .buttonStyle(.link)
+                        }
                     }
                 }
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+            if !model.isRemoteClient,
+               let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
+               handoff.requested && !handoff.canOpen {
+                Group {
+                    switch handoff.reason {
+                    case "active-work": Text("진행 중인 작업이 끝나기를 기다리고 있습니다.")
+                    case "ephemeral", "persistence-unknown": Text("대화 저장을 확인할 수 없어 연결을 유지합니다.")
+                    case "background-work", "background-unknown": Text("백그라운드 작업 종료를 확인한 뒤 인계합니다.")
+                    case "shared-worker-protected", "upstream-unload-grace": Text("다른 대화와 Codex의 연결 해제를 기다리고 있습니다.")
+                    case "unsupported", "ownership-unconfirmed": Text("연결 해제를 확인하지 못했습니다. 다시 시도해 주세요.")
+                    default: Text("연결 해제를 확인하고 있습니다. 확인되면 Codex 앱을 엽니다.")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
             if let cancellation = row.latestTurn?.cancellation,
                presentation == .idle || cancellation.targetKind != "activity" {
                 CancellationDisclosure(cancellation: cancellation)

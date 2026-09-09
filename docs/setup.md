@@ -2,6 +2,8 @@
 
 This guide covers the user-facing setup for Codex MCP Bridge for ChatGPT. Choose the path that matches the computer that will actually run Codex.
 
+Conversation connections have an independent six-hour idle grace controlled by `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` (`0` disables automatic release). Job results retain their existing separate six-hour/100-Job policy. See [connection lifetime, app handoff and retention](thread-lifecycle.md) for protection rules, persistent/ephemeral choices and restart recovery.
+
 Official background:
 
 - [Codex App Server](https://learn.chatgpt.com/docs/app-server)

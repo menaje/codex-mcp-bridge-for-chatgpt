@@ -54,6 +54,10 @@ lines.on("line", (line) => {
     return;
   }
   if (mode === "late-reconciliation") {
+    if (message.method === "thread/read") {
+      respond(message.id, {thread:{id:message.params.threadId,ephemeral:false,status:{type:"notLoaded"},turns:[]}});
+      return;
+    }
     if (message.method === "thread/start") {
       setTimeout(() => respond(message.id, {
         thread: { id: "late-created-thread", secretPayload: "SECRET_LATE_SUCCESS_PAYLOAD" }

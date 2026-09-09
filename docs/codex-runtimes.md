@@ -2,6 +2,8 @@
 
 ChatGPT connects to the bridge through MCP. The bridge executes work by connecting directly to the selected Codex CLI's App Server. App Server is a mode of that executable, not another CLI installation.
 
+Persistent conversation connections now have an independent six-hour idle grace period. The local **Continue in Codex** action verifies release before opening the app; returning to the bridge can remain blocked while the app owns its writer. Ephemeral conversations and protected shared workers are retained. See [connection lifetime, storage settings and recovery](thread-lifecycle.md) for protocol capabilities, app visibility constraints, database migration and measured cache behavior.
+
 ## Choose an installation
 
 Open **Settings → Codex** in the macOS app. App-bundled Codex, terminal installations and bridge-managed installations are listed together.
@@ -99,7 +101,7 @@ The external ChatGPT MCP connection and Codex's own connected MCP tools remain s
 
 Authentication uses the selected CLI's existing configuration. ChatGPT login and API-key authentication remain distinct; the bridge does not switch a failed ChatGPT login to API billing. A changed account identity invalidates account/model caches and prevents an existing worker from admitting another turn until restart. Same-account token refresh does not trigger that boundary.
 
-**Show bridge threads in Codex app** controls new and forked threads. Enabled threads are persisted in the selected Codex home; disabled threads are memory-only and cannot resume after the worker stops. This does not change older threads or guarantee immediate refresh of the app's list.
+**Show bridge threads in Codex app** controls new and forked threads. New installations enable it by default for resumable context; existing saved preferences are preserved. Enabled threads are persisted in the selected Codex home; disabled threads are memory-only and cannot resume after the worker stops. This does not change older threads or guarantee immediate refresh of the app's list.
 
 `CodexService` owns CLI selection, account projection, cache context and the optional billing connection. Account usage belongs to the account, not to an individual executable. Missing limits, credit balances or reset counts are unavailable, not zero. API mode does not imply unlimited requests or display a ChatGPT weekly quota. Reset credits are never redeemed automatically.
 

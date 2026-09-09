@@ -158,6 +158,17 @@ export class CodexBackendRouter implements CodexUpstream {
     await backend.archiveThread(threadId, kind);
   }
 
+  protectThreadFromImplicitResume(threadId: string): void {
+    this.backend("app-server").protectThreadFromImplicitResume?.(threadId);
+  }
+
+  async releaseThreadConnection(threadId: string, options: import("./threadConnections.js").ThreadReleaseOptions) {
+    const kind = this.threadBackends.get(threadId);
+    if (kind && kind !== "app-server") return { phase: "blocked" as const, reason: "retired-backend" };
+    return this.backend("app-server").releaseThreadConnection?.(threadId, options) ||
+      { phase: "blocked" as const, reason: "unsupported" };
+  }
+
   async restoreThread(threadId: string, backendKind?: CodexBackendKind): Promise<void> {
     const kind = backendKind || this.threadBackends.get(threadId);
     if (!kind) throw new Error("The Agent thread backend is unknown.");

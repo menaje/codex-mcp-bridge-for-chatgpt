@@ -183,7 +183,7 @@ lines.on("line", (line) => {
     threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ...threadLineages.get(id) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
@@ -193,7 +193,22 @@ lines.on("line", (line) => {
       return;
     }
     loadedThreads.add(threadId);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ...threadLineages.get(threadId) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
+    return;
+  }
+  if (message.method === "thread/unsubscribe") {
+    const id = message.params.threadId;
+    const unload = process.env.CODEX_TEST_UNSUBSCRIBE_UNLOAD === "1";
+    const status = loadedThreads.has(id) ? "unsubscribed" : "notLoaded";
+    if (unload) {
+      loadedThreads.delete(id);
+      notification("thread/closed", {threadId: id});
+    }
+    response(message.id, {status});
+    return;
+  }
+  if (message.method === "thread/loaded/list") {
+    response(message.id, {data: [...loadedThreads], nextCursor: null});
     return;
   }
   if (message.method === "thread/read") {
@@ -229,7 +244,7 @@ lines.on("line", (line) => {
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
-    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ...threadLineages.get(id) } });
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/archive") {

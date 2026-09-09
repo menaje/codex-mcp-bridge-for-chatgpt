@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { EVENT_RETENTION_SCHEMA, EventRetention } from "./eventRetention.js";
+import { THREAD_CONNECTION_SCHEMA, ThreadConnectionStore, type ThreadPersistence } from "./threadConnections.js";
 import { QuestionStore, QUESTION_STORE_SCHEMA } from "./questionStore.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
@@ -80,7 +82,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "13";
+const CURRENT_SCHEMA_VERSION = "14";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -92,6 +94,7 @@ type SessionRowInput = {
   projectId?: string;
   projectLabel?: string;
   visibleInCodexApp?: boolean;
+  persistence?: ThreadPersistence;
   lastUsedAt: number;
 };
 
@@ -109,6 +112,8 @@ type JobRowInput = {
   bridgeInstanceId?: string;
   workerId?: string;
   workerGeneration?: number;
+  workerPid?: number;
+  threadPersistence?: ThreadPersistence;
   upstreamRequestId?: string;
   terminalVersion?: number;
   agentId?: string;
@@ -421,6 +426,8 @@ export type BridgeStateStoreOptions = {
  */
 export class BridgeStateStore {
   readonly questions: QuestionStore;
+  readonly threadConnections: ThreadConnectionStore;
+  readonly eventRetention: EventRetention;
   private readonly database: Database.Database;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
@@ -457,6 +464,7 @@ export class BridgeStateStore {
       existingVersion !== "10" &&
       existingVersion !== "11" &&
       existingVersion !== "12" &&
+      existingVersion !== "13" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -464,6 +472,11 @@ export class BridgeStateStore {
     }
 
     try {
+      if (existingVersion && existingVersion !== CURRENT_SCHEMA_VERSION && this.persistent) {
+        const backup = `${options.file}.pre-v14-${randomUUID()}.sqlite`;
+        this.database.prepare("VACUUM INTO ?").run(backup);
+        chmodSync(backup, 0o600);
+      }
       this.createV1Schema();
       if (existingVersion === undefined) this.setMeta("schema_version", "1");
       if ((existingVersion || "1") === "1") this.migrateV1ToV2();
@@ -480,10 +493,31 @@ export class BridgeStateStore {
       if (this.getMeta("schema_version") === "12") {
         this.transaction(() => {
           this.database.exec(QUESTION_STORE_SCHEMA);
-          this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+          this.setMeta("schema_version", "13");
         });
       }
       this.questions = new QuestionStore(this.database);
+      if (this.getMeta("schema_version") === "13") {
+        this.transaction(() => {
+          this.database.exec(THREAD_CONNECTION_SCHEMA);
+          this.database.exec(EVENT_RETENTION_SCHEMA);
+          // Visibility was historically coupled to ephemeral at creation. Missing evidence stays unknown.
+          this.database.exec(`INSERT OR IGNORE INTO thread_connections(thread_id,scope_id,persistence,phase,updated_at)
+            SELECT thread_id,scope_id,CASE json_extract(payload,'$.visibleInCodexApp')
+              WHEN 1 THEN 'persistent' WHEN 0 THEN 'ephemeral' ELSE 'unknown' END,'blocked',last_used_at FROM sessions;
+            UPDATE thread_connections SET reason='runtime-unverified';`);
+          this.database.exec(`UPDATE thread_connections SET
+            agent_id=(SELECT agent_id FROM agent_threads WHERE thread_id=thread_connections.thread_id),
+            last_finished_at=(SELECT MAX(e.created_at) FROM job_events e JOIN jobs j ON j.job_id=e.job_id
+              WHERE j.thread_id=thread_connections.thread_id AND j.upstream_request_id IS NOT NULL
+              AND e.event_type IN ('job-completed','job-failed','job-interrupted','job-cancelled')),
+            worker_pid=(SELECT json_extract(payload,'$.workerPid') FROM jobs WHERE thread_id=thread_connections.thread_id
+              ORDER BY updated_at DESC LIMIT 1);`);
+          this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+        });
+      }
+      this.threadConnections = new ThreadConnectionStore(this.database);
+      this.eventRetention = new EventRetention(this.database);
       this.normalizeLegacyExecutionModes();
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
@@ -538,6 +572,8 @@ export class BridgeStateStore {
 
   upsertSession(session: SessionRowInput): void {
     this.transaction(() => {
+      this.threadConnections.register({ threadId: session.threadId, scopeId: session.scopeId,
+        persistence: session.persistence || (session.visibleInCodexApp === true ? "persistent" : session.visibleInCodexApp === false ? "ephemeral" : "unknown") }, session.lastUsedAt);
       this.ensureScope(session.scopeId, session.lastUsedAt);
       const project = normalizeProjectIdentity(session.projectId, session.projectLabel);
       const persistedSession = {
@@ -671,6 +707,7 @@ export class BridgeStateStore {
 
   deleteJob(jobId: string): void {
     this.transaction(() => {
+      if (this.retentionProtection(jobId).length) return;
       const row = this.database
         .prepare(`
           SELECT job_id, scope_id, request_id, status, updated_at, activity_id,
@@ -694,6 +731,11 @@ export class BridgeStateStore {
       const now = Date.now();
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
       const payload = parsePayload({ payload: row.payload }, "job");
+      if (isRecord(payload)) this.eventRetention.summarizeJob(payload, !this.eventRetention.summary(jobId).status);
+      if (!this.eventRetention.summary(jobId).usage) {
+        const usage = this.database.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as JsonRow | undefined;
+        if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:JSON.parse(usage.payload)}, true, false);
+      }
       const dashboardFields = isRecord(payload)
         ? retainedDashboardJobFields(payload)
         : {};
@@ -706,12 +748,14 @@ export class BridgeStateStore {
         updatedAt: row.updated_at,
         terminalVersion: row.terminal_version || undefined,
         ...dashboardFields,
+        ...this.eventRetention.summary(jobId),
         archivedAt: now,
         resultOmitted: true
       };
       this.database
         .prepare("UPDATE jobs SET archived_at = ?, payload = ? WHERE job_id = ?")
         .run(now, JSON.stringify(retainedSummary), row.job_id);
+      this.database.prepare("DELETE FROM job_events WHERE job_id=?").run(jobId);
       this.insertJobEvent({
         jobId: row.job_id,
         activityId: row.activity_id,
@@ -725,6 +769,65 @@ export class BridgeStateStore {
       this.touchActivity(row.activity_id, scopeVersion, now, "job-retention-pruned", {
         jobId: row.job_id
       });
+    });
+  }
+
+  retentionProtection(jobId: string, now = Date.now()): string[] {
+    const row = this.database.prepare("SELECT status,activity_id,payload FROM jobs WHERE job_id=?").get(jobId) as {status:string;activity_id:string;payload:string} | undefined;
+    if (!row) return [];
+    const reasons: string[] = [];
+    if (isActiveActivityJobStatus(row.status)) reasons.push("active-work");
+    const payload = JSON.parse(row.payload) as Record<string, unknown>;
+    if (hasBlockingInteraction(payload.pendingInteractions)) reasons.push("pending-interaction");
+    if (this.database.prepare("SELECT 1 FROM completion_outbox WHERE activity_id=? AND delivered_at IS NULL AND acknowledged_at IS NULL LIMIT 1").get(row.activity_id)) reasons.push("undelivered-result");
+    const steering = this.uncertainResultState(jobId);
+    const review = this.eventRetention.summary(jobId).uncertainResponseReview as {count?:number;latestUpdateAt?:number} | undefined;
+    if (steering.pending || steering.count > 0 && (review?.count !== steering.count || review.latestUpdateAt !== steering.latestUpdateAt)) reasons.push("uncertain-response");
+    if (this.database.prepare("SELECT 1 FROM cancellation_intents WHERE (target_job_id=? OR (target_kind='activity' AND target_activity_id=?)) AND status IN ('recorded','dispatched') LIMIT 1").get(jobId, row.activity_id)) reasons.push("pending-cancellation");
+    if (this.database.prepare("SELECT 1 FROM result_holds WHERE job_id=? AND expires_at>?").get(jobId, now)) reasons.push("user-hold");
+    return reasons;
+  }
+
+  holdResult(jobId: string, reason: string, expiresAt: number, now = Date.now()): void {
+    if (!reason.trim() || reason.length > 200 || !Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + 30 * 86400_000) {
+      throw new Error("RESULT_HOLD_INVALID: Provide a reason and a renewable hold of at most 30 days.");
+    }
+    const job = this.database.prepare("SELECT 1 FROM jobs WHERE job_id=? AND archived_at IS NULL").get(jobId);
+    if (!job) throw new Error("RESULT_NOT_RETAINED: An expired result cannot be restored by a hold.");
+    this.database.prepare("INSERT OR REPLACE INTO result_holds(job_id,reason,expires_at) VALUES (?,?,?)").run(jobId, reason.trim(), expiresAt);
+  }
+
+  releaseResultHold(jobId: string): void { this.database.prepare("DELETE FROM result_holds WHERE job_id=?").run(jobId); }
+
+  /** Explicit operator review releases only the result hold; delivery remains uncertain and cannot replay. */
+  acknowledgeUncertainResultReview(jobId: string, now = Date.now()): void {
+    this.transaction(() => {
+      const job = this.database.prepare("SELECT status FROM jobs WHERE job_id=? AND archived_at IS NULL").get(jobId) as {status:string} | undefined;
+      if (!job || !isTerminalActivityJobStatus(job.status)) throw new Error("RESULT_REVIEW_UNAVAILABLE: Review requires a retained terminal result.");
+      const state = this.uncertainResultState(jobId);
+      if (state.pending) throw new Error("RESULT_REVIEW_PENDING: Response dispatch is still in progress.");
+      this.eventRetention.acknowledgeUncertainResultReview(jobId,state.count,state.latestUpdateAt,normalizeEventTimestamp(now));
+    });
+  }
+
+  private uncertainResultState(jobId: string): {pending:number;count:number;latestUpdateAt:number} {
+    return this.database.prepare(`SELECT COALESCE(SUM(status IN ('prepared','dispatching')),0) pending,
+      COALESCE(SUM(status='uncertain'),0) count,COALESCE(MAX(CASE WHEN status='uncertain' THEN updated_at END),0) latestUpdateAt
+      FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
+  }
+
+  maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> {
+    return this.transaction(() => {
+      const result = this.eventRetention.sweep(now);
+      const candidates = this.database.prepare(`SELECT a.agent_id,c.thread_id FROM agents a JOIN thread_connections c ON c.agent_id=a.agent_id AND c.thread_id=a.current_thread_id
+        WHERE a.lifecycle='idle' AND a.current_job_id IS NULL AND c.phase='released'
+        AND c.last_finished_at<? AND a.updated_at<? LIMIT 50`).all(now - 30 * 86400_000, now - 30 * 86400_000) as Array<{agent_id:string;thread_id:string}>;
+      for (const candidate of candidates) {
+        if (this.threadConnections.hasUnfinishedWork(candidate.thread_id)) continue;
+        const jobs = this.database.prepare("SELECT job_id FROM jobs WHERE agent_id=? AND archived_at IS NULL").all(candidate.agent_id) as Array<{job_id:string}>;
+        if (!jobs.some(job => this.retentionProtection(job.job_id, now).length)) this.archiveAgent(candidate.agent_id, now);
+      }
+      return result;
     });
   }
 
@@ -1095,6 +1198,7 @@ export class BridgeStateStore {
            WHERE agent_id = ?
         `)
         .run(threadId, now, agent.agentId);
+      this.threadConnections?.supersedeHandoffs(agent.agentId, threadId, now);
       this.nextScopeVersion(agent.scopeId, now);
       const row = this.database
         .prepare("SELECT * FROM agent_threads WHERE thread_id = ?")
@@ -3913,6 +4017,7 @@ export class BridgeStateStore {
           FROM jobs WHERE job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
+    if (!previous && job.status === "running") this.threadConnections.assertAdmission(job.agentId, job.threadId || job.sessionDecision?.threadId || job.sourceThreadId);
     const terminalOrigin = job.terminalOrigin;
     if (terminalOrigin && !JOB_TERMINAL_ORIGINS.includes(terminalOrigin)) {
       throw new Error("Invalid Codex job terminal origin.");
@@ -4199,6 +4304,9 @@ export class BridgeStateStore {
     const agentStateChanged = agentId
       ? this.syncAgentForJob(job, agentId, activityId, job.updatedAt)
       : false;
+    this.threadConnections.recordJob(job, previous?.status);
+    this.eventRetention.summarizeJob(job as unknown as Record<string, unknown>,
+      isTerminalActivityJobStatus(job.status) && (!previous || !isTerminalActivityJobStatus(previous.status)));
     const statusChanged = !previous || previous.status !== job.status;
     const threadChanged = (previous?.thread_id || undefined) !== threadId;
     const restoredFromArchive = Boolean(previous?.archived_at);
@@ -4599,6 +4707,9 @@ export class BridgeStateStore {
   }
 
   private insertJobEvent(input: Omit<JobEventRecord, "eventId">): void {
+    const archived = Boolean((this.database.prepare("SELECT archived_at FROM jobs WHERE job_id=?").get(input.jobId) as {archived_at: number | null} | undefined)?.archived_at);
+    // Earlier schema migrations create their initial events before v14's retention tables exist.
+    const payload = this.eventRetention?.prepare(input, archived) ?? JSON.stringify(input.payload);
     this.database
       .prepare(`
         INSERT INTO job_events(
@@ -4613,8 +4724,9 @@ export class BridgeStateStore {
         input.eventType,
         input.status,
         input.createdAt,
-        JSON.stringify(input.payload)
+        payload
       );
+    this.eventRetention?.enforce(input.jobId);
   }
 
   private assertCancellationTarget(scopeId: string, target: CancellationTarget): void {

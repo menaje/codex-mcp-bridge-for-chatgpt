@@ -7,6 +7,10 @@ public struct BridgeCompanionClient: Sendable {
         self.rpc = UnixSocketRPCClient(socketPath: socketPath)
     }
 
+    public func threadHandoff(rowKey: String, codexThreadUrl: String, action: String) async throws -> ThreadHandoffStatus {
+        try await rpc.call("thread.handoff", params: ThreadHandoffParameters(rowKey: rowKey, codexThreadUrl: codexThreadUrl, action: action))
+    }
+
     public func waitForChanges(after: String?) async throws -> ChangeNotice {
         try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
     }
@@ -57,6 +61,12 @@ public struct BridgeCompanionClient: Sendable {
             timeout: 15
         )
     }
+}
+
+private struct ThreadHandoffParameters: Encodable, Sendable {
+    let rowKey: String
+    let codexThreadUrl: String
+    let action: String
 }
 
 public struct MacOSHelperClient: Sendable {

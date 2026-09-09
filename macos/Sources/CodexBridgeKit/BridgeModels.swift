@@ -208,6 +208,7 @@ public struct DashboardTurn: Codable, Sendable {
 }
 
 public struct DashboardRow: Codable, Identifiable, Sendable {
+    public var handoff: ThreadHandoffStatus? = nil
     public var id: String { rowKey }
     public let rowKey: String
     public let activityKey: String
@@ -230,6 +231,13 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     public let latestTurn: DashboardTurn?
     public let history: [DashboardTurn]?
     public let historyCount: Int?
+}
+
+public struct ThreadHandoffStatus: Codable, Sendable {
+    public let phase: String
+    public let reason: String?
+    public let requested: Bool
+    public let canOpen: Bool
 }
 
 public struct SettingsSnapshot: Codable, Sendable {

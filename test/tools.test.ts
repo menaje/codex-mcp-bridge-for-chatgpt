@@ -2661,6 +2661,31 @@ describe("bridge tools", () => {
     } finally { clock.mockRestore(); await close(); }
   });
 
+  it("binds native handoff to the displayed Agent and current thread and requires release evidence", async () => {
+    const root=temporaryRoot();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Handoff target"});
+      const source="11111111-1111-4111-8111-111111111111",fork="22222222-2222-4222-8222-222222222222";
+      const link={agentId:agent.agentId,backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh" as const};
+      jobs.linkAgentThread({...link,threadId:source});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Test runtime unavailable"});
+      const row=(await applicationService.dashboardSnapshot({inspectRuntime:false})).activeRows[0]!;
+      const connections=jobs.admissionStateStore.threadConnections;
+      connections.register({threadId:source,agentId:agent.agentId,scopeId:SCOPE_A,persistence:"persistent"});
+      const target={rowKey:row.rowKey,codexThreadUrl:`codex://threads/${source}`};
+      await expect(applicationService.threadHandoff!({...target,rowKey:"f".repeat(32),action:"request"})).rejects.toThrow(/TARGET_CHANGED/);
+      await expect(applicationService.threadHandoff!({...target,action:"request"})).resolves.toMatchObject({requested:true,canOpen:false});
+      connections.update(source,{phase:"unsubscribed"});
+      await expect(applicationService.threadHandoff!({...target,action:"status"})).resolves.toMatchObject({canOpen:false});
+      connections.update(source,{phase:"released",evidence:"worker-exited"});
+      await expect(applicationService.threadHandoff!({...target,action:"status"})).resolves.toMatchObject({canOpen:true});
+      jobs.linkAgentThread({...link,threadId:fork,contextMode:"fork",forkedFromThreadId:source});
+      await expect(applicationService.threadHandoff!({...target,action:"request"})).rejects.toThrow(/TARGET_CHANGED/);
+      await expect(applicationService.threadHandoff!({...target,action:"cancel"})).resolves.toMatchObject({requested:false,canOpen:false});
+    } finally {await close();}
+  });
+
   it("deduplicates response-needed Agents and filters the full dashboard scope before pagination", async () => {
     const root = temporaryRoot();
     const { jobs, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
@@ -2925,7 +2950,7 @@ describe("bridge tools", () => {
             phase: "updated",
             createdAt: Date.now(),
             summary: "Codex token usage updated.",
-            details: { total, last: zeroUsage }
+            details: { total, last: zeroUsage, jobUsage: {basis:"cumulative-difference",tokens:total} }
           }
         });
       };
@@ -2960,7 +2985,7 @@ describe("bridge tools", () => {
           const { view } = await freshDashboardSnapshot(rawCallTool, { enrich });
           expect(view[bucket]).toHaveLength(1);
           expect(view[bucket][0].tokenUsage).toEqual(usage);
-          expect(view[bucket][0].latestTurn).not.toHaveProperty("tokenUsage");
+          expect(view[bucket][0].latestTurn.tokenUsage).toEqual(usage);
           expect(JSON.stringify(view)).not.toContain("privateDetail");
         }
 
@@ -3047,7 +3072,7 @@ describe("bridge tools", () => {
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
-    expect(settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    settings.update({showBridgeThreadsInCodexApp:false},settings.current.revision);
     const task = parseToolJson(await runTask(client, {
       prompt: "keep the hidden Codex thread fixture active",
       executionMode: "background"
@@ -3105,7 +3130,7 @@ describe("bridge tools", () => {
     );
     const conversationId = "12121212-1212-4212-8212-121212121212";
     const metadata = { "openai/session": conversationId };
-    expect(settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    settings.update({showBridgeThreadsInCodexApp:false},settings.current.revision);
     const project = settings.current.projects[0]!;
     const start = async (
       requestId: string,
@@ -6594,7 +6619,7 @@ describe("bridge tools", () => {
       .toMatchObject({
         settingsRevision: 2,
         uiLocalePreference: "auto",
-        showBridgeThreadsInCodexApp: false,
+        showBridgeThreadsInCodexApp: true,
         activityCardVisibility: "always",
         completionHandoff: "off"
       });
@@ -7249,7 +7274,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("starts a sanitized read-only session by default", async () => {
+  it("starts a sanitized persistent read-only session by default", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
@@ -7265,7 +7290,7 @@ describe("bridge tools", () => {
           prompt: "inspect",
           cwd: realpathSync(root),
           sandbox: "read-only",
-          ephemeral: true,
+          ephemeral: false,
           "approval-policy": "on-request",
           "approvals-reviewer": "user",
           "app-tool-approval-mode": "auto",
@@ -14306,7 +14331,7 @@ describe("bridge tools", () => {
     });
     await vi.waitFor(() => expect(upstream.hasPendingProbe).toBe(true));
     connection.settings.update(
-      { showBridgeThreadsInCodexApp: true },
+      { showBridgeThreadsInCodexApp: !connection.settings.current.showBridgeThreadsInCodexApp },
       connection.settings.current.revision
     );
     upstream.resolveProbe({

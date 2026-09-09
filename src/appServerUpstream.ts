@@ -1,4 +1,5 @@
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
+import type { ThreadPersistence, ThreadReleaseEvidence, ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
 import { elicitationResponse, readElicitationInput } from "./mcpElicitation.js";
 import { inspectCliProtocol, requireCliProtocol, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
 import {
@@ -8,6 +9,7 @@ import {
 } from "./executionAccess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
+import { TOKEN_KEYS, tokenCounts, TurnUsageMeter, type TokenCounts } from "./tokenUsage.js";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
@@ -118,6 +120,7 @@ export type WorkerProcessMetrics = {
 export type WorkerMetricsProbe = (pid: number) => Promise<WorkerProcessMetrics>;
 
 type TurnContext = {
+  usage: TurnUsageMeter;
   threadId: string;
   turnId: string;
   lineage: CodexThreadLineage;
@@ -167,6 +170,7 @@ type WorkerExitObservation = {
 type AppWorker = {
   index: number;
   activeCalls: number;
+  maintenance?: Promise<void>;
   generation: number;
   connection?: AppServerConnection;
   startingConnection?: AppServerConnection;
@@ -187,6 +191,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private readonly threadWorkers = new Map<string, number>();
   private readonly threadAccessRequests = new Map<string, ExecutionAccessRequest>();
   private readonly threadResumeEvidence = new Map<string, boolean>();
+  private readonly releaseEvidence = new Map<string, ThreadReleaseEvidence>();
+  private readonly detachedThreads = new Set<string>();
   private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions;
   private readonly versionProbe: CodexCliVersionProbe;
   private readonly workerMetricsProbe: WorkerMetricsProbe;
@@ -418,7 +424,79 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    this.assertImplicitResumeAllowed(threadId);
     return this.withThreadWorker(threadId, (connection) => connection.listBackgroundTerminals(threadId));
+  }
+
+  private assertImplicitResumeAllowed(threadId: string): void {
+    if (this.detachedThreads.has(threadId)) throw new Error("THREAD_RELEASED: Continue this conversation explicitly before opening work controls.");
+  }
+
+  protectThreadFromImplicitResume(threadId: string): void { this.detachedThreads.add(threadId); }
+
+  async releaseThreadConnection(threadId: string, options: ThreadReleaseOptions): Promise<ThreadReleaseResult> {
+    if (this.closing) return { phase: "blocked", reason: "runtime-shutdown" };
+    const index = this.threadWorkers.get(threadId);
+    const worker = index === undefined ? undefined : this.workers[index];
+    if (!worker?.connection || worker.connection.exited) {
+      const evidence = this.releaseEvidence.get(threadId);
+      if (evidence) return { phase: "released", evidence };
+      if (options.previousWorkerPid) {
+        try { process.kill(options.previousWorkerPid, 0); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return { phase: "released", evidence: "worker-exited" };
+        }
+      }
+      return { phase: "blocked", reason: "ownership-unconfirmed" };
+    }
+    await worker.maintenance;
+    const connection = worker.connection;
+    if (!connection || connection.exited || this.closing) return { phase: "blocked", reason: "connection-changed" };
+    if (!this.capabilities().supportsThreadUnsubscribe) return { phase: "blocked", reason: "unsupported" };
+    let unlock!: () => void;
+    const maintenance = worker.maintenance = new Promise<void>(resolve => { unlock = resolve; });
+    try {
+      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
+      const safety = await connection.releaseSafety(threadId);
+      if (!safety.safe) return { phase: "blocked", reason: safety.reason };
+      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
+      this.detachedThreads.add(threadId);
+      const acknowledgement = await connection.unsubscribeThread(threadId);
+      if (acknowledgement === "notLoaded") {
+        this.onThreadClosed(worker, connection, threadId);
+        return { phase: "released", evidence: "thread-unloaded" };
+      }
+      const loaded = await connection.listLoadedThreads();
+      if (!loaded.includes(threadId)) {
+        this.onThreadClosed(worker, connection, threadId);
+        return { phase: "released", evidence: "thread-unloaded" };
+      }
+      // Retire only a completely eligible worker. An unknown child thread,
+      // pending request, ephemeral context or another admission prevents it.
+      if (worker.activeCalls === 0 && loaded.every(id => options.eligibleThreadIds.includes(id) && options.canRelease(id))) {
+        for (const id of loaded) {
+          if (!(await connection.releaseSafety(id)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+        }
+        if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+          for (const id of loaded) {
+            if (!options.canRelease(id) || worker.activeCalls > 0) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+            await connection.unsubscribeThread(id);
+            this.detachedThreads.add(id);
+          }
+          if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+            await connection.close();
+            if (connection.exited) {
+              for (const id of loaded) this.releaseEvidence.set(id, "worker-exited");
+              return { phase: "released", evidence: "worker-exited", releasedThreadIds: loaded };
+            }
+          }
+        }
+      }
+      return { phase: "unsubscribed", reason: "upstream-unload-grace" };
+    } finally {
+      if (worker.maintenance === maintenance) worker.maintenance = undefined;
+      unlock();
+    }
   }
 
   async listLoadedBackgroundTerminals(
@@ -442,6 +520,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     threadId: string,
     processId: string
   ): Promise<{ terminated: boolean }> {
+    this.assertImplicitResumeAllowed(threadId);
     return this.withThreadWorker(threadId, (connection) =>
       connection.terminateBackgroundTerminal(threadId, processId)
     );
@@ -502,7 +581,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const connection = await this.connectionFor(worker);
       const probe = await connection.probeThread(threadId);
       if (probe.state === "resumable" || probe.state === "busy") {
-        this.threadWorkers.set(threadId, worker.index);
+        // A read must not invent ownership of a historical or handed-off thread.
+        if (preferredIndex !== undefined && probe.runtimeStatus !== "notLoaded") this.threadWorkers.set(threadId, worker.index);
         this.threadResumeEvidence.set(threadId, true);
       } else if (probe.state === "orphaned") {
         this.threadWorkers.delete(threadId);
@@ -546,6 +626,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           this.threadWorkers.set(assignment.threadId, worker.index);
           this.threadResumeEvidence.set(assignment.threadId, true);
           this.threadAccessRequests.set(assignment.threadId, requestedAccess);
+          this.detachedThreads.delete(assignment.threadId);
+          this.releaseEvidence.delete(assignment.threadId);
         }
         onAssigned?.(assignment);
       };
@@ -703,6 +785,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   private async connectionFor(worker: AppWorker): Promise<AppServerConnection> {
+    await worker.maintenance;
     if (this.closing) throw new Error("Codex App Server upstream is closed.");
     if (worker.connection && !worker.connection.exited) return worker.connection;
     if (!worker.connecting) {
@@ -722,7 +805,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
           },
           (observation) => this.onWorkerExit(worker, observation),
-          () => this.invalidateAccountRateLimits()
+          () => this.invalidateAccountRateLimits(),
+          (threadId) => this.onThreadClosed(worker, connection, threadId)
         );
         worker.startingConnection = connection;
         worker.connecting = connection.initializeForAdmission().then(async (initialized) => {
@@ -786,7 +870,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   private onWorkerLateResponse(worker: AppWorker, response: CodexAppServerLateResponse): void {
     if (worker.generation === response.workerGeneration && lateResponseSucceeded(response)) {
       const threadId = lateResponseThreadId(response);
-      if (threadId) {
+      if (threadId && ["thread/start", "thread/fork", "thread/resume", "turn/start"].includes(response.method) && !this.detachedThreads.has(threadId)) {
         this.threadWorkers.set(threadId, worker.index);
         this.threadResumeEvidence.set(threadId, true);
       }
@@ -806,8 +890,19 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
 
   private forgetWorkerThreads(workerIndex: number): void {
     for (const [threadId, index] of this.threadWorkers) {
-      if (index === workerIndex) this.threadWorkers.delete(threadId);
+      if (index === workerIndex) {
+        this.threadWorkers.delete(threadId);
+        this.threadResumeEvidence.delete(threadId);
+        this.releaseEvidence.set(threadId, "worker-exited");
+      }
     }
+  }
+
+  private onThreadClosed(worker: AppWorker, connection: AppServerConnection, threadId: string): void {
+    if (worker.connection !== connection && worker.startingConnection !== connection) return;
+    if (this.threadWorkers.get(threadId) === worker.index) this.threadWorkers.delete(threadId);
+    this.threadResumeEvidence.delete(threadId);
+    this.releaseEvidence.set(threadId, "thread-unloaded");
   }
 }
 
@@ -816,10 +911,14 @@ class AppServerConnection {
   private readonly activeTurns = new Map<string, TurnContext>();
   private readonly threadTurns = new Map<string, string>();
   private readonly loadedThreads = new Set<string>();
+  private readonly subscribedThreads = new Set<string>();
+  private readonly threadPersistence = new Map<string, ThreadPersistence>();
   private readonly threadAccess = new Map<string, VerifiedExecutionAccess>();
   private readonly threadLineage = new Map<string, CodexThreadLineage>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly terminalTurns = new Set<string>();
+  private readonly threadTokenTotals = new Map<string, TokenCounts>();
+  private readonly threadLoadRevisions = new Map<string, number>();
   private readonly mcpStartupStates = new Map<string, "starting" | "ready" | "failed" | "cancelled">();
   private initializedAt?: number;
   private configWarningCount = 0;
@@ -832,7 +931,8 @@ class AppServerConnection {
     private readonly generation: number,
     private readonly protocolOptions: ResolvedCodexAppServerProtocolOptions,
     private readonly onExitObserved: (observation: WorkerExitObservation) => void,
-    private readonly onAccountRateLimitsUpdated: () => void
+    private readonly onAccountRateLimitsUpdated: () => void,
+    private readonly onThreadClosed: (threadId: string) => void
   ) {
     this.rpc = new JsonRpcProcess({
       command,
@@ -861,7 +961,8 @@ class AppServerConnection {
     generation: number,
     protocolOptions: ResolvedCodexAppServerProtocolOptions,
     onExitObserved: (observation: WorkerExitObservation) => void,
-    onAccountRateLimitsUpdated: () => void
+    onAccountRateLimitsUpdated: () => void,
+    onThreadClosed: (threadId: string) => void
   ): AppServerConnection {
     return new AppServerConnection(
       command,
@@ -869,7 +970,8 @@ class AppServerConnection {
       generation,
       protocolOptions,
       onExitObserved,
-      onAccountRateLimitsUpdated
+      onAccountRateLimitsUpdated,
+      onThreadClosed
     );
   }
 
@@ -923,10 +1025,21 @@ class AppServerConnection {
     if (!lateResponseSucceeded(response)) return;
     const threadId = lateResponseThreadId(response);
     if (!threadId) return;
+    const revision = response.lateResponseContext?.loadRevision;
+    if (typeof revision === "number" && revision !== (this.threadLoadRevisions.get(threadId) || 0)) return;
+    if (response.method === "thread/unsubscribe") {
+      this.subscribedThreads.delete(threadId); this.threadAccess.delete(threadId);
+      if (isRecord(response.response.result) && response.response.result.status === "notLoaded") {
+        this.loadedThreads.delete(threadId); this.threadTokenTotals.delete(threadId); this.onThreadClosed(threadId);
+      }
+      return;
+    }
     if (response.method === "thread/archive" || response.method === "thread/unarchive") {
       // Archive invalidates the materialized thread. Unarchive restores durable
       // persistence but still requires an explicit thread/resume on this worker.
       this.loadedThreads.delete(threadId);
+      this.subscribedThreads.delete(threadId);
+      this.threadAccess.delete(threadId);
       return;
     }
     if (
@@ -935,6 +1048,7 @@ class AppServerConnection {
       response.method === "thread/resume"
     ) {
       this.loadedThreads.add(threadId);
+      this.subscribedThreads.add(threadId);
     }
   }
 
@@ -957,9 +1071,12 @@ class AppServerConnection {
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
     const threadId = requiredString(thread?.id, "thread/start thread.id");
+    this.threadTokenTotals.set(threadId, Object.fromEntries(TOKEN_KEYS.map(key => [key, 0])));
     this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/start"));
     const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
+    this.subscribedThreads.add(threadId);
+    this.threadPersistence.set(threadId, thread?.ephemeral === true ? "ephemeral" : thread?.ephemeral === false ? "persistent" : "unknown");
     this.threadLineage.set(threadId, lineage);
     // Record the thread identity before turn/start. Durable threads can be
     // resumed after a worker exit; ephemeral threads remain correlated for
@@ -981,7 +1098,18 @@ class AppServerConnection {
     onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
-    const lineage = await this.ensureThreadLoaded(threadId, executionAccessRequest(args));
+    if (this.threadTurns.has(threadId)) throw new Error("A Codex App Server turn is already active for this thread.");
+    const probe = await this.probeThread(threadId);
+    if (probe.state === "busy") throw new Error("THREAD_EXTERNALLY_ACTIVE: Wait for the current Codex turn before continuing here.");
+    if (probe.state !== "resumable") throw new Error("THREAD_RESUME_UNCONFIRMED: Could not confirm that this conversation can safely resume.");
+    let lineage: CodexThreadLineage;
+    try { lineage = await this.ensureThreadLoaded(threadId, executionAccessRequest(args)); }
+    catch (error) {
+      if (/already has an active writer/i.test(String(error))) {
+        throw new Error("THREAD_EXTERNALLY_OWNED: Codex or another application still owns this conversation. Release its connection there and retry this same conversation. No bridge turn was started.", {cause:error});
+      }
+      throw error;
+    }
     return this.startTurn(
       threadId,
       requiredString(args.prompt, "prompt"),
@@ -1012,6 +1140,8 @@ class AppServerConnection {
     this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/fork"));
     const lineage = threadLineage(thread, sourceThreadId);
     this.loadedThreads.add(threadId);
+    this.subscribedThreads.add(threadId);
+    this.threadPersistence.set(threadId, thread?.ephemeral === true ? "ephemeral" : thread?.ephemeral === false ? "persistent" : "unknown");
     this.threadLineage.set(threadId, lineage);
     onAssigned?.(this.workerAssignment(threadId));
     return this.startTurn(
@@ -1066,6 +1196,52 @@ class AppServerConnection {
   ): Promise<CodexBackgroundTerminal[] | null> {
     if (!this.loadedThreads.has(threadId)) return null;
     return this.listMaterializedBackgroundTerminals(threadId);
+  }
+
+  async releaseSafety(threadId: string): Promise<{ safe: boolean; reason?: string }> {
+    if (this.threadPersistence.get(threadId) !== "persistent") return { safe: false, reason: "persistence-unknown" };
+    if (this.threadTurns.has(threadId) || [...this.pendingInteractions.values()].some(request => request.threadId === threadId)) {
+      return { safe: false, reason: "active-work" };
+    }
+    const probe = await this.probeThread(threadId);
+    if (probe.state !== "resumable") return { safe: false, reason: probe.state === "busy" ? "active-work" : "runtime-unknown" };
+    if (probe.runtimeStatus === "notLoaded") return { safe: true };
+    try {
+      const terminals = await this.listLoadedBackgroundTerminals(threadId);
+      return terminals === null ? { safe: false, reason: "background-unknown" }
+        : terminals.length > 0 ? { safe: false, reason: "background-work" } : { safe: true };
+    } catch { return { safe: false, reason: "background-unknown" }; }
+  }
+
+  async unsubscribeThread(threadId: string): Promise<"unsubscribed" | "notSubscribed" | "notLoaded"> {
+    if (this.threadTurns.has(threadId) || [...this.pendingInteractions.values()].some(request => request.threadId === threadId)) {
+      throw new Error("THREAD_ACTIVE: Cannot unsubscribe an active turn or pending interaction.");
+    }
+    // Dispatch can succeed even when its acknowledgement times out. Subsequent explicit use must resume.
+    this.subscribedThreads.delete(threadId);
+    this.threadAccess.delete(threadId);
+    const response = await this.rpc.request<Record<string, unknown>>("thread/unsubscribe", { threadId },
+      { timeoutMs: this.protocolOptions.requestTimeoutMs, lateResponseContext: { threadId, loadRevision: this.threadLoadRevisions.get(threadId) || 0 } });
+    if (!["unsubscribed", "notSubscribed", "notLoaded"].includes(String(response.status))) throw new Error("Invalid thread unsubscribe acknowledgement.");
+    this.subscribedThreads.delete(threadId);
+    this.threadAccess.delete(threadId);
+    return response.status as "unsubscribed" | "notSubscribed" | "notLoaded";
+  }
+
+  async listLoadedThreads(): Promise<string[]> {
+    const threads: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; page < 100; page++) {
+      const response: Record<string, unknown> = await this.rpc.request<Record<string, unknown>>("thread/loaded/list", { cursor, limit: 100 }, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+      if (!Array.isArray(response.data) || response.data.some(id => typeof id !== "string")) throw new Error("Invalid loaded thread list.");
+      threads.push(...response.data as string[]);
+      if (response.nextCursor === null || response.nextCursor === undefined) return threads;
+      if (typeof response.nextCursor !== "string" || seen.has(response.nextCursor)) throw new Error("Invalid loaded thread cursor.");
+      const nextCursor: string = response.nextCursor;
+      cursor = nextCursor; seen.add(nextCursor);
+    }
+    throw new Error("Loaded thread inspection exceeded its safe bound.");
   }
 
   private async listMaterializedBackgroundTerminals(
@@ -1153,18 +1329,22 @@ class AppServerConnection {
 
   private async ensureThreadLoaded(threadId: string, expectedAccess?: ExecutionAccessRequest): Promise<CodexThreadLineage> {
     const verified = this.threadAccess.get(threadId);
-    if (this.loadedThreads.has(threadId) && (!expectedAccess || verified)) {
+    if (this.loadedThreads.has(threadId) && this.subscribedThreads.has(threadId) && (!expectedAccess || verified)) {
       if (expectedAccess && verified) {
         verifyExecutionAccess({ ...verified, sandbox: verified.sandboxPolicy }, expectedAccess, "loaded thread");
       }
       return this.threadLineage.get(threadId) || {};
     }
+    const loadRevision = (this.threadLoadRevisions.get(threadId) || 0) + 1;
+    this.threadLoadRevisions.set(threadId, loadRevision);
+    // An external app may have added turns. A previous local counter is not this turn's baseline.
+    this.threadTokenTotals.delete(threadId);
     const response = await this.rpc.request<Record<string, unknown>>(
       "thread/resume",
       { threadId, ...(expectedAccess ? threadAccessParams(expectedAccess) : {}) },
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
-        lateResponseContext: { threadId }
+        lateResponseContext: { threadId, loadRevision }
       }
     );
     const thread = isRecord(response.thread) ? response.thread : undefined;
@@ -1174,6 +1354,8 @@ class AppServerConnection {
     if (expectedAccess) this.threadAccess.set(threadId, verifyExecutionAccess(response, expectedAccess, "thread/resume"));
     const lineage = threadLineage(thread);
     this.loadedThreads.add(threadId);
+    this.subscribedThreads.add(threadId);
+    this.threadPersistence.set(threadId, thread.ephemeral === false ? "persistent" : thread.ephemeral === true ? "ephemeral" : "unknown");
     this.threadLineage.set(threadId, lineage);
     return lineage;
   }
@@ -1404,6 +1586,7 @@ class AppServerConnection {
     const executionAccess = this.threadAccess.get(threadId);
     if (!executionAccess) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread policy has not been verified.");
     const inputRoutingVerified = await this.verifyInputRouting(threadId);
+    const usage = new TurnUsageMeter(this.threadTokenTotals.get(threadId));
     const response = await this.rpc.request<Record<string, unknown>>(
       "turn/start",
       {
@@ -1428,6 +1611,7 @@ class AppServerConnection {
       reject = rejectPromise;
     });
     const context: TurnContext = {
+      usage,
       threadId,
       turnId,
       lineage,
@@ -1528,6 +1712,7 @@ class AppServerConnection {
         : {}),
       ...(upstreamRequestId ? { upstreamRequestId } : {}),
       threadId,
+      threadPersistence: this.threadPersistence.get(threadId) || "unknown",
       ...(lineage?.sessionId ? { sessionId: lineage.sessionId } : {}),
       ...(lineage?.forkedFromThreadId
         ? { forkedFromThreadId: lineage.forkedFromThreadId }
@@ -1541,6 +1726,14 @@ class AppServerConnection {
       return;
     }
     if (!isRecord(params)) return;
+    if (method === "thread/closed" || method === "thread/status/changed" && isRecord(params.status) && params.status.type === "notLoaded") {
+      const id = optionalString(params.threadId);
+      if (id && !this.threadTurns.has(id)) {
+        this.loadedThreads.delete(id); this.subscribedThreads.delete(id); this.threadAccess.delete(id);
+        this.threadTokenTotals.delete(id);
+        this.onThreadClosed(id);
+      }
+    }
     if (method === "configWarning") this.configWarningCount += 1;
     if (method === "mcpServer/startupStatus/updated") {
       const name = optionalString(params.name)?.slice(0, 200);
@@ -1563,6 +1756,11 @@ class AppServerConnection {
       (threadId ? this.threadTurns.get(threadId) : undefined);
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
     const protocolEvent = publicNotificationEvent(method, params);
+    if (method === "thread/tokenUsage/updated" && threadId && isRecord(params.tokenUsage)) {
+      const total = tokenCounts(params.tokenUsage.total);
+      if (context && protocolEvent) protocolEvent.details = { ...protocolEvent.details, jobUsage: context.usage.observe(total) };
+      if (total) this.threadTokenTotals.set(threadId, total);
+    }
     if (!context && protocolEvent && isGlobalProtocolNotice(method)) {
       for (const active of this.activeTurns.values()) {
         const globalEvent = publicNotificationEvent(method, params);
@@ -2378,6 +2576,7 @@ function lateResponseThreadId(response: CodexAppServerLateResponse): string | un
   }
   if (
     response.method === "thread/archive" ||
+    response.method === "thread/unsubscribe" ||
     response.method === "turn/start" ||
     response.method === "turn/steer" ||
     response.method === "turn/interrupt"

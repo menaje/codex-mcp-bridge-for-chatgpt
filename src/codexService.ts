@@ -9,7 +9,7 @@ import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
 
-export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean };
+export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Shared policy and installation entrypoint for both execution and local management. */
@@ -63,9 +63,12 @@ export class CodexService {
     try { const info = statSync(this.environment.CODEX_MCP_BRIDGE_CODEX || state.selection?.command || ""); binary = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`; } catch { /* Missing selection invalidates the next admission. */ }
     return digest(JSON.stringify([this.appVisibility(), ...values, binary, this.environment.OPENAI_API_KEY, this.environment.CODEX_API_KEY]));
   }
-  async sessionPolicy(kind: CodexBackendKind, visible: boolean, _parent?: string): Promise<CodexSessionPolicy> {
+  async sessionPolicy(kind: CodexBackendKind, visible: boolean, _parent?: string, persistence: "persistent" | "ephemeral" = visible ? "persistent" : "ephemeral"): Promise<CodexSessionPolicy> {
     if (kind !== "app-server") throw new Error("CODEX_BACKEND_RETIRED: Start a fresh App Server context with an explicit handoff summary. Existing history is preserved.");
-    return { visibleInCodexApp: visible, persistent: visible };
+    if (persistence === "persistent" && !visible) throw new Error("HIDDEN_PERSISTENT_UNSUPPORTED: This Codex version has no verified durable-but-hidden creation option. Enable Codex app visibility for resumable conversations, or explicitly use a memory-only conversation.");
+    if (persistence === "ephemeral" && visible) throw new Error("EPHEMERAL_NOT_VISIBLE: Memory-only conversations cannot be shown in the Codex app.");
+    return { visibleInCodexApp: visible, persistent: persistence === "persistent", persistence,
+      ...(!visible ? { constraint: "hidden-persistent-unsupported" as const } : {}) };
   }
   async readAccount(kind: CodexBackendKind, includeBilling = false): Promise<CodexAccountSnapshot | null> {
     const revision = this.cacheRevision(), cached = this.accounts.get(kind);

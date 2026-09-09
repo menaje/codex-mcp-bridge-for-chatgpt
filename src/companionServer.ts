@@ -42,6 +42,7 @@ const requestSchema = z.strictObject({
     "companion.hello",
     "changes.wait",
     "dashboard.snapshot",
+    "thread.handoff",
     "settings.snapshot",
     "settings.update",
     "runtime.snapshot",
@@ -319,6 +320,7 @@ async function dispatchRequest(
           "settings.read",
           "settings.write",
           "runtime.drain",
+          ...(applicationService.threadHandoff ? ["thread.handoff"] : []),
           ...(remoteManagement
             ? [
                 "remote-management.configure",
@@ -328,6 +330,13 @@ async function dispatchRequest(
             : [])
         ]
       };
+    case "thread.handoff": {
+      const params = z.strictObject({ rowKey: z.string().regex(/^[0-9a-f]{32}$/),
+        codexThreadUrl: z.string().regex(/^codex:\/\/threads\/[0-9a-f-]{36}$/),
+        action: z.enum(["request", "cancel", "status"]) }).parse(request.params);
+      if (!applicationService.threadHandoff) throw new Error("THREAD_HANDOFF_UNSUPPORTED");
+      return applicationService.threadHandoff(params);
+    }
     case "dashboard.snapshot": {
       const params = dashboardParamsSchema.parse(request.params || {});
       return applicationService.dashboardSnapshot({

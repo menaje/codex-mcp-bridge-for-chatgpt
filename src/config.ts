@@ -53,6 +53,7 @@ export type BridgeConfig = {
   maxConcurrentJobs: number;
   maxPromptChars: number;
   jobTtlMs: number;
+  threadIdleMs?: number;
   jobStaleAfterMs: number;
   maxRetainedJobs: number;
   maxJobResultBytes: number;
@@ -117,6 +118,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const upstreamPoolSize = parsePositiveInt(read("UPSTREAM_POOL_SIZE") || String(Math.min(4, maxConcurrentJobs)));
   const maxPromptChars = parsePositiveInt(read("MAX_PROMPT_CHARS") || "50000");
   const jobTtlMs = parsePositiveInt(read("JOB_TTL_MS") || String(6 * 60 * 60 * 1000));
+  const threadIdleRaw = read("THREAD_IDLE_MS") ?? String(6 * 60 * 60 * 1000);
+  const threadIdleMs = threadIdleRaw === "0" ? 0 : parsePositiveInt(threadIdleRaw);
   const jobStaleAfterMs = parsePositiveInt(read("JOB_STALE_AFTER_MS") || String(10 * 60 * 1000));
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
@@ -222,6 +225,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     maxConcurrentJobs,
     maxPromptChars,
     jobTtlMs,
+    threadIdleMs,
     jobStaleAfterMs,
     maxRetainedJobs,
     maxJobResultBytes,

@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import path from "node:path";
 import { isPathWithinRoot, type CodexBackendKind, type SandboxMode } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
+import type { ThreadPersistence } from "./threadConnections.js";
 import type { ToolResult } from "./upstream.js";
 import {
   validateModelSelection,
@@ -32,6 +33,7 @@ export type ThreadExecutionState = {
 };
 
 export type TrackedCodexSession = ThreadIdentity & ThreadExecutionState & {
+  persistence?: ThreadPersistence;
   /** Whether this non-ephemeral App Server thread was created for Codex app visibility. */
   visibleInCodexApp?: boolean;
   createdAt: number;
@@ -99,6 +101,7 @@ export class SessionRegistry {
       "forkedFromThreadId"
     );
     const visibleInCodexApp = session.visibleInCodexApp ?? existing?.visibleInCodexApp;
+    const persistence = session.persistence ?? existing?.persistence;
     if ((session.projectId === undefined) !== (session.projectLabel === undefined)) {
       throw new Error("Session project metadata requires both projectId and projectLabel.");
     }
@@ -110,6 +113,7 @@ export class SessionRegistry {
       ...(sessionId ? { sessionId } : {}),
       ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
       ...(visibleInCodexApp !== undefined ? { visibleInCodexApp } : {}),
+      ...(persistence ? { persistence } : {}),
       cwd: session.cwd,
       ...(session.projectId && session.projectLabel
         ? {
@@ -477,6 +481,7 @@ function readPersistedSession(
     ...(sessionId ? { sessionId } : {}),
     ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
     ...(visibleInCodexApp !== undefined ? { visibleInCodexApp } : {}),
+    ...(["persistent", "ephemeral", "unknown"].includes(String(value.persistence)) ? { persistence: value.persistence as ThreadPersistence } : {}),
     cwd: value.cwd,
     ...(project || {}),
     sandbox,

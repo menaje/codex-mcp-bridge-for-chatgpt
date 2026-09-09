@@ -51,6 +51,7 @@ export type BackendCapabilities = {
   supportsPreciseCancellation?: boolean;
   supportsEphemeralThreads?: boolean;
   supportsThreadInspection?: boolean;
+  supportsThreadUnsubscribe?: boolean;
   supportsBackgroundTerminals?: boolean;
   supportsTurnSelection?: boolean;
 };

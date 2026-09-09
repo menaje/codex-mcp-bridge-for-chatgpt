@@ -6,6 +6,7 @@ import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
 import { installLegacyToolCompatibility } from "./legacyToolCompatibility.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import { createHash, randomUUID } from "node:crypto";
+import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerQuestionTools, QUESTION_MODEL_OUTPUT_SCHEMAS, QUESTION_APP_OUTPUT_SCHEMAS } from "./questionTools.js";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -558,6 +559,7 @@ const dashboardCodexThreadUrlOutputSchema = z.string().regex(
 );
 
 const dashboardRowOutputSchema = z.strictObject({
+  handoff: z.object({ phase: z.string(), reason: z.string().optional(), requested: z.boolean(), canOpen: z.boolean() }).optional(),
   rowKey: z.string().regex(/^[0-9a-f]{32}$/),
   activityKey: z.string().regex(/^[0-9a-f]{32}$/),
   conversationKey: z.string().regex(/^[0-9a-f]{32}$/),
@@ -1986,6 +1988,7 @@ type ActivityCardReservation = {
 };
 
 type CodexJob = {
+  threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
   activityId: string;
   projectId?: string;
@@ -2186,6 +2189,25 @@ export class CodexJobRegistry {
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
   private readonly changeListeners = new Set<() => void>();
+  private threadController?: ThreadConnectionController;
+
+  configureThreadConnections(upstream: CodexUpstream, idleMs?: number): void {
+    if (this.threadController) return;
+    this.threadController = new ThreadConnectionController(this.activityStore.threadConnections, upstream, {
+      idleMs, changed: () => { for (const listener of this.changeListeners) listener(); },
+      maintain: () => { this.activityStore.maintainRetention(); this.pruneAndPersist(); }
+    });
+    this.threadController.start();
+  }
+
+  closeThreadConnections(): Promise<void> { return this.threadController?.close() || Promise.resolve(); }
+
+  threadHandoff(threadId: string, action: "request" | "cancel" | "status"): ThreadConnectionRecord {
+    const current = action === "request" ? this.threadController?.request(threadId)
+      : action === "cancel" ? this.threadController?.cancel(threadId) : this.activityStore.threadConnections.get(threadId);
+    if (!current) throw new Error("THREAD_HANDOFF_UNAVAILABLE: Connection management is not available for this conversation.");
+    return current;
+  }
 
   subscribeChanges(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -3452,6 +3474,7 @@ export class CodexJobRegistry {
     this.pruneAndPersist();
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
     if (replay) return replay;
+    this.activityStore.threadConnections.assertAdmission(input.agentId, input.sessionDecision.threadId || input.sourceThreadId);
     if (!Number.isInteger(activeLimit) || activeLimit < 1 || activeLimit > this.maxConcurrentJobs) {
       throw new Error(`Invalid active Codex job limit: ${activeLimit}.`);
     }
@@ -3964,6 +3987,7 @@ export class CodexJobRegistry {
     job.workerId = assignment.workerId;
     job.workerGeneration = assignment.workerGeneration;
     job.workerPid = assignment.workerPid;
+    job.threadPersistence = assignment.threadPersistence || job.threadPersistence;
     job.processGroupId = assignment.processGroupId;
     job.upstreamRequestId = assignment.upstreamRequestId;
     if (assignment.threadId) {
@@ -4226,14 +4250,14 @@ export class CodexJobRegistry {
     const removed: string[] = [];
     const cutoff = Date.now() - this.ttlMs;
     for (const [jobId, job] of this.jobs) {
-      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff) {
+      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff && !this.activityStore.retentionProtection(jobId).length) {
         this.jobs.delete(jobId);
         removed.push(jobId);
       }
     }
     if (this.jobs.size <= this.maxJobs) return removed;
     const sorted = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status)).slice(0, this.jobs.size - this.maxJobs)) {
+    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) && !this.activityStore.retentionProtection(entry.jobId).length).slice(0, this.jobs.size - this.maxJobs)) {
       this.jobs.delete(job.jobId);
       removed.push(job.jobId);
     }
@@ -4658,7 +4682,8 @@ export function registerBridgeTools(
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
       pendingInteractions: jobs.list(config.maxRetainedJobs).reduce((count, job) => count + job.pendingInteractions.length, 0),
-      memoryOnlyThreads: sessions.list().filter(session => session.backendKind === "app-server" && session.visibleInCodexApp === false &&
+      memoryOnlyThreads: sessions.list().filter(session => session.backendKind === "app-server" &&
+        (session.persistence === "ephemeral" || session.persistence !== "persistent" && session.visibleInCodexApp === false) &&
         upstream.canResumeThread?.(session.threadId, session.backendKind) === true).length,
       backgroundProcessState: backgroundProcessImpact.state,
       backgroundProcesses: backgroundProcessImpact.processes,
@@ -4728,6 +4753,17 @@ export function registerBridgeTools(
       : { pending: false as const, value: { value: null, failed: false } };
   };
   const applicationService: BridgeApplicationService = {
+    async threadHandoff(input) {
+      const agent = listAllDashboardAgents(jobs).find(candidate => dashboardRowKey(candidate.agentId) === input.rowKey);
+      const thread = agent && jobs.listAgentThreads(agent.agentId).find(candidate => input.codexThreadUrl === `codex://threads/${candidate.threadId}` &&
+        (input.action !== "request" || candidate.isCurrent));
+      if (!agent || !thread || thread.backendKind !== "app-server" || input.codexThreadUrl !== `codex://threads/${thread.threadId}`) {
+        throw new Error("THREAD_HANDOFF_TARGET_CHANGED: Refresh this Agent before continuing in Codex.");
+      }
+      const record = jobs.threadHandoff(thread.threadId, input.action);
+      return { phase: record.phase, reason: record.reason, requested: record.handoffRequested,
+        canOpen: record.phase === "released" && Boolean(record.evidence) };
+    },
     subscribeChanges(listener) {
       const subscriptions = [
         jobs.subscribeChanges(() => listener("dashboard")),
@@ -4789,6 +4825,12 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
+      for (const row of [...view.activeRows, ...view.terminalRows, ...view.idleRows]) {
+        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
+        const connection = threadId ? jobs.admissionStateStore.threadConnections.get(threadId) : undefined;
+        if (connection) row.handoff = { phase: connection.phase, reason: connection.reason,
+          requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
+      }
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
@@ -9257,6 +9299,7 @@ function recordAdmittedThread(input: {
         policyRevision: input.policyRevision,
         backendKind: input.backendKind,
         visibleInCodexApp: input.visibleInCodexApp,
+        persistence: input.jobs.admissionStateStore.threadConnections.get(input.threadId)?.persistence || previousSession?.persistence || "unknown",
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
@@ -10776,6 +10819,7 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
+  threadHandoff?(input: { rowKey: string; codexThreadUrl: string; action: "request" | "cancel" | "status" }): Promise<{ phase: string; reason?: string; requested: boolean; canOpen: boolean }>;
   subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
@@ -11119,6 +11163,13 @@ function dashboardActivityKey(
     .update(activityId ? `activity:${activityId}` : `fallback:${fallbackIdentity}`)
     .digest("hex")
     .slice(0, 32);
+}
+
+function dashboardJobTokenUsage(jobs: CodexJobRegistry, jobId: string): { tokenUsage?: z.infer<typeof dashboardTokenUsageOutputSchema> } {
+  const usage = jobs.admissionStateStore.eventRetention.summary(jobId).usage;
+  const tokens = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
+  const parsed = dashboardTokenUsageOutputSchema.safeParse(tokens);
+  return parsed.success ? { tokenUsage: parsed.data } : {};
 }
 
 function dashboardRowKey(agentId: string | undefined, jobId?: string): string {
@@ -12291,6 +12342,7 @@ async function buildDashboardView(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityFor(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
+      ...dashboardJobTokenUsage(jobs, job.jobId),
       status: statusForJob(job),
       startedAt: new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -12315,6 +12367,7 @@ async function buildDashboardView(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityFor(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
+      ...dashboardJobTokenUsage(jobs, job.jobId),
       status: job.status as DashboardStatus,
       startedAt: job.createdAt === undefined ? null : new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -12417,7 +12470,8 @@ async function buildDashboardView(
       currentExecution.serviceTier !== latestTurn.execution?.serviceTier
       ? currentExecution
       : undefined;
-    const observed = [...job.publicEvents].reverse().find(event => event.type === "usage")?.details?.total;
+    const usage = jobs.admissionStateStore.eventRetention.summary(job.jobId).usage;
+    const observed = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
     const tokenUsage = isRecord(observed) && ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"].every(key => typeof observed[key] === "number" && Number.isSafeInteger(observed[key]) && observed[key] >= 0)
       ? { inputTokens: observed.inputTokens as number, cachedInputTokens: observed.cachedInputTokens as number, outputTokens: observed.outputTokens as number, totalTokens: observed.totalTokens as number } : undefined;
     const history = historyForAgent(job.agentId, job.jobId);
@@ -15856,6 +15910,7 @@ function readPersistedJob(
     workerId: value.workerId,
     workerGeneration: value.workerGeneration,
     workerPid: value.workerPid,
+    threadPersistence: ["persistent", "ephemeral", "unknown"].includes(String(value.threadPersistence)) ? value.threadPersistence as UpstreamWorkerAssignment["threadPersistence"] : undefined,
     processGroupId: value.processGroupId,
     upstreamRequestId: value.upstreamRequestId,
     terminalVersion: value.terminalVersion,

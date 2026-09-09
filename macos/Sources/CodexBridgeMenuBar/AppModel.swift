@@ -287,6 +287,8 @@ final class AppModel: ObservableObject {
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
     @Published var dashboard: DashboardSnapshot?
+    @Published var threadHandoffs: [String: ThreadHandoffStatus] = [:]
+    private var threadHandoffTasks: [String: Task<Void, Never>] = [:]
     @Published var dashboardStatusFilter: DashboardStatusFilter = .all
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
@@ -1264,6 +1266,51 @@ final class AppModel: ObservableObject {
             self.localConnectionRecovery.expire(ifDeadline: deadline)
             self.connectionRecoveryExpiryTask = nil
             self.connectionRecoveryExpiryDeadline = nil
+        }
+    }
+
+    func continueInCodex(_ row: DashboardRow) {
+        guard !isRemoteClient, let rawURL = row.codexThreadUrl,
+              let url = DashboardLink.availableCodexThread(rawURL), threadHandoffTasks[row.rowKey] == nil else { return }
+        let connection = connectionGeneration
+        threadHandoffTasks[row.rowKey] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.threadHandoffTasks[row.rowKey] = nil }
+            do {
+                let client = await self.localBridgeClient()
+                var status = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "request")
+                while !Task.isCancelled && connection == self.connectionGeneration && !self.isRemoteClient {
+                    self.threadHandoffs[row.rowKey] = status
+                    if !status.requested { await self.refreshDashboard(enrich: false); return }
+                    if status.canOpen {
+                        NSWorkspace.shared.open(url)
+                        await self.refreshDashboard(enrich: false)
+                        return
+                    }
+                    if ["ephemeral", "persistence-unknown", "unsupported", "ownership-unconfirmed"].contains(status.reason ?? "") { return }
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    status = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "status")
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.dashboardErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelThreadHandoff(_ row: DashboardRow) {
+        guard !isRemoteClient, let rawURL = row.codexThreadUrl else { return }
+        threadHandoffTasks[row.rowKey]?.cancel()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let client = await self.localBridgeClient()
+                self.threadHandoffs[row.rowKey] = try await client.threadHandoff(rowKey: row.rowKey, codexThreadUrl: rawURL, action: "cancel")
+                await self.refreshDashboard(enrich: false)
+            } catch {
+                self.dashboardErrorMessage = error.localizedDescription
+            }
         }
     }
 

@@ -25,6 +25,17 @@ import {
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 
 describe("user settings and project registry", () => {
+  it("defaults new installations to durable conversations while retaining explicit and legacy hidden settings", () => {
+    const stateFile=path.join(temporaryDirectory("settings-storage-"),"settings.json"),config=configFor();
+    const fresh=new UserSettingsStore(config,{stateFile});
+    expect(fresh.current.showBridgeThreadsInCodexApp).toBe(true);
+    fresh.update({showBridgeThreadsInCodexApp:false},0);
+    expect(new UserSettingsStore(config,{stateFile}).current.showBridgeThreadsInCodexApp).toBe(false);
+    const legacy=JSON.parse(readFileSync(stateFile,"utf8"));delete legacy.settings.showBridgeThreadsInCodexApp;
+    writeFileSync(stateFile,JSON.stringify(legacy));
+    expect(new UserSettingsStore(config,{stateFile}).current.showBridgeThreadsInCodexApp).toBe(false);
+  });
+
   it("persists inactive Ultra selections through restart and restores them when enabled", () => {
     const stateFile = path.join(temporaryDirectory("settings-ultra-"), "settings.json");
     const config = configFor();

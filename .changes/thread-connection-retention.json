@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Separate conversation connections from retained Agent history, add a six-hour idle release policy and verified Codex app handoff, and bound diagnostic events while retaining usage and delivery provenance.",
+  "breaking": false,
+  "migration": "Schema 14 backs up existing databases before resumable event cleanup. THREAD_IDLE_MS defaults to six hours and is independent of result TTL; 0 disables automatic release. New installations default to persistent visible threads while saved preferences are preserved. Ephemeral/unknown conversations are protected. Returning from Codex requires its writer to be released."
+}

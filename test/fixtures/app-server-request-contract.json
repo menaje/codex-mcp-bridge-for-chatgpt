@@ -576,6 +576,63 @@
         "method",
         "params"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/unsubscribe"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/loaded/list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": []
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
     }
   ],
   "definitions": {

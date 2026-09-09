@@ -27,7 +27,7 @@ On macOS, open the menu-bar icon to check the selected server without opening Ch
 - **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
 - **Work state:** running, input required, approval required, terminating, attention, background, and idle counts.
 - **Activity details:** registered projects, tracked conversations, run records, active/recent/idle Agents, model, reasoning effort, work time, and background processes.
-- **Quick actions:** refresh status, open a Codex conversation, open Settings, control the server, or quit the app.
+- **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
 
 <p align="center">
   <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar app in light appearance showing weekly Codex usage, reset time, work-state counts, and tracked totals" width="360">
