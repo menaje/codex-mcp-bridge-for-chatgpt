@@ -4,5 +4,5 @@
   "bump": "minor",
   "summary": "Separate conversation connections from retained Agent history, add a six-hour idle release policy and verified Codex app handoff, and bound diagnostic events while retaining usage and delivery provenance.",
   "breaking": false,
-  "migration": "Schema 14 backs up existing databases before resumable event cleanup. THREAD_IDLE_MS defaults to six hours and is independent of result TTL; 0 disables automatic release. New installations default to persistent visible threads while saved preferences are preserved. Ephemeral/unknown conversations are protected. Returning from Codex requires its writer to be released."
+  "migration": "Schema 14 backs up existing databases before batched cleanup. Early schema-14 test builds get one diagnostic rescan to apply every Job's event limit. THREAD_IDLE_MS defaults to six hours independently of result TTL; 0 disables automatic release. New installs use persistent visible threads; saved preferences and ephemeral/unknown contexts are preserved. Codex must release its writer before return."
 }

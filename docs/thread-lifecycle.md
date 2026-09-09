@@ -41,6 +41,8 @@ Schema 14 takes a consistent private SQLite backup before migrating an existing 
 
 Repeated diagnostic snapshots are coalesced by Job, event kind and item. Event cursor IDs continue increasing; authoritative current state is read from Job/Activity/question/delivery records rather than reconstructed from the event stream. The limits are 256 diagnostic events per Job, 8 KiB per payload, 50,000 Job events and 64 MiB of their payloads. Legacy excess is reduced in bounded batches. Related Activity metadata is also limited to 50,000 events and a seven-day window. These payload limits are not claims about the physical DB/WAL file size or long-lived identity tables.
 
+The corrected schema-14 cleanup applies the per-Job bound to every Job encountered in a batch. On upgrade from the initial schema-14 test build, it resets only the diagnostic migration cursor once and resumes the same batches, so already-scanned Jobs also receive the corrected bound. Usage summaries are retained before old diagnostic rows are pruned; control records and result delivery state are unchanged.
+
 When a Job result expires, its raw diagnostic events are removed in the same transaction. Existing archived Jobs are scrubbed in migration batches. Small outcome, error-code, execution-selection and usage summaries survive. Old thread-wide counters are labelled unknown for per-Job accounting; they are not retroactively presented as exact per-Job totals.
 
 General result pruning protects:

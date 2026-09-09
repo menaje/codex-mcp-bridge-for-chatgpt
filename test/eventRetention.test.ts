@@ -97,6 +97,35 @@ describe("bounded diagnostic retention",()=>{
     expect(store.countJobs()).toBe(0);store.close();
   });
 
+  it.each(["13","14"])("bounds every Job from schema %s, including a previously completed sweep, after restart",schema=>{
+    const directory=mkdtempSync(path.join(tmpdir(),"event-mixed-migration-")),file=path.join(directory,"state.sqlite"),now=Date.now();
+    let store=new BridgeStateStore({file});
+    for(const id of ["first","second","third"])store.upsertJob({...job(id),status:"completed"});
+    store.close();
+    const db=new Database(file);
+    if(schema==="13")db.exec("DROP TRIGGER event_budget_insert; DROP TRIGGER event_budget_update; DROP TRIGGER event_budget_delete; DROP TABLE event_budget; DROP TABLE result_holds; DROP TABLE job_summaries; DROP TABLE thread_connections; UPDATE bridge_meta SET value='13' WHERE key='schema_version';");
+    db.exec("DELETE FROM job_events; DELETE FROM bridge_meta WHERE key='event_retention_policy';");
+    const insert=db.prepare("INSERT INTO job_events(job_id,activity_id,scope_id,scope_version,event_type,status,created_at,payload) VALUES (?,?,?,1,'diagnostic','completed',?,?)");
+    const jobs=db.prepare("SELECT job_id,activity_id FROM jobs ORDER BY job_id").all() as Array<{job_id:string;activity_id:string}>;
+    db.transaction(()=>{for(const row of jobs)for(let n=0;n<(row.job_id==="first"?1:400);n++)insert.run(row.job_id,row.activity_id,scopeId,now,JSON.stringify({synthetic:n}));})();
+    // This sample lies beyond the first 500-row slice but within the third Job's pruned prefix.
+    const tokens={inputTokens:3000,cachedInputTokens:2500,outputTokens:100,totalTokens:3100};
+    db.prepare("UPDATE job_events SET event_type='app-usage-updated',payload=? WHERE job_id='third' AND json_extract(payload,'$.synthetic')=110")
+      .run(JSON.stringify({type:"usage",details:{jobUsage:{basis:"cumulative-difference",tokens}}}));
+    db.exec("INSERT OR REPLACE INTO bridge_meta(key,value) SELECT 'event_retention_cursor',CAST(MAX(event_id) AS TEXT) FROM job_events;");
+    db.close();
+    store=new BridgeStateStore({file});
+    store.maintainRetention(now);
+    expect(store.listJobEvents("first")).toHaveLength(1);
+    expect(store.listJobEvents("second")).toHaveLength(EVENT_RETENTION_LIMITS.perJob);
+    store.close();store=new BridgeStateStore({file});
+    for(let n=0;n<5;n++)store.maintainRetention(now);
+    for(const id of ["second","third"])expect(store.listJobEvents(id)).toHaveLength(EVENT_RETENTION_LIMITS.perJob);
+    expect(store.eventRetention.summary("third").usage).toEqual({basis:"cumulative-difference",tokens});
+    expect(store.listJobs()).toHaveLength(3);
+    store.close();
+  });
+
   it("enforces the global byte budget independently of per-job limits and makes freed pages reusable",()=>{
     const directory=mkdtempSync(path.join(tmpdir(),"event-budget-")),file=path.join(directory,"state.sqlite");
     const store=new BridgeStateStore({file});const input=job();store.upsertJob(input);
