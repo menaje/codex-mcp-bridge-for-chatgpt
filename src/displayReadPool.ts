@@ -48,6 +48,19 @@ export class DisplayReadPool<T> {
       if (matches(key)) entry.invalidated = true;
     }
   }
+
+  /** A cached display that reports pending work needs its completion notice,
+   * even when the original caller's short wait has not expired yet. */
+  observePending(matches: (key: string) => boolean = () => true): number {
+    let count = 0;
+    for (const [key, entry] of this.reads) {
+      if (!entry.invalidated && matches(key)) {
+        entry.deferred = true;
+        count += 1;
+      }
+    }
+    return count;
+  }
 }
 
 export async function waitForDisplay<T>(

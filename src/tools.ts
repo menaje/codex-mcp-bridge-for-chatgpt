@@ -4681,16 +4681,31 @@ export function registerBridgeTools(
     JSON.stringify(view.structured);
     cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
   };
-  const accountDisplayReads = new DisplayReadPool<Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>>(1, () => notifyCardObservation(upstream));
+  type AccountObservation = {
+    value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
+    failed: boolean;
+  };
+  const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
+  let accountCompletion: { revision: string; failed: boolean; until: number } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
-    if (!service) return { pending: false as const, value: null };
+    if (!service) return { pending: false as const, value: { value: null, failed: false } };
     const revision = service.cacheRevision();
     accountDisplayReads.invalidate(key => key !== revision);
-    const read = accountDisplayReads.start(revision, () => service.readAccount(config.defaultBackend, true), (_, deferred) => {
-      if (deferred && revision === service.cacheRevision()) notifyCardObservation(upstream);
+    const read = accountDisplayReads.start(revision, async () => {
+      try {
+        const value = await service.readAccount(config.defaultBackend, true);
+        return { value, failed: value === null || value.billing.actualCosts?.status === "unavailable" };
+      } catch { return { value: null, failed: true }; }
+    }, (value, deferred) => {
+      if (revision !== service.cacheRevision()) return;
+      accountCompletion = { revision, failed: value.failed, until: Date.now() + CARD_RUNTIME_CACHE_TTL_MS };
+      if (deferred) notifyCardObservation(upstream);
     });
-    return read ? waitForDisplay(read, CARD_USAGE_TIMEOUT_MS) : { pending: true as const };
+    const result = read ? await waitForDisplay(read, CARD_USAGE_TIMEOUT_MS) : { pending: true as const };
+    // A replaced account is neither a current value nor a failure of the new one.
+    return revision === service.cacheRevision() ? result
+      : { pending: false as const, value: { value: null, failed: false } };
   };
   const applicationService: BridgeApplicationService = {
     subscribeChanges(listener) {
@@ -4704,7 +4719,7 @@ export function registerBridgeTools(
     },
     async dashboardSnapshot(options = {}) {
       const startedAt = Date.now();
-      const accountRead = options.inspectRuntime ? readAccountForDisplay().catch(() => ({ pending: false as const, value: null, failed: true })) : undefined;
+      const accountRead = options.inspectRuntime ? readAccountForDisplay().catch(() => ({ pending: false as const, value: { value: null, failed: true } })) : undefined;
       const view = await buildDashboardView(
         jobs,
         upstream,
@@ -4719,13 +4734,27 @@ export function registerBridgeTools(
         options.inspectRuntime === true,
         options.legacyGrouping
       );
-      if (config.codexService) view.codexAccount = config.codexService.cachedAccount(config.defaultBackend);
-      if (config.codexService && options.inspectRuntime) {
-        const account = await accountRead!;
-        view.codexAccount = (!account.pending && account.value) || config.codexService.cachedAccount(config.defaultBackend);
-        if (account.pending) view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
-        if ("failed" in account) view.enrichment.usageUnavailable = true;
+      if (config.codexService) {
+        const service = config.codexService;
+        view.codexAccount = service.cachedAccount(config.defaultBackend);
+        if (accountRead) {
+          const account = await accountRead;
+          view.codexAccount = (!account.pending && account.value.value) || service.cachedAccount(config.defaultBackend);
+          if (account.pending) view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
+        } else {
+          const revision = service.cacheRevision();
+          view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + accountDisplayReads.observePending(key => key === revision);
+          if (accountCompletion?.revision === revision && accountCompletion.until > Date.now() && accountCompletion.failed) {
+            view.enrichment.usageUnavailable = true;
+          }
+        }
         if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
+        const accountObservedAt = view.codexAccount?.observedAt;
+        if (typeof accountObservedAt === "number") {
+          view.enrichment.oldestObservationAt = [view.enrichment.oldestObservationAt,
+            new Date(accountObservedAt).toISOString()].filter((date): date is string => !!date).sort()[0];
+        }
       }
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
@@ -10930,6 +10959,7 @@ type DashboardRuntimeCacheEntry = {
   stamp: string;
   coverage: "background" | "liveness";
   freshUntil: number;
+  livenessFreshUntil?: number;
   retainUntil: number;
   observation: DashboardRuntimeObservation;
   unavailable?: boolean;
@@ -11669,6 +11699,34 @@ function cachedDashboardRuntimes(
   return observations;
 }
 
+function cachedDashboardEnrichment(
+  upstream: CodexUpstream,
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+): CardEnrichmentSummary {
+  const now = Date.now();
+  const cache = dashboardRuntimeCaches.get(upstream);
+  const entries = candidates.flatMap(candidate => {
+    const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
+    return entry?.stamp === candidate.stamp && entry.retainUntil > now ? [entry] : [];
+  });
+  const prefixes = candidates.map(candidate => `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0`);
+  const runtimePending = dashboardRuntimeReads.get(upstream)?.observePending(key => prefixes.some(prefix => key.startsWith(prefix))) || 0;
+  const revision = upstream.accountRevision?.();
+  const usagePending = cardUsageReads.get(upstream)?.observePending(key => key === (revision || "default")) || 0;
+  const usageCompletion = cardUsageCompletions.get(upstream);
+  const dates = entries.map(entry => new Date(entry.observedAt).toISOString());
+  const usage = cachedCodexWeeklyUsage(upstream);
+  if (usage) dates.push(usage.observedAt);
+  return {
+    state: "structural", runtimeRequests: 0, cacheHits: entries.length,
+    timeouts: 0, durationMs: 0, usageTimedOut: false,
+    pendingReads: runtimePending + usagePending,
+    runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
+    usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.until > now && usageCompletion.failed),
+    oldestObservationAt: dates.sort()[0]
+  };
+}
+
 type DashboardRuntimeResult = Awaited<ReturnType<typeof inspectDashboardRuntime>>;
 const dashboardRuntimeReads = new WeakMap<CodexUpstream, DisplayReadPool<DashboardRuntimeResult>>();
 
@@ -11708,10 +11766,12 @@ function cacheDashboardRuntime(
       // Reuse unloaded observations too: a late usage completion should not
       // immediately repeat hundreds of otherwise successful runtime probes.
       freshUntil: Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
+      livenessFreshUntil: result.coverage === "liveness"
+        ? Date.now() + CARD_RUNTIME_CACHE_TTL_MS : canRetainLiveness ? previous.livenessFreshUntil : undefined,
       retainUntil: retained === previous?.observation || canRetainLiveness
         ? previous!.retainUntil : Date.now() + CARD_RUNTIME_STALE_TTL_MS,
       observation: retained,
-      unavailable: !stable,
+      unavailable: !stable || !!(canRetainLiveness && previous.unavailable),
       observedAt: retained === previous?.observation || canRetainLiveness ? previous!.observedAt : Date.now()
     });
     while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
@@ -11747,12 +11807,22 @@ async function inspectDashboardRuntimes(
     const cached = cache.get(key);
     if (!cached || cached.stamp !== candidate.stamp || cached.retainUntil <= now) return true;
     observations.set(candidate.agentId, cached.observation);
-    const coverageSatisfied = !candidate.inspectLiveness || cached.coverage === "liveness";
+    const coverageSatisfied = !candidate.inspectLiveness ||
+      (cached.coverage === "liveness" && (cached.livenessFreshUntil || 0) > now);
     const needsRead = cached.freshUntil <= now || !coverageSatisfied;
     if (!needsRead && cached.unavailable) unavailable += 1;
     return needsRead;
   });
   const cacheHits = candidates.length - pending.length;
+  // When reads outlast the display budget, let the next periodic refresh reach
+  // unobserved/older threads instead of always repeating the same first workers.
+  pending.sort((left, right) => {
+    const checkedAt = (candidate: DashboardRuntimeCandidate) => {
+      const entry = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+      return entry?.stamp === candidate.stamp ? entry.freshUntil : 0;
+    };
+    return checkedAt(left) - checkedAt(right);
+  });
   const deadline = Date.now() + CARD_RUNTIME_BUDGET_MS;
   let timedOut = 0;
   let requests = 0;
@@ -12536,14 +12606,7 @@ async function buildDashboardView(
     scope: "bridge-wide",
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
-    enrichment: enrichment?.summary || {
-      state: "structural",
-      runtimeRequests: 0,
-      cacheHits: runtimeByAgent.size,
-      timeouts: 0,
-      durationMs: 0,
-      usageTimedOut: false
-    },
+    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),
     weeklyUsage,
     counts: {
       trackedProjects,

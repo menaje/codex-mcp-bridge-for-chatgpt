@@ -2206,7 +2206,41 @@ extension ConnectionObservationRecoveryTests {
 
 extension ConnectionObservationRecoveryTests {
     @MainActor
-    func testLateEnrichmentNoticeBypassesTheRefreshIntervalAndClearsPending() async throws {
+    func testStructuralRefreshPreservesAnUnfinishedEnrichment() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-continue-details-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func reply(_ scope: String, delay: TimeInterval = 0) throws -> NativeFixtureReply {
+            let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: scope)), as: UTF8.self)
+            return NativeFixtureReply(body: "{\"result\":\(snapshot)}", delay: delay)
+        }
+        let replies = try TestDashboardReplySequence([
+            reply("initial"), reply("obsolete-enrichment", delay: 0.6),
+            reply("structural-refresh"), reply("current-enrichment")
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        await model.refreshDashboard()
+        for _ in 0..<50 {
+            if bridge.count("dashboard.snapshot") == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 2)
+        await model.refreshDashboard(enrich: false)
+        for _ in 0..<50 {
+            if model.dashboard?.scope == "current-enrichment" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.dashboard?.scope, "current-enrichment")
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertEqual(model.dashboard?.scope, "current-enrichment")
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 4)
+    }
+
+    @MainActor
+    func testLateEnrichmentNoticeAppliesCachedResultsWithoutStartingAnotherRead() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-late-details-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
         try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -2217,8 +2251,11 @@ extension ConnectionObservationRecoveryTests {
                                   "durationMs": 1500, "usageTimedOut": true, "pendingReads": 1,
                                   "oldestObservationAt": "2026-09-09T00:00:00.000Z"]
         let pendingBody = String(decoding: try JSONSerialization.data(withJSONObject: pending), as: UTF8.self)
-        let healthy = NativeFixtureReply(body: "{\"result\":\(base)}")
-        let snapshots = TestDashboardReplySequence([healthy, NativeFixtureReply(body: "{\"result\":\(pendingBody)}"), healthy, healthy])
+        pending["enrichment"] = ["state": "structural", "runtimeRequests": 0, "cacheHits": 0, "timeouts": 0,
+                                  "durationMs": 0, "usageTimedOut": false, "pendingReads": 0]
+        let completeBody = String(decoding: try JSONSerialization.data(withJSONObject: pending), as: UTF8.self)
+        let healthy = NativeFixtureReply(body: "{\"result\":\(completeBody)}")
+        let snapshots = TestDashboardReplySequence([healthy, NativeFixtureReply(body: "{\"result\":\(pendingBody)}"), healthy])
         let changes = TestDashboardReplySequence([
             NativeFixtureReply(body: #"{"result":{"revision":"late:0","topics":[]}}"#),
             NativeFixtureReply(body: #"{"result":{"revision":"late:1","topics":["enrichment"]}}"#, delay: 1),
@@ -2249,6 +2286,6 @@ extension ConnectionObservationRecoveryTests {
         }
         XCTAssertFalse(model.dashboardEnrichmentPending)
         XCTAssertFalse(model.dashboardEnrichmentFailed)
-        XCTAssertGreaterThanOrEqual(bridge.count("dashboard.snapshot"), 4)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 3)
     }
 }

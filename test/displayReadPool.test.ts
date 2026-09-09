@@ -9,6 +9,22 @@ function deferred<T>() {
 }
 
 describe("display read budgets", () => {
+  it("notifies a cached display that saw pending work before the original wait expired", async () => {
+    const pool = new DisplayReadPool<number>(2);
+    const response = deferred<number>(), obsolete = deferred<number>();
+    const publish = vi.fn();
+    const read = pool.start("current", () => response.promise, publish)!;
+    const old = pool.start("old", () => obsolete.promise, publish)!;
+    pool.invalidate(key => key === "old");
+    expect(pool.observePending()).toBe(1);
+    response.resolve(7);
+    await read.promise;
+    expect(publish).toHaveBeenCalledExactlyOnceWith(7, true);
+    obsolete.resolve(8);
+    await old.promise;
+    expect(pool.observePending()).toBe(0);
+  });
+
   it("wakes a skipped display when capacity frees even if the occupying read was invalidated", async () => {
     const wake = vi.fn(), publish = vi.fn();
     const pool = new DisplayReadPool<number>(1, wake);

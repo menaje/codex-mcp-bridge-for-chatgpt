@@ -1228,8 +1228,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshDashboard(enrich: Bool = true) async {
+    func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
+        let continueEnrichment = !applyCachedEnrichment && (enrich || dashboardEnrichmentTask != nil)
         dashboardEnrichmentTask?.cancel()
+        dashboardEnrichmentTask = nil
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         guard bridgeConnected else {
@@ -1255,7 +1257,10 @@ final class AppModel: ObservableObject {
             }
             lastDashboardRefresh = Date()
             dashboardErrorMessage = nil
-            if enrich {
+            if applyCachedEnrichment, next.enrichment?.pendingReads != nil {
+                recordDashboardEnrichment(next)
+            }
+            if continueEnrichment {
                 lastDashboardEnrichment = Date()
                 scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
             }
@@ -1276,6 +1281,11 @@ final class AppModel: ObservableObject {
         dashboardEnrichmentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let connection = self.connectionGeneration
+            defer {
+                if generation == self.dashboardRequestGeneration, connection == self.connectionGeneration {
+                    self.dashboardEnrichmentTask = nil
+                }
+            }
             do {
                 let client = try await self.bridgeClient()
                 let enriched = try await client.dashboard(
@@ -1299,9 +1309,7 @@ final class AppModel: ObservableObject {
                     self.dashboard = enriched
                 }
                 self.lastDashboardRefresh = Date()
-                self.dashboardEnrichmentFailed = enriched.enrichment?.hasFailures == true
-                self.dashboardEnrichmentPending = enriched.enrichment?.isUpdating == true
-                self.dashboardObservationDate = enriched.enrichment?.oldestObservationAt.flatMap { DisplayFormat.parseDate($0) }
+                self.recordDashboardEnrichment(enriched)
             } catch {
                 guard !Task.isCancelled,
                       generation == self.dashboardRequestGeneration,
@@ -1310,6 +1318,12 @@ final class AppModel: ObservableObject {
                 self.dashboardEnrichmentPending = false
             }
         }
+    }
+
+    private func recordDashboardEnrichment(_ snapshot: DashboardSnapshot) {
+        dashboardEnrichmentFailed = snapshot.enrichment?.hasFailures == true
+        dashboardEnrichmentPending = snapshot.enrichment?.isUpdating == true
+        dashboardObservationDate = snapshot.enrichment?.oldestObservationAt.flatMap { DisplayFormat.parseDate($0) }
     }
 
     func refreshSettings(refreshModels: Bool = false) async {
@@ -2575,14 +2589,16 @@ final class AppModel: ObservableObject {
                     // All arrivals during the debounce belong to this read.
                     self.pendingRefreshEvents.remove(topic)
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
-                    self.lastScheduledRefresh[topic] = Date()
+                    if topic != "dashboard" { self.lastScheduledRefresh[topic] = Date() }
                     switch topic {
                     case "status": await self.refreshStatus()
                     case "dashboard":
                         if self.dashboardVisible {
-                            let enrich = self.dashboardEnrichmentInvalidated || (self.lastDashboardEnrichment.map { Date().timeIntervalSince($0) >= 30 } ?? true)
+                            let enrich = self.lastDashboardEnrichment.map { Date().timeIntervalSince($0) >= 30 } ?? true
+                            let applyCached = self.dashboardEnrichmentInvalidated && !enrich
                             self.dashboardEnrichmentInvalidated = false
-                            await self.refreshDashboard(enrich: enrich)
+                            if !applyCached { self.lastScheduledRefresh[topic] = Date() }
+                            await self.refreshDashboard(enrich: enrich, applyCachedEnrichment: applyCached)
                         }
                     case "settings":
                         if self.settingsWindowVisible, !self.isBusy, !self.settingsAutosaveInProgress, self.pendingSettingsDraft == nil {

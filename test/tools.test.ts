@@ -60,6 +60,8 @@ import {
   type UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
@@ -1713,6 +1715,108 @@ describe("bridge tools", () => {
         }
       } finally { unsubscribe(); await close(); }
     }
+  });
+
+  it("reports pending account reads and their late success or failure in cached snapshots", async () => {
+    for (const outcome of ["success", "failure", "replaced"]) {
+      const fails = outcome === "failure", replaced = outcome === "replaced";
+      const root = temporaryRoot();
+      const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+      const service = new CodexService({ HOME: root, PATH: "", CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+      config.codexService = service;
+      let revision = "account-a";
+      vi.spyOn(service, "cacheRevision").mockImplementation(() => revision);
+      const value = projectCodexAccount({ account: { type: "chatgpt", planType: "plus" } }, {}, Date.now() - 10_000);
+      let settle!: () => void;
+      const read = vi.spyOn(service, "readCliAccount").mockImplementation(() => new Promise((resolve, reject) => {
+        settle = () => fails ? reject(new Error("account transport deadline")) : resolve(value);
+      }));
+      const { applicationService, close } = await connectTestClient(config, new FakeUpstream());
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const enriched = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        const pending = await applicationService.dashboardSnapshot();
+        expect(pending.enrichment).toMatchObject({ state: "structural", pendingReads: 1, usageUnavailable: false });
+        if (replaced) revision = "account-b";
+        settle();
+        expect((await enriched).enrichment.usageUnavailable).toBe(fails);
+        const complete = await applicationService.dashboardSnapshot();
+        expect(complete.enrichment).toMatchObject({ state: "structural", pendingReads: 0, usageUnavailable: fails });
+        expect(complete.codexAccount).toEqual(fails || replaced ? null : value);
+        if (!fails && !replaced) expect(complete.enrichment.oldestObservationAt).toBe(new Date(value.observedAt).toISOString());
+        expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(replaced ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(1);
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("reaches previously unobserved threads on the next refresh after slow probes settle", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const pending: Array<() => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(threadId => new Promise(resolve => {
+      pending.push(() => resolve({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+    }));
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Slow ${index}` });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `slow-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+      }
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.pendingReads).toBe(8);
+      expect(probe).toHaveBeenCalledTimes(8);
+      const firstThreads = new Set(probe.mock.calls.map(([threadId]) => threadId));
+      for (const resolve of pending.splice(0)) resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+      const next = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(16));
+      expect(probe.mock.calls.slice(8, 10).every(([threadId]) => !firstThreads.has(threadId))).toBe(true);
+      probe.mockImplementation(async threadId => ({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+      for (const resolve of pending.splice(0)) resolve();
+      await next;
+      expect(new Set(probe.mock.calls.map(([threadId]) => threadId)).size).toBe(10);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("does not renew liveness freshness when only background processes were refreshed", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: `Coverage activity ${index}` });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Coverage ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `coverage-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({
+          activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh", operation: "start",
+          cwd: root, sandbox: "read-only", scopeId: SCOPE_A, requestId: `coverage-request-${index}`,
+          requestHash: `coverage-hash-${index}`, requestHashVersion: 7, exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(`coverage-${index}`));
+        await job.promise;
+      }
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(10);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
+      await applicationService.dashboardSnapshot({ limit: 5, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(15);
+      expect(upstream.loadedTerminalReads).toHaveLength(5);
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(20);
+    } finally { clock?.mockRestore(); await close(); }
   });
 
   it("serves health from memory without pruning jobs or probing Codex", async () => {

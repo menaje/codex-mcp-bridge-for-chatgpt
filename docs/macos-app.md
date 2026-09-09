@@ -60,13 +60,17 @@ The native menu retains known values and shows their oldest observation time
 when available. Identical ongoing usage, account, and runtime reads are shared
 across snapshots; runtime observations hold one of eight shared slots until
 their actual read settles, including any follow-up process query. Valid late
-results update the cache and emit an `enrichment` invalidation. This bypasses
-the ordinary thirty-second enrichment interval for a visible native window.
+results update the cache and emit an `enrichment` invalidation. A visible native
+window immediately paints that cached snapshot, including current pending and
+failed observations, without starting another expensive enrichment. The ordinary
+thirty-second enrichment interval still schedules fresh upstream observations.
 Account revisions, thread stamps and explicit invalidations prevent superseded
 results from replacing current evidence. Late failed observations have a short
 retry cooldown, preserving previous values without an immediate refresh loop.
 Successful runtime observations, including unloaded threads, remain fresh for
-five seconds so a late detail invalidation can reuse the completed batch.
+five seconds. Background-process updates do not renew older liveness evidence.
+Within each coverage class, subsequent refreshes prioritize unobserved and older
+threads so slow reads cannot repeatedly exclude the rest of the selected batch.
 These display caches never authorize admission, settings changes or shutdown.
 
 The native popover and both retained ChatGPT cards use the same presentation

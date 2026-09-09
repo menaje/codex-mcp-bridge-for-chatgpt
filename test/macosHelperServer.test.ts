@@ -1043,7 +1043,9 @@ describe("macOS runtime helper RPC", () => {
       await replacement.close();
       await first.close();
     }
-  });
+  // Includes two five-second startup budgets, a drain and cleanup. The test's
+  // total ceiling must not expire before those individually bounded operations.
+  }, 20_000);
 
   it("blocks an older live launcher using the alternate-dotenv lock location", async () => {
     const root = temporaryDirectory();

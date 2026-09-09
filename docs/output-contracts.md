@@ -185,10 +185,14 @@ Optional enrichment fields `pendingReads`, `usageUnavailable` and
 account reads, and the oldest retained observation time. Legacy `timeouts` and
 `usageTimedOut` continue to describe the short display budget, not the final
 transport deadline. Existing clients can ignore the optional fields. Late
-completions reuse five-second runtime caches and sixty-second usage caches; the
-private native change channel sends `enrichment` invalidations without granting
-any additional card watcher or mutation authority. Running Codex jobs do not
-gain a time limit from these display budgets.
+completions update retained evidence; the private native change channel sends
+`enrichment` invalidations that paint cached values and observation metadata
+without another upstream read. Freshness remains five seconds for runtime and
+sixty seconds for usage; a background-only read does not extend liveness
+freshness. Subsequent periodic reads favor previously unobserved and older
+threads within each coverage class. No additional card watcher or mutation
+authority is granted, and running Codex jobs do not gain a time limit from
+these display budgets.
 
 ## Opaque-leaf policy
 
