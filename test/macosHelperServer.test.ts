@@ -19,7 +19,7 @@ import {
   type MacOSHelperController,
   type MacOSHelperStatus
 } from "../src/macosHelperServer.js";
-import type { BridgeCompanionServer } from "../src/companionServer.js";
+import { startPrivateJsonLineServer, type BridgeCompanionServer } from "../src/companionServer.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
 import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
@@ -32,6 +32,29 @@ afterEach(async () => {
 });
 
 describe("macOS runtime helper RPC", () => {
+  it("falls back to admission only when an older companion explicitly rejects health", async () => {
+    for (const code of [-32600, -32601, -32603]) {
+      const root = temporaryDirectory();
+      const socketPath = path.join(root, "bridge.sock");
+      const methods: string[] = [];
+      servers.push(await startPrivateJsonLineServer({
+        socketPath, maxRequestBytes: 4096, maxResponseBytes: 4096,
+        async dispatch(line) {
+          const { id, method } = JSON.parse(line);
+          methods.push(method);
+          return method === "runtime.health"
+            ? { jsonrpc: "2.0", id, error: { code, message: "fixture health rejection" } }
+            : { jsonrpc: "2.0", id, result: { acceptingNewJobs: true, activeJobs: 0, pendingAdmissions: 0 } };
+        },
+        requestTooLarge: () => ({}), internalError: () => ({})
+      }));
+      const supervisor = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile: path.join(root, ".env"), bridgeSocketPath: socketPath });
+      const health = await supervisor.health();
+      expect(health.bridge.connected).toBe(code !== -32603);
+      expect(methods).toEqual(code === -32603 ? ["runtime.health"] : ["runtime.health", "runtime.snapshot"]);
+    }
+  });
+
   it("keeps health independent of installation discovery and account queries", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "helper-health-"));
     const manager = new CodexRuntimeManager({ root: path.join(root, "runtime"), discoverExternal: false });
@@ -538,7 +561,7 @@ describe("macOS runtime helper RPC", () => {
     mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
     writeFileSync(path.join(bridgeRoot, "dist", "cli.js"), "", { mode: 0o600 });
     writeFileSync(delayFile, "0");
-    writeFakeLauncher(launcher, path.join(root, "arguments.json"), { snapshotDelayFile: delayFile });
+    writeFakeLauncher(launcher, path.join(root, "arguments.json"), { healthDelayFile: delayFile });
     updateRuntimeEnvFile(configFile, {
       apiKey: "sk-supervisor-1234567890123456",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
@@ -1020,7 +1043,9 @@ describe("macOS runtime helper RPC", () => {
       await replacement.close();
       await first.close();
     }
-  });
+  // Includes two five-second startup budgets, a drain and cleanup. The test's
+  // total ceiling must not expire before those individually bounded operations.
+  }, 20_000);
 
   it("blocks an older live launcher using the alternate-dotenv lock location", async () => {
     const root = temporaryDirectory();
@@ -1342,6 +1367,7 @@ function writeFakeLauncher(
     runtimeTransport?: string;
     detachedDescendantPidFile?: string;
     snapshotDelayFile?: string;
+    healthDelayFile?: string;
   } = {}
 ): void {
   writeFileSync(file, `
@@ -1454,8 +1480,10 @@ const server = createServer((socket) => {
       backgroundProcessAgents: ${options.backgroundProcesses || 0} > 0 ? 1 : 0,
       backgroundProcessUnknownAgents: ${options.backgroundProcessUnknownAgents || 0}
     };
-    const delayFile = ${JSON.stringify(options.snapshotDelayFile || "")};
-    const responseDelay = request.method === "runtime.snapshot" && delayFile
+    const delayFile = request.method === "runtime.health"
+      ? ${JSON.stringify(options.healthDelayFile || "")}
+      : request.method === "runtime.snapshot" ? ${JSON.stringify(options.snapshotDelayFile || "")} : "";
+    const responseDelay = delayFile
       ? Number(readFileSync(delayFile, "utf8")) : 0;
     setTimeout(() => {
       if (!socket.destroyed) socket.end(JSON.stringify({

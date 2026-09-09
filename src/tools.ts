@@ -1,6 +1,7 @@
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
 import { modelActionGuidance, modelPolicyRecoveryActions } from "./toolGuidance.js";
 import { objectSchemaUnion } from "./objectSchemaUnion.js";
+import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
 import { installLegacyToolCompatibility } from "./legacyToolCompatibility.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -672,7 +673,10 @@ const cardEnrichmentOutputSchema = z.strictObject({
   timeouts: z.number().int().min(0),
   durationMs: z.number().int().min(0),
   usageTimedOut: z.boolean(),
-  runtimeUnavailable: z.number().int().min(0).optional()
+  runtimeUnavailable: z.number().int().min(0).optional(),
+  pendingReads: z.number().int().min(0).optional(),
+  usageUnavailable: z.boolean().optional(),
+  oldestObservationAt: z.iso.datetime().optional()
 });
 
 const dashboardViewOutputSchema = z.strictObject({
@@ -2695,6 +2699,11 @@ export class CodexJobRegistry {
 
   runningCount(scopeId?: string): number {
     this.pruneAndPersist();
+    return this.observedRunningCount(scopeId);
+  }
+
+  /** Health observations must not trigger retention cleanup or SQLite writes. */
+  observedRunningCount(scopeId?: string): number {
     return [...this.jobs.values()].filter(
       (job) => isActiveActivityJobStatus(job.status) && (!scopeId || job.scopeId === scopeId)
     ).length;
@@ -4674,17 +4683,45 @@ export function registerBridgeTools(
     JSON.stringify(view.structured);
     cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
   };
+  type AccountObservation = {
+    value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
+    failed: boolean;
+  };
+  const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
+  let accountCompletion: { revision: string; failed: boolean } | undefined;
+  const readAccountForDisplay = async () => {
+    const service = config.codexService;
+    if (!service) return { pending: false as const, value: { value: null, failed: false } };
+    const revision = service.cacheRevision();
+    accountDisplayReads.invalidate(key => key !== revision);
+    const read = accountDisplayReads.start(revision, async () => {
+      try {
+        const value = await service.readAccount(config.defaultBackend, true);
+        return { value, failed: value === null || value.billing.actualCosts?.status === "unavailable" };
+      } catch { return { value: null, failed: true }; }
+    }, (value, deferred) => {
+      if (revision !== service.cacheRevision()) return;
+      accountCompletion = { revision, failed: value.failed };
+      if (deferred) notifyCardObservation(upstream);
+    });
+    const result = read ? await waitForDisplay(read, CARD_USAGE_TIMEOUT_MS) : { pending: true as const };
+    // A replaced account is neither a current value nor a failure of the new one.
+    return revision === service.cacheRevision() ? result
+      : { pending: false as const, value: { value: null, failed: false } };
+  };
   const applicationService: BridgeApplicationService = {
     subscribeChanges(listener) {
       const subscriptions = [
         jobs.subscribeChanges(() => listener("dashboard")),
         userSettings.subscribeChanges(() => { listener("settings"); listener("dashboard"); }),
-        modelCatalog.subscribe?.(() => listener("settings"))
+        modelCatalog.subscribe?.(() => listener("settings")),
+        subscribeCardObservations(upstream, () => listener("enrichment"))
       ];
       return () => { for (const unsubscribe of subscriptions) unsubscribe?.(); };
     },
     async dashboardSnapshot(options = {}) {
       const startedAt = Date.now();
+      const accountRead = options.inspectRuntime ? readAccountForDisplay().catch(() => ({ pending: false as const, value: { value: null, failed: true } })) : undefined;
       const view = await buildDashboardView(
         jobs,
         upstream,
@@ -4699,14 +4736,27 @@ export function registerBridgeTools(
         options.inspectRuntime === true,
         options.legacyGrouping
       );
-      if (config.codexService) view.codexAccount = config.codexService.cachedAccount(config.defaultBackend);
-      if (config.codexService && options.inspectRuntime) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const account = await Promise.race([config.codexService.readAccount(config.defaultBackend, true),
-          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), CARD_USAGE_TIMEOUT_MS); })]);
-        if (timer) clearTimeout(timer);
-        view.codexAccount = account || config.codexService.cachedAccount(config.defaultBackend);
-        if (account?.authMode === "api-key") view.weeklyUsage = null;
+      if (config.codexService) {
+        const service = config.codexService;
+        view.codexAccount = service.cachedAccount(config.defaultBackend);
+        if (accountRead) {
+          const account = await accountRead;
+          view.codexAccount = (!account.pending && account.value.value) || service.cachedAccount(config.defaultBackend);
+          if (account.pending) view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
+        } else {
+          const revision = service.cacheRevision();
+          view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + accountDisplayReads.observePending(key => key === revision);
+          if (accountCompletion?.revision === revision && accountCompletion.failed) {
+            view.enrichment.usageUnavailable = true;
+          }
+        }
+        if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
+        const accountObservedAt = view.codexAccount?.observedAt;
+        if (typeof accountObservedAt === "number") {
+          view.enrichment.oldestObservationAt = [view.enrichment.oldestObservationAt,
+            new Date(accountObservedAt).toISOString()].filter((date): date is string => !!date).sort()[0];
+        }
       }
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
@@ -4747,6 +4797,17 @@ export function registerBridgeTools(
     },
     runtimeSnapshot(options) {
       return runtimeAdmissionSnapshot(options);
+    },
+    runtimeHealth() {
+      return {
+        acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
+        activeJobs: jobs.observedRunningCount(),
+        pendingAdmissions: runtimeAdmission.pendingAdmissions,
+        backgroundProcessState: backgroundProcessImpact.state,
+        backgroundProcesses: backgroundProcessImpact.processes,
+        backgroundProcessAgents: backgroundProcessImpact.agents,
+        backgroundProcessUnknownAgents: backgroundProcessImpact.unknownAgents
+      };
     },
     beginDrain(options) {
       runtimeAdmission.acceptingNewJobs = false;
@@ -10680,11 +10741,12 @@ export type BridgeRuntimeSnapshotOptions = {
  * It contains no mounted-widget authority and never exposes the SQLite store.
  */
 export type BridgeApplicationService = {
-  subscribeChanges?(listener: (topic: "dashboard" | "settings") => void): () => void;
+  subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
+  runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
   beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
 };
@@ -10798,13 +10860,13 @@ function projectCodexWeeklyUsage(usage: CodexWeeklyUsage): CodexWeeklyUsageView 
 
 async function readCodexWeeklyUsage(
   upstream: CodexUpstream
-): Promise<CodexWeeklyUsageView | null> {
-  if (!upstream.readAccountRateLimits) return null;
+): Promise<CardUsageResult> {
+  if (!upstream.readAccountRateLimits) return { value: null, failed: false };
   try {
     const usage = await upstream.readAccountRateLimits();
-    return usage ? projectCodexWeeklyUsage(usage) : null;
+    return { value: usage ? projectCodexWeeklyUsage(usage) : null, failed: false };
   } catch {
-    return null;
+    return { value: null, failed: true };
   }
 }
 
@@ -10816,6 +10878,21 @@ type CardUsageCacheEntry = {
 };
 
 const cardUsageCaches = new WeakMap<CodexUpstream, CardUsageCacheEntry>();
+type CardUsageResult = { value: CodexWeeklyUsageView | null; failed: boolean };
+const cardUsageReads = new WeakMap<CodexUpstream, DisplayReadPool<CardUsageResult>>();
+const cardUsageCompletions = new WeakMap<CodexUpstream, { revision?: string; until: number; failed: boolean }>();
+const cardObservationListeners = new WeakMap<CodexUpstream, Set<() => void>>();
+
+function subscribeCardObservations(upstream: CodexUpstream, listener: () => void): () => void {
+  const listeners = cardObservationListeners.get(upstream) || new Set<() => void>();
+  cardObservationListeners.set(upstream, listeners);
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function notifyCardObservation(upstream: CodexUpstream): void {
+  for (const listener of cardObservationListeners.get(upstream) || []) listener();
+}
 
 function cachedCodexWeeklyUsage(
   upstream: CodexUpstream,
@@ -10834,37 +10911,40 @@ function cachedCodexWeeklyUsage(
 
 async function readCodexWeeklyUsageBounded(
   upstream: CodexUpstream
-): Promise<{ value: CodexWeeklyUsageView | null; timedOut: boolean }> {
+): Promise<{ value: CodexWeeklyUsageView | null; timedOut: boolean; failed: boolean }> {
   const revision = upstream.accountRevision?.();
   const fresh = cachedCodexWeeklyUsage(upstream, true);
-  if (fresh) return { value: fresh, timedOut: false };
+  if (fresh) return { value: fresh, timedOut: false, failed: false };
   const fallback = cachedCodexWeeklyUsage(upstream);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<{
-    value: CodexWeeklyUsageView | null;
-    timedOut: true;
-  }>((resolve) => {
-    timer = setTimeout(
-      () => resolve({ value: fallback, timedOut: true }),
-      CARD_USAGE_TIMEOUT_MS
-    );
-  });
-  const request = readCodexWeeklyUsage(upstream).then((value) => {
-    if (revision !== upstream.accountRevision?.()) return { value: null, timedOut: false as const };
+  const completion = cardUsageCompletions.get(upstream);
+  if (completion && completion.revision === revision && completion.until > Date.now()) {
+    return { value: fallback, timedOut: false, failed: completion.failed };
+  }
+  const pool = cardUsageReads.get(upstream) || new DisplayReadPool<CardUsageResult>(1, () => notifyCardObservation(upstream));
+  cardUsageReads.set(upstream, pool);
+  const key = revision || "default";
+  pool.invalidate(existing => existing !== key);
+  const request = pool.start(key, () => readCodexWeeklyUsage(upstream), ({ value, failed }, deferred) => {
+    if (revision !== upstream.accountRevision?.()) return;
     if (value) {
       const now = Date.now();
       cardUsageCaches.set(upstream, {
-        revision,        freshUntil: now + CARD_USAGE_CACHE_TTL_MS,
+        revision,
+        freshUntil: now + CARD_USAGE_CACHE_TTL_MS,
         retainUntil: now + CARD_USAGE_STALE_TTL_MS,
         value
       });
+      cardUsageCompletions.delete(upstream);
     }
-    if (!value) cardUsageCaches.delete(upstream);
-    return { value, timedOut: false as const };
+    if (!value) cardUsageCompletions.set(upstream, { revision, until: Date.now() + CARD_RUNTIME_CACHE_TTL_MS, failed });
+    if (deferred) notifyCardObservation(upstream);
   });
-  const result = await Promise.race([request, timeout]);
-  if (timer) clearTimeout(timer);
-  return result;
+  if (!request) return { value: fallback, timedOut: true, failed: false };
+  const result = await waitForDisplay(request, CARD_USAGE_TIMEOUT_MS);
+  if (revision !== upstream.accountRevision?.()) return { value: null, timedOut: false, failed: false };
+  return result.pending
+    ? { value: fallback, timedOut: true, failed: false }
+    : { value: result.value.value || fallback, timedOut: false, failed: result.value.failed };
 }
 
 type DashboardRuntimeObservation = {
@@ -10887,8 +10967,11 @@ type DashboardRuntimeCacheEntry = {
   stamp: string;
   coverage: "background" | "liveness";
   freshUntil: number;
+  livenessFreshUntil?: number;
   retainUntil: number;
   observation: DashboardRuntimeObservation;
+  unavailable?: boolean;
+  observedAt: number;
 };
 
 type DashboardRuntimeCandidate = {
@@ -10927,6 +11010,7 @@ const dashboardRuntimeCaches = new WeakMap<
 >();
 
 function invalidateCardRuntimeCache(upstream: CodexUpstream, threadId: string): void {
+  dashboardRuntimeReads.get(upstream)?.invalidate(key => key.includes(`\0${threadId}\0`));
   const cache = dashboardRuntimeCaches.get(upstream);
   if (!cache) return;
   for (const key of cache.keys()) {
@@ -11623,6 +11707,89 @@ function cachedDashboardRuntimes(
   return observations;
 }
 
+function cachedDashboardEnrichment(
+  upstream: CodexUpstream,
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+): CardEnrichmentSummary {
+  const now = Date.now();
+  const cache = dashboardRuntimeCaches.get(upstream);
+  const entries = candidates.flatMap(candidate => {
+    const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
+    return entry?.stamp === candidate.stamp && entry.retainUntil > now ? [entry] : [];
+  });
+  const prefixes = candidates.map(candidate => `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0`);
+  const runtimePending = dashboardRuntimeReads.get(upstream)?.observePending(key => prefixes.some(prefix => key.startsWith(prefix))) || 0;
+  const revision = upstream.accountRevision?.();
+  const usagePending = cardUsageReads.get(upstream)?.observePending(key => key === (revision || "default")) || 0;
+  const usageCompletion = cardUsageCompletions.get(upstream);
+  const dates = entries.map(entry => new Date(entry.observedAt).toISOString());
+  const usage = cachedCodexWeeklyUsage(upstream);
+  if (usage) dates.push(usage.observedAt);
+  return {
+    state: "structural", runtimeRequests: 0, cacheHits: entries.length,
+    timeouts: 0, durationMs: 0, usageTimedOut: false,
+    pendingReads: runtimePending + usagePending,
+    runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
+    usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.failed),
+    oldestObservationAt: dates.sort()[0]
+  };
+}
+
+type DashboardRuntimeResult = Awaited<ReturnType<typeof inspectDashboardRuntime>>;
+const dashboardRuntimeReads = new WeakMap<CodexUpstream, DisplayReadPool<DashboardRuntimeResult>>();
+
+function runtimeReadPool(upstream: CodexUpstream): DisplayReadPool<DashboardRuntimeResult> {
+  const pool = dashboardRuntimeReads.get(upstream) || new DisplayReadPool<DashboardRuntimeResult>(CARD_RUNTIME_PROBE_CONCURRENCY, () => notifyCardObservation(upstream));
+  dashboardRuntimeReads.set(upstream, pool);
+  return pool;
+}
+
+function cacheDashboardRuntime(
+  cache: Map<string, DashboardRuntimeCacheEntry>,
+  candidate: DashboardRuntimeCandidate,
+  result: DashboardRuntimeResult,
+  deferred: boolean
+): void {
+  const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
+  const previous = cache.get(cacheKey);
+  const canRetainLiveness =
+    result.coverage === "background" &&
+    previous?.stamp === candidate.stamp &&
+    previous.coverage === "liveness" &&
+    previous.retainUntil > Date.now();
+  const observation = canRetainLiveness
+    ? { ...result.observation, state: previous.observation.state }
+    : result.observation;
+  const coverage = canRetainLiveness ? "liveness" as const : result.coverage;
+  const stable =
+    observation.backgroundProcessState === "confirmed" &&
+    ["confirmed", "idle", "not-loaded", "busy"].includes(observation.state);
+  if (stable || deferred) {
+    const retained = !stable && observation.state !== "orphaned" && previous?.stamp === candidate.stamp && previous.retainUntil > Date.now()
+      ? previous.observation : observation;
+    cache.delete(cacheKey);
+    cache.set(cacheKey, {
+      stamp: candidate.stamp,
+      coverage,
+      // Reuse unloaded observations too: a late usage completion should not
+      // immediately repeat hundreds of otherwise successful runtime probes.
+      freshUntil: Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
+      livenessFreshUntil: result.coverage === "liveness"
+        ? Date.now() + CARD_RUNTIME_CACHE_TTL_MS : canRetainLiveness ? previous.livenessFreshUntil : undefined,
+      retainUntil: retained === previous?.observation || canRetainLiveness
+        ? previous!.retainUntil : Date.now() + CARD_RUNTIME_STALE_TTL_MS,
+      observation: retained,
+      unavailable: !stable || !!(canRetainLiveness && previous.unavailable),
+      observedAt: retained === previous?.observation || canRetainLiveness ? previous!.observedAt : Date.now()
+    });
+    while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
+      const oldestKey = cache.keys().next().value;
+      if (typeof oldestKey !== "string") break;
+      cache.delete(oldestKey);
+    }
+  }
+}
+
 async function inspectDashboardRuntimes(
   upstream: CodexUpstream,
   candidates: ReadonlyArray<DashboardRuntimeCandidate>
@@ -11633,6 +11800,7 @@ async function inspectDashboardRuntimes(
   cacheHits: number;
   timeouts: number;
   unavailable: number;
+  oldestObservationAt?: string;
 }> {
   const observations = new Map<string, DashboardRuntimeObservation>();
   const cache = dashboardRuntimeCaches.get(upstream) || new Map<string, DashboardRuntimeCacheEntry>();
@@ -11641,60 +11809,36 @@ async function inspectDashboardRuntimes(
   for (const [key, entry] of cache) {
     if (entry.retainUntil <= now) cache.delete(key);
   }
+  let unavailable = 0;
   const pending = candidates.filter((candidate) => {
     const key = dashboardRuntimeCacheKey(candidate.thread);
     const cached = cache.get(key);
     if (!cached || cached.stamp !== candidate.stamp || cached.retainUntil <= now) return true;
     observations.set(candidate.agentId, cached.observation);
-    const coverageSatisfied = !candidate.inspectLiveness || cached.coverage === "liveness";
-    return cached.freshUntil <= now || !coverageSatisfied;
+    const coverageSatisfied = !candidate.inspectLiveness ||
+      (cached.coverage === "liveness" && (cached.livenessFreshUntil || 0) > now);
+    const needsRead = cached.freshUntil <= now || !coverageSatisfied;
+    if (!needsRead && cached.unavailable) unavailable += 1;
+    return needsRead;
   });
   const cacheHits = candidates.length - pending.length;
+  // When reads outlast the display budget, let the next periodic refresh reach
+  // unobserved/older threads instead of always repeating the same first workers.
+  pending.sort((left, right) => {
+    const checkedAt = (candidate: DashboardRuntimeCandidate) => {
+      const entry = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+      return entry?.stamp === candidate.stamp ? entry.freshUntil : 0;
+    };
+    return checkedAt(left) - checkedAt(right);
+  });
   const deadline = Date.now() + CARD_RUNTIME_BUDGET_MS;
   let timedOut = 0;
-  let unavailable = 0;
   let requests = 0;
-  const inspectWithTimeout = (
-    candidate: DashboardRuntimeCandidate,
-    timeoutMs: number
-  ): Promise<{
-    observation: DashboardRuntimeObservation;
-    requests: number;
-    coverage: DashboardRuntimeCacheEntry["coverage"];
-  } | null> => new Promise((resolve) => {
-    let settled = false;
-    let acceptingFollowupRequests = true;
-    const finish = (
-      value: {
-        observation: DashboardRuntimeObservation;
-        requests: number;
-        coverage: DashboardRuntimeCacheEntry["coverage"];
-      } | null
-    ): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      acceptingFollowupRequests = false;
-      finish(null);
-    }, timeoutMs);
-    void inspectDashboardRuntime(
-      upstream,
-      candidate,
-      () => acceptingFollowupRequests
-    )
-      .then((value) => finish(value), () => finish({
-        observation: {
-          state: "unknown",
-          backgroundProcessState: "unknown",
-          backgroundProcessCount: 0
-        },
-        requests: 1,
-        coverage: candidate.inspectLiveness ? "liveness" : "background"
-      }));
-  });
+  const pool = runtimeReadPool(upstream);
+  for (const candidate of candidates) {
+    const prefix = `${dashboardRuntimeCacheKey(candidate.thread)}\0`;
+    pool.invalidate(key => key.startsWith(prefix) && !key.startsWith(`${prefix}${candidate.stamp}\0`));
+  }
   const worker = async (
     queue: DashboardRuntimeCandidate[],
     cursor: { value: number }
@@ -11709,55 +11853,31 @@ async function inspectDashboardRuntimes(
         : upstream.listLoadedBackgroundTerminals
           ? 1
           : 0;
-      requests += initiallyCountedRequests;
-      const result = await inspectWithTimeout(
-        candidate,
-        Math.max(1, Math.min(CARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
+      let started = false;
+      const request = pool.start(
+        `${dashboardRuntimeCacheKey(candidate.thread)}\0${candidate.stamp}\0${candidate.inspectLiveness}`,
+        isCurrent => {
+          started = true;
+          requests += initiallyCountedRequests;
+          return inspectDashboardRuntime(upstream, candidate, isCurrent);
+        },
+        (value, deferred) => {
+          cacheDashboardRuntime(cache, candidate, value, deferred);
+          if (deferred) notifyCardObservation(upstream);
+        }
       );
+      const waited = request ? await waitForDisplay(
+        request, Math.max(1, Math.min(CARD_RUNTIME_PROBE_TIMEOUT_MS, remainingMs))
+      ) : { pending: true as const };
+      const result = !waited.pending && !request?.invalidated ? waited.value : null;
       if (result) {
         if (result.observation.state === "unknown" || result.observation.backgroundProcessState === "unknown") unavailable += 1;
-        requests += Math.max(0, result.requests - initiallyCountedRequests);
-        const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
-        const previous = cache.get(cacheKey);
-        const canRetainLiveness =
-          result.coverage === "background" &&
-          previous?.stamp === candidate.stamp &&
-          previous.coverage === "liveness" &&
-          previous.retainUntil > Date.now();
-        const observation = canRetainLiveness
-          ? { ...result.observation, state: previous.observation.state }
-          : result.observation;
-        const coverage = canRetainLiveness ? "liveness" as const : result.coverage;
-        const stable =
-          observation.backgroundProcessState === "confirmed" &&
-          ["confirmed", "idle", "not-loaded", "busy"].includes(observation.state);
-        if (stable || observation.state === "orphaned") {
-          observations.set(candidate.agentId, observation);
-        }
-        else if (!observations.has(candidate.agentId)) {
-          observations.set(candidate.agentId, observation);
-        }
-        if (
-          stable
-        ) {
-          cache.delete(cacheKey);
-          cache.set(cacheKey, {
-            stamp: candidate.stamp,
-            coverage,
-            // An unloaded thread is cheap to re-check and can become loaded
-            // independently of bridge state, while the retained observation
-            // still keeps the next structural paint stable.
-            freshUntil: observation.state === "not-loaded"
-              ? Date.now()
-              : Date.now() + CARD_RUNTIME_CACHE_TTL_MS,
-            retainUntil: Date.now() + CARD_RUNTIME_STALE_TTL_MS,
-            observation
-          });
-          while (cache.size > CARD_RUNTIME_CACHE_MAX_ENTRIES) {
-            const oldestKey = cache.keys().next().value;
-            if (typeof oldestKey !== "string") break;
-            cache.delete(oldestKey);
-          }
+        if (started) requests += Math.max(0, result.requests - initiallyCountedRequests);
+        const cached = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+        const observation = cached?.stamp === candidate.stamp ? cached.observation : result.observation;
+        if (!observations.has(candidate.agentId) || result.observation.state === "orphaned" ||
+            result.observation.backgroundProcessState === "confirmed") {
+          observations.set(candidate.agentId, result.observation.state === "orphaned" ? result.observation : observation);
         }
       } else {
         timedOut += 1;
@@ -11768,10 +11888,8 @@ async function inspectDashboardRuntimes(
             backgroundProcessCount: 0
           });
         }
-        // The upstream API has no per-request cancellation contract. Do not
-        // launch another probe from this worker while its timed-out request may
-        // still be running, so the real in-flight fan-out stays bounded by the
-        // worker count rather than only appearing bounded to the caller.
+        // Stop this display worker at its budget. The shared pool continues
+        // to hold the physical slot across subsequent snapshot requests.
         return;
       }
     }
@@ -11830,7 +11948,13 @@ async function inspectDashboardRuntimes(
     requests,
     cacheHits,
     timeouts: timedOut,
-    unavailable
+    unavailable,
+    oldestObservationAt: candidates.reduce<string | undefined>((oldest, candidate) => {
+      const cached = cache.get(dashboardRuntimeCacheKey(candidate.thread));
+      if (cached?.stamp !== candidate.stamp || cached.retainUntil <= Date.now()) return oldest;
+      const observed = new Date(cached.observedAt).toISOString();
+      return oldest && oldest < observed ? oldest : observed;
+    }, undefined)
   };
 }
 
@@ -11960,7 +12084,10 @@ async function buildDashboardView(
           timeouts: runtimeInspection.timeouts,
           ...(runtimeInspection.unavailable > 0 ? { runtimeUnavailable: runtimeInspection.unavailable } : {}),
           durationMs: Math.max(0, Date.now() - startedAt),
-          usageTimedOut: usage.timedOut
+          usageTimedOut: usage.timedOut,
+          pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
+          usageUnavailable: usage.failed,
+          oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
         }
       }
     );
@@ -12487,14 +12614,7 @@ async function buildDashboardView(
     scope: "bridge-wide",
     statusSource: "codex-runtime-only",
     coverage: "bridge-known-retained",
-    enrichment: enrichment?.summary || {
-      state: "structural",
-      runtimeRequests: 0,
-      cacheHits: runtimeByAgent.size,
-      timeouts: 0,
-      durationMs: 0,
-      usageTimedOut: false
-    },
+    enrichment: enrichment?.summary || cachedDashboardEnrichment(upstream, runtimeCacheCandidates),
     weeklyUsage,
     counts: {
       trackedProjects,
@@ -13046,7 +13166,7 @@ async function buildActivityView(
     ),
     inspectRuntime
       ? readCodexWeeklyUsageBounded(upstream)
-      : Promise.resolve({ value: cachedCodexWeeklyUsage(upstream), timedOut: false })
+      : Promise.resolve({ value: cachedCodexWeeklyUsage(upstream), timedOut: false, failed: false })
   ]);
   modelCatalog = projectionModelCatalog(modelCatalog);
   const weeklyUsage = usage.value;
@@ -13525,7 +13645,10 @@ async function buildActivityView(
         timeouts: legacy.enrichmentStats.timeouts,
         ...((legacy.enrichmentStats.unavailable || 0) > 0 ? { runtimeUnavailable: legacy.enrichmentStats.unavailable } : {}),
         durationMs: inspectRuntime ? Math.max(0, Date.now() - enrichmentStartedAt) : 0,
-        usageTimedOut: usage.timedOut
+        usageTimedOut: usage.timedOut,
+        pendingReads: legacy.enrichmentStats.timeouts + (usage.timedOut ? 1 : 0),
+        usageUnavailable: usage.failed,
+        oldestObservationAt: [legacy.enrichmentStats.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
       },
       weeklyUsage,
       feed: {

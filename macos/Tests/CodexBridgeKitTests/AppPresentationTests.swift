@@ -1175,7 +1175,8 @@ final class AppPresentationTests: XCTestCase {
                     "constraints": ["allowDelegation": true]
                 ],
                 catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
-            )
+            ),
+            helloDelayNanoseconds: 200_000_000
         )
         let model = AppModel(
             loginItemController: TestLoginItemController(status: .notRegistered),
@@ -1187,7 +1188,14 @@ final class AppPresentationTests: XCTestCase {
             }
         )
 
-        await model.start()
+        let startup = Task { @MainActor in await model.start() }
+        for _ in 0..<50 {
+            if client.helloCallCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        model.refreshAfterSystemEvent()
+        await startup.value
+        XCTAssertGreaterThanOrEqual(client.helloCallCount, 2)
 
         XCTAssertTrue(model.isRemoteClient)
         XCTAssertNil(model.helperStatus)
@@ -1494,6 +1502,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private let settingsValue: SettingsSnapshot
     private let settingsAfterUpdate: SettingsSnapshot?
     private let dashboardDelayNanoseconds: UInt64
+    private let helloDelayNanoseconds: UInt64
     private let lock = NSLock()
     private var runtimeCalls = 0
     private var settingsUpdateCalls = 0
@@ -1501,6 +1510,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private var factoryCalls = 0
     private var closeCalls = 0
     private var remainingHelloFailures: Int
+    private var helloCalls = 0
 
     init(
         profile: RemoteServerProfile,
@@ -1508,7 +1518,8 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         settings: SettingsSnapshot,
         settingsAfterUpdate: SettingsSnapshot? = nil,
         dashboardDelayNanoseconds: UInt64 = 0,
-        helloFailures: Int = 0
+        helloFailures: Int = 0,
+        helloDelayNanoseconds: UInt64 = 0
     ) {
         helloValue = RemoteCompanionHello(
             protocol: RemoteServerProtocolInfo(
@@ -1532,10 +1543,12 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         settingsValue = settings
         self.settingsAfterUpdate = settingsAfterUpdate
         self.dashboardDelayNanoseconds = dashboardDelayNanoseconds
+        self.helloDelayNanoseconds = helloDelayNanoseconds
         remainingHelloFailures = helloFailures
     }
 
     var runtimeStatusCallCount: Int { lock.withLock { runtimeCalls } }
+    var helloCallCount: Int { lock.withLock { helloCalls } }
     var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
     var lastSettingsMutation: SettingsMutation? { lock.withLock { latestSettingsMutation } }
     var factoryCallCount: Int { lock.withLock { factoryCalls } }
@@ -1551,11 +1564,13 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
 
     func hello() async throws -> RemoteCompanionHello {
         let shouldFail = lock.withLock {
+            helloCalls += 1
             guard remainingHelloFailures > 0 else { return false }
             remainingHelloFailures -= 1
             return true
         }
         if shouldFail { throw RemoteCompanionError.unauthorized }
+        if helloDelayNanoseconds > 0 { try await Task.sleep(nanoseconds: helloDelayNanoseconds) }
         return helloValue
     }
 
@@ -2146,5 +2161,232 @@ extension AppPresentationTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertFalse(model.dashboardEnrichmentFailed)
+    }
+}
+
+
+final class ConnectionObservationRecoveryTests: XCTestCase {
+    @MainActor
+    func testFailedObservationDoesNotClaimTheServerStopped() throws {
+        let model = AppModel()
+        defer { model.cancelAllPolling() }
+        let failure = try helperStatus(bridgeConnected: false)
+        let start = Date()
+        model.recordLocalConnectionStatus(failure, at: start)
+        XCTAssertEqual(model.health, .checking)
+        model.recordLocalConnectionStatus(failure, at: start.addingTimeInterval(9))
+        XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.helperStatus?.phase, "running")
+        XCTAssertFalse(model.runtimeUnavailableExplanation.contains("중지되었습니다"))
+        XCTAssertNil(model.helperStatusErrorMessage)
+        XCTAssertNil(model.runtimeErrorMessage)
+        XCTAssertNil(model.statusErrorMessage)
+        XCTAssertNil(model.connectionErrorMessage)
+    }
+
+    @MainActor
+    func testSleepKeepsMenuCheckingUntilAFreshObservation() throws {
+        let model = AppModel()
+        defer { model.cancelAllPolling() }
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false))
+        XCTAssertEqual(model.health, .checking)
+        model.prepareForSystemSleep()
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        XCTAssertFalse(model.localConnectionRecovery.isChecking)
+        XCTAssertEqual(model.health, .checking)
+    }
+
+    @MainActor
+    func testObservationGapReschedulesTheExpiryForTheFreshWindow() async throws {
+        let model = AppModel()
+        defer { model.cancelAllPolling() }
+        let failure = try helperStatus(bridgeConnected: false)
+        let start = Date()
+        model.recordLocalConnectionStatus(failure, at: start)
+        try await Task.sleep(for: .seconds(7))
+        // Simulate an observation gap without willSleep, as distinct from a
+        // system sleep that calls prepareForSystemSleep and cancels the timer.
+        let resumed = start.addingTimeInterval(60)
+        model.recordLocalConnectionStatus(failure, at: resumed)
+        XCTAssertTrue(model.localConnectionRecovery.isChecking)
+        try await Task.sleep(for: .milliseconds(1300))
+        XCTAssertTrue(model.localConnectionRecovery.isChecking)
+        XCTAssertEqual(model.health, .checking)
+        var expectedWindow = ConnectionRecoveryWindow()
+        expectedWindow.observe(available: false, retryable: true, at: resumed)
+        expectedWindow.observe(available: false, retryable: true, at: resumed.addingTimeInterval(1.3))
+        XCTAssertTrue(expectedWindow.isChecking)
+    }
+
+    @MainActor
+    func testWindowEntryRecoveryRefreshesDashboardImmediately() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-wake-rpc-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let dashboard = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "recovered")), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            if method == "helper.health" { return NativeFixtureReply(body: "{\"result\":\(status)}", delay: 0.6) }
+            if method == "auth.status" { return NativeFixtureReply(body: #"{"result":{"installed":true,"authenticated":true,"summary":"ready"}}"#) }
+            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            if method == "dashboard.snapshot" { return NativeFixtureReply(body: "{\"result\":\(dashboard)}") }
+            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now.addingTimeInterval(-9))
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now)
+        XCTAssertFalse(model.isBridgeConnectionChecking)
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(2200))
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
+        XCTAssertEqual(model.dashboard?.scope, "recovered")
+    }
+}
+
+
+private final class RecoveryQuietChanges: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    func reply() -> NativeFixtureReply {
+        let n = lock.withLock { reads += 1; return reads }
+        return NativeFixtureReply(body: n == 1
+            ? #"{"result":{"revision":"quiet:0","topics":["dashboard","settings"]}}"#
+            : #"{"result":{"revision":"quiet:0","topics":[]}}"#,
+            delay: n == 1 ? 0 : 25)
+    }
+}
+
+extension ConnectionObservationRecoveryTests {
+    @MainActor
+    func testRecoveryRefreshesDashboardWithAnExistingQuietSubscription() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-wake-sub-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "live-subscription")), as: UTF8.self)
+        let changes = RecoveryQuietChanges()
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            if method == "helper.health" { return NativeFixtureReply(body: "{\"result\":\(status)}", delay: 0.6) }
+            if method == "auth.status" { return NativeFixtureReply(body: #"{"result":{"installed":true,"authenticated":true,"summary":"ready"}}"#) }
+            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            if method == "changes.wait" { return changes.reply() }
+            if method == "dashboard.snapshot" { return NativeFixtureReply(body: "{\"result\":\(snapshot)}") }
+            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(2200))
+        XCTAssertTrue(model.companionChangesAvailable)
+        XCTAssertEqual(model.dashboard?.scope, "live-subscription")
+        let baseline = bridge.count("dashboard.snapshot")
+        let now = Date()
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now.addingTimeInterval(-9))
+        model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now)
+        await model.refreshDashboard(enrich: false)
+        XCTAssertNil(model.dashboard)
+        // Re-enqueue the same independent status/dashboard refreshes used for
+        // system events, with the existing companion change watcher retained.
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(1500))
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertTrue(model.companionChangesAvailable)
+        XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), baseline)
+        XCTAssertEqual(model.dashboard?.scope, "live-subscription")
+    }
+}
+
+
+extension ConnectionObservationRecoveryTests {
+    @MainActor
+    func testStructuralRefreshPreservesAnUnfinishedEnrichment() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-continue-details-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func reply(_ scope: String, delay: TimeInterval = 0) throws -> NativeFixtureReply {
+            let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: scope)), as: UTF8.self)
+            return NativeFixtureReply(body: "{\"result\":\(snapshot)}", delay: delay)
+        }
+        let replies = try TestDashboardReplySequence([
+            reply("initial"), reply("obsolete-enrichment", delay: 0.6),
+            reply("structural-refresh"), reply("current-enrichment")
+        ])
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { _ in replies.next() }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        await model.refreshDashboard()
+        for _ in 0..<50 {
+            if bridge.count("dashboard.snapshot") == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 2)
+        await model.refreshDashboard(enrich: false)
+        for _ in 0..<50 {
+            if model.dashboard?.scope == "current-enrichment" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.dashboard?.scope, "current-enrichment")
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertEqual(model.dashboard?.scope, "current-enrichment")
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 4)
+    }
+
+    @MainActor
+    func testLateEnrichmentNoticeAppliesCachedResultsWithoutStartingAnotherRead() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-late-details-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let status = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let base = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+        var pending = try JSONSerialization.jsonObject(with: Data(base.utf8)) as! [String: Any]
+        pending["enrichment"] = ["state": "enriched", "runtimeRequests": 0, "cacheHits": 0, "timeouts": 0,
+                                  "durationMs": 1500, "usageTimedOut": true, "pendingReads": 1,
+                                  "oldestObservationAt": "2026-09-09T00:00:00.000Z"]
+        let pendingBody = String(decoding: try JSONSerialization.data(withJSONObject: pending), as: UTF8.self)
+        pending["enrichment"] = ["state": "structural", "runtimeRequests": 0, "cacheHits": 0, "timeouts": 0,
+                                  "durationMs": 0, "usageTimedOut": false, "pendingReads": 0]
+        let completeBody = String(decoding: try JSONSerialization.data(withJSONObject: pending), as: UTF8.self)
+        let healthy = NativeFixtureReply(body: "{\"result\":\(completeBody)}")
+        let snapshots = TestDashboardReplySequence([healthy, NativeFixtureReply(body: "{\"result\":\(pendingBody)}"), healthy])
+        let changes = TestDashboardReplySequence([
+            NativeFixtureReply(body: #"{"result":{"revision":"late:0","topics":[]}}"#),
+            NativeFixtureReply(body: #"{"result":{"revision":"late:1","topics":["enrichment"]}}"#, delay: 1),
+            NativeFixtureReply(body: #"{"result":{"revision":"late:1","topics":[]}}"#, delay: 25)
+        ])
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            if method == "helper.health" { return NativeFixtureReply(body: "{\"result\":\(status)}") }
+            return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            if method == "changes.wait" { return changes.next() }
+            return snapshots.next()
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.setDashboardVisible(true)
+        for _ in 0..<40 {
+            if model.dashboardEnrichmentPending { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(model.dashboardEnrichmentPending)
+        XCTAssertFalse(model.dashboardEnrichmentFailed)
+        XCTAssertNotNil(model.dashboardObservationDate)
+        for _ in 0..<100 {
+            if !model.dashboardEnrichmentPending { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(model.dashboardEnrichmentPending)
+        XCTAssertFalse(model.dashboardEnrichmentFailed)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 3)
     }
 }

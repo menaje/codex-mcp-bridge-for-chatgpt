@@ -8,7 +8,16 @@ public struct ConnectionRecoveryWindow: Sendable {
 
     public init() {}
 
-    public mutating func expire() {
+    public var deadline: Date? { isChecking ? failedSince?.addingTimeInterval(8) : nil }
+
+    public mutating func begin(at now: Date = Date()) {
+        failedSince = now
+        lastObservation = now
+        isChecking = true
+    }
+
+    public mutating func expire(ifDeadline expected: Date? = nil) {
+        if let expected, deadline != expected { return }
         isChecking = false
     }
 

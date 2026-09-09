@@ -60,6 +60,8 @@ import {
   type UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
@@ -526,6 +528,7 @@ class RestartAwareUpstream extends FakeUpstream {
 class ProbeAwareUpstream extends FakeUpstream {
   public probeCalls: string[] = [];
   public hangProbe = false;
+  public finishProbeTimeout?: () => void;
   public probe: CodexThreadResumeProbe = {
     state: "resumable",
     runtimeStatus: "idle",
@@ -534,7 +537,9 @@ class ProbeAwareUpstream extends FakeUpstream {
 
   async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
     this.probeCalls.push(threadId);
-    if (this.hangProbe) return new Promise(() => undefined);
+    if (this.hangProbe) return new Promise((_, reject) => {
+      this.finishProbeTimeout = () => reject(new Error("fixture RPC deadline"));
+    });
     return { ...this.probe, threadId } as CodexThreadResumeProbe;
   }
 }
@@ -1675,6 +1680,187 @@ describe("bridge tools", () => {
 
     await close();
   }, 5_000);
+
+  it("publishes late usage once, shares refreshes, and rejects a result from a replaced account", async () => {
+    for (const replaceAccount of [false, true]) {
+      const root = temporaryRoot();
+      const upstream = new WeeklyUsageUpstream();
+      let revision = "account-a";
+      Object.assign(upstream, { accountRevision: () => revision });
+      const usage = await upstream.readAccountRateLimits();
+      let resolve!: (value: CodexWeeklyUsage) => void;
+      const read = vi.spyOn(upstream, "readAccountRateLimits").mockImplementation(() => new Promise(done => { resolve = done; }));
+      const { applicationService, close } = await connectTestClient(configFor(root), upstream);
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const first = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+        expect(first.enrichment).toMatchObject({ usageTimedOut: true, pendingReads: 1, usageUnavailable: false });
+        const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await new Promise<void>(done => setImmediate(done));
+        expect(read).toHaveBeenCalledTimes(1);
+        if (replaceAccount) revision = "account-b";
+        resolve(usage);
+        await repeated;
+        const structural = await applicationService.dashboardSnapshot();
+        if (replaceAccount) {
+          expect(structural.weeklyUsage).toBeNull();
+          expect(notice).not.toHaveBeenCalledWith("enrichment");
+        } else {
+          expect(structural.weeklyUsage).toMatchObject({ remainingPercent: 64.5 });
+          expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(1);
+          expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment)
+            .toMatchObject({ usageTimedOut: false, pendingReads: 0 });
+          expect(read).toHaveBeenCalledTimes(1);
+        }
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("keeps a usage failure visible after the retry cooldown until an actual recovery", async () => {
+    const upstream = new WeeklyUsageUpstream();
+    const usage = await upstream.readAccountRateLimits();
+    const read = vi.spyOn(upstream, "readAccountRateLimits").mockRejectedValue(new Error("usage unavailable"));
+    const { applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(true);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockResolvedValue(usage);
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("reports pending account reads and their late success or failure in cached snapshots", async () => {
+    for (const outcome of ["success", "failure", "replaced"]) {
+      const fails = outcome === "failure", replaced = outcome === "replaced";
+      const root = temporaryRoot();
+      const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+      const service = new CodexService({ HOME: root, PATH: "", CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+      config.codexService = service;
+      let revision = "account-a";
+      vi.spyOn(service, "cacheRevision").mockImplementation(() => revision);
+      const value = projectCodexAccount({ account: { type: "chatgpt", planType: "plus" } }, {}, Date.now() - 10_000);
+      let settle!: () => void;
+      const read = vi.spyOn(service, "readCliAccount").mockImplementation(() => new Promise((resolve, reject) => {
+        settle = () => fails ? reject(new Error("account transport deadline")) : resolve(value);
+      }));
+      const { applicationService, close } = await connectTestClient(config, new FakeUpstream());
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const enriched = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        const pending = await applicationService.dashboardSnapshot();
+        expect(pending.enrichment).toMatchObject({ state: "structural", pendingReads: 1, usageUnavailable: false });
+        if (replaced) revision = "account-b";
+        settle();
+        expect((await enriched).enrichment.usageUnavailable).toBe(fails);
+        const complete = await applicationService.dashboardSnapshot();
+        expect(complete.enrichment).toMatchObject({ state: "structural", pendingReads: 0, usageUnavailable: fails });
+        expect(complete.codexAccount).toEqual(fails || replaced ? null : value);
+        if (!fails && !replaced) expect(complete.enrichment.oldestObservationAt).toBe(new Date(value.observedAt).toISOString());
+        expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(replaced ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(1);
+        if (fails) {
+          const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16_000);
+          try {
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+            expect(read).toHaveBeenCalledTimes(1);
+            read.mockResolvedValue(value);
+            expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+            expect(read).toHaveBeenCalledTimes(2);
+          } finally { clock.mockRestore(); }
+        }
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("reaches previously unobserved threads on the next refresh after slow probes settle", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const pending: Array<() => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(threadId => new Promise(resolve => {
+      pending.push(() => resolve({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+    }));
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Slow ${index}` });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `slow-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+      }
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.pendingReads).toBe(8);
+      expect(probe).toHaveBeenCalledTimes(8);
+      const firstThreads = new Set(probe.mock.calls.map(([threadId]) => threadId));
+      for (const resolve of pending.splice(0)) resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+      const next = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(16));
+      expect(probe.mock.calls.slice(8, 10).every(([threadId]) => !firstThreads.has(threadId))).toBe(true);
+      probe.mockImplementation(async threadId => ({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+      for (const resolve of pending.splice(0)) resolve();
+      await next;
+      expect(new Set(probe.mock.calls.map(([threadId]) => threadId)).size).toBe(10);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("does not renew liveness freshness when only background processes were refreshed", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: `Coverage activity ${index}` });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Coverage ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `coverage-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({
+          activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh", operation: "start",
+          cwd: root, sandbox: "read-only", scopeId: SCOPE_A, requestId: `coverage-request-${index}`,
+          requestHash: `coverage-hash-${index}`, requestHashVersion: 7, exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(`coverage-${index}`));
+        await job.promise;
+      }
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(10);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
+      await applicationService.dashboardSnapshot({ limit: 5, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(15);
+      expect(upstream.loadedTerminalReads).toHaveLength(5);
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(20);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("serves health from memory without pruning jobs or probing Codex", async () => {
+    const upstream = new HangingCardEnrichmentUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    const count = vi.spyOn(jobs, "runningCount").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    const list = vi.spyOn(jobs, "list").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    try {
+      expect(applicationService.runtimeHealth!()).toMatchObject({ acceptingNewJobs: true, activeJobs: 0, pendingAdmissions: 0 });
+      expect(count).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+      expect(upstream.probeCalls).toHaveLength(0);
+      await expect(applicationService.runtimeSnapshot()).rejects.toThrow("pruning unavailable");
+    } finally { count.mockRestore(); list.mockRestore(); await close(); }
+  });
 
   it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
     const root = temporaryRoot();
@@ -3044,6 +3230,7 @@ describe("bridge tools", () => {
       runtimeProbeSkippedAgents: 0
     });
 
+    const afterCache = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
     upstream.probe = {
       state: "unknown",
       reason: "transient",
@@ -3069,6 +3256,11 @@ describe("bridge tools", () => {
     expect((timedOut as { structuredContent?: any }).structuredContent?.counts)
       .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 1 });
     upstream.hangProbe = false;
+    upstream.finishProbeTimeout?.();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // The final transport failure briefly retains the last display value;
+    // a later reconciliation can start a new probe.
+    const afterFailure = afterCache.mockReturnValue(Date.now() + 5_100);
 
     upstream.probe = {
       state: "orphaned",
@@ -3081,6 +3273,7 @@ describe("bridge tools", () => {
       arguments: snapshotArguments
     });
     const orphanedView = (orphaned as { structuredContent?: any }).structuredContent;
+    afterFailure.mockRestore();
     expect(orphanedView.counts).toMatchObject({ needsAttention: 1, orphanedAgents: 1 });
     expect(orphanedView.activeRows).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: "orphaned" })
@@ -3117,13 +3310,15 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("does not start a follow-up terminal read after a runtime probe times out", async () => {
+  it("finishes a slow runtime observation, caches it, and invalidates the display without duplicating the probe", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredProbeWithLoadedTerminalUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
       configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
       upstream
     );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
     await runTask(client, {
       prompt: "create one App Server thread for a bounded enrichment timeout"
     });
@@ -3146,11 +3341,50 @@ describe("bridge tools", () => {
     });
     expect(upstream.loadedTerminalReads).toBe(0);
 
+    const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(upstream.probeCalls).toHaveLength(1);
+
     upstream.resolveProbe({ state: "resumable", runtimeStatus: "idle" });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(upstream.loadedTerminalReads).toBe(0);
+    expect(upstream.loadedTerminalReads).toBe(1);
+    await repeated;
+    expect(notice).toHaveBeenCalledWith("enrichment");
+    const recovered = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+    expect(recovered.enrichment).toMatchObject({ timeouts: 0, pendingReads: 0, runtimeRequests: 0 });
+    expect(upstream.probeCalls).toHaveLength(1);
+    unsubscribe();
 
     await close();
+  });
+
+  it("discards a late runtime result after a newer Agent version has been requested", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeWithLoadedTerminalUpstream();
+    const resolutions: Array<(value: CodexThreadResumeProbe) => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(() => new Promise(resolve => resolutions.push(resolve)));
+    const { client, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
+    try {
+      await runTask(client, { prompt: "create a thread for versioned observations" });
+      await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      const agent = jobs.listAllAgents()[0]!;
+      jobs.renameAgent(agent.agentId, "New version");
+      const current = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+      resolutions[0]!({ state: "resumable", runtimeStatus: "idle", threadId: "thread-1" });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(upstream.loadedTerminalReads).toBe(0);
+      expect(notice).not.toHaveBeenCalledWith("enrichment");
+      resolutions[1]!({ state: "resumable", runtimeStatus: "notLoaded", threadId: "thread-1" });
+      await current;
+      const cached = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      expect(cached.enrichment).toMatchObject({ pendingReads: 0, runtimeRequests: 0, cacheHits: 1 });
+      expect(probe).toHaveBeenCalledTimes(2);
+    } finally { unsubscribe(); await close(); }
   });
 
   it("marks a retained running Job as liveness-unknown when App Server reports an idle thread", async () => {

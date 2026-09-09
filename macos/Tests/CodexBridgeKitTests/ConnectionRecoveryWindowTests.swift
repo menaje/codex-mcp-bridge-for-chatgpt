@@ -2,6 +2,18 @@ import CodexBridgeKit
 import XCTest
 
 final class ConnectionRecoveryWindowTests: XCTestCase {
+    func testOldExpiryCannotEndANewRecoveryWindow() {
+        var window = ConnectionRecoveryWindow()
+        let start = Date(timeIntervalSince1970: 100)
+        window.begin(at: start)
+        let oldDeadline = window.deadline!
+        window.observe(available: false, retryable: true, at: start.addingTimeInterval(60))
+        window.expire(ifDeadline: oldDeadline)
+        XCTAssertTrue(window.isChecking)
+        window.expire(ifDeadline: window.deadline)
+        XCTAssertFalse(window.isChecking)
+    }
+
     func testTransientFailureRecoversWithoutDeclaringAnOutage() {
         var window = ConnectionRecoveryWindow()
         let start = Date(timeIntervalSince1970: 100)

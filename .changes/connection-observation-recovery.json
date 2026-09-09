@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "잠금 해제 후 연결 표시와 화면 갱신을 복구하고, 느린 추가정보 응답을 중복 조회 없이 받아 반영합니다.",
+  "breaking": false,
+  "migration": null
+}

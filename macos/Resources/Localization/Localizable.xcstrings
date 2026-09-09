@@ -30659,6 +30659,241 @@
         }
       }
     },
+    "서버 프로세스는 실행 중이지만 연결 응답을 확인하지 못했습니다.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "서버 프로세스는 실행 중이지만 연결 응답을 확인하지 못했습니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server process is running, but its connection could not be confirmed."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サーバープロセスは実行中ですが、接続応答を確認できませんでした。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器进程正在运行，但未能确认连接响应。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器程序正在執行，但無法確認連線回應。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proceso del servidor está en ejecución, pero no se pudo confirmar la conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le processus du serveur est en cours, mais la connexion n’a pas pu être confirmée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Serverprozess läuft, aber die Verbindung konnte nicht bestätigt werden."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O processo do servidor está em execução, mas não foi possível confirmar a conexão."
+          }
+        }
+      }
+    },
+    "브리지 서버의 응답을 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 서버의 응답을 확인하지 못했습니다. 잠시 후 다시 확인해 주세요."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The bridge server did not respond. Please try again shortly."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジサーバーの応答を確認できませんでした。しばらくしてから再度お試しください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能确认桥接服务器的响应。请稍后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法確認橋接伺服器的回應。請稍後再試。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo confirmar la respuesta del servidor puente. Vuelve a intentarlo en unos momentos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réponse du serveur passerelle n’a pas pu être confirmée. Réessayez dans quelques instants."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Antwort des Bridge-Servers konnte nicht bestätigt werden. Bitte versuchen Sie es gleich erneut."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível confirmar a resposta do servidor da ponte. Tente novamente em instantes."
+          }
+        }
+      }
+    },
+    "추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updating additional details. Confirmed information is shown as it becomes available."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追加情報を更新しています。確認できた情報から表示します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在更新补充信息。将先显示已确认的信息。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在更新補充資訊。將先顯示已確認的資訊。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualizando los detalles adicionales. La información confirmada se muestra a medida que está disponible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mise à jour des détails supplémentaires. Les informations confirmées s’affichent dès qu’elles sont disponibles."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zusätzliche Details werden aktualisiert. Bestätigte Informationen werden angezeigt, sobald sie verfügbar sind."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualizando os detalhes adicionais. As informações confirmadas são exibidas assim que ficam disponíveis."
+          }
+        }
+      }
+    },
+    "추가 정보 기준: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Details observed: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "추가 정보 기준: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追加情報の確認日時: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "补充信息确认时间：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "補充資訊確認時間：%@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detalles consultados: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détails vérifiés : %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Details geprüft: %@"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detalhes verificados: %@"
+          }
+        }
+      }
+    },
     "Ultra 추론 허용": {
       "localizations": {
         "en": {

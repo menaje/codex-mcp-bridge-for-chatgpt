@@ -29,9 +29,19 @@ public struct CardEnrichment: Codable, Sendable {
     public let durationMs: Int
     public let usageTimedOut: Bool
     public let runtimeUnavailable: Int?
+    public let pendingReads: Int?
+    public let usageUnavailable: Bool?
+    public let oldestObservationAt: String?
+
+    public var isUpdating: Bool { (pendingReads ?? 0) > 0 }
+
+    public var hasFailures: Bool {
+        if pendingReads != nil { return (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true }
+        return isIncomplete
+    }
 
     public var isIncomplete: Bool {
-        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0
+        usageTimedOut || timeouts > 0 || (runtimeUnavailable ?? 0) > 0 || usageUnavailable == true
     }
 }
 
