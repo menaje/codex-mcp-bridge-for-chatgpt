@@ -153,6 +153,25 @@
       "workerRecoveryTimeout": 1,
       "helperExitAndCleanupTimeout": 1,
       "fixtureIsolationCorrected": true
+    },
+    "integratedDevFullRun": {
+      "executed": 947,
+      "passed": 940,
+      "testTimeouts": 7,
+      "files": 78,
+      "workers": 1,
+      "seconds": 545.2
+    },
+    "firstSelectedRetry": {
+      "passed": 12,
+      "testTimeouts": 1
+    },
+    "paginationFixtureCorrection": {
+      "seededCompletedJobs": 14,
+      "assertionsPreserved": true,
+      "passed": 1,
+      "durationMs": 304,
+      "timeoutsChanged": false
     }
   },
   "immutableUI": {

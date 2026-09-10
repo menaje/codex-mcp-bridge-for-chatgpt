@@ -2306,7 +2306,7 @@ describe("bridge tools", () => {
 
   it("filters status-card counts, projects, history and pages before pagination", async () => {
     const root = temporaryRoot();
-    const { client, rawCallTool, settings, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(configFor(root), new FakeUpstream());
     try {
       const secondRoot = path.join(root, "second-project");
       mkdirSync(secondRoot);
@@ -2314,9 +2314,23 @@ describe("bridge tools", () => {
         undefined, settings.current.registryRevision);
       const secondProject = settings.current.projects.find(project => project.name === "Second project")!;
       for (const scopeId of [SCOPE_A, SCOPE_B]) {
+        const project = scopeId === SCOPE_A ? settings.current.projects[0]! : secondProject;
         for (let index = 0; index < 7; index++) {
-          await runTask(client, { scopeId, prompt: "Private page fixture", activityTitle: `${scopeId === SCOPE_A ? "Here" : "Elsewhere"} ${index}`,
-            agentName: `Page Agent ${index}`, ...(scopeId === SCOPE_B ? { projectId: secondProject.id } : {}) });
+          // Seed completed jobs so this read-model test measures scope and pagination.
+          const activity = jobs.createActivity({ scopeId, projectId: project.id, projectLabel: project.name,
+            projectCwd: project.cwd, title: `${scopeId === SCOPE_A ? "Here" : "Elsewhere"} ${index}` });
+          const agent = jobs.createAgent({ scopeId, agentName: `Page Agent ${index}` });
+          const threadId = `page-${scopeId}-${index}`;
+          jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+          jobs.linkAgentThread({ agentId: agent.agentId, threadId, projectId: project.id, projectLabel: project.name,
+            backendKind: "mcp", cwd: project.cwd, sandbox: "read-only", contextMode: "fresh" });
+          const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+            scopeId, projectId: project.id, projectLabel: project.name, operation: "start", cwd: project.cwd,
+            sandbox: "read-only", requestId: nextRequestId(), requestHash: `page-${scopeId}-${index}`,
+            requestHashVersion: 7, exclusiveKeys: [], executionMode: "foreground", backendKind: "mcp",
+            sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+          }, async () => fakeCodexResult(threadId));
+          await job.promise;
         }
       }
       const first = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A, limit: 5 });

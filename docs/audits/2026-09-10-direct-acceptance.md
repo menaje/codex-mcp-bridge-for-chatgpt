@@ -220,6 +220,16 @@ fake runtime was identified by its exact fixture command and removed. The
 installed runtime was not used for that cleanup. These failures are retained
 separately from the earlier 11 concurrent timeouts.
 
+The integrated dev run executed all 947 tests: 940 passed and seven hit the
+unchanged five-second test timeout (545.20 seconds overall). No assertion
+mismatch remained. The selected retry passed 12 cases and timed out only the
+pagination case. That read-model fixture was admitting 14 tasks sequentially
+to prepare its data. It now seeds the same 14 completed Jobs through the public
+registry while retaining every scope/count/project/page/privacy assertion.
+The isolated case passed in 304 milliseconds. Neither production timeouts nor
+test timeouts were increased. Concurrent Swift compilation and high system
+load were observed, but not treated as proof of the cause of every timeout.
+
 ## Remaining boundaries and cleanup
 
 | Issue | Directly completed or corrected | Still open |
