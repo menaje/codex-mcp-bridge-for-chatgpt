@@ -961,7 +961,16 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return "retry";
   }
 
-  requestLifecycle(request: LifecycleRequest): Promise<LifecycleSnapshot> { return this.lifecycle().submit(request); }
+  async requestLifecycle(request: LifecycleRequest): Promise<LifecycleSnapshot> {
+    const coordinator = this.lifecycle();
+    if (request.applicationLaunchAt && coordinator.active?.kind === "shutdown") {
+      // A previous app wrote its verified shutdown receipt after the helper
+      // exited. Reconcile it before evaluating the new app's start intent.
+      coordinator.resume();
+      await coordinator.settled();
+    }
+    return coordinator.submit(request);
+  }
   lifecycleStatus(requestId?: string): LifecycleSnapshot | null {
     return this.closed ? this.lifecycleManager?.snapshot(requestId) ?? null : this.lifecycle().snapshot(requestId);
   }
@@ -975,7 +984,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     await coordinator.settled();
     // Recovery owns this launch, including a concurrent cancel or failure.
     // Do not replace its result with an implicit start reservation.
-    if (recovering || coordinator.active || (["stop", "mode-switch"].includes(coordinator.latest?.kind || "") && coordinator.latest?.phase === "completed")) return this.snapshot();
+    if (recovering || coordinator.active ||
+        (["stop", "shutdown", "mode-switch"].includes(coordinator.latest?.kind || "") && coordinator.latest?.phase === "completed") ||
+        ["cancelled", "failed"].includes(coordinator.latest?.phase || "")) return this.snapshot();
     return this.start();
   }
 

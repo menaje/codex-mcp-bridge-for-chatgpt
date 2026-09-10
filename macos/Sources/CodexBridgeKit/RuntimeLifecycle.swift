@@ -41,12 +41,15 @@ public struct RuntimeLifecycleRequest: Codable, Sendable {
     public let candidateId: String?
     public let targetBuildId: String?
     public let replacesRequestId: String?
+    public let applicationLaunchAt: String?
     public init(requestId: String = UUID().uuidString, kind: String, force: Bool = false,
                 configuration: Configuration? = nil, candidateId: String? = nil,
-                targetBuildId: String? = nil, replacesRequestId: String? = nil) {
+                targetBuildId: String? = nil, replacesRequestId: String? = nil,
+                applicationLaunchAt: String? = nil) {
         self.requestId = requestId; self.kind = kind; self.force = force
         self.configuration = configuration; self.candidateId = candidateId
         self.targetBuildId = targetBuildId; self.replacesRequestId = replacesRequestId
+        self.applicationLaunchAt = applicationLaunchAt
     }
 }
 
