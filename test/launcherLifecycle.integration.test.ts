@@ -209,6 +209,8 @@ if (args[0] === "health") {
     const url = readFileSync(option("--url-file"), "utf8").trim();
     const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
     process.kill(pid, 0);
+    const stale = readFileSync(controlPlaneReadyFile, "utf8") === "stale";
+    console.log(JSON.stringify({ control_plane_poll: { ok: true, value: Math.floor(Date.now() / 1000) - (stale ? 76 : 0) } }));
     process.exit(url.startsWith("http://127.0.0.1:") ? 0 : 1);
   } catch {
     process.exit(1);
@@ -292,7 +294,9 @@ async function runLauncher(paths: {
     if (paths.controlPlaneReadyFile) {
       if (paths.detachOutput) { child.stdout?.destroy(); child.stderr?.destroy(); }
       const launcherPid = readStatus(paths.runtimeStatusFile).launcherPid;
-      writeFileSync(paths.controlPlaneReadyFile, "fail");
+      // A locally healthy daemon with an old success timestamp must also
+      // become degraded; require-control-plane-poll alone checks only once.
+      writeFileSync(paths.controlPlaneReadyFile, paths.detachOutput ? "stale" : "fail");
       const failed = await waitForStatus(paths.runtimeStatusFile, child, status => status.tunnel?.phase === "degraded");
       await waitForStatus(paths.runtimeStatusFile, child, status =>
         status.tunnel?.phase === "degraded" && status.tunnel.lastCheckedAt !== failed.tunnel.lastCheckedAt);

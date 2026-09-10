@@ -5140,8 +5140,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "question": {
-      "digest": "afdc0d76ab492a2bbc7626fcb080ed81e69f4aab5a7c9bc1f922298b971643da",
-      "uri": "ui://codex-mcp-bridge/question/afdc0d76ab49.html",
+      "digest": "a93cf2f84a75b0927ac228363e165b08a3b35cbfffc002397b4ce38f0d6f5c9d",
+      "uri": "ui://codex-mcp-bridge/question/a93cf2f84a75.html",
       "metadata": {
         "descriptor": {
           "title": "Your input",
@@ -5168,6 +5168,35 @@ export const UI_RESOURCE_MANIFEST = {
         }
       },
       "previous": [
+        {
+          "digest": "afdc0d76ab492a2bbc7626fcb080ed81e69f4aab5a7c9bc1f922298b971643da",
+          "uri": "ui://codex-mcp-bridge/question/afdc0d76ab49.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Your input",
+              "description": "Questions written by GPT for the user; answers return to GPT.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Collects the user's answers for GPT without directly answering or approving Codex requests.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 1
+            }
+          }
+        },
         {
           "digest": "04852baeb268adf119f918d48b84aa19724741f6970c6683097164241b59fac7",
           "uri": "ui://codex-mcp-bridge/question/04852baeb268.html",

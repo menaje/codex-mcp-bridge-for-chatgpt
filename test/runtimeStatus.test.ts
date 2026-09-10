@@ -4,11 +4,23 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MANAGED_RUNTIME_STATUS_PROTOCOL,
+  hasRecentTunnelControlPlanePoll,
   readManagedRuntimeStatus,
   writeManagedRuntimeStatus
 } from "../scripts/runtime-status.mjs";
 
 describe("managed runtime status", () => {
+  it("requires a recent successful control-plane poll even when the daemon is ready", () => {
+    const now = 1_789_001_000_000;
+    const report = (age: number) => ({ control_plane_poll: { ok: true, value: (now - age) / 1000 } });
+    expect(hasRecentTunnelControlPlanePoll(report(35_000), now)).toBe(true);
+    expect(hasRecentTunnelControlPlanePoll(report(75_000), now)).toBe(true);
+    expect(hasRecentTunnelControlPlanePoll(report(75_001), now)).toBe(false);
+    expect(hasRecentTunnelControlPlanePoll(report(-6_000), now)).toBe(false);
+    expect(hasRecentTunnelControlPlanePoll({ control_plane_poll: { ok: true } }, now)).toBe(false);
+    expect(hasRecentTunnelControlPlanePoll({ control_plane_poll: { ok: false, value: now / 1000 } }, now)).toBe(false);
+  });
+
   it("round-trips a private versioned tunnel status", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-status-"));
     const file = path.join(root, "run", "status.json");

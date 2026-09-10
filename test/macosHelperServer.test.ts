@@ -131,7 +131,8 @@ describe("macOS runtime helper RPC", () => {
         },
         requestTooLarge: () => ({}), internalError: () => ({})
       }));
-      const supervisor = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile: path.join(root, ".env"), bridgeSocketPath: socketPath });
+      const supervisor = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile: path.join(root, ".env"), bridgeSocketPath: socketPath,
+        runtimeLockDirectory: path.join(root, "run", "launcher.lock") });
       const health = await supervisor.health();
       expect(health.bridge.connected).toBe(code !== -32603);
       expect(methods).toEqual(code === -32603 ? ["runtime.health"] : ["runtime.health", "runtime.snapshot"]);
@@ -143,7 +144,8 @@ describe("macOS runtime helper RPC", () => {
     const manager = new CodexRuntimeManager({ root: path.join(root, "runtime"), discoverExternal: false });
     const snapshot = vi.spyOn(manager, "snapshot").mockImplementation(() => new Promise(() => undefined));
     const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile: path.join(root, ".env"),
-      bridgeSocketPath: path.join(root, "bridge.sock"), codexRuntimeManager: manager });
+      bridgeSocketPath: path.join(root, "bridge.sock"), codexRuntimeManager: manager,
+      runtimeLockDirectory: path.join(root, "run", "launcher.lock") });
     const socketPath = path.join(root, "helper.sock");
     const server = await startMacOSHelperServer({ socketPath, controller });
     servers.push(server);
@@ -162,7 +164,8 @@ describe("macOS runtime helper RPC", () => {
       doctorPassed: true, processRunning: true, connected: true, lastCheckedAt: new Date().toISOString(), lastError: null, lastProblem: null } };
     writeManagedRuntimeStatus(runtimeStatusFile, state);
     const controller = new MacOSBridgeSupervisor({ bridgeRoot: root, envFile, runtimeStatusFile,
-      bridgeSocketPath: path.join(root, "bridge.sock"), registeredProjectRoots: () => [] });
+      bridgeSocketPath: path.join(root, "bridge.sock"), registeredProjectRoots: () => [],
+      runtimeLockDirectory: path.join(root, "run", "launcher.lock") });
     const changes: string[] = [];
     const unsubscribe = controller.subscribeChanges(topic => changes.push(topic));
     try {
