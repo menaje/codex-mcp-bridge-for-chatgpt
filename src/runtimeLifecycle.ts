@@ -15,7 +15,8 @@ export const lifecycleRequestSchema = z.strictObject({
   configuration: lifecycleConfigurationSchema.optional(),
   candidateId: z.string().regex(/^setup_[a-f0-9]{24}$/).optional(),
   targetBuildId: z.string().min(1).max(200).optional(),
-  replacesRequestId: z.string().uuid().optional()
+  replacesRequestId: z.string().uuid().optional(),
+  applicationLaunchAt: z.iso.datetime().optional()
 }).superRefine((value, context) => {
   if (value.kind === "configure" ? !value.configuration && !value.candidateId : value.configuration || value.candidateId) {
     context.addIssue({ code: "custom", message: "Configuration belongs to a configure request." });
@@ -25,6 +26,9 @@ export const lifecycleRequestSchema = z.strictObject({
   }
   if (value.configuration && value.candidateId) context.addIssue({ code: "custom", message: "Choose explicit settings or a discovered candidate, not both." });
   if (value.targetBuildId && value.kind !== "helper-replace") context.addIssue({ code: "custom", message: "Only helper replacement has a target build." });
+  if (value.applicationLaunchAt && (value.kind !== "start" || value.force || value.replacesRequestId)) {
+    context.addIssue({ code: "custom", message: "Application launch only requests a non-replacing, graceful start." });
+  }
 });
 export type LifecycleRequest = z.infer<typeof lifecycleRequestSchema>;
 export type LifecycleConfiguration = z.infer<typeof lifecycleConfigurationSchema>;
@@ -116,6 +120,22 @@ export class RuntimeLifecycleCoordinator {
         return this.project(existing);
       }
       const active = [...this.records].reverse().find(record => !terminal(record.phase));
+      if (request.applicationLaunchAt) {
+        const latest = this.records.at(-1);
+        if (latest) {
+          const launchedAt = Date.parse(request.applicationLaunchAt);
+          const priorShutdownCompleted = latest.request.kind === "shutdown" && latest.phase === "completed" &&
+            Date.parse(latest.createdAt) < launchedAt;
+          // A new app launch may start after yesterday's completed stop/shutdown.
+          // It must never override pending work, a newer user command, or a
+          // cancellation/failure encountered while recovering this launch.
+          if (active || latest.request.kind === "mode-switch" ||
+              Date.parse(latest.createdAt) >= launchedAt ||
+              (Date.parse(latest.updatedAt) >= launchedAt && !priorShutdownCompleted)) {
+            return this.project(active ?? latest);
+          }
+        }
+      }
       if (active && (request.replacesRequestId !== active.request.requestId || !cancellable(active.phase))) {
         throw new Error("LIFECYCLE_BUSY: Cancel or replace the current reservation before submitting another operation.");
       }

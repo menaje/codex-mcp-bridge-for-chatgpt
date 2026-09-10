@@ -42,6 +42,73 @@ function fixture() {
   return { root, runDirectory, manager, supervisor, options, update };
 }
 
+it("a new app launch starts after recovering a completed native shutdown without menu interaction", async () => {
+  const f = fixture();
+  await f.supervisor.start();
+  const shutdown = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "shutdown", force: false });
+  await coordinator(f.supervisor).settled();
+  f.supervisor.acknowledgeLifecycle(shutdown.requestId);
+  await f.supervisor.close();
+  writeFileSync(path.join(f.runDirectory, "lifecycle-handoff.json"), JSON.stringify({
+    requestId: shutdown.requestId, outcome: "completed"
+  }), { mode: 0o600 });
+  const recovered = new MacOSBridgeSupervisor(f.options);
+  try {
+    const launch = { requestId: randomUUID(), kind: "start" as const, force: false, applicationLaunchAt: new Date().toISOString() };
+    // This is the production app-start path. It reconciles the receipt itself,
+    // including when it races ahead of the helper's background startOnLaunch.
+    await recovered.requestLifecycle(launch);
+    await coordinator(recovered).settled();
+    expect(recovered.lifecycleStatus(shutdown.requestId)?.phase).toBe("completed");
+    const status = await recovered.health();
+    expect(status).toMatchObject({ phase: "running", bridge: { connected: true }, tunnel: { connected: true } });
+    expect(status.pid).not.toBeNull();
+    await recovered.requestLifecycle(launch);
+    await recovered.startOnLaunch();
+    expect((await recovered.health()).pid).toBe(status.pid);
+  } finally { await recovered.close({ runtime: "force-stop" }); }
+});
+
+it("a helper-only respawn leaves a recovered shutdown stopped until a fresh app launch", async () => {
+  const f = fixture();
+  const shutdown = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "shutdown", force: false });
+  await coordinator(f.supervisor).settled();
+  f.supervisor.acknowledgeLifecycle(shutdown.requestId);
+  await f.supervisor.close();
+  writeFileSync(path.join(f.runDirectory, "lifecycle-handoff.json"), JSON.stringify({
+    requestId: shutdown.requestId, outcome: "completed"
+  }), { mode: 0o600 });
+  const recovered = new MacOSBridgeSupervisor(f.options);
+  try {
+    expect((await recovered.startOnLaunch()).pid).toBeNull();
+    expect(recovered.lifecycleStatus()?.phase).toBe("completed");
+    // Even another restart after the shutdown record is terminal is not a new app launch.
+    expect((await recovered.startOnLaunch()).pid).toBeNull();
+    await recovered.requestLifecycle({ requestId: randomUUID(), kind: "start", force: false,
+      applicationLaunchAt: new Date().toISOString() });
+    await coordinator(recovered).settled();
+    expect((await recovered.health()).phase).toBe("running");
+  } finally { await recovered.close({ runtime: "force-stop" }); }
+});
+
+it("an app launch observes a failed shutdown recovery without silently starting", async () => {
+  const f = fixture();
+  const shutdown = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "shutdown", force: false });
+  await coordinator(f.supervisor).settled();
+  f.supervisor.acknowledgeLifecycle(shutdown.requestId);
+  await f.supervisor.close();
+  const launchAt = new Date().toISOString();
+  writeFileSync(path.join(f.runDirectory, "lifecycle-handoff.json"), JSON.stringify({
+    requestId: shutdown.requestId, outcome: "failed", failureCode: "HELPER_SHUTDOWN_FAILED"
+  }), { mode: 0o600 });
+  const recovered = new MacOSBridgeSupervisor(f.options);
+  try {
+    const result = await recovered.requestLifecycle({ requestId: randomUUID(), kind: "start", force: false, applicationLaunchAt: launchAt });
+    expect(result).toMatchObject({ requestId: shutdown.requestId, phase: "failed" });
+    expect((await recovered.startOnLaunch()).pid).toBeNull();
+  } finally { await recovered.close({ runtime: "force-stop" }); }
+});
+
 it("publishes a failed native handoff before acknowledgement and accepts an explicit retry", async () => {
   const f = fixture();
   const request = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "shutdown", force: false });
