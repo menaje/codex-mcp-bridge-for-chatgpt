@@ -43,7 +43,7 @@ await Promise.all([client.connect(a), server.connect(b)]);
 const meta = { "openai/session": "isolated-question-browser" };
 const call = async (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args, _meta: meta }) as Promise<any>;
 const records = new Map<string, { bootstrap: any; calls: string[]; followUps: number }>();
-for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired", ...(!legacyRenderer ? ["read-retry", "storage-denied"] : [])]) {
+for (const mode of ["standard", "compatibility", "metadata-missing", "denied", "uncertain", "expired", ...(!legacyRenderer ? ["read-retry", "storage-denied", "host-private-state"] : [])]) {
   const bootstrap = await call("codex_ask_user", { requestId: randomUUID(), title: "화면 색상 선택", questions: [{
     id: "color", header: "색상", question: "어떤 색상을 사용할까요?", isOther: true,
     options: [{ label: "파랑", description: "기본 색상" }, { label: "빨강", description: "강조 색상" }]
@@ -76,7 +76,8 @@ const http = createServer(async (request, response) => {
     response.setHeader("Content-Type", "text/html; charset=utf-8");
     if (url.pathname === "/card") {
       const prelude = `<script>window.__errors=[];window.addEventListener('error',e=>window.__errors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__errors.push(String(e.reason)));
-        ${mode === "storage-denied" ? `Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Storage blocked','SecurityError')}});` : ""}
+        ${["storage-denied", "host-private-state"].includes(mode) ? `Object.defineProperty(window,'sessionStorage',{get(){throw new DOMException('Storage blocked','SecurityError')}});` : ""}
+        ${mode === "host-private-state" ? `window.openai={widgetState:JSON.parse(parent.sessionStorage.getItem('host-private-state')||'null'),setWidgetState(state){this.widgetState=state;parent.sessionStorage.setItem('host-private-state',JSON.stringify(state))}};` : ""}
         ${mode === "compatibility" ? `window.openai={locale:"ko-KR",toolOutput:${JSON.stringify(record.bootstrap.structuredContent)},toolResponseMetadata:${JSON.stringify(record.bootstrap._meta)},callTool:async(name,args)=>(await fetch('/call?mode=${mode}',{method:'POST',body:JSON.stringify({name,arguments:args})})).json(),sendFollowUpMessage:async({prompt})=>(await fetch('/followup?mode=${mode}',{method:'POST',body:JSON.stringify({role:'user',content:[{type:'text',text:prompt}]})})).json(),notifyIntrinsicHeight:()=>{}};` : ""}
       </script>`;
       response.end(CARD_HTML.replace("</head>", prelude + "</head>")); return;
@@ -149,11 +150,34 @@ try {
           }`);
         }
       }
+      if (mode === "host-private-state") {
+        // ChatGPT may recreate an isolated iframe without its browser storage.
+        // The host, not the iframe, owns this widget-scoped private snapshot.
+        await cli("run-code", `async page=>{
+          const frame=page.frameLocator('#card');
+          await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('other');
+          await frame.locator('input:not([hidden])').fill('private-draft-0910');
+          await page.reload();await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+          if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='other'||await frame.locator('input:not([hidden])').inputValue()!=='private-draft-0910')throw new Error('Host re-entry lost the private draft');
+          const state=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('host-private-state')));
+          if(state.modelContent!==''||state.imageIds.length!==0||!state.privateContent.questionDraft)throw new Error('Draft leaked into model-visible widget state');
+          for(const defect of ['question','scope','revision','expiry']){
+            await page.evaluate(defect=>{const state=JSON.parse(sessionStorage.getItem('host-private-state'));const draft=state.privateContent.questionDraft;
+              if(defect==='question')draft.questionId='different-question';if(defect==='scope')draft.scopeId='different-scope';
+              if(defect==='revision')draft.revision+=1;if(defect==='expiry')draft.expiresAt=Date.now()-1;
+              sessionStorage.setItem('host-private-state',JSON.stringify(state));},defect);
+            await page.reload();await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).waitFor();
+            if(await frame.getByLabel('어떤 색상을 사용할까요?').inputValue()!=='')throw new Error('Restored invalid host draft: '+defect);
+            await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');
+          }
+        }`);
+      }
       await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByLabel('어떤 색상을 사용할까요?').selectOption('0');await frame.getByRole('button',{name:'GPT에 답변 보내기',exact:true}).click();await frame.getByText(${JSON.stringify(mode === "uncertain" ? "응답은 저장됐습니다. 이 대화에서 GPT에게 계속 진행을 요청해 주세요." : mode === "denied" ? "답변을 저장했습니다." : "GPT에 후속 처리를 요청했습니다.")},{exact:true}).waitFor()}`);
       if (mode === "denied") {
         await cli("snapshot");
         await cli("run-code", `async page=>{const frame=page.frameLocator('#card');await frame.getByRole('button',{name:'GPT에 후속 처리 요청',exact:true}).click();await frame.getByText('GPT에 후속 처리를 요청했습니다.',{exact:true}).waitFor()}`);
       }
+      if (mode === "host-private-state") await cli("run-code", `async page=>{const state=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('host-private-state')));if(state.privateContent.questionDraft)throw new Error('Submitted draft remains in host widget state')}`);
       const { questionId, revision, presentationToken } = record.bootstrap._meta[USER_QUESTION_META];
       const refreshed = await call("codex_ui_read", { view: "question", questionId, revision, presentationToken });
       const responseRef = refreshed._meta[USER_QUESTION_META].responseRef;

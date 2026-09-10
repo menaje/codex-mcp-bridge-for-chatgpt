@@ -274,7 +274,13 @@ export class CodexRuntimeManager {
     const directory = path.join(this.root, "leases");
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const file = path.join(directory, `${process.pid}-${randomUUID()}.json`);
-    await writeFile(file, JSON.stringify({ pid: process.pid, selection, startedAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
+    // Readers do not take the activation lock. Publish only complete records,
+    // keeping the in-progress write outside the directory they enumerate.
+    const temporary = path.join(this.root, `.lease-${path.basename(file)}.tmp`);
+    try {
+      await writeFile(temporary, JSON.stringify({ pid: process.pid, selection, startedAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
+      await rename(temporary, file);
+    } finally { await rm(temporary, { force: true }); }
     return () => rm(file, { force: true });
   }
 

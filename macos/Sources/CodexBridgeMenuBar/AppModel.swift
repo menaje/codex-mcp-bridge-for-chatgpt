@@ -280,6 +280,7 @@ final class AppModel: ObservableObject {
     private var lastScheduledRefresh: [String: Date] = [:]
     private var lastDashboardEnrichment: Date?
     private var networkMonitor: NWPathMonitor?
+    @Published private(set) var networkAvailable: Bool?
     private var workspaceObservers: [NSObjectProtocol] = []
     private(set) var dashboardVisible = false
     private(set) var settingsWindowVisible = false
@@ -448,6 +449,7 @@ final class AppModel: ObservableObject {
         if isRemoteClient {
             guard activeRemoteProfile != nil else { return .unknown }
             if let remoteOperationalProblem { return .problem(remoteOperationalProblem) }
+            if networkAvailable == false { return .problem(.remoteConnection) }
             return remoteHello == nil ? .unknown : .healthy
         }
         guard let status = helperStatus else {
@@ -457,7 +459,7 @@ final class AppModel: ObservableObject {
         // An intentional stop is healthy. Failed/retrying starts still have a grace period.
         if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
-        if !status.tunnel.connected { return .problem(.tunnel) }
+        if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authentication) }
         if !auth.installed { return .problem(.installation) }
         return auth.authenticated ? .healthy : .problem(.authentication)
@@ -667,6 +669,8 @@ final class AppModel: ObservableObject {
         if systemObservationPending { return true }
         if !isRemoteClient, lifecycleOperation?.isExecuting == true { return true }
         guard !needsSetup, !connectionCheckRequiresAttention else { return false }
+        if networkAvailable == false, hasConnectionTarget,
+           isRemoteClient || helperStatus?.phase != "stopped" { return true }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello == nil else { return false }
             return connectionErrorMessage == nil && statusErrorMessage == nil
@@ -2852,11 +2856,17 @@ final class AppModel: ObservableObject {
         refreshLoginItemStatus()
     }
 
+    func recordNetworkAvailability(_ available: Bool) {
+        networkAvailable = available
+        refreshAfterSystemEvent()
+    }
+
     private func beginSystemEventsIfNeeded() {
         guard networkMonitor == nil else { return }
         let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] _ in
-            Task { @MainActor [weak self] in self?.refreshAfterSystemEvent() }
+        monitor.pathUpdateHandler = { [weak self] path in
+            let available = path.status == .satisfied
+            Task { @MainActor [weak self] in self?.recordNetworkAvailability(available) }
         }
         monitor.start(queue: DispatchQueue(label: "bridge.network-changes", qos: .utility))
         networkMonitor = monitor

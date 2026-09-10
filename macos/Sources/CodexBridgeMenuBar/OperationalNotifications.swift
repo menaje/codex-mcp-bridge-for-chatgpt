@@ -102,7 +102,7 @@ struct OperationalNotificationPolicy: Codable {
     }
 }
 
-enum OperationalNotificationPermission: Equatable {
+enum OperationalNotificationPermission: Equatable, Sendable {
     case unknown, notDetermined, denied, authorized
 }
 
@@ -132,12 +132,24 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     }
 
     func isAuthorized() async -> Bool {
+        await permission() == .authorized
+    }
+
+    func permission() async -> OperationalNotificationPermission {
         await withCheckedContinuation { continuation in
             center.getNotificationSettings { settings in
                 // Older SDKs do not mark the settings object Sendable; pass only the result across actors.
-                let status = settings.authorizationStatus
-                continuation.resume(returning: status == .authorized || status == .provisional)
+                continuation.resume(returning: Self.permission(for: settings.authorizationStatus))
             }
+        }
+    }
+
+    nonisolated static func permission(for status: UNAuthorizationStatus) -> OperationalNotificationPermission {
+        switch status {
+        case .notDetermined: return .notDetermined
+        case .denied: return .denied
+        case .authorized, .provisional: return .authorized
+        @unknown default: return .unknown
         }
     }
 

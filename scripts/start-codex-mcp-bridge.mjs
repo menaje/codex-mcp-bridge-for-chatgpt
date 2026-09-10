@@ -23,7 +23,7 @@ import {
   readTunnelClientVersion,
   recordTunnelProfileMetadata
 } from "./tunnel-profile.mjs";
-import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import { hasRecentTunnelControlPlanePoll, writeManagedRuntimeStatus } from "./runtime-status.mjs";
 
 if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1") {
   // The helper owns these log pipes, not the runtime's lifetime. A helper exit
@@ -630,7 +630,12 @@ async function probeTunnelHealth(tunnelClient, environment) {
     error, signal: error?.signal, stdout
   })));
   if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
-  if (result.status === 0) return { connected: true };
+  if (result.status === 0) {
+    try {
+      if (hasRecentTunnelControlPlanePoll(JSON.parse(result.stdout))) return { connected: true };
+    } catch { /* Missing or malformed successful-poll evidence is not readiness. */ }
+    return { connected: false, reason: "control-plane-poll-stale-or-unverified" };
+  }
   const evidence = [`exit=${result.status ?? "none"}`];
   if (result.error?.code) evidence.push(`error=${safeStatusText(result.error.code)}`);
   if (result.signal) evidence.push(`signal=${result.signal}`);

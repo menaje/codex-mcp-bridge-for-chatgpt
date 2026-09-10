@@ -7,6 +7,15 @@ final class OperationalNotificationsTests: XCTestCase {
     private let origin = Date(timeIntervalSince1970: 1_000)
     private let scope = OperationalNotificationPolicy.scope("fixture-server")
 
+    func testSystemPermissionPreservesTheInitialAuthorizationPrompt() {
+        // A first install must request permission, not send the user to Settings
+        // as if they had already denied it. Both allowed system states deliver.
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .notDetermined), .notDetermined)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .denied), .denied)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .authorized), .authorized)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .provisional), .authorized)
+    }
+
     func testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain() async throws {
         let suite = "bridge-permission-test-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

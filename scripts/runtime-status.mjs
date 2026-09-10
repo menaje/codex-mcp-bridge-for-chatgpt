@@ -5,6 +5,17 @@ import { readPrivateFile, writePrivateFileAtomic } from "./managed-file.mjs";
 export const MANAGED_RUNTIME_STATUS_PROTOCOL = "codex-mcp-bridge-launcher-status";
 export const MANAGED_RUNTIME_STATUS_VERSION = 1;
 
+// The supported tunnel client uses a 30-second long poll plus a 5-second
+// guardrail. Allow two such windows and one monitor interval, but never accept
+// its "one poll has succeeded" flag as indefinite connectivity evidence.
+export const MAX_TUNNEL_CONTROL_PLANE_AGE_MS = 75_000;
+export function hasRecentTunnelControlPlanePoll(report, now = Date.now()) {
+  const poll = report?.control_plane_poll;
+  if (poll?.ok !== true || !Number.isFinite(poll.value) || poll.value <= 0) return false;
+  const age = now - poll.value * 1000;
+  return age >= -5_000 && age <= MAX_TUNNEL_CONTROL_PLANE_AGE_MS;
+}
+
 export function writeManagedRuntimeStatus(filePath, status) {
   if (!filePath) return;
   const payload = {

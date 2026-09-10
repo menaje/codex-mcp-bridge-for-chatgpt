@@ -643,6 +643,22 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testNetworkLossCannotReuseTheHelpersPreviouslyConnectedTunnelState() throws {
+        let model = AppModel()
+        model.helperStatus = try helperStatus()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        XCTAssertEqual(model.health, .healthy)
+        model.recordNetworkAvailability(false)
+        XCTAssertTrue(model.bridgeConnected) // Local IPC remains available.
+        XCTAssertTrue(model.isBridgeConnectionChecking)
+        XCTAssertEqual(model.health, .checking)
+        XCTAssertEqual(model.operationalObservation, .problem(.tunnel))
+        model.recordNetworkAvailability(true)
+        XCTAssertEqual(model.health, .healthy)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+    }
+
+    @MainActor
     func testAuthenticationNoticeDistinguishesCheckingFromLoggedOut() throws {
         let model = AppModel()
 
