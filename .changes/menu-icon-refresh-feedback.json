@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Use an icon-only work history control and show a progress indicator while the menu overview refreshes.",
+  "breaking": false,
+  "migration": null
+}
