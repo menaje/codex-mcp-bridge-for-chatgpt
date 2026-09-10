@@ -1243,6 +1243,7 @@ createInterface({input:process.stdin}).on("line", line => {
       bridgeRoot,
       envFile: configFile,
       bridgeSocketPath: path.join(configDirectory, "run", "bridge.sock"),
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
       autoRestart: false,
       registeredProjectRoots: () => []
     });

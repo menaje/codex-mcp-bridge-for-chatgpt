@@ -145,6 +145,14 @@
     "earlierConcurrentNodeRun": {
       "passed": 925,
       "testTimeouts": 11
+    },
+    "preDevIntegrationRun": {
+      "passed": 933,
+      "failedTests": 5,
+      "oldSchemaReadingInstalledState": 3,
+      "workerRecoveryTimeout": 1,
+      "helperExitAndCleanupTimeout": 1,
+      "fixtureIsolationCorrected": true
     }
   },
   "immutableUI": {
@@ -178,6 +186,13 @@
     "actual-host-delivery-faults",
     "full-keyboard-and-voiceover",
     "native-codex-handoff-warning",
-    "remaining-app-mode-and-replacement-acceptance"
-  ]
+    "remaining-mode-switch-and-helper-replacement-acceptance"
+  ],
+  "separateInstalledAppUpdate": {
+    "issue": 89,
+    "build": "917363a4a745:6f0b979b4158",
+    "evidence": "2026-09-10-issue-89-menubar-startup.md",
+    "actualQuitAndReopen": true,
+    "actualTunnel": true
+  }
 }

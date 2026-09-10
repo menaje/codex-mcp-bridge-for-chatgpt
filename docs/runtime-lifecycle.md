@@ -79,7 +79,7 @@ Tests cover a real 61-second running-job wait followed by an event-triggered res
 
 ## Direct operating-service acceptance
 
-The [2026-09-10 direct acceptance record](audits/2026-09-10-direct-acceptance.md) distinguishes real Codex work, the installed helper and Tunnel, and actual native controls from isolated fixtures. `npx tsx scripts/native-operational-acceptance.ts /tmp/bridge-live-acceptance --connect-installed` builds a separate window using production views against the installed service. Its controls affect that service; it does not replace or bootstrap the installed helper and is only for a controlled operator test. The default invocation continues to use synthetic socket data.
+The [2026-09-10 direct acceptance record](audits/2026-09-10-direct-acceptance.md) distinguishes real Codex work, the installed helper and Tunnel, and actual native controls from isolated fixtures. `npx tsx scripts/native-operational-acceptance.ts /tmp/bridge-live-acceptance --connect-installed` builds a separate window using production views against the installed service. Its controls affect that service, and opening it uses the production AppModel startup request. It does not replace or bootstrap the installed helper and is only for a controlled operator test. The default invocation continues to use synthetic socket data.
 
 Runtime usage leases are written outside the enumerated lease directory and atomically published before acquisition returns. Concurrent status reads cannot observe a partially written lease. Corrupt published leases still stop unsafe activation.
 

@@ -210,6 +210,16 @@ timeouts) while other native and repository test work was active. The complete
 two-worker run above then passed all 939. Resource contention is a plausible
 explanation, not a proven assertion; no product/test timeout was relaxed.
 
+After the separate #89 task updated the installed app, a pre-integration run
+passed 933 and failed five tests. Three health tests had omitted their private
+runtime-lock directory and therefore read the installed app's new lifecycle
+records with an older schema. All four health/auth fixture constructors that
+omitted this path now specify their own directory. The remaining failures were
+a worker-recovery timeout and a helper-exit/cleanup timeout; the latter's owned
+fake runtime was identified by its exact fixture command and removed. The
+installed runtime was not used for that cleanup. These failures are retained
+separately from the earlier 11 concurrent timeouts.
+
 ## Remaining boundaries and cleanup
 
 | Issue | Directly completed or corrected | Still open |
