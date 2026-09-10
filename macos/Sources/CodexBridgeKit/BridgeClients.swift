@@ -159,7 +159,11 @@ public struct MacOSHelperClient: Sendable {
             default: throw error
             }
         }
-        guard operation.requestId == request.requestId else { throw LocalRPCError.malformedResponse("LIFECYCLE_ID_CONFLICT") }
+        // Application startup may observe the newer/pending operation that
+        // supersedes its intent. Explicit controls still require their own ID.
+        guard operation.requestId == request.requestId || request.applicationLaunchAt != nil else {
+            throw LocalRPCError.malformedResponse("LIFECYCLE_ID_CONFLICT")
+        }
         return operation
     }
 

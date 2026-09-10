@@ -6,6 +6,25 @@ cards in a WebView. The existing ChatGPT cards and MCP tools remain the primary
 remote interface and keep their current descriptors, schemas, resource URIs,
 and cache contracts.
 
+The menu bar opens as a compact status and usage summary with **Running**,
+**Response required**, and **Problems** counts. Selecting a count expands only
+that view below the summary; selecting it again collapses it, and another count
+replaces the detail view. **Work & Run History** in the footer expands current
+work followed by retained runs, including their failed/interrupted status. The
+problem review section appears only under **Problems**. Closing and reopening
+the menu resets the selection while background count refreshes continue.
+
+The popover fits its content when collapsed or showing a short list. Long detail
+lists scroll within the height available on the popover's screen, keeping the
+summary and footer controls accessible. Switching filters keeps the existing
+summary visible while the selected list loads.
+
+In configured local server mode, a new app launch starts the server after any
+previous normal shutdown is reconciled, without requiring a menu click. Stopping
+the server during the same app session remains effective across menu openings
+and refreshes. Remote clients do not start a local server. See
+[runtime lifecycle](runtime-lifecycle.md) for recovery and concurrent intent handling.
+
 ## Architecture
 
 ```text

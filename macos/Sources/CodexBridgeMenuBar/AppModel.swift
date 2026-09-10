@@ -295,7 +295,12 @@ final class AppModel: ObservableObject {
     @Published var dashboard: DashboardSnapshot?
     @Published var threadHandoffs: [String: ThreadHandoffStatus] = [:]
     private var threadHandoffTasks: [String: Task<Void, Never>] = [:]
-    @Published var dashboardStatusFilter: DashboardStatusFilter = .all
+    @Published private(set) var dashboardPanel: DashboardPanel?
+    @Published private(set) var dashboardLoadedFilter: DashboardStatusFilter?
+    var dashboardStatusFilter: DashboardStatusFilter { dashboardPanel?.filter ?? .all }
+    var dashboardDetailLoading: Bool {
+        dashboardPanel != nil && dashboardLoadedFilter != dashboardStatusFilter
+    }
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
     @Published var logs: [HelperLogEntry] = []
@@ -1109,11 +1114,18 @@ final class AppModel: ObservableObject {
         startTask = nil
     }
 
+    private let applicationLaunchRequest = RuntimeLifecycleRequest(
+        kind: "start",
+        applicationLaunchAt: Date().ISO8601Format(.init(includingFractionalSeconds: true))
+    )
+    private var applicationLaunchHandled = false
+
     private func startOnce() async {
         beginOperationalNotifications()
         do { try await recoverExternalHandoff() }
         catch { startupErrorMessage = localizedErrorDescription(error); return }
         if isRemoteClient {
+            applicationLaunchHandled = true
             logger.info("starting in remote client mode without local helper bootstrap")
             isBusy = true
             defer { isBusy = false }
@@ -1131,6 +1143,16 @@ final class AppModel: ObservableObject {
             logger.info("helper bootstrap completed")
             startupErrorMessage = nil
             beginPolling()
+            if !applicationLaunchHandled {
+                do {
+                    let client = await helperClient()
+                    let operation = try await client.requestLifecycle(applicationLaunchRequest)
+                    applicationLaunchHandled = true
+                    observeLifecycle(operation)
+                } catch {
+                    startupErrorMessage = localizedErrorDescription(error)
+                }
+            }
             await refreshAll()
         } catch HelperBootstrapError.replacementPending {
             startupErrorMessage = nil
@@ -1267,11 +1289,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func selectDashboardStatus(_ filter: DashboardStatusFilter) async {
+    func toggleDashboardPanel(_ panel: DashboardPanel) async {
         guard !changingProblems else { return }
-        guard filter != dashboardStatusFilter else { return }
-        dashboardStatusFilter = filter
-        dashboard = nil
+        dashboardPanel = dashboardPanel == panel ? nil : panel
+        dashboardRequestGeneration += 1
+        dashboardEnrichmentTask?.cancel()
+        dashboardEnrichmentTask = nil
+        dashboardErrorMessage = nil
+        guard dashboardPanel != nil else { return }
         await refreshDashboard()
     }
 
@@ -1458,6 +1483,7 @@ final class AppModel: ObservableObject {
             return
         }
         let connection = connectionGeneration
+        let filter = dashboardStatusFilter
         do {
             let client = try await bridgeClient()
             let next = try await client.dashboardWithProblems(
@@ -1465,12 +1491,13 @@ final class AppModel: ObservableObject {
                 terminalOffset: 0,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter,
+                statusFilter: filter,
                 problems: self.dashboardProblemQuery
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = next
+            dashboardLoadedFilter = filter
             if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
             if settings == nil && !interfaceLocalePreviewActive {
                 interfaceLocalePreference = next.uiLocalePreference
@@ -1617,6 +1644,7 @@ final class AppModel: ObservableObject {
     }
 
     func setDashboardVisible(_ visible: Bool) {
+        if !visible { dashboardPanel = nil }
         dashboardVisible = visible
         if visible {
             enqueueRefresh(["status", "dashboard", "auth", "codex"])
@@ -2546,6 +2574,8 @@ final class AppModel: ObservableObject {
         settingsAutosaveInProgress = false
         generalSettingsSaveState = .idle
         dashboard = nil
+        dashboardPanel = nil
+        dashboardLoadedFilter = nil
         settings = nil
         authStatus = nil
         setupDiscovery = nil

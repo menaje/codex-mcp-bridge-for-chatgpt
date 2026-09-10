@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, statSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RuntimeLifecycleCoordinator, type LifecycleDriver, type LifecycleInspection, type LifecycleRequest } from "../src/runtimeLifecycle.js";
+import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, type LifecycleDriver, type LifecycleInspection, type LifecycleRequest } from "../src/runtimeLifecycle.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
@@ -35,6 +35,53 @@ function fixture() {
 const request = (kind: LifecycleRequest["kind"] = "restart"): LifecycleRequest => ({ requestId: randomUUID(), kind, force: false });
 
 describe("durable event-driven runtime lifecycle", () => {
+  it("a new app launch starts after an older stop, but a late retry cannot undo a newer stop", async () => {
+    const f = fixture(); f.inspect({ run: null, reasons: [] });
+    await f.coordinator.submit(request("stop")); await f.coordinator.settled();
+    const previous = f.coordinator.latest!;
+    f.advance(1000);
+    const launch: LifecycleRequest = { ...request("start"), applicationLaunchAt: new Date(Date.parse(previous.updatedAt) + 1000).toISOString() };
+    const accepted = await f.coordinator.submit(launch); await f.coordinator.settled();
+    expect(accepted.requestId).toBe(launch.requestId);
+    f.advance(1000);
+    const stop = await f.coordinator.submit(request("stop")); await f.coordinator.settled();
+    const calls = vi.mocked(f.driver.execute).mock.calls.length;
+    expect((await f.coordinator.submit(launch)).requestId).toBe(launch.requestId);
+    // Also protect a delayed initial request that has not been accepted before.
+    expect((await f.coordinator.submit({ ...launch, requestId: randomUUID() })).requestId).toBe(stop.requestId);
+    await f.coordinator.settled();
+    expect(f.driver.execute).toHaveBeenCalledTimes(calls);
+    expect(f.coordinator.latest?.requestId).toBe(stop.requestId);
+  });
+
+  it.each(["shutdown", "restart", "mode-switch"] as const)("an app launch preserves an active %s reservation", async kind => {
+    const f = fixture();
+    const pending = await f.coordinator.submit(request(kind)); await f.coordinator.settled();
+    f.advance(1000);
+    const launch = { ...request("start"), applicationLaunchAt: new Date(Date.parse(pending.createdAt) + 1000).toISOString() };
+    expect((await f.coordinator.submit(launch)).requestId).toBe(pending.requestId);
+    expect(f.driver.execute).not.toHaveBeenCalled();
+    expect(f.driver.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it("an app launch never reverses cancellation performed during recovery", async () => {
+    const f = fixture();
+    const pending = await f.coordinator.submit(request("shutdown")); await f.coordinator.settled();
+    const launchAt = new Date(Date.parse(pending.createdAt) + 500).toISOString();
+    f.advance(1000);
+    f.coordinator.cancel(pending.requestId);
+    const observed = await f.coordinator.submit({ ...request("start"), applicationLaunchAt: launchAt });
+    expect(observed).toMatchObject({ requestId: pending.requestId, phase: "cancelled" });
+    expect(f.driver.execute).not.toHaveBeenCalled();
+  });
+
+  it("application launch requests cannot force or replace other lifecycle intents", () => {
+    const launch = { ...request("start"), applicationLaunchAt: new Date().toISOString() };
+    expect(lifecycleRequestSchema.safeParse({ ...launch, force: true }).success).toBe(false);
+    expect(lifecycleRequestSchema.safeParse({ ...launch, replacesRequestId: randomUUID() }).success).toBe(false);
+    expect(lifecycleRequestSchema.safeParse({ ...launch, kind: "restart" }).success).toBe(false);
+  });
+
   it("falls back to periodic reconciliation when an event is missed", async () => {
     const f = fixture(); await f.coordinator.close();
     const coordinator = new RuntimeLifecycleCoordinator(f.file, { ...f.driver, watch: undefined }, { intervalMs: 20 });

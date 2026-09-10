@@ -36,8 +36,9 @@ enum AppSingleInstanceCoordinator {
             return false
         }
 
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.menaje.codex-mcp-bridge"
         let lockURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("com.menaje.codex-mcp-bridge.menu-bar.lock")
+            .appendingPathComponent("\(bundleIdentifier).menu-bar.lock")
         let descriptor = lockURL.path.withCString {
             Darwin.open($0, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
         }

@@ -1,0 +1,97 @@
+{
+  "passed": true,
+  "runtimeBuild": "917363a4a745:6f0b979b4158",
+  "nativeEntryPoint": "CodexBridgeMenuBarApp",
+  "scope": "real native application and helper; synthetic launcher/Tunnel/workload and CLI; no menu interaction",
+  "events": [
+    {
+      "event": "app-launched",
+      "pid": 35874,
+      "at": "2026-09-10T01:06:12.395Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 35877,
+      "at": "2026-09-10T01:06:14.141Z",
+      "lifecycle": {
+        "requestId": "e91adeda-a2b8-4aca-9df3-bdddabf80b5b",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-09-10T01:06:13.396Z",
+        "updatedAt": "2026-09-10T01:06:14.122Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 35906,
+      "at": "2026-09-10T01:06:14.142Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 35906,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-exited",
+      "pid": 35874,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 35874,
+      "at": "2026-09-10T01:06:14.876Z",
+      "receipt": {
+        "outcome": "completed",
+        "requestId": "a3646fd8-cab9-41c0-ba46-f54af38c0476"
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 35919,
+      "at": "2026-09-10T01:06:14.877Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 35923,
+      "at": "2026-09-10T01:06:15.903Z",
+      "lifecycle": {
+        "requestId": "35059F42-2AC2-44D5-9A7A-B5533482B771",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-09-10T01:06:15.447Z",
+        "updatedAt": "2026-09-10T01:06:15.838Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false
+      }
+    },
+    {
+      "event": "manual-stop-stayed-stopped",
+      "at": "2026-09-10T01:06:22.586Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 35919,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 35919,
+      "at": "2026-09-10T01:06:23.108Z",
+      "receipt": {
+        "outcome": "completed",
+        "requestId": "207812a5-6a44-4953-a4c9-e9366f7c7561"
+      }
+    }
+  ]
+}

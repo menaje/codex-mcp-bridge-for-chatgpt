@@ -23,44 +23,34 @@ struct DashboardPopoverView: View {
     @State private var showForceRestartConfirmation = false
     @State private var showRepairConfirmation = false
     @State private var showApplicationQuitConfirmation = false
+    @State private var regionHeights: [DashboardPopoverRegion: CGFloat] = [:]
+    @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            RuntimeLifecycleNoticeView()
-                .padding(.horizontal, 12)
-            if let problem = model.operationalProblem {
-                Button {
-                    model.showOperationalProblem(problem)
-                } label: {
-                    Label(BridgeAppLocalization.string(problem.messageKey, locale: model.interfaceLocale),
-                        systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-            }
-            Divider()
+            headerSection.dashboardHeight(.header)
             Group {
                 if !model.hasConnectionTarget {
-                    runtimeUnavailableView
+                    runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if model.needsSetup {
-                    ConnectionRepairView()
+                    ConnectionRepairView().frame(height: fallbackHeight)
                 } else if !model.bridgeConnected, model.isBridgeConnectionChecking, model.dashboard == nil {
-                    connectionCheckingView
+                    connectionCheckingView.frame(height: fallbackHeight)
                 } else if !model.bridgeConnected, !model.isBridgeConnectionChecking {
-                    runtimeUnavailableView
+                    runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if let dashboard = model.dashboard {
                     dashboardContent(dashboard)
                 } else {
-                    loadingView
+                    loadingView.frame(height: fallbackHeight)
                 }
             }
             Divider()
-            footer
+            footer.dashboardHeight(.footer)
         }
-        .frame(width: 460, height: 660)
+        .frame(width: DashboardPopoverLayout.width)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(DashboardPopoverScreen { screenHeight = $0 })
+        .onPreferenceChange(DashboardPopoverHeights.self) { regionHeights = $0 }
         .environment(\.locale, model.interfaceLocale)
         .onAppear { model.setDashboardVisible(true) }
         .onDisappear { model.setDashboardVisible(false) }
@@ -112,6 +102,37 @@ struct DashboardPopoverView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text(applicationQuitImpactMessage)
+        }
+    }
+
+    private var fallbackHeight: CGFloat {
+        min(440, max(160, screenHeight - 24 - (regionHeights[.header] ?? 80) - (regionHeights[.footer] ?? 50)))
+    }
+
+    private var detailHeight: CGFloat {
+        DashboardPopoverLayout.detailHeight(
+            content: regionHeights[.detail] ?? 100,
+            fixed: (regionHeights[.header] ?? 80) + (regionHeights[.summary] ?? 260) +
+                (regionHeights[.footer] ?? 50) + 2,
+            screen: screenHeight
+        )
+    }
+
+    private var headerSection: some View {
+        VStack(spacing: 0) {
+            header
+            RuntimeLifecycleNoticeView().padding(.horizontal, 12)
+            if let problem = model.operationalProblem {
+                Button { model.showOperationalProblem(problem) } label: {
+                    Label(BridgeAppLocalization.string(problem.messageKey, locale: model.interfaceLocale),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+            Divider()
         }
     }
 
@@ -233,31 +254,8 @@ struct DashboardPopoverView: View {
     }
 
     private func dashboardContent(_ dashboard: DashboardSnapshot) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if shouldOfferCodexThreadPersistence {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(
-                            "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?",
-                            systemImage: "arrow.up.forward.app"
-                        )
-                        .font(.caption.weight(.semibold))
-                        Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Button("새 작업부터 켜기") {
-                            model.enableCodexThreadPersistence()
-                        }
-                        .buttonStyle(.link)
-                        .disabled(model.generalSettingsSaveState.isActive)
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                }
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
                 if model.shouldShowCodexAuthenticationNotice {
                     Button {
                         presentConnectionRepairWindow()
@@ -307,90 +305,138 @@ struct DashboardPopoverView: View {
                     WeeklyUsageView(usage: usage)
                 }
                 DashboardSummary(counts: dashboard.counts)
-                if dashboard.counts.backgroundProcesses > 0 {
-                    Button {
-                        Task { await model.selectDashboardStatus(.background) }
-                    } label: {
-                        Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
-                    Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
-                    Label(
-                        "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
-                        systemImage: "clock.badge.exclamationmark"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
-                    Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending), let observed = model.dashboardObservationDate {
-                    Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if dashboard.counts.runtimeUnknownAgents > 0,
-                   !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
-                    Label(
-                        "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
-                        systemImage: "questionmark.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-                if dashboard.counts.runtimeProbeSkippedAgents > 0 {
-                    Label(
-                        "프로세스 상태를 아직 확인하지 않은 Agent가 \(dashboard.counts.runtimeProbeSkippedAgents)개 있습니다.",
-                        systemImage: "ellipsis.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
-                    DashboardSection(
-                        title: "현재 작업",
-                        emptyText: "표시할 현재 작업이 없습니다.",
-                        rows: dashboard.activeRows,
-                        total: dashboard.pagination.active.total,
-                        groupsByActivity: true
-                    )
-                    if dashboard.pagination.active.hasNext {
-                        Label(
-                            "활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.",
-                            systemImage: "ellipsis.circle"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    }
-                }
-                if let problems = dashboard.problems,
-                   model.dashboardStatusFilter == .all || model.dashboardStatusFilter == .problems {
-                    DashboardProblemsSection(problems: problems)
-                }
-                if model.dashboardStatusFilter != .problems || dashboard.problems == nil {
-                    DashboardSection(
-                        title: "실행 기록",
-                        emptyText: "보존된 최근 실행이 없습니다.",
-                        rows: dashboard.terminalRows,
-                        total: dashboard.pagination.terminal.total,
-                        groupsByActivity: true,
-                        hasMore: dashboard.pagination.terminal.hasNext,
-                        loadMore: { Task { await model.loadMoreRecent() } }
-                    )
-                }
-                if let policy = dashboard.historyPolicy {
-                    WorkHistoryPolicyView(policy: policy)
-                }
             }
             .padding(14)
+            .dashboardHeight(.summary)
+            if let panel = model.dashboardPanel {
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if model.dashboardDetailLoading {
+                            if let error = model.dashboardErrorMessage {
+                                Text(error).font(.caption).foregroundStyle(.secondary)
+                                Button("새로고침") { Task { await model.refreshDashboard() } }
+                            } else {
+                                ProgressView("현황을 불러오는 중…")
+                                    .frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            dashboardDetails(dashboard, panel: panel)
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .dashboardHeight(.detail)
+                }
+                .frame(height: detailHeight)
+                .id(panel)
+                .accessibilityIdentifier("dashboard-detail")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dashboardDetails(_ dashboard: DashboardSnapshot, panel: DashboardPanel) -> some View {
+        if panel == .history {
+            Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if shouldOfferCodexThreadPersistence {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(
+                        "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?",
+                        systemImage: "arrow.up.forward.app"
+                    )
+                    .font(.caption.weight(.semibold))
+                    Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Button("새 작업부터 켜기") {
+                        model.enableCodexThreadPersistence()
+                    }
+                    .buttonStyle(.link)
+                    .disabled(model.generalSettingsSaveState.isActive)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        if dashboard.counts.backgroundProcesses > 0 {
+            Button {
+                Task { await model.toggleDashboardPanel(.background) }
+            } label: {
+                Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
+            Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
+            Label(
+                "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
+                systemImage: "clock.badge.exclamationmark"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+        } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
+            Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending), let observed = model.dashboardObservationDate {
+            Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if dashboard.counts.runtimeUnknownAgents > 0,
+           !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
+            Label(
+                "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
+                systemImage: "questionmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+        }
+        if dashboard.counts.runtimeProbeSkippedAgents > 0 {
+            Label(
+                "프로세스 상태를 아직 확인하지 않은 Agent가 \(dashboard.counts.runtimeProbeSkippedAgents)개 있습니다.",
+                systemImage: "ellipsis.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        if panel == .problems {
+            if let problems = dashboard.problems {
+                DashboardProblemsSection(problems: problems)
+            } else {
+                DashboardSection(title: "문제", emptyText: "처리할 문제가 없습니다.",
+                    rows: dashboard.activeRows + dashboard.terminalRows,
+                    total: dashboard.pagination.active.total + dashboard.pagination.terminal.total,
+                    groupsByActivity: true)
+            }
+        } else {
+            DashboardSection(
+                title: panel == .history ? "현재 작업" : panel.title,
+                emptyText: "표시할 현재 작업이 없습니다.",
+                rows: dashboard.activeRows,
+                total: dashboard.pagination.active.total,
+                groupsByActivity: true
+            )
+            if dashboard.pagination.active.hasNext {
+                Label("활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.", systemImage: "ellipsis.circle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if panel == .history || panel == .background {
+                DashboardSection(title: "실행 기록", emptyText: "보존된 최근 실행이 없습니다.",
+                    rows: dashboard.terminalRows, total: dashboard.pagination.terminal.total,
+                    groupsByActivity: true, hasMore: dashboard.pagination.terminal.hasNext,
+                    loadMore: { Task { await model.loadMoreRecent() } })
+                if panel == .history, let policy = dashboard.historyPolicy { WorkHistoryPolicyView(policy: policy) }
+            }
         }
     }
 
@@ -426,6 +472,18 @@ struct DashboardPopoverView: View {
             .keyboardShortcut(",")
             .help("설정")
             .accessibilityLabel("설정")
+
+            Button {
+                Task { await model.toggleDashboardPanel(.history) }
+            } label: {
+                Label("작업·실행 기록", systemImage: "clock.arrow.circlepath")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(model.dashboardPanel == .history ? Color.accentColor : Color.primary)
+            .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
+            .accessibilityIdentifier("dashboard-history")
+            .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
 
             if model.isRemoteClient {
                 Menu {
@@ -776,23 +834,17 @@ private struct DashboardSummary: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            summaryButton("실행 중", value: counts.running, symbol: "play.fill", filter: .running)
-            summaryButton("응답 필요", value: counts.responseRequiredCount, symbol: "text.bubble.fill", filter: .responseRequired)
-            summaryButton("문제", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", filter: .problems)
+            summaryButton("실행 중", value: counts.running, symbol: "play.fill", panel: .running)
+            summaryButton("응답 필요", value: counts.responseRequiredCount, symbol: "text.bubble.fill", panel: .responseRequired)
+            summaryButton("문제", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
-        if model.dashboardStatusFilter != .all {
-            Button("전체 보기") {
-                Task { await model.selectDashboardStatus(.all) }
-            }
-            .buttonStyle(.link)
-            .font(.caption)
-        }
+        .disabled(model.changingProblems)
     }
 
-    private func summaryButton(_ title: String, value: Int, symbol: String, filter: DashboardStatusFilter) -> some View {
-        let selected = model.dashboardStatusFilter == filter
+    private func summaryButton(_ title: String, value: Int, symbol: String, panel: DashboardPanel) -> some View {
+        let selected = model.dashboardPanel == panel
         return Button {
-            Task { await model.selectDashboardStatus(selected ? .all : filter) }
+            Task { await model.toggleDashboardPanel(panel) }
         } label: {
             VStack(spacing: 4) {
                 HStack(spacing: 4) {
@@ -813,6 +865,7 @@ private struct DashboardSummary: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityIdentifier("dashboard-\(panel.rawValue)")
     }
 }
 

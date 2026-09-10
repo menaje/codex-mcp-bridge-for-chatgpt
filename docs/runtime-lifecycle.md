@@ -33,6 +33,23 @@ Existing synchronous RPC methods are compatibility adapters to this coordinator.
 
 On helper re-entry, pending intent is reloaded. Executing operations are reconciled against the launcher PID and lock owner token, selected CLI and actual connection readiness. Reconciliation only observes state; any required helper-replacement activation returns to the coordinator, which checks cancellation/replacement and persists an uncancellable execution claim before starting a process. A recovered helper does not blindly repeat a completed restart. Recovery owns its launch even when it ends in cancellation or failure, so implicit startup cannot overwrite that result. Explicit stop/mode-switch outcomes suppress automatic startup; an explicit start creates new intent. Crash backoff checks pending lifecycle intent before restarting.
 
+The native app submits one graceful `start` intent with `applicationLaunchAt` and
+a stable request ID for each new app instance. This timestamp belongs only to
+`start`; it cannot force or replace another operation. The helper first reconciles
+an older shutdown receipt, then the coordinator serializes the launch intent with
+other requests. A completed shutdown from the previous app instance permits the
+new start. Pending operations, newer user commands, and cancellation or failure
+during recovery take precedence; the reply can identify that existing operation
+instead of creating a start. Regular lifecycle controls still return their own
+request ID. Retrying an app launch uses the same ID and timestamp.
+
+Opening the menu bar, refreshing status, or reconnecting the helper within the
+same app instance does not submit another launch intent. A helper-only respawn
+keeps completed stop/shutdown/mode-switch outcomes and terminal cancellation or
+failure stopped. A fresh local app launch may start after an older completed
+stop; remote client launches never request a local start. Setup and startup
+failures continue to expose helper status and recovery controls.
+
 A helper SIGTERM/SIGINT releases supervision while preserving the detached runtime, its active work, and pending reservations. The replacement helper adopts that runtime using the private lock owner and build identity. The app-managed launcher tolerates its old helper's diagnostic pipes closing; loss of a log reader does not terminate work. Application quit, mode changes and explicit force operations still stop the runtime through the coordinator before releasing the helper. The supervisor's opt-in `close({ runtime: "force-stop" })` is used for isolated test teardown, not the helper's signal handler. An OS-enforced runtime kill cannot be made graceful by this policy.
 
 For application exit and mode changes, the app claims the handoff only after verifying the runtime is stopped. It then verifies helper shutdown, commits the connection mode when required, and writes a separate private `lifecycle-handoff.json` receipt. Intermediate `claimed` and `runtime-stopped` records let app re-entry finish a transaction interrupted between helper exit and preference persistence. Receipt file changes trigger reconciliation in both `handoff-ready` and `handing-off`, including a failed settings flush or final status request before acknowledgement. Failure records carry a stable category, not raw native error text, and let the user submit a new request. Failed external actions do not claim completion or trigger automatic force. Helper replacement retains the existing launchd rollback safeguards; the replacement build completes its reservation after the bridge and tunnel become ready.
