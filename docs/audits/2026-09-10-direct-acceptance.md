@@ -230,6 +230,33 @@ The isolated case passed in 304 milliseconds. Neither production timeouts nor
 test timeouts were increased. Concurrent Swift compilation and high system
 load were observed, but not treated as proof of the cause of every timeout.
 
+The final selected rerun passed all 13 cases in four matched files in 15.14
+seconds, including all seven cases that had timed out. The 485 unselected tests
+in that filtered command are not additional skips in the full run. The complete
+947-case invocation above remains recorded as nonzero; the result is a complete
+run followed by successful focused verification, not a claimed single clean
+947-case run.
+
+## Final native build and local test app
+
+The integrated source passed the strict native bundle checks: 142 tests,
+140 passed, two opt-in live tests skipped and zero failures, plus 720 strings
+in nine languages. The release-mode arm64 executable, packaged SQLite module
+and ad-hoc application signature passed the bundler checks. A local development
+DMG was created, verified, mounted read-only and checked again for the contained
+app's signature, architecture and version. The mount was removed afterward.
+
+- Source/build: `20d91ae5e488:754746e7394b`, version 0.3.0 development.
+- Artifact: `Codex-MCP-Bridge-direct-20260910-macOS-arm64.dmg` (47,412,461 bytes).
+- SHA-256: `0be4b669083a903bd60e89703e089bff4d5e3302a07329ac8437df171e7119c6`.
+
+The artifact contains the merged #89 implementation and this review's four
+product fixes. Packaging does not replace the installed app or publish a
+release. The initial checksum-metadata helper used a Python API unavailable in
+the system Python; a streaming SHA-256 implementation completed the metadata
+after the successful image and mounted-app verification. The DMG bytes did not
+change during that correction.
+
 ## Remaining boundaries and cleanup
 
 | Issue | Directly completed or corrected | Still open |

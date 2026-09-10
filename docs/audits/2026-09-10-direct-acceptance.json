@@ -172,6 +172,24 @@
       "passed": 1,
       "durationMs": 304,
       "timeoutsChanged": false
+    },
+    "finalSelectedRetry": {
+      "passed": 13,
+      "failed": 0,
+      "matchedFiles": 4,
+      "unselected": 485,
+      "seconds": 15.14,
+      "includesAllSevenFullRunTimeouts": true
+    },
+    "finalNativeBundle": {
+      "executed": 142,
+      "passed": 140,
+      "skipped": 2,
+      "failed": 0,
+      "localizationStrings": 720,
+      "locales": 9,
+      "strictBuild": true,
+      "architecture": "arm64"
     }
   },
   "immutableUI": {
@@ -213,5 +231,16 @@
     "evidence": "2026-09-10-issue-89-menubar-startup.md",
     "actualQuitAndReopen": true,
     "actualTunnel": true
+  },
+  "localTestApp": {
+    "artifact": "Codex-MCP-Bridge-direct-20260910-macOS-arm64.dmg",
+    "sha256": "0be4b669083a903bd60e89703e089bff4d5e3302a07329ac8437df171e7119c6",
+    "architecture": "arm64",
+    "version": "0.3.0",
+    "dmgVerified": true,
+    "mountedAppSignatureVerified": true,
+    "installedAppChangedByPackaging": false,
+    "buildId": "20d91ae5e488:754746e7394b",
+    "bytes": 47412461
   }
 }
