@@ -23,6 +23,7 @@ struct DashboardPopoverView: View {
     @State private var showForceRestartConfirmation = false
     @State private var showRepairConfirmation = false
     @State private var showApplicationQuitConfirmation = false
+    @State private var isRefreshingOverview = false
     @State private var regionHeights: [DashboardPopoverRegion: CGFloat] = [:]
     @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
 
@@ -150,17 +151,32 @@ struct DashboardPopoverView: View {
             Spacer()
             if model.isBusy { ProgressView().controlSize(.small) }
             Button {
+                guard !isRefreshingOverview else { return }
+                isRefreshingOverview = true
+                let feedbackDeadline = ContinuousClock.now.advanced(by: .milliseconds(400))
                 Task {
+                    defer { isRefreshingOverview = false }
                     await model.refreshStatus()
                     await model.refreshAuthStatus()
                     await model.refreshDashboard()
+                    // Keep the click visible even when every response is cached.
+                    try? await Task.sleep(until: feedbackDeadline, clock: .continuous)
                 }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Group {
+                    if isRefreshingOverview {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
+            .disabled(isRefreshingOverview)
             .help("새로고침")
             .accessibilityLabel("현황 새로고침")
+            .accessibilityValue(isRefreshingOverview ? Text("현황을 불러오는 중…") : Text(""))
         }
         .padding(14)
     }
@@ -477,10 +493,13 @@ struct DashboardPopoverView: View {
                 Task { await model.toggleDashboardPanel(.history) }
             } label: {
                 Label("작업·실행 기록", systemImage: "clock.arrow.circlepath")
-                    .font(.caption)
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .foregroundStyle(model.dashboardPanel == .history ? Color.accentColor : Color.primary)
+            .help("작업·실행 기록")
+            .accessibilityLabel("작업·실행 기록")
             .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-history")
             .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
