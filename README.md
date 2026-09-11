@@ -146,6 +146,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
 - [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
 - [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
+- [UI release compatibility](docs/ui-release-compatibility.md) — published card baselines, development revisions and Activity retirement
 
 ## Development
 

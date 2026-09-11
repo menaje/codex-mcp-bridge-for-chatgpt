@@ -17,7 +17,7 @@ product. They never receive independent product versions.
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
 | Manifest schema | `manifestVersion` (currently 4) | Release metadata schema compatibility |
-| UI compatibility | UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer |
+| UI compatibility | Published card baselines, explicit deployment exceptions, UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer; inventory separation is pending under #53 |
 | State compatibility | SQLite schema version (currently 12) | Local data migration axis |
 | Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
@@ -26,6 +26,29 @@ product. They never receive independent product versions.
 metadata, manifest schema, release stage, branch combination, and active change
 fragments in one entry point. `npm run release:sync` repairs derived metadata;
 it does not choose a stage or grant publication authority.
+
+## Card compatibility at release boundaries
+
+The [UI card release and retirement policy](ui-release-compatibility.md) separates
+published stable baselines, development-current cards, and explicitly supported
+development/RC deployments. Ordinary UI synchronization must not turn every
+development revision into a permanent compatibility obligation. A release
+contains supported published identities, its final current cards and selected
+temporary exceptions. Preserve immutable identities and their required
+presenters/tool contracts; product SemVer does not replace UI contract checks.
+
+The target active cards are Settings, Dashboard and Question. Activity cards
+belong to a retirement and client-migration path, with only explicitly supported
+legacy revisions retained. Their removal must preserve shared work data and
+execution logic and resolve the existing #69 client-support conditions. Finalize
+card selection and any removal before the final RC; stable promotion must not
+prune or add UI payload files.
+
+This policy is recorded; the current generator still accumulates development
+history. #53 tracks baseline reconstruction, inventory/lifecycle implementation
+and the Activity retention/removal decision. #52 verifies the selected inventory
+in all payloads, and #11 verifies the upgrade instructions against the candidate.
+These remain release-readiness requirements, not completed implementation.
 
 ## Stage and branch lifecycle
 

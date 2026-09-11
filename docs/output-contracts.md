@@ -222,6 +222,14 @@ The current Dashboard descriptor requires generation 29 at the content-hashed UR
 
 The minimum Activity generation for new descriptors is 12. The current immutable resource is generation 30 at the content-hashed URI recorded in `ui-manifest.lock.json`. Every retained immutable Activity URI from generations 7–30 remains registered and refreshes through its compatible app-only path. Retained HTML assets are not rewritten or deleted when the minimum advances. UI generation 19 normalizes supported host-result wrappers and exposes retryable hydration failures. Generation 20 retains the generation-11 private bootstrap/view envelopes and paints structural data first. Generation 21 also requests bounded enrichment for a historical one-shot view through its exact Job/request correlation. Generation 22 retains per-Agent work duration, historically hoisted exact execution details shared by all nested Agents, and groups full-history idle Agents by latest Activity while suppressing copies already nested under a visible Activity. Generation 23 adds bounded recent and distinct idle detail to compact cards, with recent Activities expanded and idle Agents collapsed by default. Generation 24 reconstructs a cold full-history result from its strict public mode and optional Activity identity/version, keeps that reconstruction paginatable but one-shot and non-owning, bounds both host transports, dispatches enrichment before the long watch, rejects stale async responses, coalesces rapid refresh clicks, and retains the last successful structural view when refresh or enrichment fails. Generation 25 keeps actual model/reasoning effort on every nested Agent in compact and full cards, even when sibling selections match, and explicitly marks missing legacy execution evidence. Rehydrated views remain read-only and non-owning: enrichment grants no watcher, handoff, control lease, or mutation authority.
 
+The retained generations above describe the existing implementation. The
+[UI release compatibility policy](ui-release-compatibility.md) requires a
+published-baseline inventory, explicit deployed-client exceptions and Activity
+retirement. Its implementation is pending under #53; the current lock's full
+history is not a promise to ship every development revision. Removal must
+preserve strict contracts for remaining clients and migrate the affected ones
+before the final RC.
+
 An initial `codex_activity` full-history result with no Activity uses the same
 `restored-explicit` one-shot presentation as a cold full-history remount. There
 is no Activity proof to lease yet. Its refresh and enrichment use

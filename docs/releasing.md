@@ -31,8 +31,8 @@ The manifest controls:
 - GitHub owner and repository name;
 - personal/local plugin identity, descriptions, developer, category,
   capabilities, starter prompts, and registered ChatGPT app connection;
-- immutable Settings and Activity UI cache-key policy, hash algorithm and
-  prefix length, retained-generation count, and required logical resources;
+- immutable UI cache-key policy, hash algorithm and prefix length, minimum
+  contract generations, and currently required logical resources;
 - the single release unit, synchronized SemVer mirror, independent stage,
   derived publication channel, source-RC provenance, tag prefix, and release title;
 - generated release-note policy and the manifest-v4 release asset contract;
@@ -67,13 +67,15 @@ personal/local plugin.
 
 ## UI resource identity and compatibility
 
-UI identity is independent from release SemVer. `npm run release:sync` renders
-the final self-contained Settings and Activity HTML, combines it with the
-canonical host-affecting metadata (`mimeType`, CSP, widget domain, and
+UI identity is independent from release SemVer. `npm run release:sync` currently
+renders Settings, Dashboard, Question and retained Activity HTML, combines it
+with canonical host-affecting metadata (`mimeType`, CSP, widget domain, and
 presentation preference), and derives an immutable SHA-256 URI:
 
 ```text
 ui://codex-mcp-bridge/settings/<content-hash>.html
+ui://codex-mcp-bridge/dashboard/<content-hash>.html
+ui://codex-mcp-bridge/question/<content-hash>.html
 ui://codex-mcp-bridge/activity/<content-hash>.html
 ```
 
@@ -84,20 +86,37 @@ The command is the only supported writer for:
 - `src/uiManifest.generated.ts`, which gives the server the same identities;
 - build-time `dist/ui-manifest.json` and packaged snapshots.
 
-The server registers each current URI. Non-Activity history is filtered by its
-configured minimum contract generation. Activity resources are immutable mount
-targets, so every retained Activity revision remains registered even after the
-minimum advances; generation 12 is the minimum for new descriptors while the
-current generation-20 and retained generation 7–20 assets continue to resolve
-and refresh through app-only tools.
+The existing server registers all current and previous entries from the lock.
+Only Settings history is filtered by minimum contract generation; Activity,
+Dashboard and Question history still accumulates across development syncs.
+The build copies that entire selection into the packaged runtime. This is the
+current implementation, not a published-release support policy.
 The resource descriptor, `_meta.ui.resourceUri`, and compatibility
 `openai/outputTemplate` must all name the same current URI.
+
+The [UI card release and retirement policy](ui-release-compatibility.md) defines
+the required replacement: separate supported stable baselines, one development
+current per active card, and exact exceptions for already deployed development
+or RC clients. Only the final current cards enter the next stable baseline;
+development intermediates do not enter automatically. Activity is retired from
+the active set, with remaining compatibility and removal decided through that
+policy. Implementation and baseline reconstruction remain open in #53.
+
+Before the final RC, select the supported identities and required tool contracts,
+resolve deployment exceptions and the Activity migration, and verify the same
+selection in the npm archive and both DMGs (#52). Include the actual v0.3.0
+non-hashed card URIs in the support/retirement review; the current hashed lock
+does not establish their compatibility. Document the resulting upgrade and
+card-reopening behavior against that candidate (#11). Do not prune cards during
+stable promotion; a changed UI payload requires another RC.
 
 `npm run release:check` reproduces the render and fails on content, digest,
 metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
 template drift. Do not edit generated manifests or snapshots by hand. A SemVer
 change with identical cards preserves the URIs; a card or relevant metadata
 change produces new URIs even before the next version bump.
+These existing checks do not yet enforce published provenance or the new
+inventory separation.
 
 Retained snapshots that reference the source compiler's missing `__name`
 helper receive a small name-decorator bootstrap when served. Their stored

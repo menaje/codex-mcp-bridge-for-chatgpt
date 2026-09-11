@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Document separate published-card baselines, development-current cards and deployed-client exceptions, with Activity retirement and final-RC inventory requirements; generator and removal implementation remain pending.",
+  "breaking": false,
+  "migration": null
+}

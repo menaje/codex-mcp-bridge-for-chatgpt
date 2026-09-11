@@ -116,7 +116,7 @@ effect. See [central execution policy](codex-runtimes.md#central-execution-polic
 
 ### Refresh after a bridge/UI change
 
-MCP App resource URIs are cache keys. This repository derives immutable Settings, Activity, and Dashboard URIs from final content plus host-affecting resource metadata. Before refreshing ChatGPT:
+MCP App resource URIs are cache keys. This repository derives immutable Settings, Dashboard, Question and retained Activity URIs from final content plus host-affecting resource metadata. Before refreshing ChatGPT:
 
 ```bash
 npm run release:sync
@@ -124,7 +124,7 @@ npm run release:check
 npm run check
 ```
 
-Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. This order ensures that the server already serves the newly advertised current URI and every retained URI whose UI contract generation is still supported.
+Then deploy/restart the bridge before selecting **Refresh** on the ChatGPT plugin detail screen. The server must already serve the newly advertised current URI and every identity selected for compatibility, with its required presenter and app-only callers. The current lock also contains accumulated development revisions; the [UI release compatibility policy](ui-release-compatibility.md) defines the pending separation and release-selection requirements. Generation support alone does not establish published-release compatibility.
 
 Do not Refresh merely because the bridge, tunnel, or computer restarted. An unchanged packaged build advertises the same immutable URIs. Refresh is needed after tool descriptors, authentication, UI content, or host-affecting UI metadata change.
 
@@ -481,6 +481,12 @@ completion handoff must wake orchestration; this feature adds no general
 Job-result wake system.
 
 ## 8. Status card and retained Activity cards
+
+Activity is retired from the target active card set. The retained implementation
+described below remains available while the support inventory and client
+migration are resolved under the [UI retirement policy](ui-release-compatibility.md#activity-card-retirement).
+Its accumulated resource generations are current implementation history, not a
+requirement to preserve every development card in the next stable release.
 
 `codex_task` is execution-only. Its descriptor has no Activity UI resource, it accepts no presentation field, and its result carries no Activity bootstrap. Therefore multiple Task or Agent calls in one response create no card shells by themselves.
 
