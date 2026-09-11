@@ -118,6 +118,8 @@ try {
           if((await label.textContent()).trim()!==entry.setting)throw new Error('Wrong settings label: '+entry.locale);
           if(!await page.locator('#use-priority-service-tier').isChecked())throw new Error('Saved Fast setting is missing');
           if(!await page.getByText(entry.hint,{exact:true}).isVisible())throw new Error('Missing settings explanation');
+          const presentation=await page.evaluate(()=>{const body=getComputedStyle(document.body),card=getComputedStyle(document.querySelector('main.card')),title=getComputedStyle(document.querySelector('h1')),input=getComputedStyle(document.querySelector('select')),button=getComputedStyle(document.querySelector('#save'));return{bodyPadding:body.padding,cardBorder:card.borderStyle,cardBackground:card.backgroundColor,cardPadding:card.padding,titleSize:title.fontSize,inputMinHeight:input.minHeight,buttonMinHeight:button.minHeight}});
+          if(JSON.stringify(presentation)!==JSON.stringify({bodyPadding:'0px',cardBorder:'none',cardBackground:'rgba(0, 0, 0, 0)',cardPadding:'14px',titleSize:'17px',inputMinHeight:'38px',buttonMinHeight:'36px'}))throw new Error('Wrong settings presentation: '+JSON.stringify(presentation));
         }else{
           if(${JSON.stringify(kind)}==="activity"){
             await page.locator('.fast-mode').first().waitFor({state:'visible'});

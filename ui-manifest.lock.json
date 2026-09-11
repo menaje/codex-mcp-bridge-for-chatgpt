@@ -11,8 +11,8 @@
   },
   "resources": {
     "settings": {
-      "digest": "fc59cc3d4ed01af5fb1dd58d2897498b85efcdf8f591e34a2138440dd555fb13",
-      "uri": "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
+      "digest": "d101f8a95ccc6a0fed7fac6186713ec37a720049c0935f7c4a588d4d059f53fc",
+      "uri": "ui://codex-mcp-bridge/settings/d101f8a95ccc.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -39,6 +39,35 @@
         }
       },
       "previous": [
+        {
+          "digest": "fc59cc3d4ed01af5fb1dd58d2897498b85efcdf8f591e34a2138440dd555fb13",
+          "uri": "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 21
+            }
+          }
+        },
         {
           "digest": "ec0ba4f91bfe3229beb4d0ba9aac5001b1b0792f41ae54b842486efc2daf31c7",
           "uri": "ui://codex-mcp-bridge/settings/ec0ba4f91bfe.html",

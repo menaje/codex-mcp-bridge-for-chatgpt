@@ -122,7 +122,7 @@ New tasks do not open Activity cards. Settings and independent question cards
 cover configuration and questions that need your input.
 
 <p align="center">
-  <img src="images/chatgpt-dashboard-light-en.png" alt="ChatGPT status card showing work in the bridge" width="645">
+  <img src="images/chatgpt-dashboard-light-en.png" alt="English ChatGPT status card showing conversation scope, three current work-state counts, Run History, and background processes" width="645">
 </p>
 
 ## macOS client mode
