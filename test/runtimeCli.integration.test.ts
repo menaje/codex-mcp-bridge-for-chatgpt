@@ -23,9 +23,6 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
       CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
       CODEX_MCP_BRIDGE_COMPANION_SOCKET: socketPath,
       CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite"),
-      CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(root, "settings.json"),
-      CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(root, "sessions.json"),
-      CODEX_MCP_BRIDGE_JOB_STATE_FILE: path.join(root, "jobs.json"),
       CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json")
     },
     stdio: ["pipe", "pipe", "pipe"]

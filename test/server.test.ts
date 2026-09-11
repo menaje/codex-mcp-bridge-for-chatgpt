@@ -871,7 +871,7 @@ describe("http server", () => {
     expect(diagnostics.storage).toMatchObject({
       backend: "sqlite",
       transactional: true,
-      schemaVersion: 18,
+      schemaVersion: 19,
       activityPersistent: true,
       sessionPersistent: true,
       settingsPersistent: true
@@ -1443,9 +1443,6 @@ async function start(
     ...env,
     CODEX_GPT_BRIDGE_HOST: "127.0.0.1",
     CODEX_GPT_BRIDGE_PORT: "1",
-    CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(stateDirectory, "settings.json"),
-    CODEX_MCP_BRIDGE_SESSION_STATE_FILE: path.join(stateDirectory, "sessions.json"),
-    CODEX_MCP_BRIDGE_JOB_STATE_FILE: path.join(stateDirectory, "jobs.json"),
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite")
   });
   const server = createHttpServer(config, upstream, new FakeModelCatalog(), runtimeOptions);

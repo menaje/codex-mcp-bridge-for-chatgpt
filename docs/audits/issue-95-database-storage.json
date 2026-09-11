@@ -1,0 +1,216 @@
+{
+  "issue": 95,
+  "testedAt": "2026-09-11T11:46:35.494Z",
+  "source": "read-only metrics plus a consistent disposable SQLite backup",
+  "productionDatabaseModified": false,
+  "sourceSchema": 18,
+  "sourceCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 4124152,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 38984,
+    "reusableBytes": 159678464,
+    "btreeUsedBytes": 10431208,
+    "cellPayloadBytes": 9930121
+  },
+  "migrationBackups": {
+    "count": 5,
+    "totalBytes": 239480832,
+    "largestBytes": 189349888
+  },
+  "sourceRows": {
+    "tables": 30,
+    "rows": 28251
+  },
+  "sourceSerialization": {
+    "jobs": 672,
+    "storedPayloadBytes": {
+      "total": 625483,
+      "median": 402,
+      "p95": 649,
+      "max": 356076
+    },
+    "structuredDuplicateFields": 5157,
+    "summaries": {
+      "rowsWithContent": 581,
+      "storedPayloadBytes": {
+        "total": 223504,
+        "median": 384,
+        "p95": 402,
+        "max": 548
+      },
+      "formalDuplicateFields": 226,
+      "unexpectedTopLevelFields": 226
+    },
+    "progressSerializationComparison": {
+      "beforeFullJobBytes": {
+        "total": 625483,
+        "median": 402,
+        "p95": 649,
+        "max": 356076
+      },
+      "afterBoundedStateBytes": {
+        "total": 18280,
+        "median": 27,
+        "p95": 27,
+        "max": 163
+      },
+      "totalReductionPercent": 97.077
+    }
+  },
+  "beforeConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 126.012,
+    "medianMs": 0.608,
+    "p95Ms": 0.69,
+    "plan": [
+      "SCAN j",
+      "SCALAR SUBQUERY 1",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 2",
+      "SCAN interaction VIRTUAL TABLE INDEX 3:",
+      "CORRELATED SCALAR SUBQUERY 3",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)"
+    ],
+    "positiveResults": 0
+  },
+  "currentConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 0.677,
+    "medianMs": 0.003,
+    "p95Ms": 0.004,
+    "plan": [
+      "SCAN j USING INDEX jobs_agent_active",
+      "SCALAR SUBQUERY 1",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 2",
+      "SEARCH interaction USING COVERING INDEX job_interactions_blocking (job_id=?)",
+      "CORRELATED SCALAR SUBQUERY 3",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)"
+    ],
+    "positiveResults": 0
+  },
+  "currentRetentionPlans": {
+    "eventByJob": [
+      "SEARCH job_events USING COVERING INDEX job_events_job_cursor (job_id=?)"
+    ],
+    "oldestEventBatch": [
+      "SEARCH job_events USING INTEGER PRIMARY KEY (rowid=?)",
+      "LIST SUBQUERY 1",
+      "SCAN job_events"
+    ],
+    "blockingInteraction": [
+      "SEARCH job_interactions USING COVERING INDEX job_interactions_blocking (job_id=?)"
+    ],
+    "historyCandidates": [
+      "SEARCH j USING INDEX jobs_status_recent (status=? AND updated_at<?)",
+      "CORRELATED SCALAR SUBQUERY 1",
+      "SEARCH h USING INDEX sqlite_autoindex_work_history_state_1 (job_id=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "expiredHolds": [
+      "SEARCH result_holds USING COVERING INDEX sqlite_autoindex_result_holds_1 (job_id=?)",
+      "LIST SUBQUERY 1",
+      "SCAN result_holds"
+    ]
+  },
+  "currentRows": {
+    "tables": 32,
+    "rows": 27495
+  },
+  "currentSerialization": {
+    "jobs": 672,
+    "storedPayloadBytes": {
+      "total": 87745,
+      "median": 110,
+      "p95": 357,
+      "max": 8053
+    },
+    "structuredDuplicateFields": 0,
+    "summaries": {
+      "rowsWithContent": 581,
+      "storedPayloadBytes": {
+        "total": 218574,
+        "median": 384,
+        "p95": 402,
+        "max": 466
+      },
+      "formalDuplicateFields": 0,
+      "unexpectedTopLevelFields": 0
+    },
+    "interactions": {
+      "rows": 0,
+      "storedPayloadBytes": {
+        "total": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "structuredDuplicateFields": 0
+    }
+  },
+  "telemetryWritePath": {
+    "comparisonSourceSchema": 18,
+    "before": {
+      "sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions": 9,
+      "fullJobRowUpserts": 1,
+      "fullJobSerializations": 1,
+      "unconditionalSummaryWrites": 1,
+      "unconditionalThreadConnectionWrites": 1
+    },
+    "current": {
+      "sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions": 7,
+      "fullJobRowUpserts": 0,
+      "fullJobSerializations": 0,
+      "boundedJobStateUpdates": 1,
+      "unconditionalSummaryWrites": 0,
+      "unconditionalThreadConnectionWrites": 0,
+      "interactionWrites": "one bounded delete plus one insert per current interaction"
+    },
+    "basis": "static SQL-path count from b1104aa persistTelemetryBestEffort and current recordJobTelemetryEvent; includes scope/coalescing/retention writes and excludes trigger-internal event_budget updates"
+  },
+  "currentCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 0,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 45309,
+    "reusableBytes": 185585664,
+    "btreeUsedBytes": 9289625,
+    "cellPayloadBytes": 8907409
+  },
+  "compactedCapacity": {
+    "databaseBytes": 10412032,
+    "walBytes": 0,
+    "shmBytes": 0,
+    "pageSize": 4096,
+    "pageCount": 2542,
+    "allocatedBytes": 10412032,
+    "freePages": 0,
+    "reusableBytes": 0,
+    "btreeUsedBytes": 9288601,
+    "cellPayloadBytes": 8907409
+  },
+  "offlineCompaction": {
+    "sourceStopped": true,
+    "precompactBackupVerified": true,
+    "compactCopyVerifiedBeforeReplacement": true,
+    "rollbackCopyVerified": true,
+    "liveDatabaseReplacementPerformed": false
+  },
+  "passed": true,
+  "temporaryCopiesRemoved": true
+}

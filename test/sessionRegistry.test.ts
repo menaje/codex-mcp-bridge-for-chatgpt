@@ -1,29 +1,32 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { LEGACY_SCOPE_ID, SessionRegistry } from "../src/sessionRegistry.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
-const PROJECT_A = "33333333-3333-4333-8333-333333333333";
 
 describe("SessionRegistry", () => {
-  it("persists only session metadata and restores it after restart", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    const first = new SessionRegistry({ stateFile, allowedRoots: [root] });
+  it("persists only structured session metadata and restores it from SQLite", () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-root-")));
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const project = firstStore.applyProjectOperations(
+      [{ kind: "add", project: { name: "Codex MCP Bridge", cwd: root } }],
+      0,
+      [root]
+    ).projects[0]!;
+    const first = new SessionRegistry({ stateStore: firstStore, allowedRoots: [root] });
     first.record({
       threadId: "thread-1",
       sessionId: "session-tree-1",
       forkedFromThreadId: "thread-parent",
       scopeId: SCOPE_A,
-      sessionId: "session-tree-1",
-      forkedFromThreadId: "thread-parent",
       cwd: root,
-      projectId: PROJECT_A,
-      projectLabel: "Codex MCP Bridge",
+      projectId: project.id,
+      projectName: project.name,
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
@@ -33,18 +36,19 @@ describe("SessionRegistry", () => {
       createdAt: 100,
       lastUsedAt: 200
     });
+    firstStore.close();
 
-    const serialized = readFileSync(stateFile, "utf8");
-    expect(serialized).toContain("thread-1");
-    expect(serialized).not.toContain("prompt");
-    expect(statSync(stateFile).mode & 0o777).toBe(0o600);
+    const serialized = readFileSync(databaseFile);
+    expect(serialized.includes(Buffer.from("thread-1"))).toBe(true);
+    expect(statSync(databaseFile).mode & 0o777).toBe(0o600);
 
-    const restored = new SessionRegistry({ stateFile, allowedRoots: [root] });
+    const reopenedStore = new BridgeStateStore({ file: databaseFile });
+    const restored = new SessionRegistry({ stateStore: reopenedStore, allowedRoots: [root] });
     expect(restored.get("thread-1")).toMatchObject({
       scopeId: SCOPE_A,
       cwd: root,
-      projectId: PROJECT_A,
-      projectLabel: "Codex MCP Bridge",
+      projectId: project.id,
+      projectName: "Codex MCP Bridge",
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 3,
@@ -52,19 +56,26 @@ describe("SessionRegistry", () => {
       backendKind: "app-server",
       visibleInCodexApp: true
     });
+    expect(restored.get("thread-1")).not.toHaveProperty("payload");
+    expect(restored.get("thread-1")).not.toHaveProperty("prompt");
+    reopenedStore.close();
   });
 
   it("restores an explicitly tracked danger-full-access session", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    const writer = new SessionRegistry({ stateFile, allowedRoots: [root] });
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const writer = new SessionRegistry({ stateStore: firstStore, allowedRoots: [root] });
     writer.record(session("full-thread", root, "danger-full-access", undefined, undefined, 100));
+    firstStore.close();
 
-    const restored = new SessionRegistry({ stateFile, allowedRoots: [root] });
+    const reopenedStore = new BridgeStateStore({ file: databaseFile });
+    const restored = new SessionRegistry({ stateStore: reopenedStore, allowedRoots: [root] });
     expect(restored.get("full-thread")).toMatchObject({
       cwd: root,
       sandbox: "danger-full-access"
     });
+    reopenedStore.close();
   });
 
   it("keeps model execution state out of thread compatibility identity", () => {
@@ -117,18 +128,6 @@ describe("SessionRegistry", () => {
     expect(sessions.get("newer")?.threadId).toBe("newer");
   });
 
-  it("does not restore persisted sessions outside the current allowed roots", () => {
-    const allowed = mkdtempSync(path.join(tmpdir(), "bridge-allowed-"));
-    const outside = mkdtempSync(path.join(tmpdir(), "bridge-outside-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    const writer = new SessionRegistry({ stateFile });
-    writer.record(session("allowed", allowed, "read-only", undefined, undefined, 100));
-    writer.record(session("outside", outside, "read-only", undefined, undefined, 200));
-
-    const reader = new SessionRegistry({ stateFile, allowedRoots: [allowed] });
-    expect(reader.list().map((entry) => entry.threadId)).toEqual(["allowed"]);
-  });
-
   it("quarantines SQLite sessions outside temporary roots without deleting them", () => {
     const allowed = mkdtempSync(path.join(tmpdir(), "bridge-allowed-"));
     const outside = mkdtempSync(path.join(tmpdir(), "bridge-outside-"));
@@ -152,42 +151,6 @@ describe("SessionRegistry", () => {
     restoredStore.close();
   });
 
-  it("preserves quarantined SQLite sessions during the one-time legacy import", () => {
-    const allowed = mkdtempSync(path.join(tmpdir(), "bridge-allowed-"));
-    const outside = mkdtempSync(path.join(tmpdir(), "bridge-outside-"));
-    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-state-"));
-    const databaseFile = path.join(stateDirectory, "state.sqlite");
-    const legacyFile = path.join(stateDirectory, "sessions.json");
-    writeFileSync(
-      legacyFile,
-      `${JSON.stringify({
-        version: 5,
-        sessions: [session("legacy-allowed", allowed, "read-only", undefined, undefined, 300)]
-      })}\n`
-    );
-
-    const firstStore = new BridgeStateStore({ file: databaseFile });
-    const writer = new SessionRegistry({ stateStore: firstStore });
-    writer.record(session("sqlite-outside", outside, "read-only", undefined, undefined, 200));
-    firstStore.close();
-
-    const narrowedStore = new BridgeStateStore({ file: databaseFile });
-    const narrowed = new SessionRegistry({
-      stateStore: narrowedStore,
-      stateFile: legacyFile,
-      allowedRoots: [allowed]
-    });
-    expect(narrowed.list().map((entry) => entry.threadId)).toEqual(["legacy-allowed"]);
-    expect(narrowedStore.countSessions()).toBe(2);
-    narrowedStore.close();
-
-    const restoredStore = new BridgeStateStore({ file: databaseFile });
-    const restored = new SessionRegistry({ stateStore: restoredStore, allowedRoots: [outside] });
-    expect(restored.list().map((entry) => entry.threadId)).toEqual(["sqlite-outside"]);
-    expect(restoredStore.countSessions()).toBe(2);
-    restoredStore.close();
-  });
-
   it("still enforces the global SQLite session retention limit", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
@@ -207,17 +170,21 @@ describe("SessionRegistry", () => {
 
   it("touch moves a session to the front and persists its last-used time", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
     let now = 500;
-    const sessions = new SessionRegistry({ stateFile, now: () => now });
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    const sessions = new SessionRegistry({ stateStore: firstStore, now: () => now });
     sessions.record(session("first", root, "read-only", undefined, undefined, 100));
     sessions.record(session("second", root, "read-only", undefined, undefined, 200));
     now = 600;
     sessions.touch("first");
-
     expect(sessions.list().map((entry) => entry.threadId)).toEqual(["first", "second"]);
-    const restored = new SessionRegistry({ stateFile });
+    firstStore.close();
+
+    const reopenedStore = new BridgeStateStore({ file: databaseFile });
+    const restored = new SessionRegistry({ stateStore: reopenedStore });
     expect(restored.get("first")?.lastUsedAt).toBe(600);
+    reopenedStore.close();
   });
 
   it("groups all related sessions by conversation scope", () => {
@@ -280,90 +247,54 @@ describe("SessionRegistry", () => {
     });
   });
 
-  it("migrates version 1 state into a quarantined legacy scope", () => {
+  it("keeps an admitted project when later session evidence omits project metadata", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    writeFileSync(
-      stateFile,
-      JSON.stringify({
-        version: 1,
-        sessions: [
-          {
-            threadId: "legacy-thread",
-            cwd: root,
-            sandbox: "read-only",
-            createdAt: 100,
-            lastUsedAt: 200
-          }
-        ]
-      })
+    const sessions = new SessionRegistry();
+    sessions.record({
+      ...session("thread-1", root, "read-only", undefined, undefined, 1_000),
+      projectId: "33333333-3333-4333-8333-333333333333",
+      projectName: "Retained project"
+    });
+
+    sessions.record(session("thread-1", root, "read-only", undefined, undefined, 2_000));
+
+    expect(sessions.get("thread-1")).toMatchObject({
+      projectId: "33333333-3333-4333-8333-333333333333",
+      projectName: "Retained project"
+    });
+  });
+
+  it("projects the current registered name without restarting the session registry", () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-session-project-")));
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const project = state.applyProjectOperations(
+      [{ kind: "add", project: { name: "Original name", cwd: root } }],
+      0,
+      []
+    ).projects[0]!;
+    const sessions = new SessionRegistry({ stateStore: state });
+    sessions.record({
+      ...session("thread-1", root, "read-only", undefined, undefined, 1_000),
+      projectId: project.id,
+      projectName: project.name
+    });
+
+    state.applyProjectOperations(
+      [{ kind: "rename", projectId: project.id, name: "Current name" }],
+      1,
+      []
     );
 
-    const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
-    expect(sessions.get("legacy-thread")).toMatchObject({
-      scopeId: LEGACY_SCOPE_ID
+    expect(sessions.get("thread-1")).toMatchObject({
+      projectId: project.id,
+      projectName: "Current name"
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
-    expect(sessions.get("legacy-thread")?.backendKind).toBe("mcp-server");
+    expect(sessions.list()).toEqual([
+      expect.objectContaining({ projectId: project.id, projectName: "Current name" })
+    ]);
+    state.close();
   });
 
-  it("migrates version 2 task lanes into ordinary sessions under one scope", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    writeFileSync(
-      stateFile,
-      JSON.stringify({
-        version: 2,
-        sessions: [
-          {
-            threadId: "v2-thread",
-            scopeId: SCOPE_A,
-            taskKey: "review",
-            cwd: root,
-            sandbox: "read-only",
-            createdAt: 100,
-            lastUsedAt: 200
-          }
-        ]
-      })
-    );
-
-    const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
-    expect(sessions.get("v2-thread")).toMatchObject({ scopeId: SCOPE_A });
-    expect(sessions.get("v2-thread")).not.toHaveProperty("taskKey");
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 8 });
-    expect(sessions.get("v2-thread")?.backendKind).toBe("mcp-server");
-  });
-
-  it("migrates version 4 model fields into mutable exact selection state", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
-    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "sessions.json");
-    writeFileSync(stateFile, JSON.stringify({
-      version: 4,
-      sessions: [{
-        threadId: "v4-thread",
-        scopeId: SCOPE_A,
-        cwd: root,
-        sandbox: "read-only",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "max",
-        backendKind: "app-server",
-        createdAt: 100,
-        lastUsedAt: 200
-      }]
-    }));
-
-    const sessions = new SessionRegistry({ stateFile, allowedRoots: [root] });
-    expect(sessions.get("v4-thread")).toMatchObject({
-      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
-      updatedAt: 200,
-      backendKind: "app-server"
-    });
-    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 8 });
-    expect(persisted.sessions[0]).not.toHaveProperty("model");
-    expect(persisted.sessions[0]).not.toHaveProperty("reasoningEffort");
-  });
 });
 
 function session(

@@ -1,7 +1,5 @@
 import { DEFAULT_HISTORY_RETENTION_DAYS, HISTORY_RETENTION_DAYS, historyRetentionDays, type HistoryRetentionDays } from "./workHistory.js";
 import { createHmac, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
 import { DEFAULT_USER_MAX_CONCURRENT_JOBS } from "./config.js";
 import { EXECUTION_POLICY_VERSION, resolveTaskSandbox } from "./executionPolicy.js";
@@ -18,11 +16,6 @@ import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_REQUIRED,
   ProjectRegistry,
-  createProjectRef,
-  normalizeProjectId,
-  normalizeProjectName,
-  normalizeProjectRef,
-  projectNameKey,
   type ProjectRegistryOperation,
   type ProjectRegistrySnapshot,
   type RuntimeProjectSelection,
@@ -71,32 +64,20 @@ export type BridgeUserSettingsPatch = Partial<
     | "updatedAt"
     | "projects"
   >
-> & {
-  /** Internal compatibility surface; public settings mutations use operations. */
-  projects?: Array<Partial<ProjectTarget> & { cwd: string; name?: string; label?: string }>;
-};
+>;
 
 type GeneralSettings = Omit<
   BridgeUserSettings,
   "registryRevision" | "revision" | "projects"
 >;
 
-type PersistedSettingsState = {
-  version: 4;
-  settings: GeneralSettings;
-  projectRegistry: ProjectRegistrySnapshot;
-};
-
 export type UserSettingsStoreOptions = {
-  stateFile?: string;
   stateStore?: BridgeStateStore;
   now?: () => number;
 };
 
 export class UserSettingsStore {
-  private readonly stateFile?: string;
   private readonly stateStore: BridgeStateStore;
-  private readonly suppliedStateStore: boolean;
   private readonly executionPolicyHmacSecret: Buffer;
   private readonly now: () => number;
   private readonly initial: GeneralSettings;
@@ -113,8 +94,6 @@ export class UserSettingsStore {
     private readonly config: BridgeConfig,
     options: UserSettingsStoreOptions = {}
   ) {
-    this.stateFile = options.stateFile;
-    this.suppliedStateStore = Boolean(options.stateStore);
     this.stateStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(this.stateStore);
     this.now = options.now || Date.now;
@@ -145,11 +124,11 @@ export class UserSettingsStore {
   get historyPolicy() { return this.stateStore.workHistory.policy(this.settings.historyRetentionDays); }
 
   get persistent(): boolean {
-    return Boolean(this.stateStore.persistent || this.stateFile);
+    return this.stateStore.persistent;
   }
 
   get persistencePath(): string | null {
-    return this.stateStore.persistent ? this.stateStore.persistencePath : this.stateFile || null;
+    return this.stateStore.persistencePath;
   }
 
   /** Internal composition hook: admission participants must share this DB. */
@@ -239,17 +218,11 @@ export class UserSettingsStore {
 
   update(patch: BridgeUserSettingsPatch, expectedRevision: number): BridgeUserSettings {
     assertSettingsPatchKeys(patch);
-    const projectReplacement = patch.projects;
-    const generalPatch = { ...patch } as BridgeUserSettingsPatch;
-    delete generalPatch.projects;
-    const operations = projectReplacement
-      ? this.operationsForProjectReplacement(projectReplacement)
-      : [];
     return this.applyConfiguration(
-      generalPatch,
-      operations,
-      Object.keys(generalPatch).length > 0 ? expectedRevision : undefined,
-      operations.length > 0 ? this.current.registryRevision : undefined
+      patch,
+      [],
+      Object.keys(patch).length > 0 ? expectedRevision : undefined,
+      undefined
     );
   }
 
@@ -268,9 +241,6 @@ export class UserSettingsStore {
     expectedRegistryRevision = this.current.registryRevision
   ): BridgeUserSettings {
     assertSettingsPatchKeys(patch);
-    if (patch.projects !== undefined) {
-      throw new Error("SETTINGS_FIELD_RETIRED: Use explicit project registry operations.");
-    }
     return this.applyConfiguration(
       patch,
       operations,
@@ -374,48 +344,10 @@ export class UserSettingsStore {
 
     this.settings = committedSettings;
     this.config.codexService?.setAppVisibility(this.settings.showBridgeThreadsInCodexApp);
-    this.persistStandaloneState();
     if (generalChanged || operations.length > 0) {
       for (const listener of this.changeListeners) listener();
     }
     return this.current;
-  }
-
-  private operationsForProjectReplacement(
-    desired: Array<Partial<ProjectTarget> & { cwd: string; name?: string; label?: string }>
-  ): ProjectRegistryOperation[] {
-    const active = this.current.projects.filter((project) => project.archivedAt === undefined);
-    const matched = new Set<string>();
-    const operations: ProjectRegistryOperation[] = [];
-    for (const input of desired) {
-      const name = normalizeProjectName(input.name ?? input.label ?? "");
-      const key = projectNameKey(name);
-      let existing: ProjectTarget | undefined;
-      if (typeof input.id === "string") {
-        try {
-          const id = normalizeProjectId(input.id);
-          existing = active.find((project) => project.id === id);
-        } catch {
-          // Legacy caller-supplied slugs are not identities in the new model.
-        }
-      }
-      existing ||= active.find((project) => project.nameKey === key && !matched.has(project.id));
-      if (!existing) {
-        operations.push({ kind: "add", project: { name, cwd: input.cwd } });
-        continue;
-      }
-      matched.add(existing.id);
-      if (existing.name !== name) {
-        operations.push({ kind: "rename", projectId: existing.id, name });
-      }
-      if (existing.cwd !== input.cwd) {
-        operations.push({ kind: "relocate", projectId: existing.id, cwd: input.cwd });
-      }
-    }
-    for (const project of active) {
-      if (!matched.has(project.id)) operations.push({ kind: "archive", projectId: project.id });
-    }
-    return operations;
   }
 
   private validateGeneral(
@@ -508,42 +440,7 @@ export class UserSettingsStore {
       this.settings = loaded.settings;
       return;
     }
-    if (!this.stateFile || !existsSync(this.stateFile)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read bridge settings at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (!isRecord(parsed) || !isRecord(parsed.settings)) {
-      throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
-    }
-    const settingsRevision = Number.isInteger(parsed.settings.settingsRevision)
-      ? Number(parsed.settings.settingsRevision)
-      : Number.isInteger(parsed.settings.revision)
-        ? Number(parsed.settings.revision)
-        : 0;
-    const loaded = this.reconcileLoadedGeneral(
-      parsed.settings,
-      this.stateFile,
-      settingsRevision
-    );
-    this.settings = loaded.settings;
-    this.stateStore.setSettings(this.settings);
-    let migratedProjectRegistry = false;
-    if ((parsed.version === 3 || parsed.version === 4) && isRecord(parsed.projectRegistry)) {
-      migratedProjectRegistry = parsed.version === 3;
-      this.stateStore.importProjectRegistry(
-        readProjectRegistrySnapshot(parsed.projectRegistry, migratedProjectRegistry)
-      );
-    } else if ("projects" in parsed.settings) {
-      this.warnings.push(
-        "Legacy project IDs/default aliases were intentionally not migrated. Register projects by name in Settings."
-      );
-    }
-    if (loaded.changed || migratedProjectRegistry) this.persistStandaloneState();
+    return;
   }
 
   private reconcileLoadedGeneral(
@@ -596,23 +493,7 @@ export class UserSettingsStore {
     }
   }
 
-  private persistStandaloneState(): void {
-    if (this.suppliedStateStore || !this.stateFile) return;
-    const directory = path.dirname(this.stateFile);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.stateFile}.${process.pid}.tmp`;
-    const state: PersistedSettingsState = {
-      version: 4,
-      settings: cloneGeneralSettings(this.settings),
-      projectRegistry: this.stateStore.getProjectRegistrySnapshot()
-    };
-    writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600
-    });
-    renameSync(temporary, this.stateFile);
-    chmodSync(this.stateFile, 0o600);
-  }
+
 }
 
 function composeSettings(
@@ -820,67 +701,6 @@ function readGeneralSettings(
   };
 }
 
-function readProjectRegistrySnapshot(
-  value: Record<string, unknown>,
-  migrateLegacySelectors = false
-): ProjectRegistrySnapshot {
-  if (
-    !Number.isInteger(value.registryRevision) ||
-    typeof value.updatedAt !== "number" ||
-    !Array.isArray(value.projects)
-  ) {
-    throw new Error("Invalid project registry state.");
-  }
-  return {
-    registryRevision: Number(value.registryRevision),
-    updatedAt: value.updatedAt,
-    projects: value.projects.map((entry) => {
-      if (!isRecord(entry)) throw new Error("Invalid project registry entry.");
-      if (
-        typeof entry.id !== "string" ||
-        typeof entry.name !== "string" ||
-        typeof entry.nameKey !== "string" ||
-        typeof entry.cwd !== "string" ||
-        typeof entry.sortOrder !== "number" ||
-        typeof entry.createdAt !== "number" ||
-        typeof entry.updatedAt !== "number"
-      ) {
-        throw new Error("Invalid project registry entry.");
-      }
-      const name = normalizeProjectName(entry.name);
-      let projectRef: string;
-      let projectRevision: number;
-      if (migrateLegacySelectors) {
-        projectRef = createProjectRef();
-        projectRevision = 1;
-      } else {
-        if (typeof entry.projectRef !== "string") {
-          throw new Error("Invalid project selection reference.");
-        }
-        if (!Number.isInteger(entry.projectRevision) || Number(entry.projectRevision) < 1) {
-          throw new Error("Invalid project revision.");
-        }
-        projectRef = normalizeProjectRef(entry.projectRef);
-        projectRevision = Number(entry.projectRevision);
-      }
-      const target: ProjectTarget = {
-        id: normalizeProjectId(entry.id),
-        projectRef,
-        projectRevision,
-        name,
-        label: name,
-        nameKey: projectNameKey(name),
-        cwd: entry.cwd,
-        sortOrder: entry.sortOrder,
-        createdAt: entry.createdAt,
-        updatedAt: entry.updatedAt,
-        ...(typeof entry.archivedAt === "number" ? { archivedAt: entry.archivedAt } : {})
-      };
-      return target;
-    })
-  };
-}
-
 function migrateModelPolicyServiceTiers(value: unknown): {
   value: unknown;
   usedFastTier: boolean;
@@ -945,7 +765,6 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "modelPolicy",
     "modelDescriptionOverrides",
     "usePriorityServiceTier",
-    "projects",
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
@@ -956,6 +775,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));
   if (!unsupported) return;
   if (
+    unsupported === "projects" ||
     unsupported === "defaultProjectId" ||
     unsupported === "defaultCwd" ||
     unsupported === "projectId"

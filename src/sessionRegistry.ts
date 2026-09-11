@@ -1,4 +1,3 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isPathWithinRoot, type CodexBackendKind, type SandboxMode } from "./config.js";
 import type { BridgeStateStore } from "./stateStore.js";
@@ -8,7 +7,7 @@ import {
   validateModelSelection,
   type ModelSelection
 } from "./modelPolicy.js";
-import { normalizeProjectId, normalizeProjectLabel } from "./projectRegistry.js";
+import { normalizeProjectId, normalizeProjectName } from "./projectRegistry.js";
 
 export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
 export const SCOPE_ID_PATTERN =
@@ -25,7 +24,7 @@ export type ThreadIdentity = {
 export type ThreadExecutionState = {
   cwd: string;
   projectId?: string;
-  projectLabel?: string;
+  projectName?: string;
   sandbox: SandboxMode;
   selection?: ModelSelection;
   policyRevision?: number;
@@ -46,13 +45,7 @@ export type SessionMatch = {
   sandbox: SandboxMode;
 };
 
-type PersistedSessionState = {
-  version: 8;
-  sessions: TrackedCodexSession[];
-};
-
 export type SessionRegistryOptions = {
-  stateFile?: string;
   stateStore?: BridgeStateStore;
   allowedRoots?: string[];
   maxSessions?: number;
@@ -61,14 +54,13 @@ export type SessionRegistryOptions = {
 
 export class SessionRegistry {
   private readonly sessions = new Map<string, TrackedCodexSession>();
-  private readonly stateFile?: string;
   private readonly stateStore?: BridgeStateStore;
   private readonly allowedRoots: string[];
   private readonly maxSessions: number;
   private readonly now: () => number;
+  private projectedProjectRevision: number | undefined;
 
   constructor(options: SessionRegistryOptions = {}) {
-    this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.allowedRoots = options.allowedRoots || [];
     this.maxSessions = options.maxSessions ?? 1000;
@@ -77,11 +69,11 @@ export class SessionRegistry {
   }
 
   get persistent(): boolean {
-    return Boolean(this.stateStore?.persistent || this.stateFile);
+    return Boolean(this.stateStore?.persistent);
   }
 
   get persistencePath(): string | null {
-    return this.stateStore?.persistencePath || this.stateFile || null;
+    return this.stateStore?.persistencePath || null;
   }
 
   /** Internal composition hook for shared registry/admission persistence. */
@@ -102,9 +94,11 @@ export class SessionRegistry {
     );
     const visibleInCodexApp = session.visibleInCodexApp ?? existing?.visibleInCodexApp;
     const persistence = session.persistence ?? existing?.persistence;
-    if ((session.projectId === undefined) !== (session.projectLabel === undefined)) {
-      throw new Error("Session project metadata requires both projectId and projectLabel.");
+    if ((session.projectId === undefined) !== (session.projectName === undefined)) {
+      throw new Error("Session project metadata requires both projectId and projectName.");
     }
+    const projectId = session.projectId ?? existing?.projectId;
+    const projectName = session.projectName ?? existing?.projectName;
     this.sessions.delete(session.threadId);
     this.sessions.set(session.threadId, {
       threadId: session.threadId,
@@ -115,10 +109,10 @@ export class SessionRegistry {
       ...(visibleInCodexApp !== undefined ? { visibleInCodexApp } : {}),
       ...(persistence ? { persistence } : {}),
       cwd: session.cwd,
-      ...(session.projectId && session.projectLabel
+      ...(projectId && projectName
         ? {
-            projectId: normalizeProjectId(session.projectId),
-            projectLabel: normalizeProjectLabel(session.projectLabel)
+            projectId: normalizeProjectId(projectId),
+            projectName: normalizeProjectName(projectName)
           }
         : {}),
       sandbox: session.sandbox,
@@ -139,6 +133,7 @@ export class SessionRegistry {
   }
 
   get(threadId: string): TrackedCodexSession | undefined {
+    this.refreshProjectIdentities();
     const session = this.sessions.get(threadId);
     return session ? cloneSession(session) : undefined;
   }
@@ -219,6 +214,7 @@ export class SessionRegistry {
   }
 
   list(limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
+    this.refreshProjectIdentities();
     return [...this.sessions.values()]
       .reverse()
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
@@ -241,126 +237,58 @@ export class SessionRegistry {
   }
 
   private load(): void {
-    if (this.stateStore) {
-      const stored = this.stateStore.listSessions();
-      const decoded = stored
-        .map((session) => readPersistedSession(session, 8))
-        .filter((session): session is TrackedCodexSession => Boolean(session))
-        .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
-      const sessions = decoded.slice(-this.maxSessions);
-      const retained = new Set(sessions.map((session) => session.threadId));
-      const expired = decoded
-        .filter((session) => !retained.has(session.threadId))
-        .map((session) => session.threadId);
-      if (expired.length > 0) {
-        this.stateStore.transaction(() => {
-          for (const threadId of expired) this.stateStore?.deleteSession(threadId);
-        });
-      }
-      for (const session of sessions) {
-        if (this.isAllowedCwd(session.cwd)) this.sessions.set(session.threadId, session);
-      }
-      // A temporarily narrowed or misconfigured allowed-root set must quarantine
-      // persisted sessions, not erase them. A later restart with the original
-      // operator policy must still be able to recover the exact thread state.
-      this.importLegacyState();
-      return;
-    }
-    this.loadJsonState();
-  }
-
-  private loadJsonState(): void {
-    if (!this.stateFile || !existsSync(this.stateFile)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read Codex session state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (
-      !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8) ||
-      !Array.isArray(parsed.sessions)
-    ) {
-      throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
-    }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-    const sessions = parsed.sessions
-      .map((session) => readPersistedSession(session, stateVersion))
+    if (!this.stateStore) return;
+    const stored = this.stateStore.listSessions();
+    const decoded = stored
+      .map(readPersistedSession)
       .filter((session): session is TrackedCodexSession => Boolean(session))
-      .filter((session) => this.isAllowedCwd(session.cwd))
-      .sort((a, b) => a.lastUsedAt - b.lastUsedAt)
-      .slice(-this.maxSessions);
+      .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+    const sessions = decoded.slice(-this.maxSessions);
+    const retained = new Set(sessions.map((session) => session.threadId));
+    const expired = decoded
+      .filter((session) => !retained.has(session.threadId))
+      .map((session) => session.threadId);
+    if (expired.length > 0) {
+      this.stateStore.transaction(() => {
+        for (const threadId of expired) this.stateStore?.deleteSession(threadId);
+      });
+    }
     for (const session of sessions) {
-      this.sessions.set(session.threadId, session);
+      if (this.isAllowedCwd(session.cwd)) this.sessions.set(session.threadId, session);
     }
-    if (stateVersion !== 8) this.persist();
-  }
-
-  private importLegacyState(): void {
-    if (!this.stateStore || !this.stateFile || !existsSync(this.stateFile)) return;
-    const marker = `legacy_sessions_imported:${this.stateFile}`;
-    if (this.stateStore.getMeta(marker)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read Codex session state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (
-      !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8) ||
-      !Array.isArray(parsed.sessions)
-    ) {
-      throw new Error(`Invalid Codex session state format at ${this.stateFile}.`);
-    }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-    const imported = parsed.sessions
-      .map((session) => readPersistedSession(session, stateVersion))
-      .filter((session): session is TrackedCodexSession => Boolean(session))
-      .filter((session) => this.isAllowedCwd(session.cwd))
-      .filter((session) => !this.sessions.has(session.threadId));
-    this.stateStore.transaction(() => {
-      for (const session of imported) {
-        this.sessions.set(session.threadId, session);
-        this.stateStore?.upsertSession(session);
-      }
-      for (const threadId of this.enforceLimit()) this.stateStore?.deleteSession(threadId);
-      this.stateStore?.setMeta(marker, new Date().toISOString());
-    });
-  }
-
-  private persist(): void {
-    if (this.stateStore) {
-      this.stateStore.replaceSessions(this.list());
-      return;
-    }
-    if (!this.stateFile) return;
-    const directory = path.dirname(this.stateFile);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.stateFile}.${process.pid}.tmp`;
-    const state: PersistedSessionState = {
-      version: 8,
-      sessions: this.list()
-    };
-    writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    renameSync(temporary, this.stateFile);
-    chmodSync(this.stateFile, 0o600);
+    // A temporarily narrowed or misconfigured allowed-root set quarantines
+    // persisted sessions without erasing their execution context.
   }
 
   private persistSession(session: TrackedCodexSession, removed: string[] = []): void {
-    if (!this.stateStore) {
-      this.persist();
-      return;
-    }
+    if (!this.stateStore) return;
     this.stateStore.transaction(() => {
       this.stateStore?.upsertSession(session);
       for (const threadId of removed) this.stateStore?.deleteSession(threadId);
     });
+  }
+
+  private refreshProjectIdentities(): void {
+    if (!this.stateStore) return;
+    const revision = this.stateStore.getProjectRegistryRevision();
+    if (revision === this.projectedProjectRevision) return;
+    const current = new Map(
+      this.stateStore.listSessionProjectIdentities().map((identity) => [
+        identity.threadId,
+        identity
+      ])
+    );
+    for (const [threadId, session] of this.sessions) {
+      const identity = current.get(threadId);
+      if (identity?.projectId && identity.projectName) {
+        session.projectId = identity.projectId;
+        session.projectName = identity.projectName;
+      } else {
+        delete session.projectId;
+        delete session.projectName;
+      }
+    }
+    this.projectedProjectRevision = revision;
   }
 
   private enforceLimit(): string[] {
@@ -395,65 +323,42 @@ export function extractThreadId(result: ToolResult): string | undefined {
   return undefined;
 }
 
-function readPersistedSession(
-  value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
-): TrackedCodexSession | undefined {
+function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
   if (!isRecord(value)) return undefined;
   const sandbox = value.sandbox;
-  const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
-  const backendKind = stateVersion >= 4 ? value.backendKind : "mcp-server";
-  const legacySelection =
-    typeof value.model === "string" &&
-    value.model &&
-    typeof value.reasoningEffort === "string" &&
-    value.reasoningEffort
-      ? { model: value.model, reasoningEffort: value.reasoningEffort }
-      : undefined;
+  const scopeId = value.scopeId;
+  const backendKind = value.backendKind;
   let selection: ModelSelection | undefined;
   try {
-    selection = stateVersion >= 5 && value.selection !== undefined
+    selection = value.selection !== undefined
       ? validateModelSelection(value.selection, "persisted thread selection")
-      : legacySelection;
+      : undefined;
   } catch {
     return undefined;
   }
-  const policyRevision = stateVersion >= 5 ? value.policyRevision : undefined;
-  const sessionId = stateVersion >= 7
-    ? normalizePersistedLineageId(value.sessionId)
-    : undefined;
-  const forkedFromThreadId = stateVersion >= 7
-    ? normalizePersistedLineageId(value.forkedFromThreadId)
-    : undefined;
-  const visibleInCodexApp = stateVersion >= 8 && typeof value.visibleInCodexApp === "boolean"
+  const policyRevision = value.policyRevision;
+  const sessionId = normalizePersistedLineageId(value.sessionId);
+  const forkedFromThreadId = normalizePersistedLineageId(value.forkedFromThreadId);
+  const visibleInCodexApp = typeof value.visibleInCodexApp === "boolean"
     ? value.visibleInCodexApp
     : undefined;
   if (
-    stateVersion >= 7 &&
-    ((value.sessionId !== undefined && !sessionId) ||
-      (value.forkedFromThreadId !== undefined && !forkedFromThreadId))
-  ) {
-    return undefined;
-  }
-  if (
-    stateVersion >= 8 &&
-    value.visibleInCodexApp !== undefined &&
-    typeof value.visibleInCodexApp !== "boolean"
-  ) {
-    return undefined;
-  }
-  const updatedAt = stateVersion >= 5 && isTimestamp(value.updatedAt)
+    (value.sessionId !== undefined && !sessionId) ||
+    (value.forkedFromThreadId !== undefined && !forkedFromThreadId) ||
+    (value.visibleInCodexApp !== undefined && typeof value.visibleInCodexApp !== "boolean")
+  ) return undefined;
+  const updatedAt = isTimestamp(value.updatedAt)
     ? value.updatedAt
     : isTimestamp(value.lastUsedAt)
       ? value.lastUsedAt
-      : 0;
-  let project: { projectId: string; projectLabel: string } | undefined;
+      : undefined;
+  let project: { projectId: string; projectName: string } | undefined;
   try {
-    if (stateVersion >= 6 && (value.projectId !== undefined || value.projectLabel !== undefined)) {
-      if (typeof value.projectId !== "string" || typeof value.projectLabel !== "string") return undefined;
+    if (value.projectId !== undefined || value.projectName !== undefined) {
+      if (typeof value.projectId !== "string" || typeof value.projectName !== "string") return undefined;
       project = {
         projectId: normalizeProjectId(value.projectId),
-        projectLabel: normalizeProjectLabel(value.projectLabel)
+        projectName: normalizeProjectName(value.projectName)
       };
     }
   } catch {
@@ -469,6 +374,7 @@ function readPersistedSession(
     path.normalize(value.cwd) !== value.cwd ||
     (sandbox !== "read-only" && sandbox !== "workspace-write" && sandbox !== "danger-full-access") ||
     !isTimestamp(value.createdAt) ||
+    updatedAt === undefined ||
     !isTimestamp(value.lastUsedAt) ||
     (backendKind !== "mcp-server" && backendKind !== "app-server" && backendKind !== "codex-sdk") ||
     (policyRevision !== undefined && (!Number.isInteger(policyRevision) || (policyRevision as number) < 0))
@@ -516,10 +422,6 @@ function parseJson(text: string): unknown {
 
 function isTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
 }
 
 function normalizeOptionalLineageId(value: string | undefined, label: string): string | undefined {

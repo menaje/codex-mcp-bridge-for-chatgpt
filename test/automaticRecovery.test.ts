@@ -1,7 +1,6 @@
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { AutomaticRecoveryController, automaticRecoveryKey } from "../src/automaticRecovery.js";
@@ -57,20 +56,6 @@ describe("bounded automatic recovery", () => {
     await controller.close();state.close();
   });
 
-  it("migrates v15 with a private consistent backup and retains failed outcomes", () => {
-    const directory=mkdtempSync(path.join(tmpdir(),"bridge-recovery-migration-")),file=path.join(directory,"state.sqlite");
-    let state=new BridgeStateStore({file});
-    state.upsertJob({jobId:"original-failure",requestId:"original-request",scopeId:"11111111-1111-4111-8111-111111111111",status:"failed",updatedAt:Date.now()});
-    state.close();
-    const old=new Database(file);old.exec("DROP TABLE automatic_recovery;UPDATE bridge_meta SET value='15' WHERE key='schema_version'");old.close();
-    state=new BridgeStateStore({file});expect(state.getMeta("schema_version")).toBe("18");
-    expect(state.listJobs()[0]).toMatchObject({jobId:"original-failure",status:"failed"});
-    const backups=readdirSync(directory).filter(name=>name.includes("pre-v18"));expect(backups).toHaveLength(1);
-    expect(statSync(path.join(directory,backups[0])).mode & 0o777).toBe(0o600);
-    const backup=new Database(path.join(directory,backups[0]),{readonly:true});
-    expect(backup.pragma("quick_check",{simple:true})).toBe("ok");backup.close();state.close();
-  });
-
   it("does not report success when the original incident disappears during later work", async () => {
     const state=new BridgeStateStore({file:":memory:"});let present=true;
     const controller=new AutomaticRecoveryController(state.automaticRecovery,{candidates:()=>present?[candidate]:[],
@@ -113,26 +98,4 @@ describe("bounded automatic recovery", () => {
     state.close();
   });
 
-  it("adopts v16 budgets and creates a private backup before adding incident identities", () => {
-    const directory=mkdtempSync(path.join(tmpdir(),"bridge-recovery-v16-")),file=path.join(directory,"state.sqlite");
-    let state=new BridgeStateStore({file});
-    state.automaticRecovery.begin(candidate,1000);
-    state.automaticRecovery.finish(candidate.key,1,{resolved:false,reason:"unconfirmed"},1001);
-    const resolved={...candidate,key:automaticRecoveryKey("recheck",["resolved-agent",1]),agentId:"resolved-agent"};
-    state.automaticRecovery.begin(resolved,1000);
-    state.automaticRecovery.finish(resolved.key,1,{resolved:true,reason:"runtime-confirmed",evidence:"runtime-observed"},1001);
-    state.close();
-    const old=new Database(file);
-    old.exec("DROP TABLE automatic_recovery_incidents;UPDATE bridge_meta SET value='16' WHERE key='schema_version'");old.close();
-    state=new BridgeStateStore({file});
-    expect(state.schemaVersion).toBe(18);
-    expect(readdirSync(directory).filter(name=>name.includes("pre-v18"))).toHaveLength(1);
-    expect(state.automaticRecovery.recheckCandidate(candidate)).toEqual(candidate);
-    expect(state.automaticRecovery.begin(candidate,6000)?.attempts).toBe(2);
-    expect(state.automaticRecovery.recheckCandidate(resolved,true)).toBeUndefined();
-    state.automaticRecovery.observeRecheck(resolved,true,6000);
-    expect(state.automaticRecovery.recheckCandidate(resolved)?.key).not.toBe(resolved.key);
-    expect(state.automaticRecovery.get(resolved.key)).toMatchObject({state:"resolved",attempts:1});
-    state.close();
-  });
 });

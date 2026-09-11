@@ -207,7 +207,7 @@ describe("current project-selector replay", () => {
       activityId: admitted.activityId,
       agentId: admitted.agentId,
       threadId: admitted.threadId,
-      projectName: "Selected Project"
+      projectName: "Renamed Original"
     });
     expect(restartedJobs.listForScope(SCOPE_ID)).toHaveLength(1);
     expect(restartedJobs.activityCount(SCOPE_ID)).toBe(1);
@@ -216,7 +216,7 @@ describe("current project-selector replay", () => {
       expect.objectContaining({
         threadId: admitted.threadId,
         projectId: selectedProject.id,
-        projectLabel: "Selected Project"
+        projectName: "Renamed Original"
       })
     ]);
     expect(upstream.calls).toHaveLength(1);

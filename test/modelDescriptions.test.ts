@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +8,9 @@ import {
   modelDescriptionProjection,
   normalizeModelDescriptionOverrides
 } from "../src/modelDescriptions.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import { SETTINGS_REVISION_CONFLICT, UserSettingsStore } from "../src/userSettings.js";
+import { replaceStoredSettingsPayloadForTest } from "./helpers/sqliteSettings.js";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -18,12 +20,15 @@ describe("user model descriptions", () => {
   it("stores only overrides, preserves them across restart and mode changes, and restores to current catalog text", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "model-descriptions-"));
     directories.push(directory);
-    const stateFile = path.join(directory, "settings.json");
-    const store = new UserSettingsStore(config(), { stateFile });
+    const databaseFile = path.join(directory, "state.sqlite");
+    const firstState = new BridgeStateStore({ file: databaseFile });
+    const store = new UserSettingsStore(config(), { stateStore: firstState });
     const automatic = store.current.modelPolicy;
     const description = "  Use for a bounded change.\nKeep the result concise.  ";
     store.update({ modelDescriptionOverrides: { "model-a": description, "temporarily-unavailable": "Keep this." } }, 0);
-    const restarted = new UserSettingsStore(config(), { stateFile });
+    firstState.close();
+    const restartedState = new BridgeStateStore({ file: databaseFile });
+    const restarted = new UserSettingsStore(config(), { stateStore: restartedState });
     expect(restarted.current.modelDescriptionOverrides).toEqual({
       "model-a": description.trim(), "temporarily-unavailable": "Keep this."
     });
@@ -37,22 +42,27 @@ describe("user model descriptions", () => {
     expect(restarted.current.modelDescriptionOverrides["model-a"]).toBe(description.trim());
     restarted.update({ modelDescriptionOverrides: { "model-a": " \n\t", "temporarily-unavailable": "Keep this." } }, 3);
     expect(modelDescriptionProjection(model, restarted.current.modelDescriptionOverrides, true)).toEqual({ description: model.description });
-    expect(readFileSync(stateFile, "utf8")).not.toContain(model.description);
+    expect(readFileSync(databaseFile).includes(Buffer.from(model.description))).toBe(false);
     expect(restarted.current.modelDescriptionOverrides).toEqual({ "temporarily-unavailable": "Keep this." });
+    restartedState.close();
   });
 
   it("loads older settings without copying a catalog description or advancing the settings revision", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "model-descriptions-legacy-"));
     directories.push(directory);
-    const stateFile = path.join(directory, "settings.json");
-    const store = new UserSettingsStore(config(), { stateFile });
+    const databaseFile = path.join(directory, "state.sqlite");
+    const firstState = new BridgeStateStore({ file: databaseFile });
+    const store = new UserSettingsStore(config(), { stateStore: firstState });
     store.update({ uiLocalePreference: "ko" }, 0);
-    const saved = JSON.parse(readFileSync(stateFile, "utf8"));
-    delete saved.settings.modelDescriptionOverrides;
-    writeFileSync(stateFile, JSON.stringify(saved));
-    const restarted = new UserSettingsStore(config(), { stateFile });
+    const saved = firstState.getSettingsRecord()!.payload as Record<string, unknown>;
+    delete saved.modelDescriptionOverrides;
+    firstState.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, saved);
+    const restartedState = new BridgeStateStore({ file: databaseFile });
+    const restarted = new UserSettingsStore(config(), { stateStore: restartedState });
     expect(restarted.current.modelDescriptionOverrides).toEqual({});
     expect(restarted.current.settingsRevision).toBe(1);
+    restartedState.close();
   });
 
   it("enforces stale-write conflicts and keeps execution references independent of descriptions", () => {

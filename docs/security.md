@@ -500,7 +500,17 @@ Nonblocking questions remain visible while the Job and Agent continue running.
 
 Connection release and retained data follow the separate [lifecycle policy](thread-lifecycle.md). The native `thread.handoff` operation is available only on the private local companion socket, validates the exact displayed Agent/thread, and is excluded from remote companion methods. An admission gate prevents overlapping bridge work while release is pending. Only observed thread unload or worker exit permits opening the app; an unsubscribe response alone is insufficient. An external writer lock is never bypassed by archiving, deleting, copying a transcript or stopping a shared application process.
 
-Schema 14 creates a private consistent backup before migration. Diagnostic cleanup removes raw progress after result expiry while keeping minimal outcome/usage and replay/delivery/cancellation identities. Outstanding delivery, blocking interaction, uncertain response, active cancellation and expiring manual holds protect results. The event payload budgets do not cap identity tables or physical SQLite/WAL size. Backups remain source-sensitive and are not automatically erased. Maintenance never edits Codex's original rollout files or runs a live `VACUUM`.
+Schema 19 normalizes project, execution-context, Job, event-summary, scope-version,
+and history state while preserving the supported schema-3 and schema-18 upgrade
+paths. A private consistent backup is created before migration. Diagnostic cleanup
+removes raw progress after result expiry while keeping minimal outcome/usage and
+replay/delivery/cancellation identities. Outstanding delivery, blocking
+interaction, uncertain response, active cancellation and expiring manual holds
+protect results. Event payload budgets do not cap identity tables or physical
+SQLite/WAL/backup size. Backups remain source-sensitive and are not automatically
+erased. Maintenance never edits Codex rollout files or runs a live `VACUUM`.
+See [database schema and lifecycle](database-schema.md) for the complete ownership,
+retention, backup, capacity, and offline recovery rules.
 
 - The project ref/revision tuple guarantees freshness of the selected
   name-to-UUID/cwd mapping. It cannot distinguish an intended project from a

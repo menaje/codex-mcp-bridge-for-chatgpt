@@ -2,7 +2,8 @@ import type Database from "better-sqlite3";
 import { tokenCounts } from "./tokenUsage.js";
 
 export const EVENT_RETENTION_LIMITS = { perJob: 256, rows: 50_000, bytes: 64 * 1024 * 1024, payloadBytes: 8192, metadataMs: 7 * 86400_000, batch: 500 };
-export const EVENT_RETENTION_SCHEMA = `
+/** Upgrade-only schema introduced at v14. Current databases use stateSchema.ts. */
+export const V14_EVENT_RETENTION_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS job_summaries(job_id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
   CREATE TABLE IF NOT EXISTS result_holds(job_id TEXT PRIMARY KEY, reason TEXT NOT NULL, expires_at INTEGER NOT NULL) STRICT;
   CREATE TABLE IF NOT EXISTS event_budget(id INTEGER PRIMARY KEY CHECK(id=1), rows INTEGER NOT NULL, bytes INTEGER NOT NULL) STRICT;
@@ -21,24 +22,25 @@ const record = (v: unknown): Record<string, unknown> => v && typeof v === "objec
 /** Diagnostics are disposable; delivery, cancellation, question and replay authorities live elsewhere. */
 export class EventRetention {
   constructor(private readonly db: Database.Database) {
-    const policy = this.db.prepare("SELECT value FROM bridge_meta WHERE key='event_retention_policy'").get() as {value:string} | undefined;
-    if (policy?.value !== "2") this.db.transaction(() => {
+    const policy = this.db.prepare("SELECT policy_version FROM event_retention_state WHERE singleton=1")
+      .get() as {policy_version:number};
+    if (policy.policy_version !== 2) this.db.transaction(() => {
       // Revisit rows already passed by v14's original, first-Job-only sweep.
-      this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES ('event_retention_cursor','0')").run();
-      this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES ('event_retention_policy','2')").run();
+      this.db.prepare(`UPDATE event_retention_state SET cursor_event_id=0,policy_version=2
+        WHERE singleton=1`).run();
     })();
   }
 
   summary(jobId: string): Record<string, unknown> {
-    const row = this.db.prepare("SELECT payload FROM job_summaries WHERE job_id=?").get(jobId) as { payload: string } | undefined;
-    return row ? record(JSON.parse(row.payload)) : {};
+    const row = this.db.prepare("SELECT summary FROM jobs WHERE job_id=?").get(jobId) as { summary: string } | undefined;
+    return row ? sanitizeRetainedJobSummary(JSON.parse(row.summary)) : {};
   }
 
   acknowledgeUncertainResultReview(jobId: string, count: number, latestUpdateAt: number, reviewedAt: number): void {
     this.save(jobId, {...this.summary(jobId), uncertainResponseReview: {count, latestUpdateAt, reviewedAt}});
   }
 
-  summarizeJob(job: Record<string, unknown>, firstTerminal: boolean): void {
+  summarizeJob(job: Record<string, unknown>): void {
     const previous = this.summary(String(job.jobId));
     const execution = record(record(job.executionDecision).effectiveSelection);
     const reroute = (Array.isArray(job.publicEvents) ? [...job.publicEvents].reverse() : [])
@@ -46,10 +48,7 @@ export class EventRetention {
     const reroutedModel = record(reroute?.details).toModel;
     const next = { ...previous,
       ...(execution.model ? { execution: { ...record(previous.execution), model: execution.model, reasoningEffort: execution.reasoningEffort, serviceTier: execution.serviceTier,
-        ...(typeof reroutedModel === "string" ? {reroutedModel:reroutedModel.slice(0,120)} : {}) } } : {}),
-      ...(firstTerminal ? { status: job.status, endedAt: job.updatedAt,
-        durationMs: typeof job.createdAt === "number" && typeof job.updatedAt === "number" ? Math.max(0, job.updatedAt - job.createdAt) : undefined,
-        errorCode: typeof job.error === "string" ? job.error.match(/^([A-Z][A-Z0-9_]{2,79}):/)?.[1] || "UPSTREAM_ERROR" : undefined } : {}) };
+        ...(typeof reroutedModel === "string" ? {reroutedModel:reroutedModel.slice(0,120)} : {}) } } : {}) };
     this.save(String(job.jobId), next);
   }
 
@@ -111,15 +110,17 @@ export class EventRetention {
 
   /** One restartable migration slice; no VACUUM or long write lock during live work. */
   sweep(now = Date.now()): { processed: number; rows: number; bytes: number; freePages: number } {
-    const saved = this.db.prepare("SELECT value FROM bridge_meta WHERE key='event_retention_cursor'").get() as {value:string} | undefined;
-    const cursor = Number(saved?.value || 0);
+    const saved = this.db.prepare("SELECT cursor_event_id FROM event_retention_state WHERE singleton=1")
+      .get() as {cursor_event_id:number};
+    const cursor = saved.cursor_event_id;
     const rows = this.db.prepare(`SELECT e.event_id,e.job_id,e.event_type,e.payload,j.archived_at FROM job_events e
       JOIN jobs j ON j.job_id=e.job_id WHERE e.event_id>? ORDER BY e.event_id LIMIT ?`).all(cursor, EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string;archived_at:number|null}>;
     for (const row of rows) {
       const payload = this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: JSON.parse(row.payload) }, row.archived_at !== null, false);
       this.db.prepare("UPDATE job_events SET payload=? WHERE event_id=?").run(payload, row.event_id);
     }
-    this.db.prepare("INSERT OR REPLACE INTO bridge_meta(key,value) VALUES ('event_retention_cursor',?)").run(String(rows.at(-1)?.event_id || cursor));
+    this.db.prepare("UPDATE event_retention_state SET cursor_event_id=? WHERE singleton=1")
+      .run(rows.at(-1)?.event_id || cursor);
     const expired = this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events WHERE created_at<? ORDER BY event_id LIMIT 500").all(now - EVENT_RETENTION_LIMITS.metadataMs) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>;
     for (const row of expired) {
       if (row.event_type.startsWith("app-usage")) this.prepare({jobId:row.job_id,eventType:row.event_type,payload:JSON.parse(row.payload)}, true, false);
@@ -136,6 +137,19 @@ export class EventRetention {
   }
 
   private save(jobId: string, summary: Record<string, unknown>): void {
-    this.db.prepare("INSERT INTO job_summaries(job_id,payload) VALUES (?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload").run(jobId, JSON.stringify(summary));
+    this.db.prepare("UPDATE jobs SET summary=? WHERE job_id=?")
+      .run(JSON.stringify(sanitizeRetainedJobSummary(summary)), jobId);
   }
+}
+
+/** Keep only bounded projections that have a current reader. Job lifecycle fields live in columns. */
+export function sanitizeRetainedJobSummary(value: unknown): Record<string, unknown> {
+  const source = record(value);
+  const summary: Record<string, unknown> = {};
+  for (const key of ["execution", "usage", "uncertainResponseReview"] as const) {
+    if (source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) {
+      summary[key] = source[key];
+    }
+  }
+  return summary;
 }

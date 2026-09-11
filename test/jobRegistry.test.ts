@@ -1,9 +1,8 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
-import { LEGACY_SCOPE_ID } from "../src/sessionRegistry.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
@@ -13,7 +12,7 @@ const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 describe("CodexJobRegistry persistence", () => {
   it("notifies native subscribers when work starts and settles, then unsubscribes", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
     const changed = vi.fn();
     const unsubscribe = registry.subscribeChanges(changed);
     let complete: (value: ToolResult) => void = () => undefined;
@@ -32,7 +31,7 @@ describe("CodexJobRegistry persistence", () => {
   });
 
   it.each([["upstream unavailable", "upstream-failure"], ["CODEX_WORKER_LOST: Worker exited", "worker-loss"]])("records %s without inventing user cancellation", async (message, origin) => {
-    const root = temporaryRoot(), stateFile = path.join(root, "jobs.json");
+    const root = temporaryRoot(), stateFile = path.join(root, "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async () => { throw new Error(message); });
     await job.promise;
@@ -41,7 +40,7 @@ describe("CodexJobRegistry persistence", () => {
   });
   it("retains completed results across bridge registry restarts", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start(jobInput(root), async () => result("thread-completed"));
 
@@ -61,13 +60,12 @@ describe("CodexJobRegistry persistence", () => {
       },
       result: { structuredContent: { threadId: "thread-completed" } }
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
   it("persists retired request-hash version 3 without inventing a project identity", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start(
       {
@@ -82,15 +80,11 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.get(job.jobId)).toMatchObject({
       requestHashVersion: 3
     });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({
-      version: 10,
-      jobs: [expect.objectContaining({ requestHashVersion: 3 })]
-    });
   });
 
   it("persists request-hash version 4 and its immutable source thread", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start(
       {
@@ -111,7 +105,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it.each(["mcp-server", "codex-sdk", "app-server"] as const)("marks %s jobs that were running at restart as interrupted without replay", async backendKind => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const execute = vi.fn(async () => new Promise<ToolResult>(() => undefined));
     const job = registry.start({ ...jobInput(root), backendKind }, execute);
@@ -134,7 +128,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("treats resolved MCP error results as failed jobs", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start(jobInput(root), async () => ({
       isError: true,
@@ -155,7 +149,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("keeps spontaneous App Server interruption and worker loss distinct from cancellation", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     const interrupted = registry.start(
       { ...jobInput(root), backendKind: "app-server" },
       async () => ({
@@ -199,31 +193,10 @@ describe("CodexJobRegistry persistence", () => {
     expect(registry.listCancellationIntents({ jobId: workerLost.jobId })).toHaveLength(0);
   });
 
-  it("repairs legacy completed jobs whose retained MCP result is an error", async () => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
-    const registry = persistentRegistry(root, stateFile);
-    const job = registry.start(jobInput(root), async () => result("thread-before-repair"));
-    await job.promise;
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
-    state.jobs[0].result = {
-      isError: true,
-      content: [{ type: "text", text: "Session not found for thread_id: thread-before-repair" }]
-    };
-    writeFileSync(stateFile, JSON.stringify(state));
-
-    const restored = persistentRegistry(root, stateFile);
-    expect(restored.get(job.jobId)).toMatchObject({
-      status: "failed",
-      error: "Session not found for thread_id: thread-before-repair"
-    });
-    expect(restored.get(job.jobId)?.result).toBeUndefined();
-  });
-
   it("drops persisted jobs whose cwd is outside the configured roots", async () => {
     const firstRoot = temporaryRoot();
     const secondRoot = temporaryRoot();
-    const stateFile = path.join(firstRoot, "private", "jobs.json");
+    const stateFile = path.join(firstRoot, "private", "state.sqlite");
     const registry = persistentRegistry(firstRoot, stateFile);
     const job = registry.start(jobInput(firstRoot), async () => result("thread-one"));
     await job.promise;
@@ -234,99 +207,9 @@ describe("CodexJobRegistry persistence", () => {
     expect(restored.size).toBe(0);
   });
 
-  it("migrates version 1 jobs into a quarantined legacy scope", async () => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
-    const registry = persistentRegistry(root, stateFile);
-    const job = registry.start(jobInput(root), async () => result("legacy-thread"));
-    await job.promise;
-
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
-    state.version = 1;
-    delete state.jobs[0].scopeId;
-    delete state.jobs[0].taskKey;
-    delete state.jobs[0].requestId;
-    delete state.jobs[0].requestHash;
-    writeFileSync(stateFile, JSON.stringify(state));
-
-    const restored = persistentRegistry(root, stateFile);
-    expect(restored.get(job.jobId)).toMatchObject({
-      scopeId: LEGACY_SCOPE_ID
-    });
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
-  });
-
-  it("migrates version 2 task-lane jobs without retaining taskKey", async () => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
-    const registry = persistentRegistry(root, stateFile);
-    const job = registry.start(jobInput(root), async () => result("v2-thread"));
-    await job.promise;
-
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
-    state.version = 2;
-    state.jobs[0].taskKey = "review";
-    state.jobs[0].requestHash = "b".repeat(64);
-    delete state.jobs[0].requestHashVersion;
-    delete state.jobs[0].selectionKey;
-    writeFileSync(stateFile, JSON.stringify(state));
-
-    const restored = persistentRegistry(root, stateFile);
-    expect(restored.get(job.jobId)).toMatchObject({ scopeId: SCOPE_A });
-    expect(restored.get(job.jobId)).not.toHaveProperty("taskKey");
-    expect(restored.findRequest(SCOPE_A, REQUEST_A, "a".repeat(64))?.jobId).toBe(job.jobId);
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
-  });
-
-  it("labels pre-provenance cancelled rows only through the legacy import path", async () => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
-    const registry = persistentRegistry(root, stateFile);
-    const job = registry.start(jobInput(root), async () => result("legacy-cancelled-thread"));
-    await job.promise;
-
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
-    state.version = 9;
-    state.jobs[0].status = "cancelled";
-    delete state.jobs[0].terminalOrigin;
-    delete state.jobs[0].cancellationIntentId;
-    writeFileSync(stateFile, JSON.stringify(state));
-
-    const restored = persistentRegistry(root, stateFile);
-    expect(restored.get(job.jobId)).toMatchObject({
-      status: "cancelled",
-      terminalOrigin: "legacy-unattributed-cancellation"
-    });
-    expect(restored.get(job.jobId)?.cancellationIntentId).toBeUndefined();
-    expect(JSON.parse(readFileSync(stateFile, "utf8"))).toMatchObject({ version: 10 });
-  });
-
-  it("keeps only the newest legacy record for a duplicated scope request", async () => {
-    const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
-    const registry = persistentRegistry(root, stateFile);
-    const original = registry.start(jobInput(root), async () => result("older-thread"));
-    await original.promise;
-    const state = JSON.parse(readFileSync(stateFile, "utf8"));
-    const duplicate = structuredClone(state.jobs[0]);
-    duplicate.jobId = "newer-duplicate-job";
-    duplicate.updatedAt += 1;
-    duplicate.result = result("newer-thread");
-    state.jobs.push(duplicate);
-    writeFileSync(stateFile, JSON.stringify(state));
-
-    const restored = persistentRegistry(root, stateFile);
-    expect(restored.size).toBe(1);
-    expect(restored.get("newer-duplicate-job")).toMatchObject({
-      status: "completed",
-      result: { structuredContent: { threadId: "newer-thread" } }
-    });
-    expect(restored.get(original.jobId)).toBeUndefined();
-  });
-
   it("cancels a scope watcher promptly and releases its widget lease", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     const controller = new AbortController();
     const version = registry.getScopeVersion(SCOPE_A);
     const pending = registry.waitForScopeVersion(
@@ -354,7 +237,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("keeps watcher admission separate from all 30 active Codex job slots", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     for (let index = 0; index < 30; index += 1) {
       registry.start(
         {
@@ -425,7 +308,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("enforces independent per-scope and global watcher fairness limits", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     const controllers = Array.from({ length: 8 }, () => new AbortController());
     const scopeB = "22222222-2222-4222-8222-222222222222";
     const watches = controllers.slice(0, 3).map((controller, index) =>
@@ -896,7 +779,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("restores a terminal result that arrives while an unconfirmed force-stop is pending", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     let resolveRun!: (value: ToolResult) => void;
     const runResult = new Promise<ToolResult>((resolve) => {
       resolveRun = resolve;
@@ -942,7 +825,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("keeps a termination-failed job active when no terminal evidence exists", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     registry.attachUpstream({
       async listTools() { return { tools: [] }; },
       async callTool() { return result("unused"); },
@@ -975,7 +858,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("rejects an internal single-job cancellation before side effects when provenance is absent", async () => {
     const root = temporaryRoot();
-    const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
     const forceTerminateWorker = vi.fn(async () => undefined);
     registry.attachUpstream({
       async listTools() { return { tools: [] }; },
@@ -1009,7 +892,7 @@ describe("CodexJobRegistry persistence", () => {
     vi.useFakeTimers();
     try {
       const root = temporaryRoot();
-      const registry = persistentRegistry(root, path.join(root, "private", "jobs.json"));
+      const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
       let resolveRun!: (value: ToolResult) => void;
       const running = new Promise<ToolResult>((resolve) => {
         resolveRun = resolve;
@@ -1033,7 +916,7 @@ describe("CodexJobRegistry persistence", () => {
 
   it("redacts retained results and failures before persistence", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(root, "private", "jobs.json");
+    const stateFile = path.join(root, "private", "state.sqlite");
     const registry = persistentRegistry(root, stateFile);
     const completed = registry.start(jobInput(root), async () => ({
       _meta: { authorization: "Bearer top-secret-value" },
@@ -1108,13 +991,14 @@ function durableCancelIntent(
 }
 
 function persistentRegistry(root: string, stateFile: string): CodexJobRegistry {
+  const stateStore = new BridgeStateStore({ file: stateFile });
   return new CodexJobRegistry({
     maxConcurrentJobs: 30,
     ttlMs: 6 * 60 * 60 * 1000,
     maxJobs: 100,
     maxResultBytes: 1024 * 1024,
     staleAfterMs: 10 * 60 * 1000,
-    stateFile,
+    stateStore,
     allowedRoots: [root]
   });
 }

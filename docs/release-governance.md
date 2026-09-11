@@ -18,7 +18,7 @@ product. They never receive independent product versions.
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
 | Manifest schema | `manifestVersion` (currently 4) | Release metadata schema compatibility |
 | UI compatibility | Published card baselines, explicit deployment exceptions, UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer; inventory separation is pending under #53 |
-| State compatibility | SQLite schema version (currently 12) | Local data migration axis |
+| State compatibility | SQLite schema version (currently 19) | Local data migration axis; see [database schema and lifecycle](database-schema.md) |
 | Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 

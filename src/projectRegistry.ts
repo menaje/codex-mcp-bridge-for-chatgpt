@@ -3,8 +3,6 @@ import path from "node:path";
 import { requireAllowedCwd } from "./config.js";
 
 export const PROJECT_NAME_MAX_LENGTH = 120;
-/** @deprecated Internal compatibility alias. Project names replace labels. */
-export const PROJECT_LABEL_MAX_LENGTH = PROJECT_NAME_MAX_LENGTH;
 export const MAX_REGISTERED_PROJECTS = 100;
 
 export const PROJECT_SETUP_REQUIRED = "PROJECT_SETUP_REQUIRED";
@@ -16,8 +14,6 @@ export const PROJECT_REGISTRY_REVISION_CONFLICT = "PROJECT_REGISTRY_REVISION_CON
 export const PROJECT_ID_INVALID = "PROJECT_ID_INVALID";
 export const PROJECT_REF_INVALID = "PROJECT_REF_INVALID";
 export const PROJECT_NAME_INVALID = "PROJECT_NAME_INVALID";
-/** @deprecated Internal compatibility alias. */
-export const PROJECT_LABEL_INVALID = PROJECT_NAME_INVALID;
 export const PROJECT_CWD_INVALID = "PROJECT_CWD_INVALID";
 export const PROJECT_CWD_NOT_ALLOWED = "PROJECT_CWD_NOT_ALLOWED";
 export const PROJECT_NAME_CONFLICT = "PROJECT_NAME_CONFLICT";
@@ -42,8 +38,6 @@ export type ProjectTarget = {
   /** Per-project admission generation. Unrelated registry edits do not change it. */
   projectRevision: number;
   name: string;
-  /** Internal compatibility spelling for audit snapshots. Always equals name. */
-  label: string;
   nameKey: string;
   cwd: string;
   sortOrder: number;
@@ -154,9 +148,6 @@ export function projectNameKey(value: string): string {
   }).join("");
   return folded.normalize("NFKC");
 }
-
-/** @deprecated Internal compatibility alias. */
-export const normalizeProjectLabel = normalizeProjectName;
 
 export function canonicalProjectCwd(
   input: string,
@@ -341,7 +332,7 @@ function validateProjectTarget(value: ProjectTarget, index: number): ProjectTarg
   if (!Number.isInteger(value.projectRevision) || value.projectRevision < 1) {
     throw new Error(`${PROJECT_REF_INVALID}: Invalid project revision.`);
   }
-  const name = normalizeProjectName(value.name ?? value.label);
+  const name = normalizeProjectName(value.name);
   const nameKey = projectNameKey(name);
   if (value.nameKey !== undefined && value.nameKey !== nameKey) {
     throw new Error(`${PROJECT_NAME_INVALID}: Stored project name key is not canonical.`);
@@ -363,7 +354,6 @@ function validateProjectTarget(value: ProjectTarget, index: number): ProjectTarg
     projectRef,
     projectRevision: value.projectRevision,
     name,
-    label: name,
     nameKey,
     cwd: path.normalize(value.cwd),
     sortOrder: value.sortOrder,

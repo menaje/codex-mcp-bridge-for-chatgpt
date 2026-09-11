@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Normalize project and execution-context state in SQLite schema 19, remove standalone Settings/session/Job JSON backends and duplicate Job/event copies, and add verified migration, restart, capacity, and offline-compaction audits.",
+  "breaking": true,
+  "migration": "New installations create schema 19 directly. Existing supported schema 3 through 18 databases receive one private pre-v19 backup and migrate automatically. Schema 1 and 2 are rejected; CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE, CODEX_MCP_BRIDGE_SESSION_STATE_FILE, CODEX_MCP_BRIDGE_JOB_STATE_FILE, and their standalone JSON files are no longer read or imported."
+}

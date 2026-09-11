@@ -236,7 +236,7 @@ it("a real helper SIGTERM preserves active work, then a new helper adopts and fi
       "--runtime-lock-directory", f.options.runtimeLockDirectory], {
       cwd: path.resolve("."), stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(f.root, "cli"),
-        CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(f.root, "settings.json"), CODEX_HOME: path.join(f.root, "codex-home") }
+        CODEX_HOME: path.join(f.root, "codex-home") }
     });
     child.stdout?.resume(); child.stderr?.resume(); children.push(child); return child;
   };

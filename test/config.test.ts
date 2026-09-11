@@ -35,9 +35,9 @@ describe("config policy", () => {
     expect(config.modelCatalogTimeoutMs).toBe(30000);
     expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
     expect(config.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
-    expect(config.settingsStateFile).toMatch(/\.codex-mcp-bridge\/settings\.json$/);
-    expect(config.sessionStateFile).toMatch(/\.codex-mcp-bridge\/sessions\.json$/);
-    expect(config.jobStateFile).toMatch(/\.codex-mcp-bridge\/jobs\.json$/);
+    expect(config).not.toHaveProperty("settingsStateFile");
+    expect(config).not.toHaveProperty("sessionStateFile");
+    expect(config).not.toHaveProperty("jobStateFile");
     expect(config).not.toHaveProperty("defaultSessionMode");
     expect(config).not.toHaveProperty("autoResumeTtlMs");
     expect(config).not.toHaveProperty("fastReturnMs");
@@ -85,9 +85,6 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS: "15000",
       CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: "/tmp/codex-mcp-bridge-test-models.json",
       CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/codex-mcp-bridge-test-state.sqlite",
-      CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: "/tmp/codex-mcp-bridge-test-settings.json",
-      CODEX_MCP_BRIDGE_SESSION_STATE_FILE: "/tmp/codex-mcp-bridge-test-sessions.json",
-      CODEX_MCP_BRIDGE_JOB_STATE_FILE: "/tmp/codex-mcp-bridge-test-jobs.json",
       CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "read-only",
       CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE: "new",
       CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "900000",
@@ -110,9 +107,6 @@ describe("config policy", () => {
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
     expect(config.stateDatabaseFile).toBe("/tmp/codex-mcp-bridge-test-state.sqlite");
-    expect(config.settingsStateFile).toBe("/tmp/codex-mcp-bridge-test-settings.json");
-    expect(config.sessionStateFile).toBe("/tmp/codex-mcp-bridge-test-sessions.json");
-    expect(config.jobStateFile).toBe("/tmp/codex-mcp-bridge-test-jobs.json");
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config).not.toHaveProperty("defaultSessionMode");
     expect(config).not.toHaveProperty("autoResumeTtlMs");
@@ -152,33 +146,6 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '[{"model":"gpt-5.6-sol"}]'
     })).toThrow(/reasoning effort/i);
-  });
-
-  it("requires an absolute session state file", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_SESSION_STATE_FILE: "relative/sessions.json"
-      })
-    ).toThrow(/absolute path/);
-  });
-
-  it("requires an absolute settings state file", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: "relative/settings.json"
-      })
-    ).toThrow(/absolute path/);
-  });
-
-  it("requires an absolute job state file", () => {
-    expect(() =>
-      loadConfig({
-        CODEX_MCP_BRIDGE_NO_AUTH: "1",
-        CODEX_MCP_BRIDGE_JOB_STATE_FILE: "relative/jobs.json"
-      })
-    ).toThrow(/absolute path/);
   });
 
   it("requires an absolute SQLite state database file", () => {

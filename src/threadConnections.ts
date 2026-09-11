@@ -34,7 +34,8 @@ export type ThreadReleaseOptions = {
   previousWorkerPid?: number;
 };
 
-export const THREAD_CONNECTION_SCHEMA = `
+/** Upgrade-only schema introduced at v14. Current databases use stateSchema.ts. */
+export const V14_THREAD_CONNECTION_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS thread_connections (
     thread_id TEXT PRIMARY KEY, agent_id TEXT, scope_id TEXT NOT NULL,
     persistence TEXT NOT NULL CHECK(persistence IN ('persistent','ephemeral','unknown')),
@@ -115,11 +116,11 @@ export class ThreadConnectionStore {
   }
 
   hasUnfinishedWork(threadId: string): boolean {
-    return Boolean(this.db.prepare(`SELECT 1 FROM jobs j WHERE (j.thread_id=? OR json_extract(j.payload,'$.sourceThreadId')=?
+    return Boolean(this.db.prepare(`SELECT 1 FROM jobs j WHERE (j.thread_id=? OR j.source_thread_id=?
       OR j.agent_id=(SELECT agent_id FROM thread_connections WHERE thread_id=?)) AND j.archived_at IS NULL
       AND (j.status IN ('running','terminating','termination-failed')
-        OR EXISTS (SELECT 1 FROM json_each(j.payload,'$.pendingInteractions') interaction
-          WHERE CASE WHEN interaction.type='object' THEN COALESCE(json_extract(interaction.value,'$.isBlocking'),1)!=0 ELSE 1 END)
+        OR EXISTS (SELECT 1 FROM job_interactions interaction
+          WHERE interaction.job_id=j.job_id AND interaction.is_blocking=1)
         OR EXISTS (SELECT 1 FROM cancellation_intents cancellation
           WHERE (cancellation.target_job_id=j.job_id OR (cancellation.target_kind='activity' AND cancellation.target_activity_id=j.activity_id))
           AND cancellation.status IN ('recorded','dispatched'))) LIMIT 1`).get(threadId, threadId, threadId));

@@ -174,7 +174,6 @@ function project(
     projectRef: id === UUID_A ? REF_A : id === UUID_B ? REF_B : projectRefFor(sortOrder),
     projectRevision: 1,
     name,
-    label: name,
     nameKey: projectNameKey(name),
     cwd,
     sortOrder,

@@ -44,6 +44,8 @@ describe("release validation levels", () => {
 
   it("routes Node and Swift-owned paths to their affected checks", () => {
     expect(classifyChangedPaths(["src/server.ts"])).toEqual({ node: true, macos: false });
+    expect(classifyChangedPaths(["src/macosHelperServer.ts"]))
+      .toEqual({ node: true, macos: true });
     expect(classifyChangedPaths(["macos/Sources/App.swift"])).toEqual({ node: false, macos: true });
     expect(classifyChangedPaths(["release-manifest.json"])).toEqual({ node: true, macos: true });
 
