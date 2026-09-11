@@ -106,7 +106,11 @@ describe("GPT question orchestration", () => {
     expect(read.structuredContent).toEqual({ kind: "control", ready: true });
     expect(JSON.stringify(read.structuredContent)).not.toContain("approval-1");
     const detail = read._meta["codex/uiControl@1"];
-    expect(detail).toMatchObject({ jobId, projectName: "Fixture", canStop: true });
+    expect(detail).toMatchObject({ jobId, projectName: "Fixture" });
+    expect(detail).not.toHaveProperty("canStop");
+    expect(detail).not.toHaveProperty("affectedJobIds");
+    expect(detail).not.toHaveProperty("backgroundProcesses");
+    expect(detail).not.toHaveProperty("backgroundUnavailable");
     expect(detail.pendingInteractions[0].interactionId).toBe("approval-1");
     const args = { widgetInstanceId, card: detail.card, requestId: randomUUID(), jobId,
       expectedJobVersion: detail.jobVersion, interactionId: "approval-1", response: { decision: "accept" } };
@@ -124,13 +128,14 @@ describe("GPT question orchestration", () => {
     expect(delivered).toEqual([{ id: "approval-1", response: { decision: "accept" } }]);
     expect((await call("codex_interaction_respond", { ...args, requestId: randomUUID() }, otherMeta)).isError).toBe(true);
     question();
-    const next = (await ok("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta))._meta["codex/uiControl@1"];
-    expect(next.pendingInteractions[0].ordinary).toBe(true);
+    const ordinaryDetail = await call("codex_ui_read", { view: "control", rowKey, widgetInstanceId }, otherMeta);
+    expect(ordinaryDetail.isError).toBe(true);
+    expect(JSON.stringify(ordinaryDetail)).toContain("UI_CONTROL_UNAVAILABLE");
     const ordinaryOverview = await ok("codex_ui_read", { view: "dashboard", widgetInstanceId, enrich: false }, otherMeta);
-    expect(ordinaryOverview._meta["codex/dashboardView@1"].view.activeRows[0].controlKind).toBe("manage");
-    const refused = await call("codex_interaction_respond", { ...args, card: next.card, expectedJobVersion: next.jobVersion,
+    expect(ordinaryOverview._meta["codex/dashboardView@1"].view.activeRows[0].controlKind).toBeNull();
+    const refused = await call("codex_interaction_respond", { ...args,
       requestId: randomUUID(), interactionId: "fixture:1:question", response: { answers: { color: ["Blue"] } } }, otherMeta);
-    expect(JSON.stringify(refused)).toContain("GPT_RESPONSE_REQUIRED");
+    expect(refused.isError).toBe(true);
     expect(delivered).toHaveLength(1);
   });
 

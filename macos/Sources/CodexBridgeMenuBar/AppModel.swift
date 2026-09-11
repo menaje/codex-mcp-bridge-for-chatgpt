@@ -300,7 +300,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var dashboardLoadedFilter: DashboardStatusFilter?
     var dashboardStatusFilter: DashboardStatusFilter { dashboardPanel?.filter ?? .all }
     var dashboardDetailLoading: Bool {
-        dashboardPanel != nil && dashboardLoadedFilter != dashboardStatusFilter
+        dashboardPanel == .history && dashboard.map { $0.historyIncluded ?? true } != true
     }
     @Published var settings: SettingsSnapshot?
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
@@ -381,12 +381,25 @@ final class AppModel: ObservableObject {
     private var authRefreshPending = false
     private var codexRuntimePendingReads = Set<String>()
     private var dashboardEnrichmentTask: Task<Void, Never>?
+    private var dashboardEnrichmentTaskID: UUID?
+    private var dashboardEnrichmentRequest: DashboardEnrichmentRequest?
+    private struct DashboardEnrichmentRequest {
+        let generation: Int
+        let terminalOffset: Int
+        let idleOffset: Int
+        let bucket: DashboardAppendBucket?
+        let requestedOffset: Int
+        let filter: DashboardStatusFilter
+        let problems: ProblemQuery
+        let includeHistory: Bool
+    }
     private var settingsAutosaveDebounceTask: Task<Void, Never>?
     private var remotePairingExpirationTask: Task<Void, Never>?
     private var pendingSettingsDraft: SettingsDraft?
     private var settingsAutosaveInProgress = false
     private var interfaceLocalePreviewActive = false
     private var dashboardRequestGeneration = 0
+    private var deferredDashboardRead: (enrich: Bool, applyCachedEnrichment: Bool)?
     private var settingsRequestGeneration = 0
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
@@ -1185,7 +1198,7 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshBridgeContent(refreshModels: Bool = false) async {
-        await refreshDashboard()
+        if dashboardVisible, refreshEventTasks["dashboard"] == nil { await refreshDashboard() }
         await refreshSettings(refreshModels: refreshModels)
     }
 
@@ -1235,9 +1248,10 @@ final class AppModel: ObservableObject {
                 statusErrorMessage = nil
                 connectionErrorMessage = nil
                 updateActiveProfile(from: hello)
+                resumeDeferredDashboardReadIfNeeded()
                 if refreshContent {
                     lastDashboardEnrichment = nil
-                    enqueueRefresh(["dashboard", "settings"])
+                    enqueueRefresh(["settings"])
                 }
             } catch {
                 guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
@@ -1287,21 +1301,20 @@ final class AppModel: ObservableObject {
             at: now
         )
         scheduleConnectionRecoveryExpiry(at: now)
+        resumeDeferredDashboardReadIfNeeded()
         if refreshContent, next?.bridge.connected == true {
             lastDashboardEnrichment = nil
-            enqueueRefresh(["dashboard", "settings"])
+            enqueueRefresh(["settings"])
         }
     }
 
     func toggleDashboardPanel(_ panel: DashboardPanel) async {
         guard !changingProblems else { return }
         dashboardPanel = dashboardPanel == panel ? nil : panel
-        dashboardRequestGeneration += 1
-        dashboardEnrichmentTask?.cancel()
-        dashboardEnrichmentTask = nil
         dashboardErrorMessage = nil
-        guard dashboardPanel != nil else { return }
-        await refreshDashboard()
+        guard dashboardPanel == .history,
+              dashboard.map({ $0.historyIncluded ?? true }) != true else { return }
+        await refreshDashboard(enrich: false)
     }
 
     func selectProblemQuery(review: ProblemReview? = nil, kind: ProblemKind? = nil, offset: Int = 0, view: ProblemView? = nil) async {
@@ -1309,7 +1322,7 @@ final class AppModel: ObservableObject {
         dashboardProblemQuery = ProblemQuery(review: review ?? dashboardProblemQuery.review,
                                              kind: kind ?? dashboardProblemQuery.kind, offset: offset, view: view ?? dashboardProblemQuery.view)
         problemActionNotice = nil
-        await refreshDashboard()
+        await refreshDashboard(enrich: false)
     }
 
     func changeProblem(_ problem: DashboardProblem, action: ProblemActionKind) async {
@@ -1350,7 +1363,7 @@ final class AppModel: ObservableObject {
             repeat {
                 let snapshot = try await client.dashboardWithProblems(limit: 50, terminalOffset: 0, idleOffset: 0,
                     enrich: false, statusFilter: .problems, problems: ProblemQuery(review: .pending, kind: .failed, offset: offset,
-                        view: dashboard?.historyPolicy?.automaticRecovery == true ? .history : nil))
+                        view: dashboard?.historyPolicy?.automaticRecovery == true ? .history : nil), includeHistory: false)
                 guard connection == connectionGeneration else { return }
                 guard let problems = snapshot.problems, problems.page.offset == offset,
                       revision == nil || revision == problems.revision else {
@@ -1457,13 +1470,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func changeHistory(_ row: DashboardRow, action: String) async {
+    func acknowledgeHistory(_ row: DashboardRow) async {
         guard let controls = row.historyControls else { return }
         let connection = connectionGeneration
         do {
             let client = try await bridgeClient()
             _ = try await client.historyAction(HistoryAction(
-                rowKey: row.rowKey, expectedRevision: controls.revision, action: action
+                rowKey: row.rowKey, expectedRevision: controls.revision
             ))
             guard connection == connectionGeneration else { return }
             await refreshDashboard()
@@ -1475,19 +1488,27 @@ final class AppModel: ObservableObject {
     }
 
     func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
-        let continueEnrichment = !applyCachedEnrichment && (enrich || dashboardEnrichmentTask != nil)
-        dashboardEnrichmentTask?.cancel()
-        dashboardEnrichmentTask = nil
+        refreshEventTasks.removeValue(forKey: "dashboard")?.cancel()
+        refreshEventTaskIDs.removeValue(forKey: "dashboard")
+        pendingRefreshEvents.remove("dashboard")
+        await readDashboard(enrich: enrich, applyCachedEnrichment: applyCachedEnrichment)
+    }
+
+    private func readDashboard(enrich: Bool, applyCachedEnrichment: Bool) async {
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         guard bridgeConnected else {
+            // Keep the user's menu/refresh request until its connection is ready.
+            deferredDashboardRead = dashboardVisible ? (enrich, applyCachedEnrichment) : nil
             if isBridgeConnectionChecking { return }
             dashboard = nil
             dashboardErrorMessage = nil
             return
         }
+        deferredDashboardRead = nil
         let connection = connectionGeneration
-        let filter = dashboardStatusFilter
+        let filter = DashboardStatusFilter.all
+        let includeHistory = dashboardPanel == .history
         do {
             let client = try await bridgeClient()
             let next = try await client.dashboardWithProblems(
@@ -1496,7 +1517,8 @@ final class AppModel: ObservableObject {
                 idleOffset: 0,
                 enrich: false,
                 statusFilter: filter,
-                problems: self.dashboardProblemQuery
+                problems: self.dashboardProblemQuery,
+                includeHistory: includeHistory
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
@@ -1511,8 +1533,7 @@ final class AppModel: ObservableObject {
             if applyCachedEnrichment, next.enrichment?.pendingReads != nil {
                 recordDashboardEnrichment(next)
             }
-            if continueEnrichment {
-                lastDashboardEnrichment = Date()
+            if (!applyCachedEnrichment && enrich) || dashboardEnrichmentTask != nil {
                 scheduleDashboardEnrichment(generation: generation, terminalOffset: 0, idleOffset: 0)
             }
         } catch {
@@ -1522,6 +1543,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func resumeDeferredDashboardReadIfNeeded() {
+        guard bridgeConnected, dashboardVisible, deferredDashboardRead != nil,
+              refreshEventTasks["dashboard"] == nil else { return }
+        logger.info("connection recovered; completing deferred menu refresh")
+        enqueueRefresh(["dashboard"])
+    }
+
     private func scheduleDashboardEnrichment(
         generation: Int,
         terminalOffset: Int,
@@ -1529,43 +1557,85 @@ final class AppModel: ObservableObject {
         bucket: DashboardAppendBucket? = nil,
         requestedOffset: Int = 0
     ) {
+        let request = DashboardEnrichmentRequest(
+            generation: generation, terminalOffset: terminalOffset, idleOffset: idleOffset,
+            bucket: bucket, requestedOffset: requestedOffset,
+            filter: .all, problems: dashboardProblemQuery,
+            includeHistory: dashboardPanel == .history
+        )
+        dashboardEnrichmentRequest = request
+        // Closing a socket cancels only the native wait, not the server's runtime
+        // inspection. Keep that request alive across refreshes and panel changes
+        // so new work notices cannot pile up expensive inspections on the server.
+        guard dashboardEnrichmentTask == nil else { return }
+        let taskID = UUID()
+        dashboardEnrichmentTaskID = taskID
+        let connection = connectionGeneration
+        lastDashboardEnrichment = Date()
         dashboardEnrichmentTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let connection = self.connectionGeneration
             defer {
-                if generation == self.dashboardRequestGeneration, connection == self.connectionGeneration {
+                if self.dashboardEnrichmentTaskID == taskID {
                     self.dashboardEnrichmentTask = nil
+                    self.dashboardEnrichmentTaskID = nil
+                    self.dashboardEnrichmentRequest = nil
                 }
             }
             do {
                 let client = try await self.bridgeClient()
-                let enriched = try await client.dashboardWithProblems(
-                    limit: self.pageLimit,
-                    terminalOffset: terminalOffset,
-                    idleOffset: idleOffset,
-                    enrich: true,
-                    statusFilter: self.dashboardStatusFilter,
-                    problems: self.dashboardProblemQuery
-                )
-                guard !Task.isCancelled,
-                      generation == self.dashboardRequestGeneration,
-                      connection == self.connectionGeneration else {
-                    return
+                var target = request
+                var inspectRuntime = true
+                while !Task.isCancelled, connection == self.connectionGeneration {
+                    do {
+                        let enriched = try await client.dashboardWithProblems(
+                            limit: self.pageLimit,
+                            terminalOffset: target.terminalOffset,
+                            idleOffset: target.idleOffset,
+                            enrich: inspectRuntime,
+                            statusFilter: target.filter,
+                            problems: target.problems,
+                            includeHistory: target.includeHistory
+                        )
+                        guard !Task.isCancelled, connection == self.connectionGeneration,
+                              let latest = self.dashboardEnrichmentRequest,
+                              latest.generation == self.dashboardRequestGeneration else { return }
+                        if latest.generation != target.generation {
+                            // The completed inspection populated shared server caches.
+                            // Project those caches onto the newest panel/page. Repeat
+                            // if another refresh wins while that projection is in flight.
+                            target = latest
+                            inspectRuntime = false
+                            continue
+                        }
+                        if let bucket = target.bucket, let current = self.dashboard {
+                            self.dashboard = current.mergingPage(
+                                enriched,
+                                bucket: bucket,
+                                requestedOffset: target.requestedOffset
+                            )
+                        } else {
+                            self.dashboard = enriched
+                        }
+                        self.lastDashboardRefresh = Date()
+                        self.recordDashboardEnrichment(enriched)
+                        return
+                    } catch {
+                        guard !Task.isCancelled, connection == self.connectionGeneration,
+                              let latest = self.dashboardEnrichmentRequest,
+                              latest.generation == self.dashboardRequestGeneration else { return }
+                        if latest.generation != target.generation {
+                            target = latest
+                            inspectRuntime = false
+                            continue
+                        }
+                        self.dashboardEnrichmentFailed = true
+                        self.dashboardEnrichmentPending = false
+                        return
+                    }
                 }
-                if let bucket, let current = self.dashboard {
-                    self.dashboard = current.mergingPage(
-                        enriched,
-                        bucket: bucket,
-                        requestedOffset: requestedOffset
-                    )
-                } else {
-                    self.dashboard = enriched
-                }
-                self.lastDashboardRefresh = Date()
-                self.recordDashboardEnrichment(enriched)
             } catch {
                 guard !Task.isCancelled,
-                      generation == self.dashboardRequestGeneration,
+                      self.dashboardEnrichmentRequest?.generation == self.dashboardRequestGeneration,
                       connection == self.connectionGeneration else { return }
                 self.dashboardEnrichmentFailed = true
                 self.dashboardEnrichmentPending = false
@@ -1655,9 +1725,9 @@ final class AppModel: ObservableObject {
         } else {
             refreshEventTasks.removeValue(forKey: "dashboard")?.cancel()
             pendingRefreshEvents.remove("dashboard")
+            deferredDashboardRead = nil
             dashboardRequestGeneration += 1
-            dashboardEnrichmentTask?.cancel()
-            dashboardEnrichmentTask = nil
+            dashboardEnrichmentRequest = nil
         }
         beginChangeWatchingIfNeeded()
     }
@@ -2210,7 +2280,6 @@ final class AppModel: ObservableObject {
     func loadMoreRecent() async {
         guard let current = dashboard, current.pagination.terminal.hasNext else { return }
         let nextOffset = current.pagination.terminal.offset + current.pagination.terminal.returned
-        dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         let connection = connectionGeneration
@@ -2221,8 +2290,9 @@ final class AppModel: ObservableObject {
                 terminalOffset: nextOffset,
                 idleOffset: 0,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter,
-                problems: self.dashboardProblemQuery
+                statusFilter: .all,
+                problems: self.dashboardProblemQuery,
+                includeHistory: true
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
@@ -2232,20 +2302,12 @@ final class AppModel: ObservableObject {
                 requestedOffset: nextOffset
             )
             self.lastDashboardRefresh = Date()
-            self.scheduleDashboardEnrichment(
-                generation: generation,
-                terminalOffset: nextOffset,
-                idleOffset: 0,
-                bucket: .terminal,
-                requestedOffset: nextOffset
-            )
         }
     }
 
     func loadMoreIdle() async {
         guard let current = dashboard, current.pagination.idle.hasNext else { return }
         let nextOffset = current.pagination.idle.offset + current.pagination.idle.returned
-        dashboardEnrichmentTask?.cancel()
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
         let connection = connectionGeneration
@@ -2256,8 +2318,9 @@ final class AppModel: ObservableObject {
                 terminalOffset: 0,
                 idleOffset: nextOffset,
                 enrich: false,
-                statusFilter: self.dashboardStatusFilter,
-                problems: self.dashboardProblemQuery
+                statusFilter: .all,
+                problems: self.dashboardProblemQuery,
+                includeHistory: true
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
@@ -2267,13 +2330,6 @@ final class AppModel: ObservableObject {
                 requestedOffset: nextOffset
             )
             self.lastDashboardRefresh = Date()
-            self.scheduleDashboardEnrichment(
-                generation: generation,
-                terminalOffset: 0,
-                idleOffset: nextOffset,
-                bucket: .idle,
-                requestedOffset: nextOffset
-            )
         }
     }
 
@@ -2559,6 +2615,7 @@ final class AppModel: ObservableObject {
         connectionRecoveryExpiryTask = nil
         localConnectionRecovery = ConnectionRecoveryWindow()
         systemObservationPending = false
+        deferredDashboardRead = nil
         dashboardEnrichmentPending = false
         dashboardObservationDate = nil
         dashboardEnrichmentInvalidated = false
@@ -2572,6 +2629,8 @@ final class AppModel: ObservableObject {
         dashboardRequestGeneration += 1
         dashboardEnrichmentTask?.cancel()
         dashboardEnrichmentTask = nil
+        dashboardEnrichmentTaskID = nil
+        dashboardEnrichmentRequest = nil
         settingsAutosaveDebounceTask?.cancel()
         settingsAutosaveDebounceTask = nil
         pendingSettingsDraft = nil
@@ -2674,6 +2733,7 @@ final class AppModel: ObservableObject {
 
     func cancelAllPolling() {
         cancelChangeWatching()
+        deferredDashboardRead = nil
         statusRefreshTask?.cancel()
         statusRefreshTask = nil
         statusRefreshPending = false
@@ -2701,6 +2761,8 @@ final class AppModel: ObservableObject {
         codexRuntimePendingReads.removeAll()
         dashboardEnrichmentTask?.cancel()
         dashboardEnrichmentTask = nil
+        dashboardEnrichmentTaskID = nil
+        dashboardEnrichmentRequest = nil
     }
 
     private var shouldPollForBridgeReadiness: Bool {
@@ -2813,7 +2875,7 @@ final class AppModel: ObservableObject {
                 await self.refreshStatus()
                 guard !Task.isCancelled else { return }
                 if !wasConnected, self.bridgeConnected {
-                    self.enqueueRefresh(["dashboard", "settings", "auth", "codex"])
+                    self.enqueueRefresh(["settings", "auth", "codex"])
                 }
                 self.scheduleBackgroundRefreshes()
                 self.scheduleOperationalObservation()
@@ -2824,9 +2886,6 @@ final class AppModel: ObservableObject {
     func scheduleBackgroundRefreshes(at now: Date = Date()) {
         func due(_ topic: String, every interval: TimeInterval) -> Bool {
             lastScheduledRefresh[topic].map { now.timeIntervalSince($0) >= interval } ?? true
-        }
-        if dashboardVisible, due("dashboard", every: companionChangesAvailable ? 30 : 10) {
-            enqueueRefresh(["dashboard"])
         }
         if settingsWindowVisible, settingsInvalidated || due("settings", every: 60) {
             enqueueRefresh(["settings"])
@@ -2851,7 +2910,7 @@ final class AppModel: ObservableObject {
         }
         lastScheduledRefresh.removeAll()
         lastDashboardEnrichment = nil
-        enqueueRefresh(["status", "dashboard", "settings", "auth", "codex"])
+        enqueueRefresh(["status", "settings", "auth", "codex"])
         beginChangeWatchingIfNeeded()
         refreshLoginItemStatus()
     }
@@ -2897,7 +2956,6 @@ final class AppModel: ObservableObject {
         var topics = topics
         if topics.remove("enrichment") != nil {
             dashboardEnrichmentInvalidated = true
-            topics.insert("dashboard")
         }
         for topic in topics {
             if topic == "dashboard", !dashboardVisible { continue }
@@ -2925,12 +2983,20 @@ final class AppModel: ObservableObject {
                     switch topic {
                     case "status": await self.refreshStatus()
                     case "dashboard":
+                        // Opening the menu is one explicit refresh action. If its
+                        // status read is still in flight, finish that observation
+                        // before deciding whether the Dashboard can be read.
+                        if let statusTask = self.refreshEventTasks["status"] {
+                            await statusTask.value
+                        }
+                        guard !Task.isCancelled, generation == self.connectionGeneration else { return }
                         if self.dashboardVisible {
-                            let enrich = self.lastDashboardEnrichment.map { Date().timeIntervalSince($0) >= 30 } ?? true
-                            let applyCached = self.dashboardEnrichmentInvalidated && !enrich
+                            let deferred = self.deferredDashboardRead
+                            let enrich = deferred?.enrich ?? (self.lastDashboardEnrichment.map { Date().timeIntervalSince($0) >= 30 } ?? true)
+                            let applyCached = deferred?.applyCachedEnrichment ?? (self.dashboardEnrichmentInvalidated && !enrich)
                             self.dashboardEnrichmentInvalidated = false
                             if !applyCached { self.lastScheduledRefresh[topic] = Date() }
-                            await self.refreshDashboard(enrich: enrich, applyCachedEnrichment: applyCached)
+                            await self.readDashboard(enrich: enrich, applyCachedEnrichment: applyCached)
                         }
                     case "settings":
                         if self.settingsWindowVisible, !self.isBusy, !self.settingsAutosaveInProgress, self.pendingSettingsDraft == nil {
@@ -3002,7 +3068,12 @@ final class AppModel: ObservableObject {
                     self.companionChangesAvailable = true
                     revision = notice.revision
                     failures = 0
-                    self.enqueueRefresh(Set(notice.topics))
+                    var topics = Set(notice.topics)
+                    if topics.remove("enrichment") != nil {
+                        self.dashboardEnrichmentInvalidated = true
+                    }
+                    topics.remove("dashboard")
+                    self.enqueueRefresh(topics)
                 } catch {
                     guard !Task.isCancelled, generation == self.connectionGeneration else { return }
                     self.companionChangesAvailable = false

@@ -20,6 +20,9 @@ public protocol BridgeApplicationClient: Sendable {
 
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot
+    func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                               statusFilter: DashboardStatusFilter, problems: ProblemQuery,
+                               includeHistory: Bool) async throws -> DashboardSnapshot
     func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult
 
     func runtimeStatus(
@@ -31,6 +34,15 @@ public extension BridgeApplicationClient {
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
         try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)
+    }
+
+    func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                               statusFilter: DashboardStatusFilter, problems: ProblemQuery,
+                               includeHistory: Bool) async throws -> DashboardSnapshot {
+        try await dashboardWithProblems(
+            limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset,
+            enrich: enrich, statusFilter: statusFilter, problems: problems
+        )
     }
 
     func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult {

@@ -55,15 +55,11 @@
         "needsAttention": 0
       },
       "agents": [],
-      "archivedAgents": [],
       "agentPagination": {
         "limit": 100,
         "returned": 0,
         "total": 0,
-        "hasMore": false,
-        "archivedReturned": 0,
-        "archivedTotal": 0,
-        "archivedHasMore": false
+        "hasMore": false
       },
       "unassignedJobs": [],
       "activities": [],

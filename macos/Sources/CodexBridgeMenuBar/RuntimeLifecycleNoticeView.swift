@@ -63,7 +63,7 @@ struct RuntimeLifecycleNoticeView: View {
         switch reason.code {
         case "active-jobs", "pending-admissions":
             return BridgeAppLocalization.format("진행 중이거나 시작 중인 작업: %d개", locale: model.interfaceLocale, reason.count ?? 0)
-        case "memory-only-threads": return text("저장되지 않은 대화를 보호하고 있습니다. 해당 Agent를 아카이브해 주세요.")
+        case "memory-only-threads": return text("저장되지 않은 대화를 보호하고 있습니다. 연결 해제를 기다리거나 현황을 확인한 뒤 강제 적용하세요.")
         case "pending-interactions": return text("승인이나 답변을 기다리고 있습니다.")
         case "background-processes": return text("백그라운드 프로세스가 끝나기를 기다리고 있습니다.")
         case "background-state-unknown": return text("백그라운드 실행 상태를 확인하고 있습니다.")

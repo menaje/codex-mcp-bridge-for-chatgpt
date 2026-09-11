@@ -211,7 +211,7 @@ describe("current project-selector replay", () => {
     });
     expect(restartedJobs.listForScope(SCOPE_ID)).toHaveLength(1);
     expect(restartedJobs.activityCount(SCOPE_ID)).toBe(1);
-    expect(restartedJobs.agentCount(SCOPE_ID, true)).toBe(1);
+    expect(restartedJobs.agentCount(SCOPE_ID)).toBe(1);
     expect(restartedSessions.listForScope(SCOPE_ID)).toEqual([
       expect.objectContaining({
         threadId: admitted.threadId,

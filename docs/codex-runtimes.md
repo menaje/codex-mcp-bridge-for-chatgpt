@@ -73,7 +73,7 @@ A new managed installation resolves the latest stable release unless the user sp
 
 Managed files live under `~/.codex-mcp-bridge/runtimes` or `CODEX_MCP_BRIDGE_RUNTIME_HOME`. Each installation gets a separate version directory. HTTPS downloads, publisher integrity checks, safe archive extraction and recorded executable hashes protect installation integrity. The bridge does not alter external app bundles or global package-manager installations.
 
-Running bridges hold usage leases. Installation may finish while work is running, then wait for safe application. Applying an update never replays work. Pending approvals/questions and live memory-only Agents block a change; finish the work and archive memory-only Agents before applying it. Graceful shutdown waits for active work; explicit force-stop retains cancellation provenance.
+Running bridges hold usage leases. Installation may finish while work is running, then wait for safe application. Applying an update never replays work. Pending approvals/questions and live memory-only conversations block a change; resolve the request and wait for the connection to release, or use the explicit force path after reviewing the Dashboard. Graceful shutdown waits for active work; explicit force-stop retains cancellation provenance.
 
 Repair, retry, rollback and cleanup appear when applicable. Cleanup protects active, staged, running, pinned and recovery installations. It reclaims only files with bridge ownership records. Rollback restores executable files, not historical copies of user data.
 

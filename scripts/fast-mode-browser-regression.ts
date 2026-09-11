@@ -70,7 +70,14 @@ const server = createServer((request, response) => {
       }
       window.__cardCalls.push({name,args});
       if(args.afterVersion!==undefined)return new Promise(()=>{});
-      return {structuredContent:JSON.parse(JSON.stringify(window.__fastFixture))};
+      const fixture=JSON.parse(JSON.stringify(window.__fastFixture));
+      if(${JSON.stringify(kind)}==="dashboard"){
+        const historyRows=fixture.terminalRows;
+        fixture.statusFilter="all";fixture.statusRows=historyRows;fixture.statusRowsComplete=true;
+        fixture.historyIncluded=args.includeHistory===true;
+        if(!fixture.historyIncluded){fixture.activeRows=[];fixture.terminalRows=[];fixture.idleRows=[];fixture.pagination.terminal={...fixture.pagination.terminal,returned:0,total:0,hasNext:false}}
+      }
+      return {structuredContent:fixture};
     };
   </script>`;
   response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -119,7 +126,12 @@ try {
             if(await page.locator('.activity-agent .fast-mode').count()!==2)throw new Error('Both tier aliases must have a badge');
           }else{
             await page.locator('#dashboard-content').waitFor({state:'visible'});
-            if(await page.locator('#terminal-list .activity-agent > .execution .fast-mode').count())throw new Error('Saved Fast preference changed the displayed actual run');
+            await page.locator('#history-filter').click();
+            await page.locator('summary.history-toggle').first().waitFor({state:'visible'});
+            const executions=page.locator('#terminal-list .activity-agent > .execution');
+            if(await executions.count()!==2)throw new Error('Actual and changed next-run executions were not both rendered');
+            if(await executions.nth(0).locator('.fast-mode').count())throw new Error('Saved Fast preference changed the displayed actual run');
+            if(await executions.nth(1).locator('.fast-mode').count()!==1)throw new Error('Changed next-run Fast setting is missing');
             await page.locator('summary.history-toggle').first().click();
             if(await page.locator('.history-list .fast-mode').count()!==1)throw new Error('History must keep its original processing mode');
           }

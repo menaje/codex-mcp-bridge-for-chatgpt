@@ -9,3 +9,12 @@ export function dashboardSummaryCategory(status: string): Exclude<DashboardStatu
   if (["failed", "interrupted", "termination-failed", "liveness-unknown", "orphaned"].includes(status)) return "problems";
   return status === "running" ? "running" : null;
 }
+
+export function dashboardRowMatchesStatus(
+  row: { status: string; backgroundProcessCount?: number },
+  status: DashboardStatusFilter
+): boolean {
+  if (status === "all") return true;
+  if (status === "background") return (row.backgroundProcessCount || 0) > 0;
+  return dashboardSummaryCategory(row.status) === status;
+}

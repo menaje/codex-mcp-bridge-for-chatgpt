@@ -18,6 +18,9 @@ public struct DashboardSnapshot: Codable, Sendable {
     public var activeRows: [DashboardRow]
     public var terminalRows: [DashboardRow]
     public var idleRows: [DashboardRow]
+    public var statusRows: [DashboardRow]? = nil
+    public var statusRowsComplete: Bool? = nil
+    public var historyIncluded: Bool? = nil
     public var pagination: DashboardPagination
     public let uiLocalePreference: String
     public var historyPolicy: WorkHistoryPolicy? = nil
@@ -36,9 +39,6 @@ public struct WorkHistoryPolicy: Codable, Sendable, Equatable {
 public struct HistoryControls: Codable, Sendable {
     public let revision: String
     public let canAcknowledge: Bool
-    public let canArchive: Bool
-    public let canRestore: Bool
-    public let archived: Bool
 }
 
 public struct HistoryAction: Codable, Sendable {
@@ -47,10 +47,10 @@ public struct HistoryAction: Codable, Sendable {
     public let action: String
     public let requestId: String
 
-    public init(rowKey: String, expectedRevision: String, action: String, requestId: String = UUID().uuidString) {
+    public init(rowKey: String, expectedRevision: String, requestId: String = UUID().uuidString) {
         self.rowKey = rowKey
         self.expectedRevision = expectedRevision
-        self.action = action
+        self.action = "acknowledge"
         self.requestId = requestId
     }
 }
@@ -457,13 +457,15 @@ public struct DashboardParameters: Codable, Sendable {
     public var idleOffset: Int
     public var enrich: Bool
     public var statusFilter: DashboardStatusFilter
+    public var includeHistory: Bool?
 
     public init(
-        limit: Int = 20,
+        limit: Int = 12,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
         enrich: Bool = false,
         statusFilter: DashboardStatusFilter = .all,
+        includeHistory: Bool? = nil,
         problems: ProblemQuery? = nil
     ) {
         self.statusFilter = statusFilter
@@ -472,6 +474,7 @@ public struct DashboardParameters: Codable, Sendable {
         self.terminalOffset = terminalOffset
         self.idleOffset = idleOffset
         self.enrich = enrich
+        self.includeHistory = includeHistory
     }
 }
 

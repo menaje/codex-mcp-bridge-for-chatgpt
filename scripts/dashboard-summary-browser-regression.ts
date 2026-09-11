@@ -26,19 +26,17 @@ function html(scenario: string) {
     function response(args){
       const active=scenario==='empty'?[]:scenario==='terminating'?[row('terminating',0)]:normal;
       const recent=scenario==='empty'||scenario==='terminating'?[]:Array.from({length:25},(_,i)=>row('completed',i));
-      const filter=args.statusFilter||'all';
       const category=r=>['input-required','approval-required'].includes(r.status)?'response-required':['failed','interrupted','liveness-unknown'].includes(r.status)?'problems':r.status==='running'?'running':null;
-      const matches=r=>filter==='all'||(filter==='background'?r.backgroundProcessCount>0:category(r)===filter);
-      const activeRows=active.filter(matches),history=recent.filter(matches),offset=args.terminalOffset||0,limit=args.limit||20;
-      const view={...fixture,statusFilter:filter,generatedAt:new Date(Date.now()+ ++sequence).toISOString(),
+      const includeHistory=args.includeHistory!==false,statusRows=active.filter(r=>category(r)||r.backgroundProcessCount>0),offset=args.terminalOffset||0,limit=args.limit||12;
+      const view={...fixture,statusFilter:'all',generatedAt:new Date(Date.now()+ ++sequence).toISOString(),
         filter:{mode:'all',conversationAvailable:false,conversationHasWork:false},
         enrichment:{...fixture.enrichment,state:args.enrich?'enriched':'structural'},
-        activeRows,terminalRows:history.slice(offset,offset+limit),idleRows:[],
+        activeRows:includeHistory?active:[],terminalRows:includeHistory?recent.slice(offset,offset+limit):[],idleRows:[],statusRows,statusRowsComplete:true,historyIncluded:includeHistory,
         counts:{...fixture.counts,running:active.filter(r=>category(r)==='running').length,
           responseRequired:active.filter(r=>category(r)==='response-required').length,problems:active.filter(r=>category(r)==='problems').length,
           backgroundProcesses:scenario==='empty'||scenario==='terminating'?0:2,runtimeUnknownAgents:scenario==='unknown'?1:0,idleAgents:500},
-        pagination:{...fixture.pagination,active:{...fixture.pagination.active,returned:activeRows.length,total:activeRows.length},
-          terminal:{...fixture.pagination.terminal,offset,returned:Math.min(limit,Math.max(0,history.length-offset)),total:history.length,hasNext:offset+limit<history.length}}};
+        pagination:{...fixture.pagination,active:{...fixture.pagination.active,returned:includeHistory?active.length:0,total:includeHistory?active.length:0},
+          terminal:{...fixture.pagination.terminal,offset,returned:includeHistory?Math.min(limit,Math.max(0,recent.length-offset)):0,total:includeHistory?recent.length:0,hasNext:includeHistory&&offset+limit<recent.length}}};
       return {structuredContent:view};
     }
     window.openai={locale:'ko',callTool:async(name,args)=>{
@@ -65,6 +63,7 @@ try {
   await cli("run-code", `async page=>{
     await page.waitForFunction(()=>document.querySelector('#problems-count').textContent==='3');
     if(await page.locator('.counts button').count()!==3)throw new Error('Expected three summary buttons');
+    if(await page.locator('#active-section').isVisible()||await page.locator('#terminal-section').isVisible())throw new Error('Initial card did not stay on the summary');
     if(await page.locator('#idle-list,#idle-count,#project-count,#scope-count').count())throw new Error('Retired overview remains');
     if(await page.locator('#response-count').innerText()!=='2')throw new Error('Response count is wrong');
     await page.setViewportSize({width:460,height:900});
@@ -79,8 +78,9 @@ try {
   for (const [filter, count] of [["response-required", 2], ["problems", 3], ["running", 2], ["background", 1]] as const) {
     await cli("snapshot");
     await cli("run-code", `async page=>{
-      await page.locator('[data-status-filter="${filter}"]').click();
+      const before=await page.evaluate(()=>window.__calls.length);await page.locator('[data-status-filter="${filter}"]').click();
       await page.waitForFunction(()=>document.querySelector('[data-status-filter="${filter}"]').getAttribute('aria-pressed')==='true'&&document.querySelectorAll('#active-list .activity-agent').length===${count});
+      if(await page.evaluate(()=>window.__calls.length)!==before)throw new Error('Local status filter issued a data request');
       if(await page.locator('#problems-count').innerText()!=='3'||await page.locator('#response-count').innerText()!=='2')throw new Error('Filtering changed full-scope totals');
       await page.locator('#refresh').click();
       await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false');
@@ -90,12 +90,16 @@ try {
   await cli("snapshot");
   await cli("run-code", `async page=>{
     await page.locator('#status-all').click();
-    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===20);
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
+    await page.locator('#terminal-more').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===24);
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===25);
     await page.evaluate(()=>window.__defer=true);
-    await page.locator('[data-status-filter="problems"]').click();
+    await page.locator('#refresh').click();
     await page.waitForFunction(()=>window.__pending.length===1);
+    await page.locator('[data-status-filter="problems"]').click();
     await page.locator('[data-status-filter="response-required"]').click();
     await page.waitForFunction(()=>document.querySelectorAll('#active-list .activity-agent').length===2);
     await page.evaluate(()=>window.__pending.splice(0).forEach(release=>release()));
@@ -107,7 +111,7 @@ try {
     await cli("snapshot");
     await cli("run-code", `async page=>{
       await page.waitForFunction(()=>document.querySelector('#dashboard-content').hidden===false);
-      if('${scenario}'==='terminating'&&!(await page.locator('#active-list').innerText()).includes('종료 중'))throw new Error('Termination disappeared');
+      if('${scenario}'==='terminating'){await page.locator('#history-filter').click();await page.waitForFunction(()=>document.querySelector('#active-section').hidden===false);if(!(await page.locator('#active-list').innerText()).includes('종료 중'))throw new Error('Termination disappeared')}
       if('${scenario}'==='empty'&&await page.locator('#background-status').isVisible())throw new Error('Empty background count visible');
       if('${scenario}'==='unknown'&&!await page.locator('#background-unknown').isVisible())throw new Error('Unknown background state hidden');
       if((await page.evaluate(()=>window.__errors)).length)throw new Error('Browser error');

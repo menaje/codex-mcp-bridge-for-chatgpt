@@ -16,7 +16,7 @@ function html(scenario: string): string {
   const prelude = `<script>(()=>{
     const fixture=${JSON.stringify(dashboardView("structural"))},scenario=${JSON.stringify(scenario)};
     let sequence=0;
-    window.__calls=[];window.__errors=[];window.__pending=[];window.__defer=null;window.__failRefresh=false;
+    window.__calls=[];window.__errors=[];window.__pending=[];window.__defer=null;window.__failRefresh=false;window.__activeEnrichments=0;window.__maximumEnrichments=0;
     window.__hasWork=scenario!=="empty"&&scenario!=="unidentified";
     window.addEventListener("error",event=>window.__errors.push(String(event.message)));
     window.addEventListener("unhandledrejection",event=>window.__errors.push(String(event.reason)));
@@ -24,7 +24,7 @@ function html(scenario: string): string {
       return {...base,rowKey:prefix+"-"+(active?"active":index),activityKey:prefix+"-activity-"+index,
         conversationKey:prefix,projectKey:prefix,projectName:prefix==="here"?"현재 프로젝트":"다른 프로젝트",
         activityTitle:title,agentName:(prefix==="here"?"현재 에이전트 ":"다른 에이전트 ")+index,
-        status:active?"running":"completed",bucket:active?"active":"recent",controlKind:active?"manage":null,
+        status:active?"running":"completed",bucket:active?"active":"recent",controlKind:active?"request":null,
         history:[],historyCount:0,latestTurn:{...base.latestTurn,activityTitle:title,activityKey:prefix+"-activity-"+index,status:active?"running":"completed"}}}
     function response(args){
       const mode=args.scope==="auto"?(window.__hasWork?"conversation":"all"):args.scope||"all";
@@ -33,28 +33,33 @@ function html(scenario: string): string {
       const activeHere=window.__hasWork&&scenario!=="completed"?[row("here",0,true)]:[];
       const activeRows=mode==="conversation"?activeHere:[...activeHere,row("elsewhere",0,true)];
       const terminal=mode==="conversation"?here:[...elsewhere,...here];
-      const offset=args.terminalOffset||0,limit=args.limit||20,terminalRows=terminal.slice(offset,offset+limit);
+      const includeHistory=args.includeHistory!==false,offset=args.terminalOffset||0,limit=args.limit||12;
+      const terminalRows=includeHistory?terminal.slice(offset,offset+limit):[];
       const view={...fixture,generatedAt:new Date(Date.now()+(++sequence)).toISOString(),scope:mode==="conversation"?"conversation":"bridge-wide",
+        statusFilter:"all",historyIncluded:includeHistory,statusRows:activeRows,statusRowsComplete:true,
         filter:{mode,conversationAvailable:scenario!=="unidentified",conversationHasWork:window.__hasWork},
-        enrichment:{...fixture.enrichment,state:args.enrich?"enriched":"structural"},activeRows,terminalRows,idleRows:[],
+        enrichment:{...fixture.enrichment,state:args.enrich?"enriched":"structural"},activeRows:includeHistory?activeRows:[],terminalRows,idleRows:[],
         counts:{...fixture.counts,trackedConversations:mode==="conversation"?1:window.__hasWork?2:1,trackedProjects:mode==="conversation"?1:2,
           running:activeRows.length,active:activeRows.length,retainedJobs:terminal.length+activeRows.length,completed:terminal.length},
-        pagination:{...fixture.pagination,active:{...fixture.pagination.active,returned:activeRows.length,total:activeRows.length},
-          terminal:{...fixture.pagination.terminal,offset,limit,returned:terminalRows.length,total:terminal.length,hasPrevious:offset>0,hasNext:offset+terminalRows.length<terminal.length}}};
+        pagination:{...fixture.pagination,active:{...fixture.pagination.active,returned:includeHistory?activeRows.length:0,total:includeHistory?activeRows.length:0},
+          terminal:{...fixture.pagination.terminal,offset,limit,returned:terminalRows.length,total:includeHistory?terminal.length:0,
+            hasPrevious:includeHistory&&offset>0,hasNext:includeHistory&&offset+terminalRows.length<terminal.length}}};
       return {structuredContent:view,_meta:{"codex/dashboardView@1":{kind:"codex/dashboardView",version:1,purpose:"bridge-wide-read-only-hydration",view}}};
     }
     function detail(args){return {structuredContent:{kind:"control",ready:true},_meta:{"codex/uiControl@1":{
       kind:"control",rowKey:args.rowKey,agentId:"fixture-agent",jobId:"fixture-job",agentName:"현재 에이전트",activityTitle:"현재 작업",
-      jobVersion:1,status:"running",canStop:true,affectedJobIds:["fixture-job"],pendingInteractions:[],backgroundProcesses:[],
+      jobVersion:1,status:"input-required",pendingInteractions:[{interactionId:"fixture-approval",kind:"approval",summary:"범위 전환 확인",availableDecisions:["accept","decline"],isBlocking:true}],
       card:{kind:"dashboard",token:"fixture-proof",activityId:"fixture-activity",generation:1,presentation:{kind:"explicit"}}}}}}
     window.__release=()=>{const pending=window.__pending.splice(0);for(const release of pending)release()};
     window.openai={locale:"ko-KR",notifyIntrinsicHeight:()=>{},toolResponseMetadata:{},callTool:async(name,args)=>{
       window.__calls.push({name,args});
-      const read=()=>args.view==="control"?detail(args):response(args);
-      if(args.view==="dashboard"&&!args.enrich&&window.__failRefresh){window.__failRefresh=false;return {isError:true,content:[{type:"text",text:"Refresh fixture failed"}]}}
-      const shouldDefer=window.__defer==="details"&&args.view==="control"||window.__defer==="enrich"&&args.enrich||window.__defer==="page"&&!args.enrich&&args.terminalOffset>0;
-      if(shouldDefer){window.__defer=null;return new Promise(resolve=>window.__pending.push(()=>resolve(read())))}
-      return read();
+      if(args.enrich){window.__activeEnrichments++;window.__maximumEnrichments=Math.max(window.__maximumEnrichments,window.__activeEnrichments)}
+      try{const read=()=>args.view==="control"?detail(args):response(args);
+        if(args.view==="dashboard"&&!args.enrich&&window.__failRefresh){window.__failRefresh=false;return {isError:true,content:[{type:"text",text:"Refresh fixture failed"}]}}
+        const shouldDefer=window.__defer==="details"&&args.view==="control"||window.__defer==="enrich"&&args.enrich||window.__defer==="page"&&!args.enrich&&args.terminalOffset>0;
+        if(shouldDefer){window.__defer=null;return await new Promise(resolve=>window.__pending.push(()=>resolve(read())))}
+        return read();
+      }finally{if(args.enrich)window.__activeEnrichments--}
     }};
   })();</script>`;
   return DASHBOARD_CARD_HTML.replace("</head>", `${prelude}</head>`);
@@ -79,9 +84,9 @@ try {
   await cli("run-code", `async page=>{
     await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true');
     if(await page.locator('h1').innerText()!=='Codex 현황')throw new Error('Status-card name is wrong');
-    if((await page.locator('#active-list').innerText()).includes('다른 대화'))throw new Error('Initial conversation leaked other work');
+    if(await page.locator('#active-section').isVisible()||await page.locator('#terminal-section').isVisible())throw new Error('Initial card did not stay on the summary');
     const calls=await page.evaluate(()=>window.__calls.filter(call=>call.args.view==='dashboard'));
-    if(calls[0].args.scope!=='auto'||calls.find(call=>call.args.enrich)?.args.scope!=='conversation')throw new Error('Initial enrichment repeated auto selection');
+    if(calls[0].args.scope!=='auto'||calls[0].args.includeHistory!==false||calls.find(call=>call.args.enrich)?.args.scope!=='conversation'||calls.find(call=>call.args.enrich)?.args.includeHistory!==false)throw new Error('Initial summary/enrichment request is wrong');
     await page.screenshot({path:${JSON.stringify(path.join(artifacts, "conversation-desktop.png"))}});
     await page.setViewportSize({width:360,height:850});
     if(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth))throw new Error('Mobile overflow');
@@ -111,11 +116,18 @@ try {
     await page.locator('#refresh').click();
     await page.waitForFunction(()=>window.__calls.filter(call=>call.args.view==='dashboard'&&!call.args.enrich&&call.args.scope==='all').length>=2&&document.querySelector('main.card').getAttribute('aria-busy')==='false');
     await page.screenshot({path:${JSON.stringify(path.join(artifacts, "all-desktop.png"))}});
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
+    await page.locator('#terminal-more').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===24);
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===32);
     await page.locator('#scope-conversation').click();
-    await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1'&&document.querySelectorAll('#terminal-list .activity-agent').length===20);
-    if((await page.locator('#dashboard-content').innerText()).includes('다른 대화'))throw new Error('Scope switch retained all-work rows');
+    await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1'&&!document.querySelector('#active-section').offsetParent);
+    await page.locator('[data-status-filter="running"]').click();
+    if((await page.locator('#active-list').innerText()).includes('다른 대화'))throw new Error('Scope switch retained all-work rows');
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===24);
     if(await page.locator('#terminal-more').isVisible())throw new Error('Scoped last page still advertises more');
@@ -131,20 +143,28 @@ try {
     await page.waitForFunction(()=>document.querySelector('#scope-conversation').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='1');
     await page.evaluate(()=>window.__release());
     await page.waitForFunction(()=>document.querySelector('main.card').getAttribute('aria-busy')==='false');
+    if(await page.evaluate(()=>window.__maximumEnrichments)!==1)throw new Error('Scope switches overlapped enrichment requests');
+    await page.locator('[data-status-filter="running"]').click();
     if((await page.locator('#active-list').innerText()).includes('다른 대화'))throw new Error('Late enrichment replaced the selected scope');
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
     await page.evaluate(()=>{window.__defer='page'});
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>window.__pending.length===1);
     await page.locator('#scope-all').click();
     await page.waitForFunction(()=>document.querySelector('#scope-all').getAttribute('aria-pressed')==='true'&&document.querySelector('#running-count').textContent==='2');
     await page.evaluate(()=>window.__release());
-    if(await page.locator('#terminal-list .activity-agent').count()!==20)throw new Error('Late scoped page contaminated all-work cache');
+    if(await page.locator('#terminal-list .activity-agent').count()!==0)throw new Error('Scope switch did not return to the summary');
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
+    if((await page.locator('#terminal-list').innerText()).includes('이 대화 작업 21'))throw new Error('Late scoped page contaminated all-work cache');
   }`);
   await cli("snapshot");
   report.push("Late enrichment and load-more responses cannot cross scope changes");
 
   await cli("run-code", `async page=>{
     await page.locator('#scope-conversation').click();
+    await page.locator('[data-status-filter="running"]').click();
     await page.locator('[data-control-row="here-active"] .work-control-toggle').click();
     await page.locator('#work-details-body button').first().waitFor();
     await page.evaluate(()=>{window.__defer='details'});
@@ -155,12 +175,11 @@ try {
     await page.evaluate(()=>window.__release());
     if(await page.locator('#work-details').count())throw new Error('Old detail form reopened in the new scope');
     await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
-    await page.waitForTimeout(1100);
     const previous=await page.evaluate(()=>window.__calls.length);
     await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
-    await page.waitForFunction(count=>window.__calls.length>count,previous);
-    if((await page.evaluate(count=>window.__calls.slice(count).filter(call=>call.args.view==='dashboard'),previous)).some(call=>call.args.scope!=='all'))throw new Error('Restoration discarded manual scope');
-    await page.waitForFunction(()=>document.querySelector('main.card').getAttribute('aria-busy')==='false');
+    await page.waitForTimeout(250);
+    if(await page.evaluate(()=>window.__calls.length)!==previous)throw new Error('Page restoration refreshed dashboard data');
+    if(await page.locator('#scope-all').getAttribute('aria-pressed')!=='true')throw new Error('Restoration discarded manual scope');
     await page.evaluate(()=>{window.__failRefresh=true});
     await page.locator('#refresh').click();
     await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('마지막'));

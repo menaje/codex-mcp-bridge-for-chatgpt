@@ -84,7 +84,7 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
-const CURRENT_SCHEMA_VERSION = "17";
+const CURRENT_SCHEMA_VERSION = "18";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -472,6 +472,7 @@ export class BridgeStateStore {
       existingVersion !== "14" &&
       existingVersion !== "15" &&
       existingVersion !== "16" &&
+      existingVersion !== "17" &&
       existingVersion !== CURRENT_SCHEMA_VERSION
     ) {
       this.database.close();
@@ -532,9 +533,10 @@ export class BridgeStateStore {
       if (["15","16"].includes(this.getMeta("schema_version") || "")) {
         this.transaction(() => {
           this.database.exec(AUTOMATIC_RECOVERY_SCHEMA);
-          this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+          this.setMeta("schema_version", "17");
         });
       }
+      if (this.getMeta("schema_version") === "17") this.migrateV17ToV18();
       this.workHistory = new WorkHistoryStore(this.database);
       this.automaticRecovery = new AutomaticRecoveryStore(this.database);
       this.threadConnections = new ThreadConnectionStore(this.database);
@@ -845,14 +847,6 @@ export class BridgeStateStore {
       const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
       const historyRemoved = this.workHistory.sweep(days, jobId => this.retentionProtection(jobId, now).length > 0, now);
       this.automaticRecovery.prune(days, now);
-      const candidates = this.database.prepare(`SELECT a.agent_id,c.thread_id FROM agents a JOIN thread_connections c ON c.agent_id=a.agent_id AND c.thread_id=a.current_thread_id
-        WHERE a.lifecycle='idle' AND a.current_job_id IS NULL AND c.phase='released'
-        AND c.last_finished_at<? AND a.updated_at<? LIMIT 50`).all(now - 30 * 86400_000, now - 30 * 86400_000) as Array<{agent_id:string;thread_id:string}>;
-      for (const candidate of candidates) {
-        if (this.threadConnections.hasUnfinishedWork(candidate.thread_id)) continue;
-        const jobs = this.database.prepare("SELECT job_id FROM jobs WHERE agent_id=? AND archived_at IS NULL").all(candidate.agent_id) as Array<{job_id:string}>;
-        if (!jobs.some(job => this.retentionProtection(job.job_id, now).length)) this.archiveAgent(candidate.agent_id, now);
-      }
       return {...result,historyRemoved};
     });
   }
@@ -1060,7 +1054,7 @@ export class BridgeStateStore {
     return row ? readAgentRow(row) : undefined;
   }
 
-  listAgents(scopeId?: string, includeArchived = false, limit = 100, offset = 0): BridgeAgent[] {
+  listAgents(scopeId?: string, limit = 100, offset = 0): BridgeAgent[] {
     const boundedLimit = Math.max(0, Math.min(1_000, limit));
     const boundedOffset = Math.max(0, offset);
     let sql = "SELECT * FROM agents";
@@ -1070,14 +1064,13 @@ export class BridgeStateStore {
       predicates.push("scope_id = ?");
       parameters.push(normalizeUuid(scopeId, "agent scopeId"));
     }
-    if (!includeArchived) predicates.push("lifecycle <> 'archived'");
     if (predicates.length > 0) sql += ` WHERE ${predicates.join(" AND ")}`;
     sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?";
     parameters.push(boundedLimit, boundedOffset);
     return (this.database.prepare(sql).all(...parameters) as AgentStorageRow[]).map(readAgentRow);
   }
 
-  countAgents(scopeId?: string, includeArchived = false): number {
+  countAgents(scopeId?: string): number {
     let sql = "SELECT COUNT(*) AS count FROM agents";
     const parameters: string[] = [];
     const predicates: string[] = [];
@@ -1085,7 +1078,6 @@ export class BridgeStateStore {
       predicates.push("scope_id = ?");
       parameters.push(normalizeUuid(scopeId, "agent scopeId"));
     }
-    if (!includeArchived) predicates.push("lifecycle <> 'archived'");
     if (predicates.length > 0) sql += ` WHERE ${predicates.join(" AND ")}`;
     return Number((this.database.prepare(sql).get(...parameters) as CountRow).count);
   }
@@ -1247,9 +1239,6 @@ export class BridgeStateStore {
       if (activity.scopeId !== agent.scopeId) {
         throw new Error("The Activity and Agent belong to different conversation scopes.");
       }
-      if (agent.lifecycle === "archived") {
-        throw new Error("The selected Agent is archived. Restore it before assigning work.");
-      }
       if (!isAgentContextMode(input.contextMode)) throw new Error("Invalid Agent context mode.");
       const existing = this.database
         .prepare(`
@@ -1408,9 +1397,6 @@ export class BridgeStateStore {
     const now = options.now ?? Date.now();
     return this.transaction(() => {
       const agent = this.requireAgent(agentId);
-      if (agent.lifecycle === "archived") {
-        throw new Error("An archived Agent must be restored before its execution state can change.");
-      }
       const currentJobId = lifecycle === "active" || lifecycle === "waiting-input"
         ? normalizeRequiredString(options.currentJobId, "current job id", 200)
         : undefined;
@@ -1446,42 +1432,6 @@ export class BridgeStateStore {
         }
         throw error;
       }
-      this.nextScopeVersion(agent.scopeId, now);
-      return this.requireAgent(agent.agentId);
-    });
-  }
-
-  archiveAgent(agentId: string, now = Date.now()): BridgeAgent {
-    return this.transaction(() => {
-      const agent = this.requireAgent(agentId);
-      if (agent.lifecycle === "archived") return agent;
-      if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
-        throw new Error(
-          `AGENT_BUSY: Agent has active job ${agent.currentJobId || "unknown"}. Force-stop that job before archiving; filesystem changes are not rolled back.`
-        );
-      }
-      this.database
-        .prepare(`
-          UPDATE agents SET lifecycle = 'archived', archived_at = ?, version = version + 1,
-                            updated_at = ? WHERE agent_id = ?
-        `)
-        .run(now, now, agent.agentId);
-      this.nextScopeVersion(agent.scopeId, now);
-      return this.requireAgent(agent.agentId);
-    });
-  }
-
-  restoreAgent(agentId: string, now = Date.now()): BridgeAgent {
-    return this.transaction(() => {
-      const agent = this.requireAgent(agentId);
-      if (agent.lifecycle !== "archived") return agent;
-      this.database
-        .prepare(`
-          UPDATE agents SET lifecycle = CASE WHEN orphaned_reason IS NULL THEN 'idle' ELSE 'orphaned' END,
-                            archived_at = NULL, version = version + 1, updated_at = ?
-           WHERE agent_id = ?
-        `)
-        .run(now, agent.agentId);
       this.nextScopeVersion(agent.scopeId, now);
       return this.requireAgent(agent.agentId);
     });
@@ -3983,6 +3933,65 @@ export class BridgeStateStore {
     });
   }
 
+  /** Restore every bridge-local archived Agent before archive/restore support is removed. */
+  private migrateV17ToV18(): void {
+    this.transaction(() => {
+      const archived = this.database
+        .prepare(`
+          SELECT a.agent_id, a.scope_id, a.current_job_id, a.orphaned_reason,
+                 j.status AS job_status, j.payload AS job_payload
+            FROM agents a
+            LEFT JOIN jobs j ON j.job_id = a.current_job_id AND j.archived_at IS NULL
+           WHERE a.lifecycle = 'archived' OR a.archived_at IS NOT NULL
+        `)
+        .all() as Array<{
+          agent_id: string;
+          scope_id: string;
+          current_job_id: string | null;
+          orphaned_reason: string | null;
+          job_status: string | null;
+          job_payload: string | null;
+        }>;
+      let restoredCount = 0;
+      for (const row of archived) {
+        let lifecycle: BridgeAgentLifecycle = row.orphaned_reason ? "orphaned" : "idle";
+        if (row.current_job_id && row.job_status && isActiveActivityJobStatus(row.job_status)) {
+          const payload = row.job_payload
+            ? parsePayload({ payload: row.job_payload }, "archived Agent current job") as Record<string, unknown>
+            : undefined;
+          lifecycle = hasBlockingInteraction(payload?.pendingInteractions) ? "waiting-input" : "active";
+        }
+        const currentJobId = lifecycle === "active" || lifecycle === "waiting-input"
+          ? row.current_job_id
+          : null;
+        const update = this.database
+          .prepare(`
+            UPDATE agents
+               SET lifecycle = ?, current_job_id = ?, archived_at = NULL, version = version + 1
+             WHERE agent_id = ? AND (lifecycle = 'archived' OR archived_at IS NOT NULL)
+          `)
+          .run(lifecycle, currentJobId, row.agent_id);
+        if (update.changes !== 1) {
+          throw new Error("Schema v18 migration could not restore every archived Agent atomically.");
+        }
+        restoredCount += update.changes;
+      }
+      const remaining = Number((this.database
+        .prepare("SELECT COUNT(*) AS count FROM agents WHERE lifecycle='archived' OR archived_at IS NOT NULL")
+        .get() as CountRow).count);
+      if (restoredCount !== archived.length || remaining !== 0) {
+        throw new Error("Schema v18 migration left archived Agent state behind.");
+      }
+      const now = Date.now();
+      for (const scopeId of new Set(archived.map((row) => row.scope_id))) {
+        this.nextScopeVersion(scopeId, now);
+      }
+      this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
+      this.setMeta("schema_v18_restored_agent_count", String(restoredCount));
+      this.setMeta("schema_v18_migrated_at", new Date(now).toISOString());
+    });
+  }
+
   private registerBridgeInstance(): void {
     this.transaction(() => {
       const now = Date.now();
@@ -4387,9 +4396,6 @@ export class BridgeStateStore {
     now: number
   ): boolean {
     const agent = this.requireAgent(agentId);
-    if (agent.lifecycle === "archived") {
-      throw new Error("An archived Agent cannot own a running Codex job.");
-    }
     let lifecycle: BridgeAgentLifecycle;
     let currentJobId: string | undefined;
     let assignmentReleased = false;
@@ -5456,7 +5462,6 @@ function readAgentRow(row: AgentStorageRow): BridgeAgent {
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    archivedAt: row.archived_at ?? undefined,
     orphanedReason: row.orphaned_reason || undefined
   };
 }

@@ -1493,58 +1493,6 @@
         }
       }
     },
-    "Ultra": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ウルトラ"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ultra"
-          }
-        }
-      }
-    },
     "경로 변경": {
       "localizations": {
         "en": {
@@ -1593,162 +1541,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "redirecionado"
-          }
-        }
-      }
-    },
-    "낮음": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Low"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "低"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "低"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "低"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bajo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Faible"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Niedrig"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Baixo"
-          }
-        }
-      }
-    },
-    "높음": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "High"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "高"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "高"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "高"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Élevé"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hoch"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Alto"
-          }
-        }
-      }
-    },
-    "매우 높음": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Extra high"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "非常に高い"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "极高"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "極高"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Muy alto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Très élevé"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sehr hoch"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Muito alto"
           }
         }
       }
@@ -1869,58 +1661,6 @@
         }
       }
     },
-    "중간": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Medium"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "中"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "中"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "中"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Medio"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Moyen"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mittel"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Médio"
-          }
-        }
-      }
-    },
     "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.": {
       "localizations": {
         "de": {
@@ -1975,110 +1715,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "更快地執行支援的模型。模型與推理強度保持不變，用量或費用可能增加。"
-          }
-        }
-      }
-    },
-    "최대": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maximum"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最大"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最高"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最高"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Máximo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maximum"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maximum"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Máximo"
-          }
-        }
-      }
-    },
-    "최소": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Minimal"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最小"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最低"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最低"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mínimo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Minimal"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Minimal"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mínimo"
           }
         }
       }
@@ -32478,60 +32114,60 @@
         }
       }
     },
-    "저장되지 않은 대화를 보호하고 있습니다. 해당 Agent를 아카이브해 주세요.": {
+    "저장되지 않은 대화를 보호하고 있습니다. 연결 해제를 기다리거나 현황을 확인한 뒤 강제 적용하세요.": {
       "localizations": {
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "저장되지 않은 대화를 보호하고 있습니다. 해당 Agent를 아카이브해 주세요."
+            "value": "저장되지 않은 대화를 보호하고 있습니다. 연결 해제를 기다리거나 현황을 확인한 뒤 강제 적용하세요."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Protecting unsaved conversations. Archive the affected Agents to continue."
+            "value": "Protecting unsaved conversations. Wait for connection release, or review the Dashboard and apply with Force."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "未保存の会話を保護しています。該当するAgentをアーカイブしてください。"
+            "value": "保存されていない会話を保護しています。接続が解放されるまで待つか、ダッシュボードを確認してから強制適用してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在保护尚未保存的对话。请归档相关 Agent 以继续。"
+            "value": "正在保护尚未保存的对话。请等待连接释放，或查看仪表板后强制应用。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在保護尚未儲存的對話。請封存相關 Agent 以繼續。"
+            "value": "正在保護尚未儲存的對話。請等待連線釋放，或查看儀表板後強制套用。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Se están protegiendo conversaciones sin guardar. Archiva los Agents afectados para continuar."
+            "value": "Se están protegiendo las conversaciones no guardadas. Espera a que se libere la conexión o revisa el panel y aplica con Forzar."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les conversations non enregistrées sont protégées. Archivez les Agents concernés pour continuer."
+            "value": "Les conversations non enregistrées sont protégées. Attendez la libération de la connexion, ou vérifiez le tableau de bord puis appliquez avec Forcer."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Nicht gespeicherte Unterhaltungen werden geschützt. Archivieren Sie die betroffenen Agents, um fortzufahren."
+            "value": "Nicht gespeicherte Unterhaltungen werden geschützt. Warten Sie, bis die Verbindung freigegeben wird, oder prüfen Sie das Dashboard und wenden Sie die Änderung mit „Erzwingen“ an."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Protegendo conversas não salvas. Arquive os Agents afetados para continuar."
+            "value": "As conversas não salvas estão protegidas. Aguarde a liberação da conexão ou revise o painel e aplique com Forçar."
           }
         }
       }
@@ -36104,124 +35740,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "A verificar permissão de notificações…"
-          }
-        }
-      }
-    },
-    "에이전트 보관": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Archive Agent"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "에이전트 보관"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "エージェントを保管"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "归档智能体"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "封存代理程式"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Archivar agente"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Archiver l’agent"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent archivieren"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arquivar agente"
-          }
-        }
-      }
-    },
-    "에이전트 복원": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restore Agent"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "에이전트 복원"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "エージェントを復元"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "恢复智能体"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "還原代理程式"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restaurar agente"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restaurer l’agent"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent wiederherstellen"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restaurar agente"
           }
         }
       }

@@ -51,12 +51,21 @@ await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 const port = (server.address() as { port: number }).port;
 try {
   await cli("open", `http://127.0.0.1:${port}/?revision=0&kind=job`);
-  for (let revision = 0; revision < variants.length; revision++) for (const kind of ["job", "process"]) {
+  const current = JSON.parse(await cli("run-code", `async page=>{
+    const frame=page.frameLocator('iframe');
+    if(await frame.getByRole('button',{name:'작업 관리',exact:true}).count())throw new Error('Current dashboard still exposes work management');
+    if(await frame.locator('#work-stop-confirmation').count())throw new Error('Current dashboard mounted a stop confirmation');
+    return page.frames()[1].evaluate(()=>({calls:window.__calls.filter(call=>call.name==='codex_ui_stop'),errors:window.__errors}));
+  }`));
+  assert.deepEqual(current.errors, []);
+  assert.deepEqual(current.calls, []);
+  results.push({ revision: "current", managementControls: "absent", passed: true });
+  for (let revision = 1; revision < variants.length; revision++) for (const kind of ["job", "process"]) {
     await cli("goto", `http://127.0.0.1:${port}/?revision=${revision}&kind=${kind}`);
     await cli("snapshot");
     const result = JSON.parse(await cli("run-code", `async page=>{
       const frame=page.frameLocator('iframe'),stop=frame.getByRole('button',{name:'에이전트 강제 종료…',exact:true}),confirmation=frame.locator('#work-stop-confirmation');
-      await frame.getByRole('button',{name:${JSON.stringify(revision === 0 ? "작업 관리" : "상세 보기")},exact:true}).click();
+      await frame.getByRole('button',{name:'상세 보기',exact:true}).click();
       await stop.click();await confirmation.waitFor();
       const text=await confirmation.innerText();if(!text.includes('Test project')||!text.includes('Selected work')||!text.includes('History Agent'))throw new Error('Stop target missing');
       const before=await page.frames()[1].evaluate(()=>window.__calls.filter(call=>call.name==='codex_ui_stop').length);
@@ -87,7 +96,7 @@ try {
     results.push({ revision: revision ? retainedUris[revision - 1] : "current", kind, passed: true });
   }
   writeFileSync(path.join(artifacts, "results.json"), JSON.stringify(results, null, 2) + "\n");
-  console.log("6 sandboxed dashboard stop scenarios passed: current/two retained, Job/process, cancel, refresh invalidation, single exact dispatch.");
+  console.log("Current Dashboard management controls are absent; four retained-card stop compatibility scenarios passed.");
 } finally {
   try { await cli("close"); } finally { server.close(); }
 }

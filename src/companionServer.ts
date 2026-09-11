@@ -1,4 +1,4 @@
-import { dashboardHistoryActionInput } from "./workHistory.js";
+import { dashboardHistoryRuntimeInput } from "./workHistory.js";
 import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
@@ -68,7 +68,8 @@ const dashboardParamsSchema = z.strictObject({
   limit: z.number().int().min(5).max(50).optional(),
   terminalOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
-  enrich: z.boolean().optional()
+  enrich: z.boolean().optional(),
+  includeHistory: z.boolean().optional()
 });
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional(),
@@ -341,7 +342,7 @@ async function dispatchRequest(
       };
     case "dashboard.history": {
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
-      return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
+      return applicationService.historyAction(dashboardHistoryRuntimeInput.parse(request.params));
     }
     case "dashboard.problem": {
       if (!applicationService.problemAction) throw new Error("PROBLEMS_UNSUPPORTED");
@@ -364,7 +365,8 @@ async function dispatchRequest(
         idleOffset: params.idleOffset,
         // Older native clients omit enrich and retain their prior all-in-one
         // snapshot behavior. The current client sends false explicitly.
-        inspectRuntime: params.enrich !== false
+        inspectRuntime: params.enrich !== false,
+        includeHistory: params.includeHistory !== false
       });
     }
     case "settings.snapshot": {

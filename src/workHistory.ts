@@ -4,11 +4,21 @@ import { problemKey, problemRevision } from "./problemReview.js";
 
 export const HISTORY_RETENTION_DAYS = [7, 30, 90, 0] as const;
 export type HistoryRetentionDays = (typeof HISTORY_RETENTION_DAYS)[number];
-export const dashboardHistoryActionInput = z.strictObject({
+const dashboardHistoryActionBase = {
   rowKey: z.string().regex(/^[a-f0-9]{32}$/), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-  action: z.enum(["acknowledge", "archive", "restore"]), requestId: z.string().uuid()
+  requestId: z.string().uuid()
+} as const;
+/** Current public history mutation contract. */
+export const dashboardHistoryActionInput = z.strictObject({
+  ...dashboardHistoryActionBase,
+  action: z.literal("acknowledge")
 });
-export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryActionInput>;
+/** Runtime compatibility parser for already-mounted cards and older native clients. */
+export const dashboardHistoryRuntimeInput = z.strictObject({
+  ...dashboardHistoryActionBase,
+  action: z.enum(["acknowledge", "archive", "restore"])
+});
+export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryRuntimeInput>;
 export type HistoryJobIdentity = {jobId:string;activityId:string;status:string;updatedAt:number};
 export const DEFAULT_HISTORY_RETENTION_DAYS: HistoryRetentionDays = 30;
 export const ISSUE_ATTENTION_DAYS = 7;

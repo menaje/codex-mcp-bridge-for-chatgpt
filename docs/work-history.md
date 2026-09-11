@@ -9,8 +9,8 @@ is an inspection notice and is not a failed inspection.
 
 Current work contains execution, response waits, termination in progress and
 observed background work. Finished runs keep their original status in history.
-Native and card rows use the same time rule: live turns show elapsed work time and
-relative start time; terminal turns show recorded duration and relative end time.
+Native and card rows use the same time rule: live turns show elapsed work time at
+the last explicit snapshot; terminal turns show recorded duration and relative end time.
 Missing historical timing remains unavailable.
 
 ## Automatic recovery and original GPT wait
@@ -79,8 +79,8 @@ termination and disconnection. Automatic processing shows action, attempt count,
 current state and evidence. The Problems summary counts unresolved runtime issues,
 and opens this dedicated area. Acknowledgement belongs to each
 execution, so a later success or a different failure on the same Agent cannot
-hide the earlier unreviewed failure. Archived Agents' retained failures remain
-reviewable. Every retained failure remains available throughout its configured
+hide the earlier unreviewed failure. Failures belonging to Agents restored by the
+schema-18 migration remain reviewable. Every retained failure remains available throughout its configured
 retention period; seven days no longer silently removes an unreviewed item in
 current clients.
 
@@ -92,8 +92,9 @@ limits bulk review to its chosen conversation/all-work scope. Bulk review collec
 all matching pages before changing anything, then sends at most 100 exact targets
 per atomic request. A changed page revision cancels collection. A changed target
 rejects its whole request, and partial completion across requests is reported.
-Both interfaces read the same durable state. Native clients subscribe to changes;
-cards reload after their own actions, refresh, and visibility recovery.
+Both interfaces read the same durable state. Native clients still subscribe to
+service changes, while Dashboard display data reloads only after its own actions,
+explicit refresh, menu reopening, or a card scope/history request.
 
 Unavailable runtime state cannot be acknowledged. **Check status again** makes a
 fresh, bounded, non-loading inspection. The problem remains while execution or
@@ -116,19 +117,24 @@ cannot authorize an unrelated action; writes never use a fallback transport or
 automatic replay. Local/native review and remote review use existing authenticated
 companion paths; remote review requires `settings.write`.
 
-## Agent archive and compatibility
+## Agent restoration and compatibility
 
-History separately offers **Archive Agent** / **Restore Agent**. Archiving changes
-only the Bridge Agent lifecycle after fresh non-loading inspection and revision
-checks confirm no active work or unknown background state. It never stops work,
-changes an outcome, or archives/deletes a Codex conversation.
+Schema 18 restores every Agent archived by earlier bridge versions before current
+history is served. The migration preserves its identity, Activity/thread/project
+links, retained executions and results, review state, next-run settings and stored
+timestamps. It restores active and waiting state from a retained current Job,
+keeps orphan evidence, and otherwise makes the Agent idle. It performs no work
+replay, thread resume, or Codex conversation load.
 
-`dashboard.history` and app-private `codex_ui_history` remain for these controls
-and immutable older cards. Snapshots without the optional `problems` query retain
-the prior seven-day/latest-Agent problem projection for compatibility. Clients
-that send `problems` without `view` retain the earlier per-execution Needs
-action/Reviewed history contract. Current clients send `view: actionable`,
-`history`, or `automatic`. Agent archive and optional review remain independent.
+Current native and card interfaces have no Agent archive/restore controls, list,
+filter or API schema. `dashboard.history` and app-private `codex_ui_history` now
+support execution acknowledgement only. Their runtime compatibility parsers
+recognize archive/restore requests from retained cards and return
+`AGENT_ARCHIVE_REMOVED` without changing the Agent. Snapshots without the optional
+`problems` query retain the prior seven-day/latest-Agent problem projection for
+compatibility. Clients that send `problems` without `view` retain the earlier
+per-execution Needs action/Reviewed history contract. Current clients send
+`view: actionable`, `history`, or `automatic`.
 
 ## Retention
 
@@ -172,6 +178,6 @@ links to macOS notification settings. Repeated requests do not prompt again afte
 authorization. The official model-description disclosure uses the shared full-row
 button and leading-aligned, selectable text.
 
-Current resource generations are Dashboard 27, Settings 20, and Activity 30. Prior published
+Current resource generations are Dashboard 29, Settings 21, and Activity 30. Prior published
 resource snapshots remain immutable. The Dashboard HTML budget is 200 KiB, including
 problem review, history actions and policy copy in all nine supported languages.

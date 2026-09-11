@@ -16,7 +16,7 @@ public struct BridgeCompanionClient: Sendable {
     }
 
     public func dashboard(
-        limit: Int = 20,
+        limit: Int = 12,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
         enrich: Bool = false,
@@ -58,6 +58,14 @@ public struct BridgeCompanionClient: Sendable {
                                       statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
         try await rpc.call("dashboard.snapshot", params: DashboardParameters(limit: limit, terminalOffset: terminalOffset,
             idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter, problems: problems), timeout: enrich ? 10 : 3)
+    }
+
+    public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                                      statusFilter: DashboardStatusFilter, problems: ProblemQuery,
+                                      includeHistory: Bool) async throws -> DashboardSnapshot {
+        try await rpc.call("dashboard.snapshot", params: DashboardParameters(limit: limit, terminalOffset: terminalOffset,
+            idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter,
+            includeHistory: includeHistory, problems: problems), timeout: enrich ? 10 : 3)
     }
 
     public func problemAction(_ action: ProblemAction) async throws -> ProblemActionResult {

@@ -321,6 +321,8 @@ struct DashboardPopoverView: View {
                     WeeklyUsageView(usage: usage)
                 }
                 DashboardSummary(counts: dashboard.counts)
+                dashboardBackgroundStatus(dashboard)
+                dashboardFreshness(dashboard)
             }
             .padding(14)
             .dashboardHeight(.summary)
@@ -378,36 +380,6 @@ struct DashboardPopoverView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        if dashboard.counts.backgroundProcesses > 0 {
-            Button {
-                Task { await model.toggleDashboardPanel(.background) }
-            } label: {
-                Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
-            }
-            .buttonStyle(.link)
-            .font(.caption)
-        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
-            Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
-            Label(
-                "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
-                systemImage: "clock.badge.exclamationmark"
-            )
-            .font(.caption)
-            .foregroundStyle(.orange)
-        } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
-            Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending), let observed = model.dashboardObservationDate {
-            Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
         if dashboard.counts.runtimeUnknownAgents > 0,
            !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
             Label(
@@ -429,30 +401,89 @@ struct DashboardPopoverView: View {
             if let problems = dashboard.problems {
                 DashboardProblemsSection(problems: problems)
             } else {
+                let rows = panel.rows(in: dashboard)
                 DashboardSection(title: "문제", emptyText: "처리할 문제가 없습니다.",
-                    rows: dashboard.activeRows + dashboard.terminalRows,
-                    total: dashboard.pagination.active.total + dashboard.pagination.terminal.total,
+                    rows: rows,
+                    total: rows.count,
                     groupsByActivity: true)
             }
         } else {
+            let rows = panel.rows(in: dashboard)
+            let currentRows = panel == .history
+                ? dashboard.activeRows
+                : rows.filter { $0.bucket == "active" }
+            let recentRows = panel == .history
+                ? dashboard.terminalRows
+                : rows.filter { $0.bucket != "active" }
             DashboardSection(
                 title: panel == .history ? "현재 작업" : panel.title,
                 emptyText: "표시할 현재 작업이 없습니다.",
-                rows: dashboard.activeRows,
-                total: dashboard.pagination.active.total,
+                rows: currentRows,
+                total: currentRows.count,
                 groupsByActivity: true
             )
-            if dashboard.pagination.active.hasNext {
+            if panel == .history, dashboard.pagination.active.hasNext {
                 Label("활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.", systemImage: "ellipsis.circle")
                     .font(.caption).foregroundStyle(.orange)
             }
-            if panel == .history || panel == .background {
+            if panel == .history || !recentRows.isEmpty {
                 DashboardSection(title: "실행 기록", emptyText: "보존된 최근 실행이 없습니다.",
-                    rows: dashboard.terminalRows, total: dashboard.pagination.terminal.total,
-                    groupsByActivity: true, hasMore: dashboard.pagination.terminal.hasNext,
+                    rows: recentRows,
+                    total: panel == .history ? dashboard.pagination.terminal.total : recentRows.count,
+                    groupsByActivity: true, hasMore: panel == .history && dashboard.pagination.terminal.hasNext,
                     loadMore: { Task { await model.loadMoreRecent() } })
                 if panel == .history, let policy = dashboard.historyPolicy { WorkHistoryPolicyView(policy: policy) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func dashboardBackgroundStatus(_ dashboard: DashboardSnapshot) -> some View {
+        if dashboard.counts.backgroundProcesses > 0 {
+            Button {
+                Task { await model.toggleDashboardPanel(.background) }
+            } label: {
+                Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+            .foregroundStyle(model.dashboardPanel == .background ? Color.accentColor : Color.primary)
+            .accessibilityAddTraits(model.dashboardPanel == .background ? [.isSelected] : [])
+            .accessibilityIdentifier("dashboard-background")
+        } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
+            Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func dashboardFreshness(_ dashboard: DashboardSnapshot) -> some View {
+        HStack {
+            Text("마지막 확인")
+            Spacer()
+            Text(DisplayFormat.dateTime(dashboard.generatedAt, locale: model.interfaceLocale))
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+
+        if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
+            Label(
+                "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
+                systemImage: "clock.badge.exclamationmark"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+        } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
+            Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending),
+           let observed = model.dashboardObservationDate {
+            Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1220,9 +1251,7 @@ struct DashboardRowView: View {
             .foregroundStyle(.secondary)
             if let controls = row.historyControls {
                 HStack {
-                    if controls.canAcknowledge { historyButton("확인함", action: "acknowledge") }
-                    if controls.canArchive { historyButton("에이전트 보관", action: "archive") }
-                    if controls.canRestore { historyButton("에이전트 복원", action: "restore") }
+                    if controls.canAcknowledge { acknowledgeHistoryButton("확인함") }
                     if changingHistory { ProgressView().controlSize(.mini) }
                 }
                 .font(.caption2)
@@ -1371,11 +1400,11 @@ struct DashboardRowView: View {
             DashboardTimePresentation.text(turn: turn, fallbackUpdatedAt: turn.updatedAt, locale: model.interfaceLocale)
     }
 
-    private func historyButton(_ title: LocalizedStringKey, action: String) -> some View {
+    private func acknowledgeHistoryButton(_ title: LocalizedStringKey) -> some View {
         Button(title) {
             changingHistory = true
             Task {
-                await model.changeHistory(row, action: action)
+                await model.acknowledgeHistory(row)
                 changingHistory = false
             }
         }
@@ -1993,12 +2022,9 @@ enum DashboardExecutionPresentation {
             execution.reasoningEffort,
             locale: locale
         )
-        let current = "\(model) · \(effort)"
-        guard let rerouted = execution.reroutedModelDisplayName ?? execution.reroutedModel else {
-            return current
-        }
-        let reroute = BridgeAppLocalization.string("경로 변경", locale: locale)
-        return "\(current) → \(rerouted) (\(reroute))"
+        let actualModel = (execution.reroutedModelDisplayName ?? execution.reroutedModel)
+            .map { "\(model) → \($0)" } ?? model
+        return "\(actualModel) · \(effort)"
     }
 
     static func turnText(

@@ -103,6 +103,8 @@ try {
     const action=(name)=>row.locator('[data-description-action="'+name+'"]');
     const official='Our most capable model for complex, demanding work.';
     await page.locator('#settings-form').waitFor({state:'visible'});
+    const effortLabels=await page.locator('#policy-effort option').allTextContents();
+    check(effortLabels.join(',')==='low,medium','Korean Settings must keep canonical lowercase effort values: '+effortLabels.join(','));
     await page.setViewportSize({width:720,height:1050});
     check((await row.locator('.model-description-text').first().textContent())===official,'Show official text before editing');
     await action('edit').click();
@@ -213,7 +215,7 @@ try {
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),'No mobile overflow');
     await page.locator('.model-descriptions-panel').screenshot({path:${JSON.stringify(path.join(output, "settings-model-descriptions-mobile-ko.png"))}});
     check((await page.evaluate(()=>window.__cardErrors)).length===0,'No page errors');
-    return {realMcp:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,plainText:true,locales};
+    return {realMcp:true,canonicalEfforts:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,plainText:true,locales};
   }`);
   writeFileSync(path.join(output, "report.txt"), result);
   console.log(result);

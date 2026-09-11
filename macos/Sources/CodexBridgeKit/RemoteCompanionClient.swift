@@ -233,7 +233,7 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
     }
 
     public func dashboard(
-        limit: Int = 20,
+        limit: Int = 12,
         terminalOffset: Int = 0,
         idleOffset: Int = 0,
         enrich: Bool = false,
@@ -278,6 +278,24 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
                 idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter, problems: problems), timeout: enrich ? 10 : 3)
         } catch RemoteCompanionError.server(let status, let message) where status == -32602 && message.contains("problems") && message.lowercased().contains("unrecognized") {
             return try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)
+        }
+    }
+
+    public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
+                                      statusFilter: DashboardStatusFilter, problems: ProblemQuery,
+                                      includeHistory: Bool) async throws -> DashboardSnapshot {
+        do {
+            return try await call("dashboard.snapshot", params: DashboardParameters(
+                limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset,
+                enrich: enrich, statusFilter: statusFilter, includeHistory: includeHistory,
+                problems: problems
+            ), timeout: enrich ? 10 : 3)
+        } catch RemoteCompanionError.server(let status, let message)
+            where status == -32602 && message.lowercased().contains("unrecognized") {
+            return try await dashboardWithProblems(
+                limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset,
+                enrich: enrich, statusFilter: statusFilter, problems: problems
+            )
         }
     }
 

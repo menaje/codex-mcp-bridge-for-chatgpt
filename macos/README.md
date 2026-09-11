@@ -15,7 +15,12 @@ Pairing and the security model are documented in
 The Dashboard uses the same **Running / Response needed / Issues** summary as
 the current ChatGPT status card. The three tiles keep the previous menu-bar
 dashboard styling, with an icon and label above each larger number.
-Counts filter current work and run history;
+The popover starts at that summary. The tiles filter one complete, history-free
+status index in memory, while **Work & Run History** loads retained history in
+12-row pages only when opened. Closing the popover collapses any selected list, and
+reopening it performs the next Dashboard read. Keeping it open, connectivity
+events, and work-change notices do not trigger display-only Dashboard reads.
+Counts classify current work and recent actionable outcomes;
 background processes appear separately when present. Idle Agents have no
 standalone count or section, but their recorded turns remain in run history.
 The menu-bar icon and header describe bridge service health. Work failures,
@@ -23,9 +28,16 @@ interruptions, orphaned Agents, and input/approval waits appear in the Dashboard
 without marking the bridge unhealthy. Loading the first Dashboard snapshot
 does not delay a healthy service indicator; connection, authentication, and
 snapshot request failures still show a service warning. Native snapshot
-requests explicitly select the modern `statusFilter` projection, so the server
-and native client should be updated together. Immutable older cards retain their
-original projection when that optional parameter is omitted.
+requests explicitly select `statusFilter: all` and `includeHistory: false` for
+the summary, so the server and native client should be updated together.
+Immutable older clients retain their original projection when those optional
+parameters are omitted.
+
+Native and ChatGPT rows use the same status, actual execution, snapshot/recorded
+time, and older-history order. Next-run settings appear only when they differ
+from the latest actual model, effort, effective Fast tier, or reroute. Effort
+values stay as canonical lowercase catalog text in the menu, card, and both
+Settings surfaces; labels and descriptions remain localized.
 
 ## Development
 
@@ -123,6 +135,12 @@ language applies to both the native app and retained cards. Automatic follows
 the language of the host displaying each surface, so the macOS app and a ChatGPT
 card can differ only while Automatic is selected.
 Runtime discovery runs away from the menu-bar UI thread.
+Dashboard refreshes, panel changes, and closing/reopening the popover share one
+in-flight enrichment request. Its completed observations are read back for the
+current panel and page, so work-change notices do not leave cancelled native
+requests running overlapping inspections on the server. Per-Agent observation
+reads also avoid repeating the full Job-retention sweep, including when
+protected results exceed the configured retained-Job limit.
 
 Remote-client mode needs only the matching macOS app on the client. The server
 Mac must be running this app's managed Bridge with remote management explicitly

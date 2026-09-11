@@ -11,7 +11,6 @@ Agent identity, the Codex conversation, an individual Job, a loaded App Server t
 | `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | 1 MiB | Maximum individual result body |
 | `CODEX_MCP_BRIDGE_THREAD_IDLE_MS` | 21,600,000 ms (6 hours) | First durably committed end of the latest actual turn |
 | Diagnostic events | 7 days | Event time, with the size bounds below |
-| Agent logical archive | 30 days | Saved work end and last Agent update; current connection must already be released |
 
 Set `THREAD_IDLE_MS=0` to disable automatic connection release, or use a positive integer to adjust it. Restart the bridge to apply environment changes. Explicit app handoff still operates when automatic release is disabled. Reads, dashboard refreshes, notification delivery and terminal Job rewrites cannot move the connection's work-end clock. A restart does not replace it with startup time. A synthetic interruption discovered at restart is not evidence of when actual work ended.
 
@@ -39,6 +38,17 @@ Codex 0.153.3 exposes no verified option for creating a durable conversation whi
 
 Schema 14 takes a consistent private SQLite backup before migrating an existing database. Event cleanup then commits resumable batches of at most 500 source events. It does not read or delete Codex rollout files. Ordinary live maintenance does not run `VACUUM`.
 
+Schema 18 first backs up a schema-17 database, then restores every legacy
+archived Agent in one transaction. IDs, names, timestamps, projects, Activity
+assignments, thread links, next-run settings, Jobs, results, history and review
+state remain unchanged. An archived Agent with a retained active Job becomes
+active or waiting for input from that Job's current state; an archived orphan
+remains orphaned; other archived Agents become idle. The migration clears only
+the legacy archive marker and advances the Agent/scope versions. It is safe with
+zero archived Agents and is idempotent after restart. It does not start work,
+resume threads, or load Codex conversations. Agent archive/restore and the
+30-day automatic Agent archive policy are no longer available.
+
 Repeated diagnostic snapshots are coalesced by Job, event kind and item. Event cursor IDs continue increasing; authoritative current state is read from Job/Activity/question/delivery records rather than reconstructed from the event stream. The limits are 256 diagnostic events per Job, 8 KiB per payload, 50,000 Job events and 64 MiB of their payloads. Legacy excess is reduced in bounded batches. Related Activity metadata is also limited to 50,000 events and a seven-day window. These payload limits are not claims about the physical DB/WAL file size or long-lived identity tables.
 
 The corrected schema-14 cleanup applies the per-Job bound to every Job encountered in a batch. On upgrade from the initial schema-14 test build, it resets only the diagnostic migration cursor once and resumes the same batches, so already-scanned Jobs also receive the corrected bound. Usage summaries are retained before old diagnostic rows are pruned; control records and result delivery state are unchanged.
@@ -53,7 +63,7 @@ General result pruning protects:
 - Recorded/dispatched cancellation intents, until terminal resolution.
 - An explicit result hold, until release or expiry. Store-level `holdResult` requires a reason and a renewable expiry no more than 30 days away; it cannot restore an already expired result. No end-user hold/review control is added by this change.
 
-Protected results can exceed the ordinary count/time retention policy, but do not remove diagnostic size limits or the individual result limit. Operators should resolve outstanding delivery/response states rather than clear provenance or replay an uncertain response. Reserved request IDs, cancellation/steering journals, question delivery records, project pins and fork identities are not diagnostic garbage. Thirty-day Agent archive is local only; `codex_agent` restore preserves its existing current thread and settings.
+Protected results can exceed the ordinary count/time retention policy, but do not remove diagnostic size limits or the individual result limit. Operators should resolve outstanding delivery/response states rather than clear provenance or replay an uncertain response. Reserved request IDs, cancellation/steering journals, question delivery records, Agent identities, project pins and fork identities are not diagnostic garbage.
 
 After cleanup, free pages are reusable even when the DB file size stays unchanged. Inspect DB/WAL size and freelist pages separately. For disk compaction, stop the bridge safely, retain its backup, checkpoint and run SQLite `VACUUM` offline, then restart. Do not compact or restore over an active bridge, or restore only the main database file while discarding an associated live WAL. A backup contains private repository/result data and needs the same access controls as the live database.
 

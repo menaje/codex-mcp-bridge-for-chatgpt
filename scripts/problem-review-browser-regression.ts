@@ -29,8 +29,10 @@ const prelude=`<script>(()=>{
   }
   const scope=args.scope==='all'?'all':'conversation',query=args.problems||{review:'pending',kind:'all',offset:0},scoped=entries.filter(item=>scope==='all'||!item.other),filtered=scoped.filter(item=>item.review===query.review&&(query.kind==='all'||query.kind===item.kind));
   const limit=args.limit||12,offset=Math.min(query.offset,filtered.length?Math.floor((filtered.length-1)/limit)*limit:0),rows=filtered.slice(offset,offset+limit),pendingCount=scoped.filter(item=>item.review==='pending').length;
-  const activeRows=args.statusFilter==='problems'?[]:[{...base,rowKey:key(9000),agentName:'진행 중인 실행',status:'running',bucket:'active',controlKind:null,history:[],historyCount:0}],terminalRows=args.statusFilter==='problems'?[]:[failures[0].row];
+  const currentRows=[{...base,rowKey:key(9000),agentName:'진행 중인 실행',status:'running',bucket:'active',controlKind:null,history:[],historyCount:0}],recentRows=[failures[0].row],includeHistory=args.includeHistory!==false;
+  const activeRows=includeHistory&&args.statusFilter!=='problems'?currentRows:[],terminalRows=includeHistory&&args.statusFilter!=='problems'?recentRows:[];
   return {structuredContent:{...fixture,statusFilter:args.statusFilter||'all',generatedAt:new Date(epoch+ ++sequence).toISOString(),filter:{mode:scope,conversationAvailable:true,conversationHasWork:true},activeRows,terminalRows,idleRows:[],
+   statusRows:[...currentRows,...recentRows],statusRowsComplete:true,historyIncluded:includeHistory,
    counts:{...fixture.counts,running:1,problems:pendingCount,responseRequired:0},historyPolicy:{retentionDays:30,issueAttentionDays:7,reviewUntilRetention:true,lastCleanupAt:null,lastCleanupCount:0,totalRemoved:0},
    problems:{query:{...query,offset},revision:filtered.map(item=>item.problemKey+item.revision).join(''),pendingCount,acknowledgedCount:scoped.length-pendingCount,reviewableCount:scoped.filter(item=>item.canAcknowledge).length,rows,page:{offset,limit,total:filtered.length,returned:rows.length,hasPrevious:offset>0,hasNext:offset+rows.length<filtered.length}},
    pagination:{...fixture.pagination,active:{...fixture.pagination.active,returned:activeRows.length,total:activeRows.length},terminal:{...fixture.pagination.terminal,returned:terminalRows.length,total:terminalRows.length}}}};
@@ -43,13 +45,19 @@ async function cli(...args:string[]){const result=await execute("npx",["--yes","
 try{
  await cli("open",origin);writeFileSync(path.join(artifacts,"initial.snapshot.txt"),await cli("snapshot"));
  await cli("run-code",`async page=>{
-  await page.locator('#problem-list .problem-row').first().waitFor();
-  if(!(await page.locator('#active-list').innerText()).includes('진행 중인'))throw new Error('Current work missing');
+  await page.waitForFunction(()=>document.querySelector('#problems-count').textContent==='114');
+  if(await page.locator('#active-section').isVisible()||await page.locator('#terminal-section').isVisible()||await page.locator('#problem-section').isVisible())throw new Error('Initial card did not stay on the summary');
+  await page.locator('#history-filter').click();await page.locator('#history-policy').waitFor();
+  if(!(await page.locator('#history-policy').innerText()).includes('보관 기간'))throw new Error('Run-history retention notice missing');
+  if(!(await page.locator('#active-list').innerText()).includes('진행 중인'))throw new Error('Current work missing from run history');
+  const before=await page.evaluate(()=>window.__calls.length);
   await page.locator('[data-status-filter="problems"]').click();
+  await page.locator('#problem-list .problem-row').first().waitFor();
+  if(await page.evaluate(()=>window.__calls.length)!==before)throw new Error('Opening the loaded problem list issued a data request');
   await page.waitForFunction(()=>document.querySelector('#active-list').closest('section').hidden);
   if(await page.locator('#terminal-list').isVisible())throw new Error('Problem filter still shows history');
-  if(!(await page.locator('#history-policy').innerText()).includes('보관 기간'))throw new Error('Old seven-day policy');
-  await page.locator('#problem-next').click();await page.waitForFunction(()=>document.querySelector('#problem-page-label').textContent.startsWith('21'));
+  if(await page.locator('#history-policy').isVisible())throw new Error('Run-history policy remained visible in problem review');
+  await page.locator('#problem-next').click();await page.waitForFunction(()=>document.querySelector('#problem-page-label').textContent.startsWith('13'));
   await page.locator('#problem-previous').click();await page.waitForFunction(()=>document.querySelector('#problem-page-label').textContent.startsWith('1–'));
   await page.locator('#problem-list input').first().check();await page.locator('#problem-ack-selected').click();
   await page.waitForFunction(()=>document.querySelector('#problems-count').textContent==='113');
@@ -77,10 +85,12 @@ try{
   await page.waitForFunction(()=>document.querySelector('#problems-count').textContent==='1');
   const batches=await page.evaluate(()=>window.__calls.filter(call=>call.name==='codex_ui_problem'&&call.args.action==='acknowledge').map(call=>call.args.targets.length));
   if(batches.join(',')!=='1,100,12')throw new Error('Wrong batches or repeated mutations: '+batches);
+  const historyLeaks=await page.evaluate(()=>window.__calls.filter(call=>call.args?.statusFilter==='problems'&&call.args?.limit===50&&call.args?.includeHistory!==false).length);
+  if(historyLeaks)throw new Error('Bulk problem paging requested run history');
   await page.locator('#problem-kind').selectOption('all');await page.locator('#scope-all').click();await page.waitForFunction(()=>document.querySelector('#problems-count').textContent==='2');
   for(const locale of ['en','ko','ja','zh-Hans','zh-Hant','es','fr','de','pt']){await page.evaluate(locale=>dispatchEvent(new CustomEvent('openai:set_globals',{detail:{globals:{locale}}})),locale);if(!(await page.locator('#problem-ack-all').innerText()).trim())throw new Error('Missing translation');if(!(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)))throw new Error('Localized overflow: '+locale)}
   if((await page.evaluate(()=>window.__errors)).length)throw new Error(JSON.stringify(await page.evaluate(()=>window.__errors)));
  }`);
- const report={passed:16,artifacts,checks:["dedicated problem view","retention notice","problem pagination","selected review","undo preserves outcome","unknown cannot be reviewed","recheck preserves unresolved runtime","exact termination impact","cancel does not stop","single confirmed stop","360/460 widths","dark mode","bulk beyond 100","single mutation dispatch","conversation scope isolation","nine locales"]};
+ const report={passed:19,artifacts,checks:["summary-first presentation","lazy run history","dedicated local problem view","retention notice","problem pagination","selected review","undo preserves outcome","unknown cannot be reviewed","recheck preserves unresolved runtime","exact termination impact","cancel does not stop","single confirmed stop","360/460 widths","dark mode","bulk beyond 100","history-free bulk paging","single mutation dispatch","conversation scope isolation","nine locales"]};
  writeFileSync(path.join(artifacts,"report.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){writeFileSync(path.join(artifacts,"failure.snapshot.txt"),await cli("snapshot").catch(String));writeFileSync(path.join(artifacts,"failure-state.txt"),await cli("run-code",`async page=>console.log(JSON.stringify(await page.evaluate(()=>({calls:window.__calls.slice(-8),errors:window.__errors,message:document.querySelector('#message').textContent,page:document.querySelector('#problem-page-label').textContent,count:document.querySelector('#problems-count').textContent}))))`).catch(String));throw error;}finally{await cli("close").catch(()=>{});await new Promise<void>(resolve=>server.close(()=>resolve()));}

@@ -5,20 +5,65 @@ import XCTest
 
 final class DashboardPopoverTests: XCTestCase {
     @MainActor
-    func testPanelsToggleIndependentlyFromTheAllHistoryQueryAndResetOnClose() async throws {
+    func testStatusChangesStayLocalWhileReopeningRefreshesAndSharesPendingEnrichment() async throws {
+        let f = try PopoverFixture()
+        defer { f.state.releaseEnrichment(); f.remove() }
+        f.state.holdEnrichment = true
+        await f.model.refreshDashboard()
+        for _ in 0..<100 {
+            if f.state.enrichmentReadCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(f.state.enrichmentReadCount, 1)
+
+        let readsBeforeFilters = f.state.dashboardReadCount
+        for panel in [DashboardPanel.running, .responseRequired, .problems] {
+            await f.model.toggleDashboardPanel(panel)
+            XCTAssertEqual(f.model.dashboardLoadedFilter, .all)
+            XCTAssertEqual(f.model.dashboard?.scope, "all")
+        }
+        XCTAssertEqual(f.state.dashboardReadCount, readsBeforeFilters)
+        f.model.setDashboardVisible(false)
+        f.model.setDashboardVisible(true)
+        await f.model.toggleDashboardPanel(.running)
+        // Allow the same debounced refresh used by work-change notices to run.
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(f.state.enrichmentReadCount, 1)
+        XCTAssertEqual(f.state.maximumConcurrentEnrichments, 1)
+
+        f.state.releaseEnrichment()
+        for _ in 0..<100 {
+            if (f.model.dashboard?.enrichment?.cacheHits ?? 0) > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(f.model.dashboardPanel, .running)
+        XCTAssertEqual(f.model.dashboardLoadedFilter, .all)
+        XCTAssertEqual(f.model.dashboard?.scope, "all")
+        XCTAssertEqual(f.model.dashboard?.enrichment?.cacheHits, 1)
+        XCTAssertEqual(f.state.enrichmentReadCount, 1)
+        XCTAssertTrue(f.model.bridgeConnected)
+        XCTAssertNil(f.model.dashboardErrorMessage)
+    }
+
+    @MainActor
+    func testStatusPanelsUseTheLoadedSnapshotAndHistoryLoadsOnlyWhenOpened() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let model = f.model
         await model.refreshDashboard(enrich: false)
         XCTAssertNil(model.dashboardPanel)
         XCTAssertEqual(model.dashboard?.counts.running, 3)
-        for panel in [DashboardPanel.running, .responseRequired, .problems, .history] {
+        let initialReads = f.state.dashboardReadCount
+        for panel in [DashboardPanel.running, .responseRequired, .problems] {
             await model.toggleDashboardPanel(panel)
             XCTAssertEqual(model.dashboardPanel, panel)
-            XCTAssertEqual(model.dashboardLoadedFilter, panel.filter)
-            XCTAssertEqual(model.dashboard?.scope, panel.filter.rawValue)
+            XCTAssertEqual(model.dashboardLoadedFilter, .all)
+            XCTAssertEqual(model.dashboard?.scope, "all")
         }
-        await model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.state.dashboardReadCount, initialReads)
+        await model.toggleDashboardPanel(.history)
         XCTAssertEqual(model.dashboardPanel, .history)
+        XCTAssertEqual(f.state.dashboardReadCount, initialReads + 1)
+        XCTAssertEqual(model.dashboard?.historyIncluded, true)
         await model.toggleDashboardPanel(.history)
         XCTAssertNil(model.dashboardPanel)
         XCTAssertNotNil(model.dashboard)
@@ -29,12 +74,12 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testSummarySurvivesFilterLoadingAndLateResultsCannotChangeTheSelectedPanel() async throws {
+    func testLateHistoryResultCannotChangeTheLocallySelectedPanel() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let model = f.model
         await model.refreshDashboard(enrich: false)
-        f.state.delayRunning = true
-        let running = Task { await model.toggleDashboardPanel(.running) }
+        f.state.delayHistory = true
+        let history = Task { await model.toggleDashboardPanel(.history) }
         for _ in 0..<50 {
             if model.dashboardDetailLoading { break }
             try await Task.sleep(for: .milliseconds(5))
@@ -42,21 +87,14 @@ final class DashboardPopoverTests: XCTestCase {
         XCTAssertEqual(model.dashboard?.counts.running, 3)
         XCTAssertTrue(model.dashboardDetailLoading)
         await model.toggleDashboardPanel(.problems)
-        await running.value
+        await history.value
         XCTAssertEqual(model.dashboardPanel, .problems)
-        XCTAssertEqual(model.dashboardLoadedFilter, .problems)
-        XCTAssertEqual(model.dashboard?.scope, "problems")
+        XCTAssertEqual(model.dashboardLoadedFilter, .all)
+        XCTAssertEqual(model.dashboard?.scope, "all")
         XCTAssertFalse(model.dashboardDetailLoading)
-
-        let next = Task { await model.toggleDashboardPanel(.running) }
-        for _ in 0..<50 {
-            if model.dashboardPanel == .running { break }
-            try await Task.sleep(for: .milliseconds(5))
-        }
         model.setDashboardVisible(false)
-        await next.value
         XCTAssertNil(model.dashboardPanel)
-        XCTAssertEqual(model.dashboard?.scope, "problems")
+        XCTAssertEqual(model.dashboard?.scope, "all")
     }
 
     func testDetailHeightFitsEmptyShortAndLongListsToTheOwningScreen() {
@@ -80,6 +118,20 @@ final class DashboardPopoverTests: XCTestCase {
         _ = await f.model.stopRuntime(force: false)
         await f.model.start()
         XCTAssertEqual(f.state.launchRequests.count, 1)
+        XCTAssertEqual(f.state.dashboardReadCount, 0)
+    }
+
+    @MainActor
+    func testOpeningDuringStartupCoalescesIntoOneStagedDashboardRefresh() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.model.setDashboardVisible(true)
+        await f.model.start()
+        for _ in 0..<100 {
+            if f.state.enrichmentReadCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(f.state.dashboardReadCount, 2)
+        XCTAssertEqual(f.state.enrichmentReadCount, 1)
     }
 
     @MainActor
@@ -143,11 +195,27 @@ private final class PopoverReplyState: @unchecked Sendable {
     static let existingRequestID = "11111111-1111-4111-8111-111111111111"
     private let lock = NSLock()
     private var requests: [[String: Any]] = []
-    private var slow = false
     private var fail = false
     private var coalesce = false
     private var operation: [String: Any]?
-    var delayRunning: Bool { get { lock.withLock { slow } } set { lock.withLock { slow = newValue } } }
+    private let enrichmentGate = DispatchSemaphore(value: 0)
+    private var pausedEnrichment = false
+    private var enrichmentReads = 0
+    private var activeEnrichments = 0
+    private var maximumEnrichments = 0
+    private var completedEnrichments = 0
+    private var dashboardReads = 0
+    private var slowHistory = false
+    var holdEnrichment: Bool { get { lock.withLock { pausedEnrichment } } set { lock.withLock { pausedEnrichment = newValue } } }
+    var enrichmentReadCount: Int { lock.withLock { enrichmentReads } }
+    var maximumConcurrentEnrichments: Int { lock.withLock { maximumEnrichments } }
+    var dashboardReadCount: Int { lock.withLock { dashboardReads } }
+
+    func releaseEnrichment() {
+        let active = lock.withLock { pausedEnrichment = false; return activeEnrichments }
+        for _ in 0..<active { enrichmentGate.signal() }
+    }
+    var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
     var failStart: Bool { get { lock.withLock { fail } } set { lock.withLock { fail = newValue } } }
     var coalesceStart: Bool { get { lock.withLock { coalesce } } set { lock.withLock { coalesce = newValue } } }
     var launchRequests: [[String: Any]] { lock.withLock { requests.filter { $0["applicationLaunchAt"] != nil } } }
@@ -177,7 +245,19 @@ private final class PopoverReplyState: @unchecked Sendable {
             lock.withLock { operation = result }
         case "dashboard.snapshot":
             let filter = params["statusFilter"] as? String ?? "all"
-            if filter == "running", delayRunning { delay = 0.2 }
+            let includeHistory = params["includeHistory"] as? Bool ?? true
+            lock.withLock { dashboardReads += 1 }
+            if params["enrich"] as? Bool == true {
+                let paused = lock.withLock {
+                    enrichmentReads += 1
+                    activeEnrichments += 1
+                    maximumEnrichments = max(maximumEnrichments, activeEnrichments)
+                    return pausedEnrichment
+                }
+                if paused { _ = enrichmentGate.wait(timeout: .now() + 5) }
+                lock.withLock { activeEnrichments -= 1; completedEnrichments += 1 }
+            }
+            if includeHistory, delayHistory { delay = 0.2 }
             let names = ["trackedProjects", "trackedConversations", "retainedJobs", "active", "running", "inputRequired",
                 "approvalRequired", "terminating", "needsAttention", "backgroundProcesses", "backgroundProcessAgents",
                 "runtimeUnknownAgents", "runtimeProbeSkippedAgents", "completed", "failed", "interrupted", "cancelled", "idleAgents", "orphanedAgents"]
@@ -186,7 +266,12 @@ private final class PopoverReplyState: @unchecked Sendable {
                 "returnedConversations": 0, "conversationTotal": 0, "hasPrevious": false, "hasNext": false]
             result = ["kind": "dashboard", "generatedAt": "2026-09-10T00:00:00Z", "scope": filter,
                 "statusSource": "codex-runtime-only", "coverage": "complete", "counts": counts,
-                "activeRows": [], "terminalRows": [], "idleRows": [], "pagination": ["active": page, "terminal": page, "idle": page],
+                "activeRows": [], "terminalRows": [], "idleRows": [], "statusRows": [],
+                "historyIncluded": includeHistory,
+                "pagination": ["active": page, "terminal": page, "idle": page],
+                "enrichment": ["state": "structural", "runtimeRequests": 0,
+                    "cacheHits": lock.withLock { completedEnrichments }, "timeouts": 0,
+                    "durationMs": 0, "usageTimedOut": false, "pendingReads": 0],
                 "uiLocalePreference": "ko"]
         default: return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"Fixture method unavailable"}}"#)
         }

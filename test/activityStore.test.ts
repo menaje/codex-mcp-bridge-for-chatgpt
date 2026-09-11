@@ -32,7 +32,7 @@ describe("Activity SQLite state", () => {
     const [activity] = store.listActivities(SCOPE_A);
     const [job] = store.listJobs() as Array<Record<string, unknown>>;
 
-    expect(store.schemaVersion).toBe(17);
+    expect(store.schemaVersion).toBe(18);
     expect(activity).toMatchObject({
       scopeId: SCOPE_A,
       title: "Legacy Codex job legacy-j",
@@ -53,7 +53,7 @@ describe("Activity SQLite state", () => {
       backendKind: "mcp-server",
       terminalVersion: 1
     });
-    const [agent] = store.listAgents(SCOPE_A, true);
+    const [agent] = store.listAgents(SCOPE_A);
     expect(agent).toMatchObject({
       agentId: job.agentId,
       scopeId: SCOPE_A,

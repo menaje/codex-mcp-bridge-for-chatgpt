@@ -964,8 +964,9 @@ describe("bridge tools", () => {
       expect(catalog.calls).toHaveLength(0);
       const currentTools = tools.filter(tool => !legacyAppNames.includes(tool.name));
       expect(currentTools).toHaveLength(19);
-      // The seventh app-only contract includes bounded per-execution problem rows.
-      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(165_000);
+      // The seventh app-only contract includes bounded problem rows and the
+      // complete history-free status index used by both overview clients.
+      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(170_000);
       expect(tools.filter(tool => tool._meta?.["codex/registrationTier"] === "compatibility")
         .map(tool => tool.name).sort()).toEqual(legacyAppNames.sort());
       for (const tool of tools) {
@@ -999,6 +1000,10 @@ describe("bridge tools", () => {
       expect(named("codex_ui_stop").annotations?.destructiveHint).toBe(true);
       expect(named("codex_question_action").annotations?.destructiveHint).toBe(false);
       expect(named("codex_interaction_respond").annotations?.destructiveHint).toBe(true);
+      expect(JSON.stringify(named("codex_agent").inputSchema)).toContain('"const":"rename"');
+      expect(JSON.stringify(named("codex_agent").inputSchema)).not.toMatch(/archive|restore/);
+      expect(JSON.stringify(named("codex_ui_history").inputSchema)).toContain('"const":"acknowledge"');
+      expect(JSON.stringify(named("codex_ui_history").inputSchema)).not.toMatch(/archive|restore/);
       for (const arguments_ of [{ view: "settings", unexpected: true }, { view: "anything" }, { view: "dashboard", questionId: SCOPE_A }]) {
         const rejected = await client.callTool({ name: "codex_ui_read", arguments: arguments_ });
         expect(rejected.isError).toBe(true);
@@ -1093,7 +1098,7 @@ describe("bridge tools", () => {
     expect(missing.isError).toBe(true);
     expect(JSON.stringify(missing)).toContain("Unrecognized keys");
     expect(JSON.stringify(missing)).toContain("activityTitle");
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
 
     const invalid = await rawCallTool({
@@ -1236,7 +1241,7 @@ describe("bridge tools", () => {
       agent: { mode: "existing", id: agentId }
     });
     expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(2);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(2);
 
     const defaultedSecondAgent = await runTask(client, {
       prompt: "independent review",
@@ -1246,7 +1251,7 @@ describe("bridge tools", () => {
     const secondAgentId = parseToolJson(defaultedSecondAgent).agentId as string;
     expect(jobs.getAgent(secondAgentId)?.agentName)
       .toMatch(/^Codex Agent [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(3);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(3);
     await close();
   });
 
@@ -1268,7 +1273,7 @@ describe("bridge tools", () => {
     expect(mixed.isError).toBe(true);
     expect(JSON.stringify(mixed)).toContain("Unrecognized key");
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
 
     const invalidNewAgentContext = await rawCallTool({
       name: "codex_task",
@@ -1471,7 +1476,7 @@ describe("bridge tools", () => {
             expect(html).toContain('node("details","cancellation")');
             expect(html).toContain("function executionText(execution)");
             expect(html).toContain(
-              "function appendExecution(parent,execution,required=false)"
+              "function appendExecution(parent,execution,required=false,templateKey=null)"
             );
             expect(html).toContain(
               "function renderActivityRows(parent,rows,recentActivity=false)"
@@ -1522,6 +1527,10 @@ describe("bridge tools", () => {
           expect(html).not.toContain('callTool("codex_cancel"');
           expect(html).not.toContain('callTool("codex_steer"');
           expect(html).not.toContain('callTool("codex_activity_handoff"');
+          if (revision.uri === currentUri) {
+            expect(html).not.toContain('callTool("codex_ui_stop"');
+            expect(html).not.toContain("dashboard.control.manage");
+          }
           expect(html).not.toContain("localStorage");
         } else if (name === "settings" && revision.uri === currentUri) {
           expect(html).toContain('operation:{kind:"patch",settings}');
@@ -1861,6 +1870,53 @@ describe("bridge tools", () => {
       expect(upstream.probeCalls).toHaveLength(0);
       await expect(applicationService.runtimeSnapshot()).rejects.toThrow("pruning unavailable");
     } finally { count.mockRestore(); list.mockRestore(); await close(); }
+  });
+
+  it("bounds retention checks while refreshing many protected jobs and their runtime observations", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server", CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "8",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "4"
+    }), upstream);
+    const store = jobs.admissionStateStore;
+    const count = 24;
+    try {
+      for (let index = 0; index < count; index++) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: `Protected activity ${index}` });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Protected ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `protected-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+          operation: "start", cwd: root, sandbox: "read-only", scopeId: SCOPE_A,
+          requestId: `protected-request-${index}`, requestHash: `protected-hash-${index}`, requestHashVersion: 7,
+          exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(`protected-${index}`));
+        store.holdResult(job.jobId, "Refresh regression", Date.now() + 86_400_000);
+        await job.promise;
+      }
+      const checks = vi.spyOn(store, "retentionProtection");
+      try {
+        const enriched = await applicationService.dashboardSnapshot({ inspectRuntime: true, statusFilter: "running",
+          problems: { review: "pending", kind: "all", offset: 0, view: "actionable" } });
+        expect(enriched.counts.retainedJobs).toBe(count);
+        // A few projection passes are fine; a full retention sweep for every
+        // Agent and every probe completion blocks the companion health socket.
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 12);
+        checks.mockClear();
+        const structural = await applicationService.dashboardSnapshot({ statusFilter: "all",
+          problems: { review: "pending", kind: "all", offset: 0, view: "actionable" } });
+        expect(structural.counts.retainedJobs).toBe(count);
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 4);
+        checks.mockClear();
+        await jobs.sweepAutomaticRecovery();
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 2);
+        expect(applicationService.runtimeHealth!().activeJobs).toBe(0);
+        expect(jobs.size).toBe(count);
+      } finally { checks.mockRestore(); }
+    } finally { await close(); }
   });
 
   it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
@@ -2625,8 +2681,15 @@ describe("bridge tools", () => {
         execution: expect.objectContaining({
           model: "gpt-5.6-sol",
           reasoningEffort: "max",
-          reroutedModel: "gpt-5.6-terra",
-          isCurrent: false
+          isCurrent: true
+        }),
+        latestTurn: expect.objectContaining({
+          execution: expect.objectContaining({
+            model: "gpt-5.6-sol",
+            reasoningEffort: "max",
+            reroutedModel: "gpt-5.6-terra",
+            isCurrent: false
+          })
         })
       })
     ]));
@@ -2636,7 +2699,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("reviews failed history without keeping old failures in current work and supports reversible archive", async () => {
+  it("reviews failed history and rejects archive requests from retained clients without changing the Agent", async () => {
     const root=temporaryRoot(), {jobs,applicationService,rawCallTool,close}=await connectTestClient(configFor(root),new FakeUpstream());
     let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
     try {
@@ -2652,7 +2715,7 @@ describe("bridge tools", () => {
       const snapshot=()=>applicationService.dashboardSnapshot({statusFilter:"all"});
       const first=await snapshot(),row=first.terminalRows[0]!;
       expect(first.activeRows).toEqual([]);expect(first.counts.problems).toBe(1);
-      expect(row.historyControls).toMatchObject({canAcknowledge:true,canArchive:true,canRestore:false});
+      expect(row.historyControls).toEqual({canAcknowledge:true,revision:expect.stringMatching(/^[a-f0-9]{64}$/)});
       const args={rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,widgetInstanceId:"dddddddd-dddd-4ddd-8ddd-000000001599",scopeId:SCOPE_A};
       const read=await rawCallTool({name:"codex_ui_read",arguments:{view:"history",...args}});
       expect(read.isError,JSON.stringify(read)).not.toBe(true);
@@ -2668,16 +2731,20 @@ describe("bridge tools", () => {
       expect((await rawCallTool({name:"codex_ui_history",arguments:request})).isError).not.toBe(true);
       now+=1000;await fail();
       expect((await snapshot()).counts.problems).toBe(1);
-      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
       const newer=(await snapshot()).terminalRows[0]!;
-      await applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId()});
-      const archived=await snapshot();expect(archived.counts.problems).toBe(0);
-      expect(archived.terminalRows[0].historyControls).toMatchObject({canRestore:true,canArchive:false});
-      await applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:archived.terminalRows[0].historyControls!.revision,action:"restore",requestId:nextRequestId()});
+      await expect(applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_ARCHIVE_REMOVED/);
+      const legacyRead=await rawCallTool({name:"codex_ui_read",arguments:{view:"history",rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,widgetInstanceId:args.widgetInstanceId,scopeId:SCOPE_A}});
+      const legacyToken=(legacyRead._meta as any)["codex/historyControl@1"].token;
+      const legacyArchive=await rawCallTool({name:"codex_ui_history",arguments:{rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId(),widgetInstanceId:args.widgetInstanceId,scopeId:SCOPE_A,token:legacyToken}});
+      expect(legacyArchive.isError).toBe(true);
+      expect(JSON.stringify(legacyArchive)).toContain("AGENT_ARCHIVE_REMOVED");
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");
       expect((await snapshot()).counts.problems).toBe(1);
       now+=8*86400_000;
       const old=await snapshot();expect(old.activeRows).toEqual([]);expect(old.counts.problems).toBe(0);
-      expect(old.terminalRows[0].status).toBe("failed");expect(old.terminalRows[0].historyControls!.canAcknowledge).toBe(false);
+      const retained=old.terminalRows[0]!;
+      expect(retained.status).toBe("failed");expect(retained.historyControls).toBeUndefined();
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");
     } finally {clock.mockRestore();await close();}
   });
 
@@ -2957,6 +3024,55 @@ describe("bridge tools", () => {
     } finally { for (const finish of completions) finish(); await Promise.resolve(); await close(); }
   });
 
+  it("returns a complete lightweight status index while deferring paged history", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    try {
+      for (let index = 0; index < 125; index += 1) {
+        const agent = jobs.createAgent({
+          scopeId: SCOPE_A,
+          agentName: `Deferred history Agent ${index}`
+        });
+        jobs.setAgentExecutionState(agent.agentId, "orphaned", {
+          orphanedReason: "Status index coverage"
+        });
+      }
+      const summary = await applicationService.dashboardSnapshot({
+        scopeId: SCOPE_A,
+        statusFilter: "all",
+        includeHistory: false,
+        limit: 5,
+        inspectRuntime: false
+      });
+      expect(summary.historyIncluded).toBe(false);
+      expect(summary.activeRows).toEqual([]);
+      expect(summary.terminalRows).toEqual([]);
+      expect(summary.statusRowsComplete).toBe(true);
+      expect(summary.statusRows).toHaveLength(125);
+      expect(summary.statusRows?.every((row) =>
+        row.status === "orphaned" && row.history?.length === 0
+      )).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(summary), "utf8"))
+        .toBeLessThanOrEqual(DASHBOARD_VIEW_PRIVATE_MAX_BYTES);
+      expect(summary.counts.problems).toBe(125);
+
+      const history = await applicationService.dashboardSnapshot({
+        scopeId: SCOPE_A,
+        statusFilter: "all",
+        includeHistory: true,
+        limit: 5,
+        inspectRuntime: false
+      });
+      expect(history.historyIncluded).toBe(true);
+      expect(history.activeRows.length).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps a failed Agent visible as a problem when background processes remain", async () => {
     const root = temporaryRoot();
     const upstream = new SelectiveLoadedTerminalUpstream();
@@ -2985,8 +3101,8 @@ describe("bridge tools", () => {
       expect(modern.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 1, backgroundProcesses: 1 });
       expect(modern.activeRows).toEqual([expect.objectContaining({ status: "failed", backgroundProcessCount: 1 })]);
       const row=modern.activeRows[0];
-      expect(row.historyControls!.canArchive).toBe(false);
-      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_BACKGROUND_PROCESS/);
+      expect(row.historyControls).toEqual({canAcknowledge:true,revision:expect.stringMatching(/^[a-f0-9]{64}$/)});
+      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_ARCHIVE_REMOVED/);
 
       for (const statusFilter of ["problems", "background"] as const) {
         const filtered = await applicationService.dashboardSnapshot({ statusFilter });
@@ -5663,7 +5779,7 @@ describe("bridge tools", () => {
         }
       });
       expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-      expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+      expect(jobs.listAgents(SCOPE_A)).toEqual([]);
       expect(jobs.listForScope(SCOPE_A)).toEqual([]);
       expect(sessions.listForScope(SCOPE_A)).toEqual([]);
       expect(upstream.calls).toEqual([]);
@@ -7282,7 +7398,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(rejected)).not.toContain("sensitive");
     expect(upstream.calls).toEqual([]);
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
     expect(jobs.listForScope(SCOPE_A)).toEqual([]);
     await close();
   });
@@ -7341,7 +7457,7 @@ describe("bridge tools", () => {
     });
     expect(upstream.calls).toEqual([]);
     expect(unguarded.jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-    expect(unguarded.jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(unguarded.jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
     expect(unguarded.jobs.listForScope(SCOPE_A)).toEqual([]);
     await unguarded.close();
   });
@@ -7381,7 +7497,7 @@ describe("bridge tools", () => {
       expect(JSON.stringify(rejected)).not.toContain("PROJECT_UNAVAILABLE");
       expect(upstream.calls).toEqual([]);
       expect(connection.jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-      expect(connection.jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+      expect(connection.jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
       expect(connection.jobs.listForScope(SCOPE_A)).toEqual([]);
     } finally {
       if (existsSync(displaced) && !existsSync(root)) renameSync(displaced, root);
@@ -8000,7 +8116,7 @@ describe("bridge tools", () => {
     stateStore.close();
   });
 
-  it("manages Agent lifecycle through one scope-local idempotent tool without deleting history", async () => {
+  it("renames Agents and rejects retired archive or restore mutations without changing history", async () => {
     const root = temporaryRoot();
     const upstream = new ManagedDeferredUpstream();
     const { client, rawCallTool, jobs, close } = await connectTestClient(
@@ -8017,17 +8133,17 @@ describe("bridge tools", () => {
       }
     }));
     const agentId = started.agentId;
-    const busyRequestId = "10101010-1010-4010-8010-101010101010";
-    const busy = parseToolJson(await client.callTool({
+    const retiredWhileBusy = await client.callTool({
       name: "codex_agent",
-      arguments: { requestId: busyRequestId, agentId, action: "archive" }
-    }));
-    expect(busy).toMatchObject({
-      ok: false,
-      code: "AGENT_BUSY",
-      nextActions: [expect.stringContaining(`codex_status({"query":{"kind":"job","id":"${started.jobId}"}})`)],
-      warnings: [expect.stringContaining("does not roll back filesystem changes")]
+      arguments: {
+        requestId: "10101010-1010-4010-8010-101010101010",
+        agentId,
+        operation: { kind: "archive" }
+      }
     });
+    expect(retiredWhileBusy.isError).toBe(true);
+    expect(JSON.stringify(retiredWhileBusy)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "active", currentJobId: started.jobId });
 
     const activeDetach = await client.callTool({
       name: "codex_agent_recovery_detach",
@@ -8048,11 +8164,16 @@ describe("bridge tools", () => {
     expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "managed-thread" });
     expect(jobs.listActivityAgentAssignments(started.activityId, agentId)[0]?.releasedAt)
       .toEqual(expect.any(Number));
-    const busyReplay = parseToolJson(await client.callTool({
+    const retiredRestore = await client.callTool({
       name: "codex_agent",
-      arguments: { requestId: busyRequestId, agentId, action: "archive" }
-    }));
-    expect(busyReplay).toEqual(busy);
+      arguments: {
+        requestId: "10101010-1010-4010-8010-101010101011",
+        agentId,
+        operation: { kind: "restore" }
+      }
+    });
+    expect(retiredRestore.isError).toBe(true);
+    expect(JSON.stringify(retiredRestore)).toContain("AGENT_ARCHIVE_REMOVED");
     expect(jobs.getAgent(agentId)?.lifecycle).toBe("idle");
 
     const detachedActivity = jobs.createActivity({ scopeId: SCOPE_A, title: "Detached assignment" });
@@ -8127,60 +8248,40 @@ describe("bridge tools", () => {
       orphanedReason: "Transient session metadata was unavailable before recovery."
     });
 
-    const archived = parseToolJson(await client.callTool({
+    const archived = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "40404040-4040-4040-8040-404040404040",
         agentId,
         operation: { kind: "archive" }
       }
-    }));
-    expect(archived).toMatchObject({
-      ok: true,
-      target: { type: "agent", id: agentId, state: "archived" }
     });
+    expect(archived.isError).toBe(true);
+    expect(JSON.stringify(archived)).toContain("AGENT_ARCHIVE_REMOVED");
     expect(upstream.archivedThreads).toEqual([]);
     const card = await client.callTool({ name: "codex_activity", arguments: {} });
     const cardView = parseToolJson(card);
-    expect(cardView.agents).not.toEqual(expect.arrayContaining([expect.objectContaining({ agentId })]));
-    expect(cardView.archivedAgents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ agentId, canRestore: true })
+    expect(cardView.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId, lifecycle: "orphaned" })
     ]));
+    expect(cardView).not.toHaveProperty("archivedAgents");
 
-    const restored = parseToolJson(await client.callTool({
+    const restored = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "50505050-5050-4050-8050-505050505050",
         agentId,
         operation: { kind: "restore" }
       }
-    }));
-    expect(restored).toMatchObject({
-      ok: true,
-      target: { type: "agent", id: agentId, state: "idle" }
     });
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
     expect(jobs.getAgent(agentId)).toMatchObject({
       agentName: "Renamed Agent",
-      lifecycle: "idle"
+      lifecycle: "orphaned"
     });
     expect(upstream.restoredThreads).toEqual([]);
-
-    const crossScope = await rawCallTool({
-      name: "codex_agent",
-      arguments: {
-        scopeId: SCOPE_B,
-        requestId: "60606060-6060-4060-8060-606060606060",
-        agentId,
-        operation: { kind: "archive" }
-      }
-    });
-    expect(crossScope.isError).toBe(true);
-    expect(JSON.stringify(crossScope)).toContain("another conversation scope");
-    expect(jobs.getAgent(agentId)).toMatchObject({
-      lifecycle: "idle",
-      currentThreadId: "managed-thread",
-      agentName: "Renamed Agent"
-    });
+    expect(jobs.listAgentThreads(agentId)).toHaveLength(1);
     await close();
   });
 
@@ -8207,7 +8308,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("archives a logical Agent without archiving an upstream thread that has a fork descendant", async () => {
+  it("rejects retired Agent archive and restore requests while preserving a forked thread graph", async () => {
     const root = temporaryRoot();
     const upstream = new ManagedDeferredUpstream();
     const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
@@ -8231,19 +8332,17 @@ describe("bridge tools", () => {
       forkedFromThreadId: "source-thread"
     });
 
-    const archived = parseToolJson(await client.callTool({
+    const archived = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "61616161-6161-4161-8161-616161616161",
         agentId: sourceAgent.agentId,
-        action: "archive"
+        operation: { kind: "archive" }
       }
-    }));
-    expect(archived).toMatchObject({
-      ok: true,
-      target: { type: "agent", id: sourceAgent.agentId, state: "archived" }
     });
-    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({ lifecycle: "archived" });
+    expect(archived.isError).toBe(true);
+    expect(JSON.stringify(archived)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({ lifecycle: "idle" });
     expect(jobs.listAgentThreads(sourceAgent.agentId)).toHaveLength(1);
     expect(upstream.archivedThreads).toEqual([]);
     expect(jobs.getAgent(forkAgent.agentId)).toMatchObject({
@@ -8258,18 +8357,16 @@ describe("bridge tools", () => {
       })
     ]);
 
-    const restored = parseToolJson(await client.callTool({
+    const restored = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "62626262-6262-4262-8262-626262626262",
         agentId: sourceAgent.agentId,
-        action: "restore"
+        operation: { kind: "restore" }
       }
-    }));
-    expect(restored).toMatchObject({
-      ok: true,
-      target: { type: "agent", id: sourceAgent.agentId, state: "idle" }
     });
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
     expect(upstream.restoredThreads).toEqual([]);
     expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({
       lifecycle: "idle",
@@ -8281,70 +8378,41 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("stops exact work from a global detail proof and replays without another termination", async () => {
+  it("does not expose Dashboard management controls for running work", async () => {
     const upstream = new DeferredUpstream();
     const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
     try {
       const started = parseToolJson(await runTask(client, { prompt: "Global stop fixture", executionMode: "background" }));
       expect((await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false })).activeRows[0].controlKind)
-        .toBe("manage");
+        .toBeNull();
       const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + started.agentId).digest("hex").slice(0, 32);
       const widgetInstanceId = randomUUID();
       const result = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
-      expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      const detail = (result as any)._meta["codex/uiControl@1"];
-      const args = { kind: "job", scopeId: SCOPE_B, requestId: randomUUID(), widgetInstanceId,
-        jobId: started.jobId, expectedJobVersion: detail.jobVersion, card: detail.card };
-      expect((await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, expectedJobVersion: detail.jobVersion + 1 } })).isError).toBe(true);
-      const first = await rawCallTool({ name: "codex_ui_stop", arguments: args });
-      expect(first.isError, JSON.stringify(first)).not.toBe(true);
-      const replay = await rawCallTool({ name: "codex_ui_stop", arguments: args });
-      expect(replay.structuredContent).toEqual(first.structuredContent);
-      expect(upstream.aborts).toBe(1);
-      expect(jobs.get(started.jobId)?.status).toBe("cancelled");
-      expect((await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false })).terminalRows[0].controlKind)
-        .toBeNull();
-      expect(jobs.listCancellationIntents({ jobId: started.jobId })).toEqual(expect.arrayContaining([
-        expect.objectContaining({ source: "widget-control", toolName: "codex_ui_stop" })
-      ]));
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("no review request");
+      expect(upstream.aborts).toBe(0);
+      expect(jobs.get(started.jobId)?.status).toBe("running");
     } finally { while (upstream.pendingCount) upstream.resolveNext(); await close(); }
   });
 
-  it("uses global detail proofs for idle processes and rejects a version race after inventory", async () => {
+  it("does not expose Dashboard management controls for idle background processes", async () => {
     const upstream = new BackgroundTerminalUpstream();
     const config = configFor(temporaryRoot());
     const connection = await connectTestClient(config, upstream);
-    const { client, rawCallTool, jobs, close } = connection;
-    const second = await connectTestClient(config, upstream, connection.sessions, new FakeModelCatalog(), connection.settings, jobs);
+    const { client, rawCallTool, jobs, applicationService, close } = connection;
     try {
       const completed = parseToolJson(await runTask(client, { prompt: "Idle process fixture", executionMode: "foreground" }));
-      const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + completed.agentId).digest("hex").slice(0, 32);
+      const dashboard = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      const row = dashboard.activeRows.find((candidate) => candidate.agentName === "Codex Agent") || dashboard.activeRows[0]!;
+      expect(row.backgroundProcessCount).toBe(2);
+      expect(row.controlKind).toBeNull();
       const widgetInstanceId = randomUUID();
-      const read = async () => {
-        const value = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
-        expect(value.isError, JSON.stringify(value)).not.toBe(true);
-        return (value as any)._meta["codex/uiControl@1"];
-      };
-      const detail = await read();
-      expect(detail.canStop).toBe(false);
-      expect(detail.backgroundProcesses).toHaveLength(2);
-      const args = { kind: "process", scopeId: SCOPE_B, requestId: randomUUID(), widgetInstanceId,
-        agentId: completed.agentId, expectedAgentVersion: detail.agentVersion, processId: "background-process-1", card: detail.card };
-      expect((await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, processId: "not-displayed" } })).isError).toBe(true);
-      const [stopped, concurrent] = await Promise.all([rawCallTool({ name: "codex_ui_stop", arguments: args }), second.rawCallTool({ name: "codex_ui_stop", arguments: args })]);
-      expect(concurrent.structuredContent).toEqual(stopped.structuredContent);
-      expect(stopped.isError, JSON.stringify(stopped)).not.toBe(true);
-      expect((await rawCallTool({ name: "codex_ui_stop", arguments: args })).structuredContent).toEqual(stopped.structuredContent);
-      expect(upstream.terminationCalls).toHaveLength(1);
-      const current = await read();
-      upstream.beforeNextList = () => { jobs.renameAgent(completed.agentId, "Changed during lookup"); };
-      const raced = await rawCallTool({ name: "codex_ui_stop", arguments: { ...args, requestId: randomUUID(),
-        card: current.card, expectedAgentVersion: current.agentVersion, processId: "legacy-background-process-2" } });
-      expect(raced.isError).toBe(true);
-      expect(JSON.stringify(raced)).toContain("AGENT_VERSION_CHANGED");
-      expect(upstream.terminationCalls).toHaveLength(1);
+      const detail = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey: row.rowKey, widgetInstanceId } });
+      expect(detail.isError).toBe(true);
+      expect(JSON.stringify(detail)).toContain("no review request");
+      expect(upstream.terminationCalls).toHaveLength(0);
       expect(jobs.get(completed.jobId)?.status).toBe("completed");
-    } finally { await second.close(); await close(); }
+    } finally { await close(); }
   });
 
   it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
@@ -8420,8 +8488,7 @@ describe("bridge tools", () => {
         agentId,
         lifecycle: "idle",
         backgroundProcessState: "running",
-        backgroundProcessCount: 2,
-        canArchive: false
+        backgroundProcessCount: 2
       })
     ]));
     expect((card as { _meta?: Record<string, any> })._meta?.interactionControls.agents)
@@ -8467,7 +8534,7 @@ describe("bridge tools", () => {
         agentName: "Process Agent",
         status: "background-process-running",
         backgroundProcessCount: 2,
-        controlKind: "manage"
+        controlKind: null
       })
     ]));
     expect(JSON.stringify(dashboard)).not.toContain("background-process-1");
@@ -8482,18 +8549,16 @@ describe("bridge tools", () => {
     expect(mountedActivity).toMatchObject({ activityId, cardGeneration: expect.any(Number) });
     expect(mountedPresentation).toEqual({ kind: "explicit" });
 
-    const archiveConflict = parseToolJson(await client.callTool({
+    const archiveConflict = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "70707070-7070-4070-8070-707070707070",
         agentId,
-        action: "archive"
+        operation: { kind: "archive" }
       }
-    }));
-    expect(archiveConflict).toMatchObject({
-      ok: false,
-      code: "AGENT_BACKGROUND_PROCESS"
     });
+    expect(archiveConflict.isError).toBe(true);
+    expect(JSON.stringify(archiveConflict)).toContain("AGENT_ARCHIVE_REMOVED");
 
     const terminateArguments = {
       requestId: "80808080-8080-4080-8080-808080808080",
@@ -8634,8 +8699,7 @@ describe("bridge tools", () => {
         expect.objectContaining({
           agentId,
           backgroundProcessState: "none",
-          backgroundProcessCount: 0,
-          canArchive: true
+          backgroundProcessCount: 0
         })
       ]));
     await close();
@@ -10906,7 +10970,7 @@ describe("bridge tools", () => {
     expect(secondJob.jobId).toBe(firstJob.jobId);
     expect(secondJob.activityId).toBe(firstJob.activityId);
     expect(upstream.calls).toHaveLength(1);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
 
     upstream.resolveNext(fakeCodexResult("concurrent-retry-thread"));
     await waitForJobStatus(client, firstJob.jobId, "completed");
@@ -10929,7 +10993,7 @@ describe("bridge tools", () => {
       }
     }));
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
 
     const rejected = await client.callTool({
       name: "codex_task",
@@ -10950,10 +11014,10 @@ describe("bridge tools", () => {
     expect(rejected.isError).toBe(true);
     expect(JSON.stringify(rejected)).toContain("Too many Codex jobs are running");
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
     expect(jobs.listActivities(SCOPE_A, 100, 0))
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ title: "Rolled-back Activity" })]));
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0))
+    expect(jobs.listAgents(SCOPE_A, 100, 0))
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ agentName: "Rolled-back Agent" })]));
 
     upstream.resolveNext(fakeCodexResult("occupying-thread"));
@@ -12415,7 +12479,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(rejected)).toContain("PROJECT_REGISTRY_CHANGED");
     expect(upstream.calls).toEqual([]);
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
     expect(jobs.listForScope(SCOPE_A)).toEqual([]);
 
     // The generation token prevents stale mappings. At the same current
@@ -12479,7 +12543,7 @@ describe("bridge tools", () => {
     expect(settings.current).toMatchObject({ registryRevision: 2 });
     expect(upstream.calls).toEqual([]);
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
     expect(jobs.listForScope(SCOPE_A)).toEqual([]);
     await close();
   });
@@ -12533,7 +12597,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(raced)).toContain("PROJECT_REGISTRY_CHANGED");
     expect(upstream.calls).toHaveLength(1);
     expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
-    expect(jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
     expect(jobs.listForScope(SCOPE_A)).toHaveLength(1);
     await close();
   });
@@ -12961,7 +13025,7 @@ describe("bridge tools", () => {
     });
     expect(migratedJobs.listForScope(SCOPE_A)).toHaveLength(1);
     expect(migratedJobs.activityCount(SCOPE_A)).toBe(1);
-    expect(migratedJobs.agentCount(SCOPE_A, true)).toBe(1);
+    expect(migratedJobs.agentCount(SCOPE_A)).toBe(1);
     expect(upstream.calls).toHaveLength(1);
 
     await migratedConnection.close();
@@ -13223,7 +13287,7 @@ describe("bridge tools", () => {
       ended: { rows: [] }
     });
     expect(compact.agents).toEqual([]);
-    expect(compact.archivedAgents).toEqual([]);
+    expect(compact).not.toHaveProperty("archivedAgents");
     expect(compact.activities).toEqual([]);
     expect(compact.unassignedJobs).toEqual([]);
 
@@ -14500,14 +14564,17 @@ describe("bridge tools", () => {
     );
     expect(orphanedStatus.scopeCounts).toMatchObject({ agents: 1, orphanedAgents: 1 });
 
-    await client.callTool({
+    const retiredArchive = await client.callTool({
       name: "codex_agent",
       arguments: {
         requestId: "73737373-7373-4373-8373-737373737373",
         agentId,
-        action: "archive"
+        operation: { kind: "archive" }
       }
     });
+    expect(retiredArchive.isError).toBe(true);
+    expect(JSON.stringify(retiredArchive)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)?.lifecycle).toBe("orphaned");
     upstream.probe = {
       state: "resumable",
       runtimeStatus: "notLoaded",
@@ -14518,14 +14585,18 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "74747474-7474-4474-8474-747474747474",
         agentId,
-        action: "restore"
+        operation: { kind: "restore" }
       }
     });
-    expect(parseToolJson(restored)).toMatchObject({
-      ok: true,
-      target: { type: "agent", id: agentId, state: "idle" }
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "orphaned", currentThreadId: "thread-1" });
+    const fresh = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "start fresh after orphaning", agentId, contextMode: "fresh", executionMode: "foreground" }
     });
-    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
+    expect(fresh.isError).not.toBe(true);
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-2" });
     await close();
   });
 
@@ -14699,7 +14770,7 @@ describe("bridge tools", () => {
     expect(setupContent).not.toHaveProperty("bridgeSession");
     expect(upstream.calls).toEqual([]);
     expect(jobs.listActivities(SCOPE_A)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
     expect(jobs.listForScope(SCOPE_A)).toEqual([]);
     expect(sessions.listForScope(SCOPE_A)).toEqual([]);
 
@@ -14747,7 +14818,7 @@ describe("bridge tools", () => {
     expect(JSON.stringify(missingProject)).toContain("PROJECT_REQUIRED");
     expect(upstream.calls).toEqual([]);
     expect(jobs.listActivities(SCOPE_A)).toEqual([]);
-    expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
     expect(jobs.listForScope(SCOPE_A)).toEqual([]);
     expect(sessions.listForScope(SCOPE_A)).toEqual([]);
     await close();
@@ -14785,7 +14856,7 @@ describe("bridge tools", () => {
         nextActions: [expect.stringContaining("codex_settings({})")]
       }
     });
-    expect(jobs.listAgents(SCOPE_A, true)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
     const denied = await client.callTool({
       name: "codex_task",
       arguments: { prompt: "inspect", agentName: "Retired Cwd", contextMode: "fresh", cwd: outside }
@@ -16634,7 +16705,7 @@ describe("CLI contract and interaction admission", () => {
       expect(JSON.stringify(result)).toContain("CODEX_PROTOCOL_UNSUPPORTED");
       expect(connected.jobs.list()).toHaveLength(0);
       expect(connected.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(0);
-      expect(connected.jobs.listAgents(SCOPE_A, true, 100, 0)).toHaveLength(0);
+      expect(connected.jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(0);
       expect(upstream.calls).toHaveLength(0);
     } finally { await connected.close(); }
   });

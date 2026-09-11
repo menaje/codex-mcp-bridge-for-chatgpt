@@ -2,7 +2,6 @@ export const AGENT_LIFECYCLES = [
   "idle",
   "active",
   "waiting-input",
-  "archived",
   "orphaned"
 ] as const;
 
@@ -23,7 +22,6 @@ export type BridgeAgent = {
   version: number;
   createdAt: number;
   updatedAt: number;
-  archivedAt?: number;
   orphanedReason?: string;
 };
 

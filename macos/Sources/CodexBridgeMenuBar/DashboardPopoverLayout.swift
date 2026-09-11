@@ -24,6 +24,31 @@ enum DashboardPanel: String, CaseIterable {
         case .background: return "백그라운드 프로세스"
         }
     }
+
+    func rows(in snapshot: DashboardSnapshot) -> [DashboardRow] {
+        if self == .history {
+            return snapshot.activeRows + snapshot.terminalRows
+        }
+        let rows = snapshot.statusRowsComplete == true
+            ? snapshot.statusRows ?? []
+            : snapshot.activeRows + snapshot.terminalRows
+        return rows.filter(matches)
+    }
+
+    private func matches(_ row: DashboardRow) -> Bool {
+        switch self {
+        case .history:
+            return true
+        case .running:
+            return row.status == "running"
+        case .responseRequired:
+            return ["input-required", "approval-required"].contains(row.status)
+        case .problems:
+            return ["failed", "interrupted", "termination-failed", "liveness-unknown", "orphaned"].contains(row.status)
+        case .background:
+            return row.backgroundProcessCount > 0
+        }
+    }
 }
 
 enum DashboardPopoverLayout {

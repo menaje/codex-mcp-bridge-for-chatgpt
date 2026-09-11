@@ -72,7 +72,7 @@ export const activityFixture = (
 
 const dashboardPage = (total = 0) => ({
   offset: 0,
-  limit: 20,
+  limit: 12,
   returned: 0,
   total,
   returnedConversations: 0,

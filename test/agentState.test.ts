@@ -1,6 +1,7 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 
@@ -10,6 +11,211 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("scope-level bridge Agents", () => {
+  it("restores every archived v17 Agent atomically without changing its links, history, or activity time", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "bridge-agent-v18-"));
+    const file = path.join(directory, "state.sqlite");
+    let store = new BridgeStateStore({ file });
+    const project = store.applyProjectOperations(
+      [{ kind: "add", project: { name: "Migration project", cwd: realpathSync(directory) } }],
+      0,
+      []
+    ).projects[0]!;
+    const activity = store.createActivity({
+      scopeId: SCOPE_A,
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: project.cwd,
+      title: "Migration fixture",
+      now: 100
+    });
+    const idle = store.createAgent({ scopeId: SCOPE_A, agentName: "Archived Idle", now: 110 });
+    store.assignAgent({ activityId: activity.activityId, agentId: idle.agentId, contextMode: "fresh", now: 120 });
+    store.linkAgentThread({
+      agentId: idle.agentId,
+      threadId: "archived-idle-thread",
+      projectId: project.id,
+      projectLabel: project.name,
+      backendKind: "app-server",
+      cwd: project.cwd,
+      sandbox: "read-only",
+      contextMode: "fresh",
+      now: 130
+    });
+    const orphaned = store.createAgent({ scopeId: SCOPE_A, agentName: "Archived Orphan", now: 140 });
+    store.setAgentExecutionState(orphaned.agentId, "orphaned", {
+      orphanedReason: "Stored thread is unavailable.",
+      now: 150
+    });
+    const historicalActivity = store.createActivity({
+      scopeId: SCOPE_A,
+      projectId: project.id,
+      projectLabel: project.name,
+      projectCwd: project.cwd,
+      title: "Retained failure",
+      now: 151
+    });
+    const historicalJob = {
+      jobId: "migration-retained-job",
+      requestId: "migration-retained-request",
+      activityId: historicalActivity.activityId,
+      scopeId: SCOPE_A,
+      agentId: orphaned.agentId,
+      projectId: project.id,
+      projectLabel: project.name,
+      cwd: project.cwd,
+      status: "failed",
+      createdAt: 152,
+      updatedAt: 153,
+      resultAvailability: "delivered",
+      result: { content: [{ type: "text", text: "retained migration result" }] },
+      error: "retained migration failure",
+      execution: { model: "gpt-5.6-sol", reasoningEffort: "high", serviceTier: "fast" }
+    };
+    store.upsertJob(historicalJob);
+    store.workHistory.acknowledge(historicalJob.jobId, 154);
+    const active = store.createAgent({ scopeId: SCOPE_A, agentName: "Archived Active", now: 160 });
+    store.upsertJob({
+      jobId: "migration-active-job",
+      requestId: "migration-active-request",
+      scopeId: SCOPE_A,
+      agentId: active.agentId,
+      status: "running",
+      createdAt: 170,
+      updatedAt: 171,
+      pendingInteractions: []
+    });
+    store.setAgentExecutionState(active.agentId, "active", {
+      currentJobId: "migration-active-job",
+      now: 172
+    });
+    const waiting = store.createAgent({ scopeId: SCOPE_A, agentName: "Archived Waiting", now: 180 });
+    store.upsertJob({
+      jobId: "migration-waiting-job",
+      requestId: "migration-waiting-request",
+      scopeId: SCOPE_A,
+      agentId: waiting.agentId,
+      status: "running",
+      createdAt: 190,
+      updatedAt: 191,
+      pendingInteractions: [{ interactionId: "approval", isBlocking: true }]
+    });
+    store.setAgentExecutionState(waiting.agentId, "waiting-input", {
+      currentJobId: "migration-waiting-job",
+      now: 192
+    });
+    store.close();
+
+    const database = new Database(file);
+    const ids = [idle.agentId, orphaned.agentId, active.agentId, waiting.agentId];
+    const placeholders = ids.map(() => "?").join(",");
+    database.prepare(`UPDATE agents SET lifecycle='archived', archived_at=999 WHERE agent_id IN (${placeholders})`)
+      .run(...ids);
+    // A legacy/interrupted state can retain a stale pointer even though there
+    // is no current Job. Schema 18 derives that pointer together with lifecycle.
+    database.prepare("UPDATE agents SET current_job_id='missing-current-job' WHERE agent_id=?")
+      .run(idle.agentId);
+    database.prepare("UPDATE bridge_meta SET value='17' WHERE key='schema_version'").run();
+    const before = database.prepare(`
+      SELECT agent_id, version, created_at, updated_at, current_thread_id, current_job_id, orphaned_reason
+        FROM agents WHERE agent_id IN (${placeholders}) ORDER BY agent_id
+    `).all(...ids) as Array<Record<string, unknown>>;
+    const historicalJobBefore = database.prepare(`
+      SELECT job_id, scope_id, activity_id, agent_id, project_uuid, project_name_snapshot,
+             project_cwd_snapshot, status, updated_at, payload
+        FROM jobs WHERE job_id=?
+    `).get(historicalJob.jobId) as Record<string, unknown>;
+    const reviewBefore = database.prepare(
+      "SELECT job_id, acknowledged_at, expired_at FROM work_history_state WHERE job_id=?"
+    ).get(historicalJob.jobId) as Record<string, unknown>;
+    const scopeVersionBefore = (database.prepare("SELECT version FROM scope_versions WHERE scope_id=?")
+      .get(SCOPE_A) as { version: number }).version;
+    database.close();
+
+    store = new BridgeStateStore({ file });
+    expect(store.schemaVersion).toBe(18);
+    expect(store.getMeta("schema_v18_restored_agent_count")).toBe("4");
+    expect(store.getMeta("schema_v18_migrated_at")).toEqual(expect.any(String));
+    expect(store.getAgent(idle.agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "archived-idle-thread" });
+    expect(store.getAgent(idle.agentId)?.currentJobId).toBeUndefined();
+    expect(store.getAgent(orphaned.agentId)).toMatchObject({
+      lifecycle: "orphaned",
+      orphanedReason: "Stored thread is unavailable."
+    });
+    expect(store.getAgent(active.agentId)).toMatchObject({
+      lifecycle: "active",
+      currentJobId: "migration-active-job"
+    });
+    expect(store.getAgent(waiting.agentId)).toMatchObject({
+      lifecycle: "waiting-input",
+      currentJobId: "migration-waiting-job"
+    });
+    expect(store.listAgents(SCOPE_A)).toHaveLength(4);
+    expect(store.listAgentThreads(idle.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "archived-idle-thread",
+        projectId: project.id,
+        projectLabel: project.name,
+        cwd: project.cwd,
+        sandbox: "read-only",
+        contextMode: "fresh",
+        isCurrent: true
+      })
+    ]);
+    expect(store.listActivityAgentAssignments(activity.activityId, idle.agentId)).toEqual([
+      expect.objectContaining({ activityId: activity.activityId, releasedAt: undefined })
+    ]);
+    expect(store.listJobs()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: "migration-active-job", status: "running" }),
+      expect.objectContaining({ jobId: "migration-waiting-job", status: "running" }),
+      expect.objectContaining({
+        jobId: historicalJob.jobId,
+        status: "failed",
+        resultAvailability: "delivered",
+        result: historicalJob.result,
+        error: historicalJob.error,
+        execution: historicalJob.execution
+      })
+    ]));
+    expect(store.workHistory.acknowledgedJobIds(SCOPE_A)).toContain(historicalJob.jobId);
+    store.close();
+
+    const migrated = new Database(file);
+    const after = migrated.prepare(`
+      SELECT agent_id, version, created_at, updated_at, current_thread_id, current_job_id, orphaned_reason, archived_at
+        FROM agents WHERE agent_id IN (${placeholders}) ORDER BY agent_id
+    `).all(...ids) as Array<Record<string, unknown>>;
+    expect(after.map(({ archived_at: _archivedAt, ...row }) => row)).toEqual(
+      before.map((row) => ({
+        ...row,
+        version: Number(row.version) + 1,
+        ...(row.agent_id === idle.agentId ? { current_job_id: null } : {})
+      }))
+    );
+    expect(after.every((row) => row.archived_at === null)).toBe(true);
+    expect((migrated.prepare("SELECT version FROM scope_versions WHERE scope_id=?")
+      .get(SCOPE_A) as { version: number }).version).toBe(scopeVersionBefore + 1);
+    expect(migrated.prepare(`
+      SELECT job_id, scope_id, activity_id, agent_id, project_uuid, project_name_snapshot,
+             project_cwd_snapshot, status, updated_at, payload
+        FROM jobs WHERE job_id=?
+    `).get(historicalJob.jobId)).toEqual(historicalJobBefore);
+    expect(migrated.prepare(
+      "SELECT job_id, acknowledged_at, expired_at FROM work_history_state WHERE job_id=?"
+    ).get(historicalJob.jobId)).toEqual(reviewBefore);
+    migrated.close();
+    const backups = readdirSync(directory).filter((name) => name.includes("pre-v18"));
+    expect(backups).toHaveLength(1);
+    expect(statSync(path.join(directory, backups[0]!)).mode & 0o777).toBe(0o600);
+
+    store = new BridgeStateStore({ file });
+    expect(store.getMeta("schema_v18_restored_agent_count")).toBe("4");
+    const versions = store.listAgents(SCOPE_A).map((agent) => agent.version).sort((a, b) => a - b);
+    store.close();
+    store = new BridgeStateStore({ file });
+    expect(store.listAgents(SCOPE_A).map((agent) => agent.version).sort((a, b) => a - b)).toEqual(versions);
+    store.close();
+  });
+
   it("guards recovery detach inside the assignment transaction", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     store.createActivity({ activityId: ACTIVITY_A, scopeId: SCOPE_A, title: "Recovery goal" });
@@ -156,14 +362,14 @@ describe("scope-level bridge Agents", () => {
     });
     const renamed = store.renameAgent(agent.agentId, "  Builder  ", 70);
     expect(renamed).toMatchObject({ agentId: agent.agentId, agentName: "Builder", currentThreadId: "thread-fork" });
-    expect(store.archiveAgent(agent.agentId, 80)).toMatchObject({ lifecycle: "archived", archivedAt: 80 });
-    expect(store.listAgents(SCOPE_A)).toEqual([]);
-    expect(store.restoreAgent(agent.agentId, 90)).toMatchObject({ lifecycle: "idle", archivedAt: undefined });
+    expect(store.listAgents(SCOPE_A)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId: agent.agentId, lifecycle: "idle" })
+    ]));
     store.recordAgentMutation(SCOPE_A, "mutation-1", "hash-1", { ok: true, action: "rename" }, 100);
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(17);
+    expect(restored.schemaVersion).toBe(18);
     expect(restored.getActivity(ACTIVITY_A)).toMatchObject({
       lifecycle: "open",
       projectId: project.id,

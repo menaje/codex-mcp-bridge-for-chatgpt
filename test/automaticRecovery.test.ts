@@ -63,9 +63,9 @@ describe("bounded automatic recovery", () => {
     state.upsertJob({jobId:"original-failure",requestId:"original-request",scopeId:"11111111-1111-4111-8111-111111111111",status:"failed",updatedAt:Date.now()});
     state.close();
     const old=new Database(file);old.exec("DROP TABLE automatic_recovery;UPDATE bridge_meta SET value='15' WHERE key='schema_version'");old.close();
-    state=new BridgeStateStore({file});expect(state.getMeta("schema_version")).toBe("17");
+    state=new BridgeStateStore({file});expect(state.getMeta("schema_version")).toBe("18");
     expect(state.listJobs()[0]).toMatchObject({jobId:"original-failure",status:"failed"});
-    const backups=readdirSync(directory).filter(name=>name.includes("pre-v17"));expect(backups).toHaveLength(1);
+    const backups=readdirSync(directory).filter(name=>name.includes("pre-v18"));expect(backups).toHaveLength(1);
     expect(statSync(path.join(directory,backups[0])).mode & 0o777).toBe(0o600);
     const backup=new Database(path.join(directory,backups[0]),{readonly:true});
     expect(backup.pragma("quick_check",{simple:true})).toBe("ok");backup.close();state.close();
@@ -125,8 +125,8 @@ describe("bounded automatic recovery", () => {
     const old=new Database(file);
     old.exec("DROP TABLE automatic_recovery_incidents;UPDATE bridge_meta SET value='16' WHERE key='schema_version'");old.close();
     state=new BridgeStateStore({file});
-    expect(state.schemaVersion).toBe(17);
-    expect(readdirSync(directory).filter(name=>name.includes("pre-v17"))).toHaveLength(1);
+    expect(state.schemaVersion).toBe(18);
+    expect(readdirSync(directory).filter(name=>name.includes("pre-v18"))).toHaveLength(1);
     expect(state.automaticRecovery.recheckCandidate(candidate)).toEqual(candidate);
     expect(state.automaticRecovery.begin(candidate,6000)?.attempts).toBe(2);
     expect(state.automaticRecovery.recheckCandidate(resolved,true)).toBeUndefined();

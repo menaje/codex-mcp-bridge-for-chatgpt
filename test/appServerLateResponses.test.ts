@@ -40,7 +40,6 @@ describe("AppServerLateResponseJournal", () => {
       sandbox: "read-only",
       contextMode: "fresh"
     });
-    store.archiveAgent(restoreAgent.agentId);
 
     const journal = new AppServerLateResponseJournal(store, { retentionLimit: 16 });
     const pool = new CodexAppServerUpstreamPool(
@@ -73,7 +72,7 @@ describe("AppServerLateResponseJournal", () => {
         method: "thread/unarchive"
       });
       await eventually(() => journal.status().totals.observed === 3);
-      expect(store.getAgent(restoreAgent.agentId)?.lifecycle).toBe("archived");
+      expect(store.getAgent(restoreAgent.agentId)?.lifecycle).toBe("idle");
 
       await expect(pool.startThread!({
         backendKind: "app-server",

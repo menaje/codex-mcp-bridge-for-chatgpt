@@ -1,5 +1,3 @@
-import { DASHBOARD_STOP_BUTTONS, DASHBOARD_STOP_CONFIRMATION_SCRIPT } from "./dashboardStopConfirmation.js";
-
 /** Detail controls are opened deliberately; overview refreshes never overwrite
  * their form or dispatch an action. Domain mutations are never auto-retried. */
 export const DASHBOARD_CONTROL_SCRIPT = String.raw`
@@ -8,9 +6,9 @@ const controlHosts=new Map(),controlPanel=document.getElementById("work-details-
 function mutationId(){return createWidgetInstanceId()}
 function actionButton(label,action){const button=node("button","",label);button.type="button";button.addEventListener("click",action);return button}
 function appendWorkControl(body,row){
- if(row.controlKind!=="request"&&row.controlKind!=="manage")return;
+ if(row.controlKind!=="request")return;
  const host=node("div","work-control"),button=actionButton("",()=>void openWorkDetails(row.rowKey)),chevron=node("span","chevron");
- host.dataset.controlRow=row.rowKey;button.className="work-control-toggle";chevron.setAttribute("aria-hidden","true");button.append(chevron,node("span","",t[row.controlKind==="request"?"dashboard.control.requests":"dashboard.control.manage"]));
+ host.dataset.controlRow=row.rowKey;button.className="work-control-toggle";chevron.setAttribute("aria-hidden","true");button.append(chevron,node("span","",t["dashboard.control.requests"]));
  button.setAttribute("aria-expanded",String(selectedControlRow===row.rowKey));if(selectedControlRow===row.rowKey)button.setAttribute("aria-controls","work-details");host.appendChild(button);controlHosts.set(row.rowKey,host);body.appendChild(host);
 }
 // Keep the same form nodes across structural/enriched paints, including focus
@@ -40,12 +38,10 @@ function controlInteraction(interaction){
  if(interaction.kind==="user-input"){const fields=questionFields(panel,interaction.questions||[]);panel.appendChild(actionButton(t["activity.answer"],()=>{if(fields.every(field=>field.valid()))void answerInteraction(interaction,{answers:Object.fromEntries(fields.map(field=>[field.id,[field.read()]]))})}));return panel}
  const actions=node("div","actions");for(const decision of interaction.availableDecisions||[])actions.appendChild(actionButton(controlDecisionLabel(decision),()=>void answerInteraction(interaction,{decision})));panel.appendChild(actions);return panel;
 }
-${DASHBOARD_STOP_CONFIRMATION_SCRIPT}
 function renderWorkDetails(){
  const detail=controlDetail;if(!detail)return;controlMessage.textContent=statusLabel(detail.status);controlMessage.classList.remove("error");controlBody.replaceChildren();
  for(const interaction of detail.pendingInteractions||[])controlBody.appendChild(controlInteraction(interaction));
-${DASHBOARD_STOP_BUTTONS}
- if(detail.backgroundUnavailable)controlBody.appendChild(node("p","message",t["activity.backgroundUnavailable"]));if(!controlBody.childElementCount)controlBody.appendChild(node("p","message",t["dashboard.control.empty"]));scheduleSizeChanged(true);
+ if(!controlBody.childElementCount)controlBody.appendChild(node("p","message",t["dashboard.control.empty"]));scheduleSizeChanged(true);
 }
 controlRefresh.addEventListener("click",()=>void refreshWorkDetails());controlClose.addEventListener("click",()=>closeWorkDetails());
 window.addEventListener("pagehide",()=>{++controlEpoch;controlDetail=null;setControlBusy(false)});

@@ -69,9 +69,11 @@ fixtures["dashboard-deferred"] = fixture("dashboard", `
   window.openai.callTool=async(name,args)=>{
     const result=await originalCall(name,{...args,enrich:false});
     return new Promise((resolve,reject)=>{(args.enrich===true?window.__enrichments:window.__reads).push({args,reject,resolve:(title)=>{
-      const view=result.structuredContent;view.generatedAt=new Date().toISOString();
-      view.terminalRows[0].activityTitle=title;view.terminalRows[0].latestTurn.activityTitle=title;
-      view.pagination.terminal={...view.pagination.terminal,offset:args.terminalOffset||0,returned:1,total:3,hasNext:true};
+      const view=result.structuredContent,row=view.terminalRows[0],markers={'Initial page':11,'Initial history':12,'Fresh after return':41,'Last successful overview':51,'Recovered in the same card':61,'Recovered cold card':71,'STALE BEFORE LEAVE':91,'STALE ENRICHMENT':92,'OBSOLETE ENRICHMENT':93};
+      view.generatedAt=new Date().toISOString();row.activityTitle=title;row.latestTurn.activityTitle=title;
+      view.statusFilter='all';view.statusRows=[row];view.statusRowsComplete=true;view.historyIncluded=args.includeHistory===true;
+      view.activeRows=[];view.terminalRows=view.historyIncluded?[row]:[];view.counts.running=markers[title]||0;
+      view.pagination.terminal={...view.pagination.terminal,offset:args.terminalOffset||0,returned:view.historyIncluded?1:0,total:view.historyIncluded?3:0,hasNext:view.historyIncluded};
       resolve(result);
     }})});
   };`);
@@ -206,17 +208,11 @@ try {
   }
 
   if (!group || group === "dashboard") {
-    for (const outcome of ["old-first", "new-first", "old-error", "page", "visibility"]) {
+    for (const outcome of ["old-first", "new-first", "old-error"]) {
       await open("dashboard-deferred");
       await run(waitForRead(1));
-      let oldIndex = 0, newIndex = 1;
-      if (outcome === "page") {
-        await run("await page.evaluate(()=>window.__reads[0].resolve('Initial page'));await page.waitForFunction(()=>window.__enrichments.length===1);await page.locator('#terminal-more').click();" + waitForRead(2));
-        oldIndex = 1; newIndex = 2;
-      }
-      await run(`await page.evaluate(()=>{window.__nowOffset=31000;${outcome === "visibility"
-        ? "Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));"
-        : "window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));"}});` + waitForRead(newIndex + 1));
+      const oldIndex = 0, newIndex = 1;
+      await run("await page.evaluate(()=>{window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'))});" + waitForRead(2));
       if (outcome === "new-first") {
         await run(`await page.evaluate(()=>window.__reads[${newIndex}].resolve('Fresh after return'));await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);`);
       }
@@ -225,36 +221,50 @@ try {
         assert.equal(await evaluate("()=>document.querySelector('#refresh').disabled"), true, `${outcome}: stale completion cleared fresh request busy state`);
         await run(`await page.evaluate(()=>window.__reads[${newIndex}].resolve('Fresh after return'));await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);`);
       }
-      if (outcome === "page") await run("await page.waitForFunction(()=>window.__enrichments.length===2);");
-      // Late enrichment from before suspension must also remain obsolete.
-      await run("await page.evaluate(()=>{for(const request of window.__enrichments.slice(0,-1))request.resolve('STALE ENRICHMENT')});");
-      const state = await evaluate("()=>({text:document.body.innerText,busy:document.querySelector('#refresh').disabled})");
-      assert(state.text.includes("Fresh after return"), `${outcome}: fresh state missing`);
-      assert(!state.text.includes("STALE"), `${outcome}: obsolete response rendered`);
+      const state = await evaluate("()=>({running:document.querySelector('#running-count').textContent,busy:document.querySelector('#refresh').disabled})");
+      assert.equal(state.running, "41", `${outcome}: fresh state missing`);
       assert.equal(state.busy, false);
       await record(`dashboard-${outcome}`);
     }
+
+    // A page restoration keeps the last successful snapshot. A later explicit
+    // refresh must supersede an interrupted history-page request.
+    await open("dashboard-deferred");
+    await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].resolve('Initial page'));await page.waitForFunction(()=>window.__enrichments.length===1);await page.evaluate(()=>window.__enrichments[0].resolve('Initial page'));await page.locator('#history-filter').click();" + waitForRead(2));
+    await run("await page.evaluate(()=>window.__reads[1].resolve('Initial history'));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled&&!document.querySelector('#terminal-more-wrap').hidden);await page.locator('#terminal-more').click();" + waitForRead(3));
+    await run("await page.evaluate(()=>{window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'))});await page.waitForTimeout(50);");
+    assert.equal(await evaluate("()=>window.__reads.length"), 3, "page restoration unexpectedly refreshed the Dashboard");
+    await run("await page.locator('#refresh').click();" + waitForRead(4) + "await page.evaluate(()=>window.__reads[2].resolve('STALE BEFORE LEAVE'));");
+    assert.equal(await evaluate("()=>document.querySelector('#refresh').disabled"), true, "stale page completion cleared explicit refresh busy state");
+    await run("await page.evaluate(()=>window.__reads[3].resolve('Fresh after return'));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
+    let pageState = await evaluate("()=>({running:document.querySelector('#running-count').textContent,text:document.body.innerText})");
+    assert.equal(pageState.running, "41", "page: fresh state missing");
+    assert(pageState.text.includes("Fresh after return"), "page: refreshed history row missing");
+    assert(!pageState.text.includes("STALE"), "page: obsolete response rendered");
+    await record("dashboard-page");
+
     for (const lifecycle of ["pageshow", "visibility", "online"]) {
       await open("dashboard-deferred");
-      await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].resolve('Last successful overview'));await page.waitForFunction(()=>window.__enrichments.length===1);");
+      await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].resolve('Last successful overview'));await page.waitForFunction(()=>window.__enrichments.length===1);await page.evaluate(()=>window.__enrichments[0].resolve('Last successful overview'));await page.waitForFunction(()=>document.querySelector('#running-count').textContent==='51');");
       const updated = await evaluate("()=>document.querySelector('#updated').textContent");
       await run(`await page.evaluate(()=>{window.__nowOffset=31000;${lifecycle === "pageshow"
         ? "window.dispatchEvent(new Event('pagehide'));window.dispatchEvent(new Event('pageshow'));"
         : lifecycle === "online" ? "window.dispatchEvent(new Event('online'));"
-        : "Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));"}});` + waitForRead(2));
-      assert.equal(await evaluate("()=>document.querySelector('#dashboard-content').hidden"), false, `${lifecycle}: hid last successful snapshot during refresh`);
+        : "Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));"}});await page.waitForTimeout(50);`);
+      assert.equal(await evaluate("()=>window.__reads.length"), 1, `${lifecycle}: background restoration unexpectedly refreshed the Dashboard`);
+      assert.equal(await evaluate("()=>document.querySelector('#dashboard-content').hidden"), false, `${lifecycle}: hid last successful snapshot during restoration`);
+      await run("await page.locator('#refresh').click();" + waitForRead(2));
       await run("await page.evaluate(()=>window.__reads[1].reject(new Error('Transport unavailable')));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
-      let state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,text:document.body.innerText,message:document.querySelector('#message').textContent,updated:document.querySelector('#updated').textContent})");
+      let state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,running:document.querySelector('#running-count').textContent,message:document.querySelector('#message').textContent,updated:document.querySelector('#updated').textContent})");
       assert.equal(state.hidden, false, `${lifecycle}: lost last successful snapshot on failure`);
-      assert(state.text.includes("Last successful overview"), `${lifecycle}: missing retained rows`);
+      assert.equal(state.running, "51", `${lifecycle}: missing retained snapshot`);
       assert.match(state.message, /마지막으로 불러온 현황/);
       assert.equal(state.updated, updated, `${lifecycle}: replaced last successful timestamp`);
-      await run("await page.evaluate(()=>window.__enrichments[0].resolve('OBSOLETE ENRICHMENT'));await page.locator('#refresh').click();" + waitForRead(3));
+      await run("await page.locator('#refresh').click();" + waitForRead(3));
       await run("await page.evaluate(()=>window.__reads[2].resolve('Recovered in the same card'));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
-      state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,text:document.body.innerText,message:document.querySelector('#message').textContent})");
+      state = await evaluate("()=>({hidden:document.querySelector('#dashboard-content').hidden,running:document.querySelector('#running-count').textContent,message:document.querySelector('#message').textContent})");
       assert.equal(state.hidden, false);
-      assert(state.text.includes("Recovered in the same card"));
-      assert(!state.text.includes("OBSOLETE"));
+      assert.equal(state.running, "61");
       assert(!state.message.includes("마지막으로 불러온 현황"));
       await record(`dashboard-retain-and-retry-${lifecycle}`);
     }
@@ -262,6 +272,7 @@ try {
     await run(waitForRead(1) + "await page.evaluate(()=>window.__reads[0].reject(new Error('Transport unavailable')));await page.waitForFunction(()=>!document.querySelector('#refresh').disabled);");
     assert.match(await evaluate("()=>document.querySelector('#message').textContent"), /새로고침을 눌러 다시 시도/);
     await run("await page.locator('#refresh').click();" + waitForRead(2) + "await page.evaluate(()=>window.__reads[1].resolve('Recovered cold card'));await page.waitForFunction(()=>!document.querySelector('#dashboard-content').hidden);");
+    assert.equal(await evaluate("()=>document.querySelector('#running-count').textContent"), "71");
     await record("dashboard-cold-retry");
   }
 
@@ -289,7 +300,9 @@ try {
         await page.evaluate(()=>{const widget=document.querySelector('#dashboard-card').contentWindow;${lifecycle === "page"
           ? "widget.dispatchEvent(new Event('pagehide'));widget.dispatchEvent(new Event('pageshow'));"
           : "Object.defineProperty(widget.document,'visibilityState',{configurable:true,value:'visible'});widget.document.dispatchEvent(new Event('visibilitychange'));"}});
-        await page.waitForFunction(count=>window.__initializations.length>count,before);
+        ${lifecycle === "page"
+          ? "await page.waitForFunction(count=>window.__initializations.length>count,before);"
+          : "await page.waitForTimeout(50);if(await page.evaluate(()=>window.__initializations.length)!==before)throw new Error('Visibility restoration restarted MCP Apps initialization');"}
         await page.evaluate(()=>window.__replyInitialization());
         await page.waitForFunction(()=>!document.querySelector('#dashboard-card').contentDocument.querySelector('#dashboard-content').hidden);
       `);

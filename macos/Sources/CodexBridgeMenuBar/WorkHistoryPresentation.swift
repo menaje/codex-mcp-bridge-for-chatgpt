@@ -5,18 +5,14 @@ import SwiftUI
 enum DashboardTimePresentation {
     static func text(turn: DashboardTurn?, fallbackUpdatedAt: String, locale: Locale, now: Date = Date()) -> String {
         let live = turn.map { $0.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "liveness-unknown"].contains($0.status) } ?? false
-        var duration = turn?.durationMs
-        if live, let startedAt = turn?.startedAt, let start = DisplayFormat.parseDate(startedAt) {
-            duration = max(0, Int(now.timeIntervalSince(start) * 1_000))
-        }
+        let duration = turn?.durationMs
         let workTime = duration.map {
             BridgeAppLocalization.format("작업시간 %@", locale: locale, DisplayFormat.duration($0, locale: locale))
         } ?? BridgeAppLocalization.string("작업시간 확인 불가", locale: locale)
-        let timestamp = live ? (turn?.startedAt ?? turn?.updatedAt ?? fallbackUpdatedAt)
-            : (turn?.endedAt ?? turn?.updatedAt ?? fallbackUpdatedAt)
+        if live { return workTime }
+        let timestamp = turn?.endedAt ?? turn?.updatedAt ?? fallbackUpdatedAt
         let relative = DisplayFormat.relative(timestamp, relativeTo: now, locale: locale)
-        let elapsed = live ? BridgeAppLocalization.format("시작 %@", locale: locale, relative) : relative
-        return "\(workTime) · \(elapsed)"
+        return "\(workTime) · \(relative)"
     }
 }
 

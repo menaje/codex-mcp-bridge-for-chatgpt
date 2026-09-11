@@ -1062,7 +1062,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!this.isManagedRuntimeRunning()) return;
     const impact = await readBridgeAdmission(this.bridgeSocketPath);
     if (!impact) throw new Error("CODEX_APPLY_PENDING: The running bridge could not be inspected. Its environment was preserved.");
-    if ((impact.memoryOnlyThreads || 0) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Archive memory-only agents before applying a runtime change. The current environment was preserved.");
+    if ((impact.memoryOnlyThreads || 0) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations still require the running environment. Wait for their connections to release or use force after reviewing the Dashboard. The current environment was preserved.");
     if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
   }
 
@@ -1328,7 +1328,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           15_000
         );
         if (options.protectMemory && ((impact.memoryOnlyThreads || 0) > 0 || (impact.pendingInteractions || 0) > 0)) {
-          throw new Error("CODEX_APPLY_PENDING: Memory-only agents or pending interactions still require the running environment. Archive or resolve them before applying this change.");
+          throw new Error("CODEX_APPLY_PENDING: Memory-only conversations or pending interactions still require the running environment. Wait for their connections to release or resolve the interactions before applying this change.");
         }
         if (
           impact.backgroundProcessState !== "confirmed" ||

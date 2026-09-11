@@ -124,7 +124,7 @@ describe("remote native companion", () => {
       jsonrpc: "2.0",
       id: "dashboard-1",
       method: "dashboard.snapshot",
-      params: { limit: 12, terminalOffset: 0, idleOffset: 0, enrich: false }
+      params: { limit: 12, terminalOffset: 0, idleOffset: 0, enrich: false, includeHistory: false }
     };
     const unauthorized = await jsonRequest(
       `${endpoint}/remote-companion/v1/rpc`,
@@ -162,10 +162,13 @@ describe("remote native companion", () => {
       body: { jsonrpc: "2.0", id: "dashboard-1", result: { kind: "dashboard" } }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith({
+      problems: undefined,
+      statusFilter: undefined,
       limit: 12,
       terminalOffset: 0,
       idleOffset: 0,
-      inspectRuntime: false
+      inspectRuntime: false,
+      includeHistory: false
     });
     expect(manager.status().devices[0]?.lastSeenAt).not.toBeNull();
 

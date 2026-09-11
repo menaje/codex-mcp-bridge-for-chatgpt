@@ -12,7 +12,8 @@ that view below the summary; selecting it again collapses it, and another count
 replaces the detail view. **Work & Run History** in the footer expands current
 work followed by retained runs, including their failed/interrupted status. The
 problem review section appears only under **Problems**. Closing and reopening
-the menu resets the selection while background count refreshes continue.
+the menu resets the selection. Reopening performs a fresh Dashboard read;
+leaving the menu open does not poll or reactively reread display data.
 
 The popover fits its content when collapsed or showing a short list. Long detail
 lists scroll within the height available on the popover's screen, keeping the
@@ -61,28 +62,34 @@ Dashboard or Settings. See [Remote client mode](remote-client.md) for pairing,
 settings semantics, and the network/security boundary.
 
 The native Dashboard uses the same progressive application-service contract as
-the ChatGPT card. It publishes an `enrich: false` structural snapshot first,
-then replaces or merges that page with a bounded `enrich: true` result in a
-separate task. Structural RPC has a two-second client ceiling; enrichment has a
-ten-second transport ceiling. The display waits up to six seconds for runtime
-enrichment, with 1.5 seconds per observation and for usage/account details.
+the ChatGPT card. It publishes an `enrich: false`, `includeHistory: false`
+structural snapshot first. That response carries summary counts and one complete
+history-free status index, while the visible run-history pages remain empty.
+The same explicit refresh then applies a bounded `enrich: true` response in a
+separate task. Opening **Work & Run History** requests the stored history in
+12-row pages
+with `includeHistory: true` and does not start another runtime inspection.
+Structural RPC has a two-second client ceiling; enrichment has a ten-second
+transport ceiling. The display waits up to six seconds for runtime enrichment,
+with 1.5 seconds per observation and for usage/account details.
 These are display budgets: pending reads continue under the App Server's final
 RPC deadlines (normally thirty seconds). Matching last-known usage and runtime
-evidence is included in later structural snapshots without an upstream call,
-so polling does not temporarily clear process counts or reorder their rows.
-Refresh and pagination cancel stale
-enrichment generations, and an enrichment failure leaves the structural view
-visible. Swift does not issue App Server runtime probes itself.
+evidence is included in later structural snapshots without an upstream call.
+Status buttons classify the loaded index locally, so switching or collapsing
+them cannot clear counts, reorder data, or start a request. Pagination reads
+stored history only. One in-flight enrichment is shared across reopen/refresh
+generations, and its cached result is projected onto the latest selected panel
+and page. An enrichment failure leaves the structural view visible. Swift does
+not issue App Server runtime probes itself.
 
 Slow details show an updating notice, separately from a failed observation.
 The native menu retains known values and shows their oldest observation time
 when available. Identical ongoing usage, account, and runtime reads are shared
 across snapshots; runtime observations hold one of eight shared slots until
 their actual read settles, including any follow-up process query. Valid late
-results update the cache and emit an `enrichment` invalidation. A visible native
-window immediately paints that cached snapshot, including current pending and
-failed observations, without starting another expensive enrichment. The ordinary
-thirty-second enrichment interval still schedules fresh upstream observations.
+results update the cache and emit an `enrichment` invalidation. That invalidation
+is retained for the next explicit Dashboard read; it does not refresh a visible
+popover by itself.
 Account revisions, thread stamps and explicit invalidations prevent superseded
 results from replacing current evidence. Late failed observations have a short
 retry cooldown, preserving previous values without an immediate refresh loop.
@@ -93,14 +100,17 @@ threads so slow reads cannot repeatedly exclude the rest of the selected batch.
 These display caches never authorize admission, settings changes or shutdown.
 
 The native popover and both retained ChatGPT cards use the same presentation
-rules. Active, recent, and idle sections are Activity-first with one or more
-Agents nested below; an idle heading is explicitly the Agent's latest Activity,
-not a current assignment. Project/conversation context appears once on the
-Activity. Agent state, background processes, work time, and the latest actual
-model/reasoning effort remain on every Agent even when sibling values match;
-different next-run settings remain separately labelled per Agent. Active work
-shows only accumulated work time; past work adds relative age and omits absolute
-start, update, and end timestamps. The native UI never prints the private
+rules. When a status or history view is selected, its Activity-first rows contain
+one or more Agents; an idle history heading is explicitly the Agent's latest
+Activity, not a current assignment. Project/conversation context appears once
+on the Activity. Agent state, background processes, work time, and the latest
+actual model/reasoning effort remain on every Agent even when sibling values
+match. Rows present status, actual execution, time, then older history. A
+separately labelled next-run setting appears only when the current model, effort,
+effective Fast tier, or reroute differs from the latest actual turn. Active
+work shows only the duration captured by the last explicit snapshot. Past work
+adds relative age and omits absolute start, update, and end timestamps. The
+native UI never prints the private
 compatibility session alias. Active and recent sections start open; idle starts
 collapsed. A native Agent's retained-history label and chevron share one
 full-width click target, and expanded history remains left-aligned with the rest
@@ -113,8 +123,10 @@ The menu bar and Activity/Dashboard cards show a localized lightning badge besid
 the model and reasoning level when that execution captured `priority` or `fast`.
 Changing the preference updates supported next-run settings without relabelling
 running or historical work. Settings explains that the model and reasoning level
-stay the same while usage or costs may increase. All nine interface languages
-use matching names in native Settings and the Settings card.
+stay the same while usage or costs may increase. Effort values themselves use
+the catalog's canonical lowercase English text (`low`, `medium`, `high`,
+`xhigh`, and other supported values) in the native menu, Dashboard card and both
+Settings surfaces. The effort field name and description remain localized.
 
 The normal native UI is intentionally limited to that Dashboard and the
 Settings card's General and Projects content plus a small Server tab for the
@@ -201,7 +213,9 @@ The local helper and companion expose cancellable `changes.wait` requests. They
 wait up to twenty-five seconds for revisioned invalidations, without repeatedly
 building snapshots. Process transitions, tunnel state changes (excluding routine
 heartbeat writes), login completion, authentication-file changes, installation
-progress, Job/Agent changes and settings/model changes trigger relevant refreshes.
+progress, Job/Agent changes and settings/model changes still drive service,
+settings and operational state. Dashboard topics do not become display reads;
+enrichment invalidation is remembered for the next user-triggered Dashboard read.
 Each server restart changes the revision epoch so reconnecting clients resync.
 The channel carries only topic names and revision identifiers, accepts at most
 four pending watchers, and releases a watcher when its socket closes. It is not
@@ -211,22 +225,26 @@ exposed through the remote HTTPS application method allowlist.
 | --- | --- |
 | Local connection | Change notices and an independent ten-second watchdog |
 | Tunnel readiness | Asynchronous CLI probe every five seconds, five-second deadline; existing twenty-second heartbeat expiry remains |
-| Dashboard | On opening and changes; thirty-second visible reconciliation, or ten seconds with older/remote servers; no background Dashboard reads when hidden |
-| Dashboard enrichment | Every thirty seconds for automatic visible updates; immediately after reconnection or a late-result invalidation |
+| Dashboard | App startup cache, menu opening, explicit refresh, and direct Dashboard actions; status filters use the loaded snapshot |
+| Dashboard enrichment | Once after an explicit full Dashboard refresh; one in-flight request is shared, and history/pagination do not start it |
 | Settings | On opening and changes; sixty-second visible fallback; pending edits are preserved |
 | Authentication | Login completion/auth changes and opening a window; five-minute fallback, two-second bounded browser-login checks |
 | CLI/SDK details | Installation changes and window entry; five-minute background fallback; visible settings reconcile each minute with change support, otherwise thirty seconds or two seconds during installation |
 | Operational notifications | Reevaluate on observed state changes and watchdog observations; existing sixty-second grace/deduplication remains |
 
-The app coalesces bursts of automatic refresh requests over 250 ms. System wake,
-display wake, session activation, app activation and network-path changes request
-a fresh health observation and relevant content. Until the fresh response, the
-menu shows checking; network availability alone never proves tunnel readiness.
+The app coalesces bursts of automatic non-Dashboard refresh requests over 250 ms.
+System wake, display wake, session activation, app activation and network-path
+changes request a fresh health observation and relevant settings/authentication
+content, without rereading the Dashboard. Until the fresh response, the menu
+shows checking; network availability alone never proves tunnel readiness.
 Sleep/display sleep/session deactivation invalidate prior observation evidence.
 A new recovery window replaces its expiry timer, and an old timer cannot expire
-the new window. Every successful local reconnection schedules visible content
-again even when an earlier content read skipped a disconnected server and the
-change subscription remained open. A failed probe with a running process offers
+the new window. A menu-opening or explicit Dashboard read that was skipped while
+disconnected remains pending until a local or remote health observation succeeds.
+That observation completes the requested read once, with its original enrichment
+policy, even after the short recovery window expires. Closing the menu or switching
+servers discards the pending read. Later connection observations do not reread an
+already loaded Dashboard. A failed probe with a running process offers
 reconnection and does not claim the server stopped. No observation failure
 restarts the server or cancels a Codex job. Closing both content windows cancels
 the companion watcher, while helper lifecycle observation remains active. Old

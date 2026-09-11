@@ -149,10 +149,9 @@ export class AppServerLateResponseJournal {
 
     const agent = this.stateStore.getAgentForThread(record.threadId);
     if (!agent) return "thread-untracked";
-    // Logical Agent archive/restore is deliberately bridge-local. A timed-out
-    // upstream archive response can still reveal that upstream state changed,
-    // but it must never replay that side effect into the Agent lifecycle. Mark
-    // every tracked late archive/unarchive success for explicit reconciliation.
+    // Agent archive/restore has been removed. A late response from a retained
+    // request can still reveal an upstream thread-side change, but must never
+    // alter the logical Agent. Mark it for explicit reconciliation only.
     return "state-conflict";
   }
 

@@ -24,22 +24,40 @@ const interactions = [
 ];
 
 function html(index: number): string {
-  const original = dashboardView("structural"), row = original.terminalRows[0];
+  const original = dashboardView("structural"), sourceRow = original.terminalRows[0], row = {
+    ...sourceRow,
+    execution: sourceRow.execution
+      ? { ...sourceRow.execution, reasoningEffort: " XHIGH " }
+      : undefined,
+    latestTurn: {
+      ...sourceRow.latestTurn,
+      execution: sourceRow.latestTurn.execution
+        ? { ...sourceRow.latestTurn.execution, reasoningEffort: " HIGH " }
+        : undefined
+    }
+  };
+  const requestRows = ["row-a", "row-b"].map((rowKey, offset) => ({ ...row, rowKey,
+    agentName: offset ? "Second Agent" : row.agentName, bucket: "active", status: "input-required", controlKind: "request",
+    history: [], historyCount: 0 }));
+  const activeRows = [...requestRows, { ...row, rowKey: "row-c", activityKey: "ordinary-running",
+    agentName: "Ordinary running Agent", bucket: "active", status: "running", controlKind: "manage",
+    history: [], historyCount: 0 }];
   const view = { ...original,
-    activeRows: ["row-a", "row-b"].map((rowKey, offset) => ({ ...row, rowKey,
-      agentName: offset ? "Second Agent" : row.agentName, bucket: "active", status: "input-required", controlKind: "request",
-      history: [], historyCount: 0 })),
+    activeRows,
+    statusRows: activeRows,
+    statusRowsComplete: true,
+    historyIncluded: true,
     terminalRows: Array.from({ length: 12 }, (_, offset) => ({ ...row, rowKey: `completed-${offset}`,
       activityKey: `completed-activity-${offset}`, agentName: `Completed Agent ${offset + 1}`, controlKind: null, history: [], historyCount: 0 })),
-    counts: { ...original.counts, active: 2, inputRequired: 2, needsAttention: 2 },
+    counts: { ...original.counts, active: 3, running: 1, inputRequired: 2, needsAttention: 2 },
     pagination: { ...original.pagination,
-      active: { ...original.pagination.active, total: 2, returned: 2 },
+      active: { ...original.pagination.active, total: 3, returned: 3 },
       terminal: { ...original.pagination.terminal, total: 12, returned: 12 } }
   };
   const detail = { rowKey: "row-a", projectName: "Test project", activityTitle: "Selected work", agentName: "History Agent",
-    agentId: "agent-1", jobId: "job-1", jobVersion: 1, agentVersion: 1, status: "running", canStop: false,
+    agentId: "agent-1", jobId: "job-1", jobVersion: 1, agentVersion: 1, status: "running",
     card: { kind: "dashboard", token: "browser-only-fixture", activityId: "activity-1", generation: 1, presentation: { kind: "explicit" } },
-    pendingInteractions: [interactions[index]], backgroundProcesses: [] };
+    pendingInteractions: [interactions[index]] };
   const prelude = `<script>(()=>{
     window.__calls=[];window.__errors=[];window.__opened=[];
     window.addEventListener("error",event=>window.__errors.push(String(event.message)));
@@ -68,8 +86,14 @@ try {
     if (index) await cli("goto", `http://127.0.0.1:${port}/${index}`);
     writeFileSync(path.join(artifacts, `case-${index}.snapshot.txt`), await cli("snapshot"));
     await cli("run-code", `async page=>{
+      await page.locator('[data-status-filter="running"]').click();
+      if(!(await page.locator('#active-list').innerText()).includes('Ordinary running Agent'))throw new Error('Running fixture missing');
+      if(await page.locator('[data-control-row="row-c"]').count())throw new Error('Retired work management control remains');
+      await page.locator('[data-status-filter="response-required"]').click();
       if(await page.locator('#terminal-list .work-control-toggle').count())throw new Error('Completed work has an empty control');
-      if((await page.locator('#dashboard-content').innerText()).includes('다음 실행 설정:'))throw new Error('Next-run preview leaked into the overview');
+      const executionText=await page.locator('#active-list').innerText();
+      if(!executionText.includes('실행: GPT-5.6 Sol · high'))throw new Error('Actual execution is missing or translated');
+      if(!executionText.includes('다음 실행 설정: GPT-5.6 Terra · xhigh'))throw new Error('Changed next-run settings are missing or translated');
       await page.locator('[data-control-row="row-a"]').getByRole('button',{name:'요청 확인',exact:true}).click();
       await page.locator('#work-details-body .interaction').waitFor();
       if(await page.locator('[data-control-row="row-a"] #work-details').count()!==1)throw new Error('Panel is not inside the selected row');
@@ -110,14 +134,14 @@ try {
       await page.screenshot({path:${JSON.stringify(path.join(artifacts, "inline-mobile.png"))}});
       await page.setViewportSize({width:900,height:900});
       await page.screenshot({path:${JSON.stringify(path.join(artifacts, "inline-desktop.png"))}});
-      await page.evaluate(()=>{window.__view.activeRows=window.__view.activeRows.filter(row=>row.rowKey!=='row-a');document.querySelector('#refresh').click()});
+      await page.evaluate(()=>{window.__view.activeRows=window.__view.activeRows.filter(row=>row.rowKey!=='row-a');window.__view.statusRows=window.__view.statusRows.filter(row=>row.rowKey!=='row-a');document.querySelector('#refresh').click()});
       await page.locator('#work-details').waitFor({state:'detached'});
       if(await page.locator('[data-control-row="row-a"]').count())throw new Error('A removed row left stale controls');
     }`);
     results.push({ case: index, passed: true });
   }
   writeFileSync(path.join(artifacts, "results.json"), JSON.stringify(results, null, 2));
-  console.log("Dashboard inline controls: 4 input scenarios, local placement, collapse/switch, retained draft/focus, completed-row hiding, removal, mobile/desktop layout, and actual-run-only execution passed (simulated host and data).");
+  console.log("Dashboard inline controls: 4 input scenarios, local placement, collapse/switch, retained draft/focus, completed-row hiding, removal, mobile/desktop layout, and actual/conditional-next execution passed (simulated host and data).");
 } catch (error) {
   writeFileSync(path.join(artifacts, "failure.txt"), await cli("run-code", "async page=>page.evaluate(()=>({errors:window.__errors,text:document.body.innerText,calls:window.__calls}))").catch(String));
   throw error;

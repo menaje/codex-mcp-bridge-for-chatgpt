@@ -10,8 +10,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "Failed and interrupted runs need review for 7 days. Acknowledge removes them from the issue count. Active work and undelivered results are protected; Codex conversations and project files are kept.",
     "history.cleanup": "Last cleanup: {time} · {count} runs",
     "history.acknowledge": "Acknowledge",
-    "history.archive": "Archive Agent",
-    "history.restore": "Restore Agent",
     "history.started": "Started {relative}"
   },
   "ko": {
@@ -24,8 +22,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "실패·중단은 최근 7일 동안 확인이 필요합니다. 확인함을 누르면 문제 집계에서 제외됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다.",
     "history.cleanup": "최근 정리: {time} · {count}건",
     "history.acknowledge": "확인함",
-    "history.archive": "에이전트 보관",
-    "history.restore": "에이전트 복원",
     "history.started": "시작 {relative}"
   },
   "ja": {
@@ -38,8 +34,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "失敗・中断は直近7日間、確認が必要です。「確認済み」で問題の集計から除外します。進行中の作業と未配信の結果、Codexの会話とプロジェクトファイルは保持します。",
     "history.cleanup": "前回の整理: {time} · {count}件",
     "history.acknowledge": "確認済み",
-    "history.archive": "エージェントを保管",
-    "history.restore": "エージェントを復元",
     "history.started": "開始 {relative}"
   },
   "zh-Hans": {
@@ -52,8 +46,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "失败和中断记录在最近7天内需要查看。点击“已查看”可将其从问题统计中排除。正在进行的工作、未送达的结果、Codex对话和项目文件将保留。",
     "history.cleanup": "上次清理：{time} · {count}条",
     "history.acknowledge": "已查看",
-    "history.archive": "归档智能体",
-    "history.restore": "恢复智能体",
     "history.started": "开始于{relative}"
   },
   "zh-Hant": {
@@ -66,8 +58,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "失敗和中斷記錄在最近7天內需要查看。按下「已查看」可將其從問題統計中排除。進行中的工作、未送達的結果、Codex對話和專案檔案將保留。",
     "history.cleanup": "上次清理：{time} · {count}筆",
     "history.acknowledge": "已查看",
-    "history.archive": "封存代理程式",
-    "history.restore": "還原代理程式",
     "history.started": "開始於{relative}"
   },
   "es": {
@@ -80,8 +70,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "Los fallos y las interrupciones requieren revisión durante 7 días. Marcar como revisado los excluye del contador de problemas. Se conservan el trabajo activo, los resultados sin entregar, las conversaciones de Codex y los archivos del proyecto.",
     "history.cleanup": "Última limpieza: {time} · {count} ejecuciones",
     "history.acknowledge": "Marcar como revisado",
-    "history.archive": "Archivar agente",
-    "history.restore": "Restaurar agente",
     "history.started": "Iniciado {relative}"
   },
   "fr": {
@@ -94,8 +82,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "Les échecs et interruptions nécessitent une vérification pendant 7 jours. Les marquer comme vérifiés les retire du compteur de problèmes. Le travail actif, les résultats non remis, les conversations Codex et les fichiers du projet sont conservés.",
     "history.cleanup": "Dernier nettoyage : {time} · {count} exécutions",
     "history.acknowledge": "Marquer comme vérifié",
-    "history.archive": "Archiver l’agent",
-    "history.restore": "Restaurer l’agent",
     "history.started": "Démarré {relative}"
   },
   "de": {
@@ -108,8 +94,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "Fehler und Unterbrechungen müssen 7 Tage lang geprüft werden. Bestätigte Einträge werden nicht mehr als Probleme gezählt. Aktive Arbeit, nicht zugestellte Ergebnisse, Codex-Gespräche und Projektdateien bleiben erhalten.",
     "history.cleanup": "Letzte Bereinigung: {time} · {count} Ausführungen",
     "history.acknowledge": "Bestätigen",
-    "history.archive": "Agent archivieren",
-    "history.restore": "Agent wiederherstellen",
     "history.started": "Gestartet {relative}"
   },
   "pt": {
@@ -122,8 +106,6 @@ export const WORK_HISTORY_TRANSLATIONS = {
     "history.notice": "Falhas e interrupções precisam de revisão durante 7 dias. Marcar como revisto exclui-as da contagem de problemas. O trabalho ativo, os resultados não entregues, as conversas do Codex e os ficheiros do projeto são mantidos.",
     "history.cleanup": "Última limpeza: {time} · {count} execuções",
     "history.acknowledge": "Marcar como revisto",
-    "history.archive": "Arquivar agente",
-    "history.restore": "Restaurar agente",
     "history.started": "Iniciado {relative}"
   }
 };

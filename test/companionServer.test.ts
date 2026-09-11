@@ -119,13 +119,16 @@ describe("native companion server", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "dashboard.snapshot",
-      params: { limit: 12, terminalOffset: 4, idleOffset: 7, enrich: false }
+      params: { limit: 12, terminalOffset: 4, idleOffset: 7, enrich: false, includeHistory: false }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith({
+      problems: undefined,
+      statusFilter: undefined,
       limit: 12,
       terminalOffset: 4,
       idleOffset: 7,
-      inspectRuntime: false
+      inspectRuntime: false,
+      includeHistory: false
     });
     expect(dashboard).toMatchObject({ id: 1, result: { kind: "dashboard" } });
 
@@ -136,10 +139,13 @@ describe("native companion server", () => {
       params: { limit: 12 }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith({
+      problems: undefined,
+      statusFilter: undefined,
       limit: 12,
       terminalOffset: undefined,
       idleOffset: undefined,
-      inspectRuntime: true
+      inspectRuntime: true,
+      includeHistory: true
     });
 
     await request(socketPath, {
@@ -149,10 +155,13 @@ describe("native companion server", () => {
       params: { limit: 12, enrich: true }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenLastCalledWith({
+      problems: undefined,
+      statusFilter: undefined,
       limit: 12,
       terminalOffset: undefined,
       idleOffset: undefined,
-      inspectRuntime: true
+      inspectRuntime: true,
+      includeHistory: true
     });
 
     const settings = await request(socketPath, {
@@ -196,17 +205,20 @@ describe("native companion server", () => {
       jsonrpc: "2.0",
       id: "native-cold-mount",
       method: "dashboard.snapshot",
-      params: { limit: 20, enrich: false }
+      params: { limit: 20, enrich: false, includeHistory: false }
     });
     expect(performance.now() - startedAt).toBeLessThan(500);
     expect(response).toMatchObject({
       result: { kind: "dashboard", enrichment: { state: "structural" } }
     });
     expect(applicationService.dashboardSnapshot).toHaveBeenCalledWith({
+      problems: undefined,
+      statusFilter: undefined,
       limit: 20,
       terminalOffset: undefined,
       idleOffset: undefined,
-      inspectRuntime: false
+      inspectRuntime: false,
+      includeHistory: false
     });
   });
 

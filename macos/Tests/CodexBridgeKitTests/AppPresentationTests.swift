@@ -118,6 +118,20 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(BridgeAppLocalization.languageCode(for: "unknown"), "en")
     }
 
+    func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
+        for language in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = BridgeAppLocalization.locale(for: language)
+            XCTAssertEqual(
+                BridgeAppLocalization.reasoningEffortLabel("  XHIGH  ", fallback: "번역값", locale: locale),
+                "xhigh"
+            )
+            XCTAssertEqual(
+                BridgeAppLocalization.reasoningEffortLabel("", fallback: "  NOVEL  ", locale: locale),
+                "novel"
+            )
+        }
+    }
+
     func testNativeLocalizationNormalizesRegionalLocales() {
         let cases = [
             "en-GB": "en",
@@ -354,7 +368,7 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testHiddenDashboardDoesNotRefreshButOpeningAndFallbackDo() async throws {
+    func testDashboardRefreshesOnOpeningButNotOnBackgroundSchedule() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-visible-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
         try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -382,6 +396,10 @@ final class AppPresentationTests: XCTestCase {
         model.setDashboardVisible(true)
         try await waitForSnapshotCount(1)
         XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
+        let whileOpen = bridge.count("dashboard.snapshot")
+        model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), whileOpen)
         model.setDashboardVisible(false)
         let before = bridge.count("dashboard.snapshot")
         model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
@@ -391,7 +409,8 @@ final class AppPresentationTests: XCTestCase {
         try await waitForSnapshotCount(before + 1)
         model.setDashboardVisible(false)
         model.setDashboardVisible(true)
-        // Both requests belong to the same debounce window regardless of runner speed.
+        // A background scheduling pass cannot add another Dashboard read to the
+        // explicit refresh caused by reopening the menu.
         model.scheduleBackgroundRefreshes(at: Date().addingTimeInterval(120))
         try await waitForSnapshotCount(before + 2)
         try await Task.sleep(for: .milliseconds(400))
@@ -1162,6 +1181,17 @@ final class AppPresentationTests: XCTestCase {
             current: changed,
             latest: nil
         ))
+        let rerouted = try dashboardExecution(
+            model: "gpt-5.6-sol",
+            displayName: "Sol",
+            effort: " XHIGH ",
+            reroutedModel: "gpt-5.6-terra",
+            isCurrent: false
+        )
+        XCTAssertEqual(
+            DashboardExecutionPresentation.text(rerouted),
+            "Sol → gpt-5.6-terra · xhigh"
+        )
     }
 
     func testFastModeUsesEachExecutionAndDetectsNextRunChanges() throws {
@@ -1253,7 +1283,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(items[1].turn.execution?.reasoningEffort, "high")
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[0].turn.execution),
-            "Terra · 최대"
+            "Terra · max"
         )
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[2].turn.execution),
@@ -1310,9 +1340,17 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(model.isRemoteClient)
         XCTAssertNil(model.helperStatus)
         XCTAssertEqual(model.remoteHello?.server.id, profile.serverId)
-        XCTAssertEqual(model.dashboard?.scope, "server-workroom")
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(client.dashboardCallCount, 0)
         XCTAssertNotNil(model.settings)
         XCTAssertTrue(model.bridgeConnected)
+
+        model.setDashboardVisible(true)
+        for _ in 0..<100 {
+            if model.dashboard?.scope == "server-workroom" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.dashboard?.scope, "server-workroom")
 
         var draft = try SettingsDraft(snapshot: XCTUnwrap(model.settings))
         draft.maxConcurrentJobs += 1
@@ -1390,6 +1428,7 @@ final class AppPresentationTests: XCTestCase {
 
         let activated = await model.activateRemoteServer(secondProfile.serverId)
         XCTAssertTrue(activated)
+        await model.refreshDashboard(enrich: false)
         await staleRefresh.value
         try await Task.sleep(nanoseconds: 300_000_000)
 
@@ -1467,13 +1506,15 @@ final class AppPresentationTests: XCTestCase {
             }
         )
         await model.refreshAll()
-        XCTAssertEqual(model.dashboard?.scope, "before-pairing")
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(old.dashboardCallCount, 0)
 
         let paired = await model.pairRemoteServer(
             invitation: "fresh-invitation", profileName: "서버", deviceName: "Mac"
         )
         XCTAssertTrue(paired)
-        XCTAssertEqual(model.dashboard?.scope, "after-pairing")
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(repaired.dashboardCallCount, 0)
         XCTAssertEqual(try credentials.credential(for: profile.serverId), "new-credential")
         XCTAssertEqual(old.factoryCallCount, 1)
         XCTAssertEqual(old.closeCallCount, 1)
@@ -1484,9 +1525,17 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(removed)
         XCTAssertNil(try credentials.credential(for: profile.serverId))
         XCTAssertEqual(model.activeRemoteProfile?.serverId, backupProfile.serverId)
-        XCTAssertEqual(model.dashboard?.scope, "backup-server")
+        XCTAssertNil(model.dashboard)
+        XCTAssertEqual(backup.dashboardCallCount, 0)
         XCTAssertEqual(repaired.closeCallCount, 1)
         XCTAssertEqual(backup.factoryCallCount, 1)
+
+        model.setDashboardVisible(true)
+        for _ in 0..<100 {
+            if model.dashboard?.scope == "backup-server" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.dashboard?.scope, "backup-server")
         let didQuit = await model.shutdownApplication(force: false)
         XCTAssertTrue(didQuit)
         XCTAssertEqual(backup.closeCallCount, 1)
@@ -1531,9 +1580,16 @@ final class AppPresentationTests: XCTestCase {
 
         await model.refreshAll()
         XCTAssertTrue(model.bridgeConnected)
-        XCTAssertEqual(model.dashboard?.scope, "server-recovered")
+        XCTAssertNil(model.dashboard)
         XCTAssertNotNil(model.settings)
         XCTAssertNil(model.connectionErrorMessage)
+
+        model.setDashboardVisible(true)
+        for _ in 0..<100 {
+            if model.dashboard?.scope == "server-recovered" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.dashboard?.scope, "server-recovered")
     }
 
     @MainActor
@@ -1621,6 +1677,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private var closeCalls = 0
     private var remainingHelloFailures: Int
     private var helloCalls = 0
+    private var dashboardCalls = 0
 
     init(
         profile: RemoteServerProfile,
@@ -1659,6 +1716,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
 
     var runtimeStatusCallCount: Int { lock.withLock { runtimeCalls } }
     var helloCallCount: Int { lock.withLock { helloCalls } }
+    var dashboardCallCount: Int { lock.withLock { dashboardCalls } }
     var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
     var lastSettingsMutation: SettingsMutation? { lock.withLock { latestSettingsMutation } }
     var factoryCallCount: Int { lock.withLock { factoryCalls } }
@@ -1691,6 +1749,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         enrich: Bool,
         statusFilter: DashboardStatusFilter
     ) async throws -> DashboardSnapshot {
+        lock.withLock { dashboardCalls += 1 }
         if dashboardDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: dashboardDelayNanoseconds)
         }
@@ -2284,6 +2343,110 @@ extension AppPresentationTests {
 
 final class ConnectionObservationRecoveryTests: XCTestCase {
     @MainActor
+    func testDeferredMenuReadCompletesAfterLocalConnectionRecovery() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-deferred-menu-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let failure = try helperStatus(bridgeConnected: false)
+        let status = String(decoding: try JSONEncoder().encode(failure), as: UTF8.self)
+        let snapshot = String(decoding: try JSONEncoder().encode(dashboardStatus(scope: "deferred-menu")), as: UTF8.self)
+        let helper = try NativeRPCFixture(path: paths.helperSocket.path) { method in
+            NativeFixtureReply(body: method == "helper.health"
+                ? "{\"result\":\(status)}"
+                : #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let bridge = try NativeRPCFixture(path: paths.bridgeSocket.path) { method in
+            NativeFixtureReply(body: method == "dashboard.snapshot"
+                ? "{\"result\":\(snapshot)}"
+                : #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+        }
+        let model = AppModel(paths: paths)
+        defer { model.cancelAllPolling(); helper.stop(); bridge.stop(); try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        model.recordLocalConnectionStatus(failure, at: now.addingTimeInterval(-9))
+        model.recordLocalConnectionStatus(failure, at: now)
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(helper.count("helper.health"), 1)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 0)
+        XCTAssertFalse(model.bridgeConnected)
+
+        // The watchdog/change handler receives a fresh healthy observation,
+        // after the menu's original read already skipped the unavailable server.
+        model.recordLocalConnectionStatus(try helperStatus())
+        for _ in 0..<100 {
+            if model.dashboard?.scope == "deferred-menu" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.dashboard?.scope, "deferred-menu")
+        XCTAssertGreaterThan(bridge.count("dashboard.snapshot"), 0)
+
+        try await Task.sleep(for: .milliseconds(300))
+        let completedReads = bridge.count("dashboard.snapshot")
+        model.recordLocalConnectionStatus(failure)
+        model.recordLocalConnectionStatus(try helperStatus())
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), completedReads,
+                       "Recovery must not start another Dashboard refresh once the requested read completed.")
+
+        model.recordLocalConnectionStatus(failure)
+        await model.refreshDashboard(enrich: false)
+        model.recordLocalConnectionStatus(try helperStatus())
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), completedReads + 1,
+                       "A deferred structural refresh must not add an enrichment request.")
+
+        model.recordLocalConnectionStatus(failure)
+        await model.refreshDashboard(enrich: false)
+        model.setDashboardVisible(false)
+        model.recordLocalConnectionStatus(try helperStatus())
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), completedReads + 1,
+                       "Closing the menu must discard its deferred read.")
+    }
+
+    @MainActor
+    func testDeferredMenuReadCompletesAfterRemoteConnectionRecovery() async throws {
+        let profile = remoteProfile(id: "33333333-3333-4333-8333-333333333333", name: "복구 서버")
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "deferred-remote-menu"),
+            settings: try settingsSnapshot(
+                policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                         "constraints": ["allowDelegation": true]],
+                catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+            ),
+            helloFailures: 2
+        )
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile]
+            )),
+            credentialStore: TestCredentialStore([profile.serverId: "device_fixture"]),
+            remoteClientFactory: { _, _ in client }
+        )
+        defer { model.cancelAllPolling() }
+        await model.refreshStatus()
+        model.setDashboardVisible(true)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(client.helloCallCount, 2)
+        XCTAssertEqual(client.dashboardCallCount, 0)
+        XCTAssertFalse(model.bridgeConnected)
+
+        // Same status-only observation used by wake and the ten-second watchdog.
+        await model.refreshStatus()
+        for _ in 0..<100 {
+            if model.dashboard?.scope == "deferred-remote-menu" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.dashboard?.scope, "deferred-remote-menu")
+        XCTAssertGreaterThan(client.dashboardCallCount, 0)
+    }
+
+    @MainActor
     func testFailedObservationDoesNotClaimTheServerStopped() throws {
         let model = AppModel()
         defer { model.cancelAllPolling() }
@@ -2380,7 +2543,7 @@ private final class RecoveryQuietChanges: @unchecked Sendable {
 
 extension ConnectionObservationRecoveryTests {
     @MainActor
-    func testRecoveryRefreshesDashboardWithAnExistingQuietSubscription() async throws {
+    func testExplicitWindowEntryRefreshesDashboardWithAnExistingQuietSubscription() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-wake-sub-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
         try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -2405,13 +2568,14 @@ extension ConnectionObservationRecoveryTests {
         XCTAssertTrue(model.companionChangesAvailable)
         XCTAssertEqual(model.dashboard?.scope, "live-subscription")
         let baseline = bridge.count("dashboard.snapshot")
+        XCTAssertEqual(baseline, 2)
         let now = Date()
         model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now.addingTimeInterval(-9))
         model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false), at: now)
         await model.refreshDashboard(enrich: false)
         XCTAssertNil(model.dashboard)
-        // Re-enqueue the same independent status/dashboard refreshes used for
-        // system events, with the existing companion change watcher retained.
+        // A fresh window-entry intent waits for the status observation and then
+        // performs its own Dashboard read. Recovery alone does not request it.
         model.setDashboardVisible(true)
         try await Task.sleep(for: .milliseconds(1500))
         XCTAssertTrue(model.bridgeConnected)
@@ -2458,7 +2622,7 @@ extension ConnectionObservationRecoveryTests {
     }
 
     @MainActor
-    func testLateEnrichmentNoticeAppliesCachedResultsWithoutStartingAnotherRead() async throws {
+    func testLateEnrichmentNoticeStaysCachedUntilExplicitWindowRefresh() async throws {
         let root = URL(fileURLWithPath: "/tmp/cb-late-details-\(UUID().uuidString.prefix(8))")
         let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
         try FileManager.default.createDirectory(at: paths.helperSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -2498,6 +2662,12 @@ extension ConnectionObservationRecoveryTests {
         XCTAssertTrue(model.dashboardEnrichmentPending)
         XCTAssertFalse(model.dashboardEnrichmentFailed)
         XCTAssertNotNil(model.dashboardObservationDate)
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertTrue(model.dashboardEnrichmentPending)
+        XCTAssertEqual(bridge.count("dashboard.snapshot"), 2)
+
+        model.setDashboardVisible(false)
+        model.setDashboardVisible(true)
         for _ in 0..<100 {
             if !model.dashboardEnrichmentPending { break }
             try await Task.sleep(for: .milliseconds(20))
@@ -2529,6 +2699,7 @@ extension AppPresentationTests {
                 XCTAssertEqual(model.dashboard?.problems?.historyCount, 112)
             }
             await model.acknowledgeAllFinishedProblems()
+            XCTAssertEqual(state.bulkHistoryReadCount, 0)
             if changesDuringPaging {
                 XCTAssertEqual(state.batches, [])
                 XCTAssertNotNil(model.dashboardErrorMessage)
@@ -2559,8 +2730,10 @@ private final class ProblemPagingFixture: @unchecked Sendable {
     private let automaticViews: Bool
     private var reviewed = Set<String>()
     private var recordedBatches: [Int] = []
+    private var bulkHistoryReads = 0
     var batches: [Int] { lock.withLock { recordedBatches } }
     var reviewedCount: Int { lock.withLock { reviewed.count } }
+    var bulkHistoryReadCount: Int { lock.withLock { bulkHistoryReads } }
     init(base: String, changesDuringPaging: Bool, automaticViews: Bool) {
         self.base = base; self.changesDuringPaging = changesDuringPaging; self.automaticViews = automaticViews
     }
@@ -2585,6 +2758,7 @@ private final class ProblemPagingFixture: @unchecked Sendable {
                 let review = query["review"] as? String ?? "pending"
                 let view = query["view"] as? String ?? "actionable"
                 let limit = args["limit"] as? Int ?? 12
+                if limit == 50, (args["includeHistory"] as? Bool) != false { bulkHistoryReads += 1 }
                 let offset = query["offset"] as? Int ?? 0
                 let ids = (1...112).map { String(format: "%032x", $0) }.filter {
                     automaticViews ? view == "history" : reviewed.contains($0) == (review == "acknowledged")

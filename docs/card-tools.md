@@ -31,7 +31,7 @@ remains 12; current cards use the seven consolidated contracts below.
 | `codex_ask_user`, `codex_user_answer` | Create a user question and retrieve its response |
 | `codex_dashboard`, `codex_settings` | Thin UI openers |
 | `codex_models` | Current permitted model/effort catalog; explicit contract v2 also identifies fixed/automatic selection policy without a card |
-| `codex_agent`, `codex_activity_update` | Agent management and non-cancelling Activity transitions |
+| `codex_agent`, `codex_activity_update` | Agent rename and non-cancelling Activity transitions |
 
 | App-only tools | Closed operations |
 | --- | --- |
@@ -39,8 +39,8 @@ remains 12; current cards use the seven consolidated contracts below.
 | `codex_update_settings` | Save/reset with existing revision checks |
 | `codex_question_action` | `operation.kind: submit`, `claim` or `ack` |
 | `codex_ui_problem` | Review/undo individual failed executions, recheck live problems, or retry failed termination with the exact affected executions |
-| `codex_ui_history` | Acknowledge or archive/restore the selected Agent with a private history proof |
-| `codex_ui_stop` | `kind: job` or `process` with exact private target proof |
+| `codex_ui_history` | Acknowledge the selected failed/interrupted execution with a private history proof |
+| `codex_ui_stop` | Retained-card compatibility for `kind: job` or `process` with exact private target proof |
 | `codex_interaction_respond` | Respond to the original Codex approval/input request |
 
 The current discovery budget is 165,000 UTF-8 JSON bytes, including the seven app-only contracts; the model-visible inventory remains 12 tools.
@@ -79,15 +79,17 @@ model catalog. Initial data and refreshes use `codex_ui_read`. Settings retry
 can request a fresh model catalog. Saving Settings returns committed editor
 state in the same response.
 
-The user-facing name is **Codex status** (Korean: **Codex 현황**). Generation 23
-opens with `codex_ui_read` and `{view: "dashboard", scope: "auto"}`. A retained
-Activity or Job in the opening GPT conversation, including completed/archived
+The user-facing name is **Codex status** (Korean: **Codex 현황**). Generation 29
+opens with `codex_ui_read` and
+`{view: "dashboard", scope: "auto", statusFilter: "all", includeHistory: false}`.
+A retained
+Activity or Job in the opening GPT conversation, including completed/retained
 history, selects **This conversation**; no records or missing host identity
 selects **All conversations**. The two buttons allow switching both ways. The
 thin opener also accepts missing host identity, while rejecting malformed
 identity metadata. It still returns no work records or snapshot. The resolved
-choice is then sent explicitly on structural reads, enrichment,
-refresh, and pagination; only a new cold mount chooses automatically. Losing
+choice is then sent explicitly on structural reads, enrichment, refresh, and
+history pagination; only a new cold mount chooses automatically. Losing
 host identity while explicitly viewing this conversation fails the read rather
 than silently replacing it with all work.
 
@@ -109,32 +111,45 @@ muted icon and label above a larger number:
 | Response needed | Agents waiting for input or approval, counted once even when both are pending |
 | Issues | Unresolved latest failure, interruption, termination failure, unknown liveness, or orphaned Agent; excludes normal input/approval waits |
 
-Counts cover the entire selected conversation scope before pagination or status
-filtering. Selecting a summary filters the rows; **Show all** restores that scope.
+Counts and the history-free status index explicitly marked complete with `statusRowsComplete: true` cover the same selected scope
+and classification version. Selecting a summary filters that loaded index with
+no tool call; selecting it again or **Show all** collapses the list back to the
+summary.
 Background processes have a separate conditional link, with unknown/deferred
 inspection still visible. Terminating work keeps its row badge. Current work
-prioritizes responses and problems. **Run history** includes the recorded turns
-of idle Agents, with per-Agent history and conversation links preserved. There is
+prioritizes responses and problems. The card initially hides current and recent
+lists. **Run history** fetches the first 12-row stored page only when selected, includes
+recorded turns of idle Agents, and retains per-Agent history and conversation
+links. **Load more** reads only another stored history page and performs no
+runtime or account enrichment. There is
 no separate idle count/list, and an idle Agent without any recorded turn is hidden.
 A later run clears an earlier failed outcome from **Issues** while retaining it
-in history. Archived Agents remain historical and do not become current issues.
+in history. Schema 18 restores legacy archived Agents before this view is built.
 The menu-bar health indicator does not treat ordinary response waits as a fault.
 
-Generation 24 and the native client opt into this projection with app-private
+Generation 29 and the native client opt into this projection with app-private
 `statusFilter: "all" | "running" | "response-required" | "problems" | "background"`.
+Current clients always request `all` and classify the returned `statusRows`
+locally; `includeHistory` separates that index from the paged run history.
 Omission preserves the original active/recent/idle pages for immutable older
-cards. This presentation change does not unload threads, hand conversations to
-Codex, or change Agent/Job/database retention; those are tracked in issue #80.
+cards and clients. The current projection does not unload threads or hand
+conversations to Codex. Schema 18 removes Agent auto-archive; Job, database,
+project and original Codex-conversation retention remain separate policies.
 
 Dashboard retains its structural-first render, bounded enrichment, pagination,
-refresh error recovery and disclosure state. A user deliberately opens **Review requests** or **Manage work** on one row to see its project, Activity, Agent and original requests.
-Overview refreshes do not replace that form. Details are reread on refresh and
-page restoration. Stop confirmation appears inside the card (ChatGPT's sandbox
-does not allow native JavaScript dialogs), shows the selected target and preserves
-the impact warning. Idle background processes are separate from active turns.
+refresh error recovery and disclosure state. Manual refresh preserves the
+selected filter, while scope changes return to the summary and keep obsolete
+responses from repainting it. Page restoration, visibility changes and network
+recovery only repaint retained data or repair the UI transport; they do not
+reread the Dashboard. A user deliberately opens **Review requests** on one row
+to see its project, Activity, Agent and original approval/input request. Ordinary
+questions remain on the GPT answer path. The current card has no **Manage work**
+button, stop panel, or background-process control. Overview refreshes do not
+replace an open request form; details are reread on explicit refresh and page
+restoration.
 
-The detail response exposes only `{kind: control, ready: true}` publicly. Exact
-targets, original approval input and a five-minute signed proof are private.
+The request-detail response exposes only `{kind: control, ready: true}` publicly.
+Exact targets, original approval input and a five-minute signed proof are private.
 The proof binds the widget, opening host scope (when available), target scope,
 Activity generation, Agent/Job identity and versions, and allowed process IDs.
 Domain handlers revalidate current ownership, versions, pending request and
@@ -142,6 +157,9 @@ process state immediately before dispatch. Restart invalidates proofs; a fresh
 read recovers them. A global UI action never expands the model's ordinary
 conversation scope. GPT-authored questions cannot approve original requests;
 ordinary Codex questions in details direct the user back to GPT handling.
+Model and next-run execution rows display the exact canonical lowercase effort
+value (`low`, `medium`, `high`, `xhigh`, and other catalog-supported values);
+only the field name and description are localized.
 
 The standalone Question resource no longer imports the Activity renderer.
 Submission stores an answer; claim, host message and acknowledgment remain

@@ -71,8 +71,9 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
   connection, missing scope metadata does not block mounted recovery. Any host
   or explicit compatibility scope that is supplied is still validated. That
   widget UUID is correlation evidence rather than authentication. A hydrated
-  card keeps its last snapshot after refresh failure and stops automatic retry
-  until an explicit refresh; a timed-out standard call that was already
+  card keeps its last snapshot after refresh failure. Dashboard data changes
+  only on initial mount, explicit refresh, scope selection, stored-history reads,
+  or a direct action that requires reconciliation; a timed-out standard call that was already
   dispatched is never duplicated through the compatibility alias.
 - `codex_task` is execution-only, has no UI binding or presentation input, and
   exposes a delivered foreground result through a bounded structured `answer`.
@@ -135,9 +136,10 @@ The tunnel transport, ChatGPT workspace policy, bridge policy, Codex sandbox, fi
 - `codex_activity_handoff` exposes batch operations only to the current card and
   requires the exact newest automatic presentation lease and nested card proof.
   Single-item and flat presentation inputs are rejected.
-- `codex_agent` publishes one discriminated `operation` containing only
-  idempotent scope-local Agent rename/archive/restore behavior. Expired flat
-  fields are rejected; it never permanently deletes an Agent or rolls back files.
+- `codex_agent` publishes one discriminated `operation` containing only an
+  idempotent scope-local Agent rename. Expired flat fields are rejected. The
+  runtime parser recognizes retained archive/restore requests only to return
+  `AGENT_ARCHIVE_REMOVED` before any state mutation.
 - `codex_background_process_terminate` is app-private and destructive. It
   requires a host-correlated mounted-card lease plus exact Activity generation,
   presentation, Agent version, current App Server thread, and freshly listed
@@ -352,7 +354,8 @@ the network as the current macOS user.
   diagnostic stores only allowlisted IDs, hashes, bridge instance, timestamp,
   tool, and reason code—not raw host metadata, prompts, answers, or auth data.
 - App Server background terminals left after a turn are observed separately
-  from Agent idle state and require exact process termination before archive.
+  from Agent idle state and require an exact process-targeted control to terminate;
+  they never change the Agent lifecycle.
 - Ten-minute `no-progress-observed` threshold with process liveness explicitly
   unknown; it does not automatically cancel a job.
 - Normally 100 retained jobs and one MiB per retained job result by default. Pending delivery, interactions, uncertain responses, cancellation and renewable holds protect results from ordinary pruning; diagnostic event size limits still apply.
@@ -608,8 +611,9 @@ Schema 14 creates a private consistent backup before migration. Diagnostic clean
   and command output are never copied into that journal. `/healthz` is
   intentionally minimal and exposes only `ok`, `name`, and `title`; aggregate
   and operator counters belong to the private app-only `codex_diagnostics`
-  surface. Late archive/unarchive success never changes logical Agent state; the
-  journal records it as a conflict for explicit upstream recovery.
+  surface. A late App Server thread archive/unarchive success never changes
+  logical Agent state; the journal records it as a conflict for explicit upstream
+  recovery.
 - Steering is usable only while both the ChatGPT model turn and the target Codex
   turn are active. A bounded same-response `codex_status` wait can expose a
   verified sibling result in time to steer another active Job. Once the ChatGPT
@@ -620,8 +624,8 @@ Schema 14 creates a private consistent backup before migration. Diagnostic clean
 - App Server continuation admission uses `thread/read`, not an optimistic local
   boolean. Missing and `systemError` are permanent orphan evidence; `active`
   and transport/timeout failures are retryable and do not mutate Agent
-  continuity state. Restoring an archived orphaned Agent clears that state only
-  after a new exact probe proves the thread is resumable.
+  continuity state. Reusing an orphaned Agent clears that state only after a new
+  exact probe proves the thread is resumable.
 - Server-initiated approval and input requests are correlated by exact worker
   generation and JSON-RPC request ID. `serverRequest/resolved` dismisses a
   request without sending a duplicate response; `autoResolutionMs` has a local
@@ -638,9 +642,10 @@ Schema 14 creates a private consistent backup before migration. Diagnostic clean
   startup latency/failures, crash count/rate, and protocol/config/MCP
   initialization state. Worker PID, thread assignment, config contents, and MCP
   payloads remain private.
-- Logical Agent archive/restore never invokes App Server thread archive/unarchive.
-  This keeps bridge lifecycle management from cascading through an upstream fork
-  graph and affecting another logical Agent.
+- Schema 18 restores every legacy archived Agent by changing only its persisted
+  Agent state. It does not invoke App Server thread archive/unarchive, resume or
+  replay work, so the migration cannot cascade through an upstream fork graph or
+  claim historical conversations.
 - Tool results and retained jobs can contain repository content. They are
   stripped of result `_meta`, token/password/key patterns, and configured-root
   absolute prefixes, then bounded in memory and persisted to the private state

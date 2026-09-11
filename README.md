@@ -25,8 +25,8 @@ ChatGPT
 On macOS, open the menu-bar icon to check the selected server without opening ChatGPT:
 
 - **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
-- **Work state:** running, input required, approval required, terminating, attention, background, and idle counts.
-- **Activity details:** registered projects, tracked conversations, run records, active/recent/idle Agents, model, reasoning effort, work time, and background processes.
+- **Work state:** running, response-required, and problem counts, plus a conditional background-process indicator. Selecting a count filters the loaded snapshot without another server read.
+- **Activity details:** current status lists and 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
 - **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
 
 <p align="center">

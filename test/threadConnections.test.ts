@@ -143,7 +143,7 @@ describe("durable thread connection lifetime", () => {
     await controller.close();store.close();
   });
 
-  it("archives only a released current conversation after 30 days and keeps its restore path", () => {
+  it("keeps a released current conversation available after 30 days", () => {
     const store=new BridgeStateStore({file:":memory:"});
     const agent=store.createAgent({scopeId,agentName:"Long lived",now:1000});
     store.linkAgentThread({agentId:agent.agentId,threadId:"thread",backendKind:"app-server",cwd:"/tmp",sandbox:"read-only",contextMode:"fresh",now:1000});
@@ -152,9 +152,9 @@ describe("durable thread connection lifetime", () => {
     const later=2001+30*86400_000;
     store.maintainRetention(later);expect(store.getAgent(agent.agentId)?.lifecycle).toBe("idle");
     store.threadConnections.update("thread",{phase:"released",evidence:"worker-exited"},3000);
-    store.maintainRetention(later);expect(store.getAgent(agent.agentId)?.lifecycle).toBe("archived");
+    store.maintainRetention(later);expect(store.getAgent(agent.agentId)?.lifecycle).toBe("idle");
     expect(store.listAgentThreads(agent.agentId)).toEqual([expect.objectContaining({threadId:"thread",isCurrent:true})]);
-    expect(store.restoreAgent(agent.agentId,later+1).currentThreadId).toBe("thread");
+    expect(store.getAgent(agent.agentId)?.currentThreadId).toBe("thread");
     store.close();
   });
 });

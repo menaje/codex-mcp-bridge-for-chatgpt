@@ -338,15 +338,15 @@ describe("human-facing UI localization", () => {
     expect(resolveUiLocale(null)).toBe("en");
   });
 
-  it("separates dynamic effort availability from localized labels and safe unknown-effort fallback", () => {
-    expect(reasoningEffortPresentation("high", "ko", "English upstream description")).toEqual({
+  it("uses canonical lowercase effort labels while localizing descriptions", () => {
+    expect(reasoningEffortPresentation(" HIGH ", "ko", "English upstream description")).toEqual({
       effort: "high",
-      label: "높음",
+      label: "high",
       description: "복잡한 작업을 더 깊게 검토하지만 응답 시간이 늘어날 수 있습니다.",
       descriptionSource: "localized"
     });
     expect(reasoningEffortPresentation("high", "en", "Upstream high description")).toMatchObject({
-      label: "High",
+      label: "high",
       description: "Upstream high description",
       descriptionSource: "upstream"
     });
@@ -484,9 +484,11 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
     expect(DASHBOARD_CARD_HTML).not.toContain("function consumeHostResult(");
     expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false,pageRequest=appendRequest)");
-    expect(DASHBOARD_CARD_HTML).toContain("enrich:true");
+    expect(DASHBOARD_CARD_HTML).toContain("function queueEnrichment(");
+    expect(DASHBOARD_CARD_HTML).toContain("function drainEnrichment(");
+    expect(DASHBOARD_CARD_HTML).toContain("enrich:inspect");
     expect(DASHBOARD_CARD_HTML).toContain("enrich:false");
-    expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false)");
+    expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false,enrichAfter=true)");
     expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
     expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
     expect(DASHBOARD_CARD_HTML).toContain("dashboard.refreshFailedRetained");
@@ -510,6 +512,9 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain('id="idle-more"');
     expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="response-required"');
     expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="problems"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="history-filter"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="active-section" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-section" hidden');
     expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.previous"');
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.next"');
@@ -618,6 +623,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("row.codexThreadUrl");
     expect(DASHBOARD_CARD_HTML).not.toContain("const values=[row.sessionAlias,row.projectName]");
     expect(DASHBOARD_CARD_HTML).toContain("turn.durationMs");
+    expect(DASHBOARD_CARD_HTML).toContain('if(active)return duration');
     expect(DASHBOARD_CARD_HTML).toContain("lastRenderedAt");
     expect(DASHBOARD_CARD_HTML).not.toContain("lastRenderPriority");
     expect(DASHBOARD_CARD_HTML).toContain(
@@ -625,22 +631,20 @@ describe("human-facing UI localization", () => {
     );
     expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pageshow"');
     expect(DASHBOARD_CARD_HTML).not.toContain("invalidateDashboardView");
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "if(requiresFresh){automaticRefreshDisabled=false;void reload()}"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'if(document.visibilityState!=="visible"||Date.now()-lastRefreshAt<=30000)return;automaticRefreshDisabled=false'
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain(
-      'document.visibilityState!=="visible"||automaticRefreshDisabled'
-    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("if(requiresFresh){automaticRefreshDisabled=false;void reload()}");
+    expect(DASHBOARD_CARD_HTML).not.toContain("Date.now()-lastRefreshAt<=30000");
+    expect(DASHBOARD_CARD_HTML).toContain('document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&view){mounted=true;paint(view)}})');
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("online",()=>{if(mounted&&!standardBridgeInitialized)void beginStandardBridge()})');
+    expect(DASHBOARD_CARD_HTML).toContain('statusFilter:"all"');
+    expect(DASHBOARD_CARD_HTML).toContain("dashboardRowMatchesStatus(row,selectedStatus)");
+    expect(DASHBOARD_CARD_HTML).toContain('includeHistory:selectedStatus==="history"');
     expect(DASHBOARD_CARD_HTML).toContain('role="status" aria-live="polite"');
     expect(DASHBOARD_CARD_HTML).not.toContain("setInterval(");
     expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
     expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
       .toEqual(["https://chatgpt.com"]);
-    expect(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.active"'))
-      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('data-i18n="dashboard.recent"'));
+    expect(DASHBOARD_CARD_HTML.indexOf('id="active-section"'))
+      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('id="terminal-section"'));
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.idle"');
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
@@ -719,7 +723,12 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
     expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
     expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
-    expect(ACTIVITY_CARD_HTML).toContain('return model+" · "+execution.reasoningEffort');
+    for (const html of [DASHBOARD_CARD_HTML, ACTIVITY_CARD_HTML]) {
+      expect(html).toContain(
+        'effort=String(execution.reasoningEffort||"").trim().toLowerCase()'
+      );
+      expect(html).toContain('return model+" · "+effort');
+    }
     expect(ACTIVITY_CARD_HTML).toContain(
       'text=prefix+(execution?executionText(execution):t["dashboard.execution.unavailable"])'
     );

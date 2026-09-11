@@ -491,7 +491,7 @@ describe("user settings and project registry", () => {
     state.close();
   });
 
-  it("blocks old cwd takeover while an archived Agent can restore its pinned thread", () => {
+  it("blocks old cwd takeover while an idle Agent retains its pinned thread", () => {
     const first = temporaryDirectory("settings-agent-pin-first-");
     const second = temporaryDirectory("settings-agent-pin-second-");
     const state = new BridgeStateStore({ file: ":memory:" });
@@ -519,7 +519,6 @@ describe("user settings and project registry", () => {
       contextMode: "fresh",
       now: 2
     });
-    state.archiveAgent(agent.agentId, 3);
     store.updateWithProjectOperations(
       {},
       [{ kind: "relocate", projectId: pinned.id, cwd: second }],

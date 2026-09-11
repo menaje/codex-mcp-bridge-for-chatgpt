@@ -67,18 +67,9 @@ enum BridgeAppLocalization {
         fallback: String? = nil,
         locale: Locale
     ) -> String {
-        let key: String
-        switch effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "minimal": key = "최소"
-        case "low": key = "낮음"
-        case "medium": key = "중간"
-        case "high": key = "높음"
-        case "xhigh": key = "매우 높음"
-        case "max": key = "최대"
-        case "ultra": key = "Ultra"
-        default: return fallback ?? effort
-        }
-        return string(key, locale: locale)
+        let canonical = effort.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !canonical.isEmpty { return canonical }
+        return fallback?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? canonical
     }
 
     /// Lifecycle failures can contain both an initial failure and rollback

@@ -55,9 +55,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
     }
     function resetProblems(){problemOffset=0;selectedProblemKeys.clear();problemNotice="";problemStopCandidate=null;problemElements.list.replaceChildren();problemElements.confirm.hidden=true}
     function renderProblems(next){
-      const data=next.problems;problemElements.section.hidden=!data||!["all","problems"].includes(selectedStatus);
-      document.getElementById("active-list").closest("section").hidden=Boolean(data&&selectedStatus==="problems");
-      document.getElementById("terminal-list").closest("section").hidden=Boolean(data&&selectedStatus==="problems");
+      const data=next.problems;problemElements.section.hidden=!data||selectedStatus!=="problems";
       if(!data)return;problemOffset=data.page.offset;problemElements.count.textContent=formatNumber(data.page.total);
       const automatic=next.historyPolicy?.automaticRecovery===true;
       for(const button of document.querySelectorAll("[data-problem-review]"))button.hidden=automatic;
@@ -110,7 +108,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
     }
     async function collectFinishedProblems(){
       let offset=0,revision=null;const problems=[];
-      for(;;){const snapshot=unwrap(await callTool("codex_ui_read",{view:"dashboard",widgetInstanceId,scope:selectedScope,statusFilter:"problems",limit:50,enrich:false,problems:{review:"pending",kind:"failed",offset,...(automaticProblemViews()?{view:"history"}:{})}}));
+      for(;;){const snapshot=unwrap(await callTool("codex_ui_read",{view:"dashboard",widgetInstanceId,scope:selectedScope,statusFilter:"problems",limit:50,enrich:false,includeHistory:false,problems:{review:"pending",kind:"failed",offset,...(automaticProblemViews()?{view:"history"}:{})}}));
         const data=snapshot.problems;if(!data||data.page.offset!==offset||revision!==null&&revision!==data.revision)throw new Error(t["problem.changed"]);revision=data.revision;
         problems.push(...data.rows.filter(problem=>problem.canAcknowledge));if(!data.page.hasNext)break;if(!data.page.returned)throw new Error(t["problem.changed"]);offset+=data.page.returned;
       }return problems;
@@ -123,7 +121,7 @@ export const PROBLEM_REVIEW_SCRIPT = String.raw`
       finally{problemMutationInFlight=false;setBusy(false)}
       if(mounted){await reload(true);if(failure)showError(new Error(problemError(failure)))}
     }
-    async function selectProblemQuery({review=problemReview,kind=problemKind,offset=0,view:nextView=problemView}){if(busy||!mounted)return;problemReview=review;problemView=nextView;problemKind=kind;problemOffset=offset;selectedProblemKeys.clear();problemNotice="";problemStopCandidate=null;problemElements.confirm.hidden=true;await reload(true)}
+    async function selectProblemQuery({review=problemReview,kind=problemKind,offset=0,view:nextView=problemView}){if(busy||!mounted)return;problemReview=review;problemView=nextView;problemKind=kind;problemOffset=offset;selectedProblemKeys.clear();problemNotice="";problemStopCandidate=null;problemElements.confirm.hidden=true;await reload(true,false)}
     for(const button of document.querySelectorAll("[data-problem-review]"))button.addEventListener("click",()=>void selectProblemQuery({review:button.dataset.problemReview}));
     for(const button of document.querySelectorAll("[data-problem-view]"))button.addEventListener("click",()=>void selectProblemQuery({view:button.dataset.problemView,kind:"all"}));
     problemElements.kind.addEventListener("change",()=>void selectProblemQuery({kind:problemElements.kind.value}));
