@@ -8,7 +8,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 
 - Run and continue local Codex work from a ChatGPT conversation.
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
-- See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a count to filter the current work and run history. The card starts with this conversation when it has retained work, with a switch to all conversations.
+- See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
 - Choose which project folders Codex may use and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
@@ -25,13 +25,13 @@ ChatGPT
 On macOS, open the menu-bar icon to check the selected server without opening ChatGPT:
 
 - **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
-- **Work state:** running, response-required, and problem counts, plus a conditional background-process indicator. Selecting a count filters the loaded snapshot without another server read.
-- **Activity details:** current status lists and 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
+- **Work state:** running, response-required, and issue counts, plus a conditional background-process indicator. Selecting a count filters the loaded current-work snapshot without another server read.
+- **Activity details:** filtered current-work lists or 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
 - **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
 
 <p align="center">
-  <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar app in light appearance showing weekly Codex usage, reset time, work-state counts, and tracked totals" width="360">
-  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS menu-bar overview in light appearance showing one running Agent and one completed recent Agent" width="360">
+  <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar app in light appearance showing weekly Codex usage and the three current work-state counts" width="360" valign="top">
+  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS menu-bar app in light appearance with Work and Run History selected, showing current Agents and their actual execution settings" width="360" valign="top">
 </p>
 
 ## Choose how to use it
@@ -100,7 +100,7 @@ After the server reports that the Bridge and Tunnel are ready:
 Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT connection refresh. Refresh the connection after installing a release that changes tools or card UI.
 
 <p align="center">
-  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Codex overview in light appearance showing a running Agent and recent Codex work" width="645">
+  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Codex status card in light appearance showing conversation scope, three current work-state counts, Run History, and a background-process indicator" width="645">
 </p>
 
 ## Settings at a glance
@@ -112,7 +112,11 @@ Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT conne
 | Projects | The folders Codex may use for new work |
 | Server | Codex backend and the maximum access the server may grant |
 
-General settings are saved automatically and are shared by every ChatGPT conversation using that server. In client mode, General and Projects edit the selected remote server. The login-at-startup preference always belongs to the current Mac. Server settings require an explicit save and restart.
+Changes in the native app's General tab are saved automatically. In the ChatGPT Settings card, choose **Save settings** after editing. These settings are shared by every ChatGPT conversation using that server. In client mode, General and Projects edit the selected remote server. The login-at-startup preference always belongs to the current Mac. Server settings require an explicit save and restart.
+
+<p align="center">
+  <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT settings card in light appearance showing access strategy, execution model policy, project registration, interface language, and concurrency" width="645">
+</p>
 
 For every option and its effect, see [Setup and settings](docs/setup.md#settings-reference).
 
