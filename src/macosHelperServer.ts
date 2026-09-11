@@ -8,7 +8,6 @@ import { readFile } from "node:fs/promises";
 import {
   existsSync,
   lstatSync,
-  readFileSync,
   unlinkSync,
   watch,
   type FSWatcher
@@ -2475,9 +2474,7 @@ function readRegisteredProjectRoots(
 ): string[] {
   const fileValues = readRuntimeEnvSubset(envFile, [
     "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE",
-    "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE",
-    "CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE",
-    "CODEX_GPT_BRIDGE_SETTINGS_STATE_FILE"
+    "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE"
   ], options);
   const stateDatabaseFile = configuredRuntimePath(
     fileValues,
@@ -2509,36 +2506,7 @@ function readRegisteredProjectRoots(
       database.close();
     }
   }
-
-  const settingsStateFile = configuredRuntimePath(
-    fileValues,
-    "SETTINGS_STATE_FILE",
-    path.join(homedir(), ".codex-mcp-bridge", "settings.json")
-  );
-  if (!existsSync(settingsStateFile)) return [];
-  assertRegularStateFile(settingsStateFile);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(settingsStateFile, "utf8"));
-  } catch {
-    throw new Error("Could not inspect the registered project folders.");
-  }
-  const record = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? parsed as Record<string, unknown>
-    : {};
-  const registry = record.projectRegistry && typeof record.projectRegistry === "object"
-    ? record.projectRegistry as Record<string, unknown>
-    : undefined;
-  const projects = Array.isArray(registry?.projects) ? registry.projects : [];
-  const roots = projects.map((project) =>
-    project && typeof project === "object" && !Array.isArray(project)
-      ? (project as Record<string, unknown>).cwd
-      : undefined
-  );
-  if (roots.some((root) => typeof root !== "string" || !path.isAbsolute(root))) {
-    throw new Error("Stored project registry contains an invalid folder path.");
-  }
-  return [...new Set(roots as string[])];
+  return [];
 }
 
 function configuredRuntimePath(

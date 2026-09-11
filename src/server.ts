@@ -460,7 +460,6 @@ export function createHttpServer(
   const stateStore = runtimeOptions.stateStore || new BridgeStateStore({ file: config.stateDatabaseFile });
   const ownsStateStore = runtimeOptions.stateStore === undefined;
   const sessions = new SessionRegistry({
-    stateFile: config.sessionStateFile,
     stateStore,
     allowedRoots: config.allowedRoots
   });
@@ -471,7 +470,6 @@ export function createHttpServer(
       maxJobs: config.maxRetainedJobs,
       maxResultBytes: config.maxJobResultBytes,
       staleAfterMs: config.jobStaleAfterMs,
-      stateFile: config.jobStateFile,
       stateStore,
       allowedRoots: config.allowedRoots
     }
@@ -486,7 +484,6 @@ export function createHttpServer(
   const cardPerformance = new CardPerformanceTracker();
   const ownsDescriptorCoordinator = runtimeOptions.descriptorCoordinator === undefined;
   const userSettings = new UserSettingsStore(config, {
-    stateFile: config.settingsStateFile,
     stateStore
   });
   config.codexService?.setVisibilityProvider(() => userSettings.current.showBridgeThreadsInCodexApp);

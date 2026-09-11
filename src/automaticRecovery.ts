@@ -14,7 +14,8 @@ export type AutomaticRecoveryResult = { resolved: boolean; reason: string; evide
 export const AUTOMATIC_RECOVERY_ATTEMPTS = 3;
 const RETRY_DELAYS = [5_000, 30_000, 120_000];
 
-export const AUTOMATIC_RECOVERY_SCHEMA = `
+/** Upgrade-only schema introduced at v17. Current databases use stateSchema.ts. */
+export const V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS automatic_recovery (
     recovery_key TEXT PRIMARY KEY, scope_id TEXT NOT NULL, agent_id TEXT NOT NULL,
     job_id TEXT, kind TEXT NOT NULL CHECK(kind IN ('recheck','retry-stop','release')),
@@ -37,7 +38,7 @@ export function automaticRecoveryKey(kind: AutomaticRecoveryKind, identity: unkn
 /** Attempts are committed before dispatch, so restarting cannot reset a limit
  * or interpret an interrupted dispatch as evidence of successful cleanup. */
 export class AutomaticRecoveryStore {
-  constructor(private readonly db: Database.Database) { db.exec(AUTOMATIC_RECOVERY_SCHEMA); }
+  constructor(private readonly db: Database.Database) {}
 
   get(key: string): AutomaticRecoveryRecord | undefined {
     const row = this.db.prepare("SELECT * FROM automatic_recovery WHERE recovery_key=?").get(key);

@@ -73,7 +73,7 @@ export type BridgeActivity = {
   scopeId: string;
   /** Stable project identity pinned when the Activity admits its first work. */
   projectId?: string;
-  projectLabel?: string;
+  projectName?: string;
   continuationOfActivityId?: string;
   /** Presentation generation is independent from Agent/thread continuity. */
   cardGeneration: number;

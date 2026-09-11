@@ -1,0 +1,112 @@
+{
+  "issue": 95,
+  "testedAt": "2026-09-11T11:46:35.869Z",
+  "source": "consistent read-only backup of the explicitly supplied database",
+  "productionDatabaseModified": false,
+  "codexCalls": 0,
+  "appReads": 4,
+  "restartPasses": [
+    {
+      "pass": 1,
+      "discoveredToolCount": 31,
+      "stableAgainstPreviousPass": null,
+      "changedTables": []
+    },
+    {
+      "pass": 2,
+      "discoveredToolCount": 31,
+      "stableAgainstPreviousPass": true,
+      "changedTables": []
+    }
+  ],
+  "sourceSchema": 18,
+  "sourceCounts": {
+    "activities": 311,
+    "activity_agents": 671,
+    "activity_events": 1040,
+    "agent_mutations": 21,
+    "agent_threads": 356,
+    "agents": 348,
+    "automatic_recovery": 1,
+    "automatic_recovery_incidents": 1,
+    "bridge_instances": 558,
+    "bridge_meta": 43,
+    "cancellation_intents": 23,
+    "cancellation_operations": 21,
+    "codex_question_deliveries": 0,
+    "completion_outbox": 0,
+    "event_budget": 1,
+    "job_events": 21437,
+    "job_summaries": 581,
+    "jobs": 672,
+    "project_registry": 1,
+    "projects": 7,
+    "result_holds": 0,
+    "scope_versions": 71,
+    "scopes": 71,
+    "sessions": 394,
+    "steering_deliveries": 208,
+    "thread_connections": 394,
+    "transport_observations": 1000,
+    "user_questions": 0,
+    "user_settings": 1,
+    "work_history_state": 19
+  },
+  "criticalState": {
+    "activeJobs": 0,
+    "blockingInteractions": 0,
+    "pendingQuestions": 0,
+    "undeliveredOutbox": 0,
+    "activeCancellations": 0,
+    "unresolvedSteering": 0,
+    "unresolvedRecovery": 0,
+    "validResultHolds": 0,
+    "archivedReceipts": 671
+  },
+  "approvedDrops": {
+    "invalidProjectSessions": 43,
+    "invalidProjectAgentThreads": 43
+  },
+  "stage": "complete",
+  "currentSchema": 19,
+  "currentTableCount": 32,
+  "currentIndexCount": 42,
+  "currentTriggerCount": 3,
+  "preservedEntities": {
+    "scopes": 71,
+    "project_registry": 1,
+    "projects": 7,
+    "user_settings": 1,
+    "activities": 311,
+    "agents": 348,
+    "activity_agents": 671,
+    "jobs": 672,
+    "activity_events": 1040,
+    "completion_outbox": 0,
+    "agent_mutations": 21,
+    "cancellation_operations": 21,
+    "cancellation_intents": 23,
+    "steering_deliveries": 208,
+    "transport_observations": 1000,
+    "codex_question_deliveries": 0,
+    "thread_connections": 394,
+    "automatic_recovery": 1,
+    "automatic_recovery_incidents": 1,
+    "sessions": 351,
+    "agent_threads": 313,
+    "job_events": 21437,
+    "result_holds": 0,
+    "work_history_state": 19,
+    "user_questions": 0
+  },
+  "jobReceipts": {
+    "count": 672,
+    "digest": "de5b57ae2fcf752ec7f6c044c4cffef84701ca037b6853d12078ac29ce48f956"
+  },
+  "sessionContexts": {
+    "count": 351,
+    "digest": "3052bae95f9e1e783029468ce94cf0320da971ef9efda704771fb38785109818"
+  },
+  "passed": true,
+  "temporaryCopyRemoved": true
+}

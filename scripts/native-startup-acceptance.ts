@@ -60,7 +60,6 @@ const launch = () => {
     CODEX_MCP_BRIDGE_ROOT: runtime, CODEX_MCP_BRIDGE_NODE: process.execPath,
     CODEX_MCP_BRIDGE_ENV_FILE: environmentFile, CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT: "1",
     CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "cli"), CODEX_MCP_BRIDGE_CODEX: codex,
-    CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(root, "settings.json")
   } });
   child.stdout?.on("data", data => process.stdout.write(data));
   child.stderr?.on("data", data => process.stderr.write(data));

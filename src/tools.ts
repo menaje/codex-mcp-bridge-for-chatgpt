@@ -17,7 +17,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerQuestionTools, QUESTION_MODEL_OUTPUT_SCHEMAS, QUESTION_APP_OUTPUT_SCHEMAS } from "./questionTools.js";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as z from "zod/v4";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -132,7 +131,6 @@ import {
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
-  legacyActivityIdForJob,
   normalizeActivityTitle,
   type ActivityProjectAdmission,
   type BeginSteeringDeliveryInput,
@@ -1077,7 +1075,6 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
     projectRef: z.string(),
     projectRevision: z.number().int().min(1),
     name: z.string(),
-    label: z.string(),
     nameKey: z.string(),
     cwd: z.string(),
     sortOrder: z.number().int(),
@@ -1936,7 +1933,7 @@ const CURRENT_TASK_REQUEST_HASH_VERSION = 7 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
-  projectLabel: string;
+  projectName: string;
   cwd: string;
 };
 
@@ -2042,7 +2039,7 @@ type CodexJob = {
   jobId: string;
   activityId: string;
   projectId?: string;
-  projectLabel?: string;
+  projectName?: string;
   /** Caller-facing name+generation selection retained only for exact replay. */
   projectRequest?: RuntimeProjectSelection;
   agentId?: string;
@@ -2094,11 +2091,6 @@ type CodexJob = {
 
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
-type PersistedCodexJobState = {
-  version: 10;
-  jobs: PersistedCodexJob[];
-};
-
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
@@ -2149,7 +2141,6 @@ export type CodexJobRegistryOptions = {
   maxJobs?: number;
   maxResultBytes?: number;
   staleAfterMs?: number;
-  stateFile?: string;
   stateStore?: BridgeStateStore;
   allowedRoots?: string[];
 };
@@ -2204,7 +2195,6 @@ export class CodexJobRegistry {
   private readonly maxJobs: number;
   private readonly maxResultBytes: number;
   private readonly staleAfterMs: number;
-  private readonly stateFile?: string;
   private readonly stateStore?: BridgeStateStore;
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
@@ -2315,7 +2305,6 @@ export class CodexJobRegistry {
       options.activityPresentationTtlMs ?? 6 * 60 * 60 * 1000;
     this.activityCardMountReservationTtlMs =
       options.activityMountReservationTtlMs ?? 15_000;
-    this.stateFile = options.stateFile;
     this.stateStore = options.stateStore;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
@@ -2323,11 +2312,11 @@ export class CodexJobRegistry {
   }
 
   get persistent(): boolean {
-    return Boolean(this.stateStore?.persistent || this.stateFile);
+    return Boolean(this.stateStore?.persistent);
   }
 
   get persistencePath(): string | null {
-    return this.stateStore?.persistencePath || this.stateFile || null;
+    return this.stateStore?.persistencePath || null;
   }
 
   get persistenceSchemaVersion(): number | null {
@@ -2995,7 +2984,7 @@ export class CodexJobRegistry {
     threadId: string;
     sessionId?: string;
     projectId?: string;
-    projectLabel?: string;
+    projectName?: string;
     backendKind: string;
     cwd: string;
     sandbox: string;
@@ -4368,47 +4357,19 @@ export class CodexJobRegistry {
   }
 
   private load(): void {
-    if (this.stateStore) {
-      const stored = this.stateStore.listJobs();
-      const changed = this.loadJobs(stored, 10);
-      if (changed || this.jobs.size !== stored.length) {
-        this.stateStore.replaceJobs(this.persistedJobs());
-      }
-      this.importLegacyState();
-      return;
+    if (!this.stateStore) return;
+    const stored = this.stateStore.listJobs();
+    const changed = this.loadJobs(stored);
+    if (changed || this.jobs.size !== stored.length) {
+      this.stateStore.replaceJobs(this.persistedJobs());
     }
-    this.loadJsonState();
   }
 
-  private loadJsonState(): void {
-    if (!this.stateFile || !existsSync(this.stateFile)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read Codex job state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (
-      !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9 && parsed.version !== 10) ||
-      !Array.isArray(parsed.jobs)
-    ) {
-      throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
-    }
-
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-    const changed = this.loadJobs(parsed.jobs, stateVersion);
-    if (changed || stateVersion !== 10) this.persist(true);
-    else this.activityStore.importLegacyJobs(this.persistedJobs());
-  }
-
-  private loadJobs(values: unknown[], stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10): boolean {
+  private loadJobs(values: unknown[]): boolean {
     const now = Date.now();
-    let changed = stateVersion !== 10;
+    let changed = false;
     const valid = values
-      .map((job) => readPersistedJob(job, stateVersion))
+      .map(readPersistedJob)
       .filter((job): job is PersistedCodexJob => Boolean(job))
       .filter((job) => this.isAllowedCwd(job.cwd))
       .sort((a, b) => a.updatedAt - b.updatedAt);
@@ -4457,66 +4418,10 @@ export class CodexJobRegistry {
     return changed;
   }
 
-  private importLegacyState(): void {
-    if (!this.stateStore || !this.stateFile || !existsSync(this.stateFile)) return;
-    const marker = `legacy_jobs_imported:${this.stateFile}`;
-    if (this.stateStore.getMeta(marker)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read Codex job state at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (
-      !isRecord(parsed) ||
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== 5 && parsed.version !== 6 && parsed.version !== 7 && parsed.version !== 8 && parsed.version !== 9 && parsed.version !== 10) ||
-      !Array.isArray(parsed.jobs)
-    ) {
-      throw new Error(`Invalid Codex job state format at ${this.stateFile}.`);
-    }
-    const stateVersion = parsed.version as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-    const existing = new Set(this.jobs.keys());
-    const candidates = parsed.jobs.filter((value) => {
-      const id = isRecord(value) && typeof value.jobId === "string" ? value.jobId : undefined;
-      return id ? !existing.has(id) : true;
-    });
-    this.stateStore.transaction(() => {
-      this.loadJobs(candidates, stateVersion);
-      this.stateStore?.importLegacyJobs(this.persistedJobs());
-      this.stateStore?.setMeta(marker, new Date().toISOString());
-    });
-  }
-
-  private persist(allowLegacyUnattributedCancellation = false): void {
-    if (this.stateStore) {
-      this.stateStore.replaceJobs(this.persistedJobs());
-      this.lastPersistedAt = Date.now();
-      this.persistenceWarningShown = false;
-      return;
-    }
+  private persist(): void {
     const persisted = this.persistedJobs();
-    if (this.stateFile) {
-      const directory = path.dirname(this.stateFile);
-      mkdirSync(directory, { recursive: true, mode: 0o700 });
-      const temporary = `${this.stateFile}.${process.pid}.tmp`;
-      const state: PersistedCodexJobState = {
-        version: 10,
-        jobs: persisted
-      };
-      writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-        encoding: "utf8",
-        mode: 0o600
-      });
-      renameSync(temporary, this.stateFile);
-      chmodSync(this.stateFile, 0o600);
-    }
-    if (allowLegacyUnattributedCancellation) {
-      this.activityStore.importLegacyJobs(persisted);
-    } else {
-      this.activityStore.replaceJobs(persisted);
-    }
+    if (this.stateStore) this.stateStore.replaceJobs(persisted);
+    else this.activityStore.replaceJobs(persisted);
     this.lastPersistedAt = Date.now();
     this.persistenceWarningShown = false;
   }
@@ -4588,23 +4493,26 @@ export class CodexJobRegistry {
       }
     }
     try {
-      const { promise: _promise, ...persisted } = job;
-      this.stateStore.transaction(() => {
-        this.stateStore?.upsertJob(persisted);
-        this.stateStore?.recordJobTelemetryEvent(
-          job.jobId,
-          `app-${publicEvent.type}-${publicEvent.phase}`,
-          publicEvent,
-          publicEvent.createdAt,
-          publicEvent.type === "approval-required" || publicEvent.type === "input-required"
-            ? publicEvent.phase === "waiting"
-              ? "user"
-              : publicEvent.phase === "completed"
-                ? "codex"
-                : undefined
-            : undefined
-        );
-      });
+      this.stateStore.recordJobTelemetryEvent(
+        job.jobId,
+        `app-${publicEvent.type}-${publicEvent.phase}`,
+        publicEvent,
+        publicEvent.createdAt,
+        publicEvent.type === "approval-required" || publicEvent.type === "input-required"
+          ? publicEvent.phase === "waiting"
+            ? "user"
+            : publicEvent.phase === "completed"
+              ? "codex"
+              : undefined
+          : undefined,
+        {
+          updatedAt: job.updatedAt,
+          version: job.version,
+          lastProgressAt: job.lastProgressAt,
+          lastProgress: job.lastProgress,
+          pendingInteractions: job.pendingInteractions
+        }
+      );
       this.lastPersistedAt = Date.now();
       this.persistenceWarningShown = false;
       this.notifyScope(job.scopeId);
@@ -4621,6 +4529,7 @@ export class CodexJobRegistry {
   }
 
   private pruneAndPersist(): void {
+    this.refreshProjectIdentities();
     const beforePrune = new Map(this.jobs);
     const removed = this.prune();
     if (removed.length === 0) return;
@@ -4641,6 +4550,25 @@ export class CodexJobRegistry {
         );
         this.persistenceWarningShown = true;
       }
+    }
+  }
+
+  private refreshProjectIdentities(): void {
+    const activities = new Map(
+      this.activityStore.listActivityProjectIdentities().map((activity) => [
+        activity.activityId,
+        activity
+      ])
+    );
+    for (const job of this.jobs.values()) {
+      const activity = activities.get(job.activityId);
+      if (!activity) {
+        delete job.projectId;
+        delete job.projectName;
+        continue;
+      }
+      job.projectId = activity.projectId;
+      job.projectName = activity.projectName;
     }
   }
 
@@ -5224,7 +5152,7 @@ export function registerBridgeTools(
     const card = { kind: "dashboard", token: controlProofs.issue(claims), activityId: activity.activityId,
       generation: activity.cardGeneration, presentation: { kind: "explicit" } };
     const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,
-      agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectLabel || null,
+      agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectName || null,
       conversationUrl: scopeResolver.conversationUrl(agent.scopeId), card,
       jobId: job.jobId, jobVersion: job.version, status: job.status,
       pendingInteractions: pendingInteractions.map(interaction => ({ ...interaction,
@@ -9357,7 +9285,7 @@ function resolveTaskProjectAdmission(input: {
   const legacyActivityCwd = activityCwds.length === 1 ? activityCwds[0] : undefined;
 
   let threadContext:
-    | { projectId?: string; projectLabel?: string; cwd: string }
+    | { projectId?: string; projectName?: string; cwd: string }
     | undefined;
   if (usesExistingThread && input.agentResolution.agent) {
     const agent = input.agentResolution.agent;
@@ -9372,7 +9300,7 @@ function resolveTaskProjectAdmission(input: {
       threadContext = {
         cwd,
         projectId: thread?.projectId || session?.projectId,
-        projectLabel: thread?.projectLabel || session?.projectLabel
+        projectName: thread?.projectName || session?.projectName
       };
     }
   }
@@ -9417,10 +9345,10 @@ function resolveTaskProjectAdmission(input: {
   }
 
   if (threadContext) {
-    if (threadContext.projectId && threadContext.projectLabel) {
+    if (threadContext.projectId && threadContext.projectName) {
       const admission = {
         projectId: threadContext.projectId,
-        projectLabel: threadContext.projectLabel,
+        projectName: threadContext.projectName,
         cwd: threadContext.cwd
       };
       assertRequestedProjectMatches(input.args.project, admission, requiresExplicitProject);
@@ -9494,13 +9422,13 @@ function assertSelectedProjectMatchesAdmission(
 function taskProjectFromActivity(admission: ActivityProjectAdmission): TaskProjectAdmission {
   return {
     projectId: admission.projectId,
-    projectLabel: admission.projectLabel,
+    projectName: admission.projectName,
     cwd: admission.projectCwd
   };
 }
 
 function taskProjectFromTarget(project: ProjectTarget): TaskProjectAdmission {
-  return { projectId: project.id, projectLabel: project.name, cwd: project.cwd };
+  return { projectId: project.id, projectName: project.name, cwd: project.cwd };
 }
 
 async function requireAgentSession(
@@ -9636,7 +9564,7 @@ function resolveActivityForTask(
   return jobs.createActivity({
     scopeId,
           projectId: projectAdmission?.projectId,
-    projectLabel: projectAdmission?.projectLabel,
+    projectName: projectAdmission?.projectName,
     projectCwd: projectAdmission?.cwd,
     continuationOfActivityId: validated.continuationOfActivityId,
     title: validated.activityTitle,
@@ -9685,7 +9613,7 @@ function recordAdmittedThread(input: {
         ...(input.projectAdmission
           ? {
               projectId: input.projectAdmission.projectId,
-              projectLabel: input.projectAdmission.projectLabel
+              projectName: input.projectAdmission.projectName
             }
           : {}),
         sandbox: input.sandbox,
@@ -9703,7 +9631,7 @@ function recordAdmittedThread(input: {
         threadId: input.threadId,
         sessionId: input.sessionId,
         projectId: input.projectAdmission?.projectId,
-        projectLabel: input.projectAdmission?.projectLabel,
+        projectName: input.projectAdmission?.projectName,
         backendKind: input.backendKind,
         cwd: input.cwd,
         sandbox: input.sandbox,
@@ -10013,7 +9941,7 @@ async function continueTrackedSession(input: {
         ...(input.projectAdmission
           ? {
               projectId: input.projectAdmission.projectId,
-              projectLabel: input.projectAdmission.projectLabel
+              projectName: input.projectAdmission.projectName
             }
           : {}),
         scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
@@ -10027,7 +9955,7 @@ async function continueTrackedSession(input: {
         threadId: input.session.threadId,
         sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
         projectId: input.projectAdmission?.projectId,
-        projectLabel: input.projectAdmission?.projectLabel,
+        projectName: input.projectAdmission?.projectName,
         backendKind: input.session.backendKind,
         cwd: input.session.cwd,
         sandbox: input.session.sandbox,
@@ -10242,7 +10170,7 @@ async function runCodex(input: {
         ? currentProject
         : {
             ...(projectAdmission as TaskProjectAdmission),
-            projectLabel: currentProject.projectLabel
+            projectName: currentProject.projectName
           };
     }
     const activity = resolveActivityForTask(
@@ -10267,7 +10195,7 @@ async function runCodex(input: {
         backendKind: input.backendKind,
         activityId: activity.activityId,
         projectId: projectAdmission?.projectId,
-        projectLabel: projectAdmission?.projectLabel,
+        projectName: projectAdmission?.projectName,
         projectRequest: input.projectRequest,
         agentId: agent.agentId,
         contextMode: input.contextMode,
@@ -10743,7 +10671,7 @@ function formatJobStatus(
       activity: registry?.getActivity(job.activityId)?.version || null
     },
     operation: job.operation,
-    projectName: job.projectLabel || null,
+    projectName: job.projectName || null,
     sandbox: job.sandbox,
     executionAudit: formatExecutionAudit(job),
     scopeId: job.scopeId,
@@ -10753,14 +10681,14 @@ function formatJobStatus(
       ...job.sessionDecision,
       scopeId: job.scopeId,
       requestId: job.requestId,
-      projectName: job.projectLabel || null,
+      projectName: job.projectName || null,
       activityPresentationId: job.activityPresentationId || null
     },
     bridgeActivity: {
       activityId: job.activityId,
       jobId: job.jobId,
       agentId: job.agentId || null,
-      projectName: job.projectLabel || null,
+      projectName: job.projectName || null,
       executionMode: job.executionMode,
       ...activityTracking
     },
@@ -10846,8 +10774,8 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
     operation: job.operation,
-    projectName: job.projectLabel || null,
-    workspaceLabel: job.projectLabel || "Pinned workspace",
+    projectName: job.projectName || null,
+    workspaceLabel: job.projectName || "Pinned workspace",
     sandbox: job.sandbox,
     executionDecision: job.executionDecision || null,
     executionAudit: formatExecutionAudit(job),
@@ -10924,7 +10852,7 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   return {
     activityId: activity.activityId,
     scopeId: activity.scopeId,
-    projectName: activity.projectLabel || null,
+    projectName: activity.projectName || null,
     continuationOfActivityId: activity.continuationOfActivityId || null,
     cardGeneration: activity.cardGeneration,
     title: activity.title,
@@ -11010,7 +10938,7 @@ function formatSessionSummary(session: TrackedCodexSession): Record<string, unkn
     sessionId: session.sessionId || null,
     forkedFromThreadId: session.forkedFromThreadId || null,
     scopeId: session.scopeId,
-    projectName: session.projectLabel || null,
+    projectName: session.projectName || null,
     sandbox: session.sandbox,
     selection: session.selection,
     policyRevision: session.policyRevision,
@@ -11030,7 +10958,7 @@ function formatAgentThreadSummary(
     sessionId: thread.sessionId || null,
     agentId: thread.agentId,
     scopeId: thread.scopeId,
-    projectName: thread.projectLabel || null,
+    projectName: thread.projectName || null,
     backendKind: thread.backendKind,
     sandbox: thread.sandbox,
     contextMode: thread.contextMode,
@@ -11619,13 +11547,13 @@ function dashboardProjectKey(
 function dashboardProjectIdentity(
   ...candidates: ReadonlyArray<{
     projectId?: string;
-    projectLabel?: string;
+    projectName?: string;
   } | undefined>
 ): Pick<DashboardRow, "projectKey" | "projectName"> {
-  const paired = candidates.find((candidate) => candidate?.projectId && candidate.projectLabel);
+  const paired = candidates.find((candidate) => candidate?.projectId && candidate.projectName);
   const projectId = paired?.projectId || candidates.find((candidate) => candidate?.projectId)?.projectId;
-  const projectName = paired?.projectLabel ||
-    candidates.find((candidate) => candidate?.projectLabel)?.projectLabel ||
+  const projectName = paired?.projectName ||
+    candidates.find((candidate) => candidate?.projectName)?.projectName ||
     null;
   return {
     projectKey: dashboardProjectKey(projectId, projectName),
@@ -14008,7 +13936,7 @@ async function buildActivityView(
       .find((assignment) => assignment.agentId === agentId);
   const workspacesFor = (activityId: string): string[] => {
     const activity = activityById.get(activityId);
-    if (activity?.projectLabel) return [activity.projectLabel];
+    if (activity?.projectName) return [activity.projectName];
     return [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
       path.basename(job.cwd)
     ))];
@@ -14139,7 +14067,7 @@ async function buildActivityView(
     return {
       rowType: "activity" as const,
       activityId: activity.activityId,
-      projectName: activity.projectLabel || null,
+      projectName: activity.projectName || null,
       title: activity.title,
       kind: activity.kind,
       lifecycle: activity.lifecycle,
@@ -16327,10 +16255,7 @@ function readTrackingState(
     : undefined;
 }
 
-function readPersistedJob(
-  value: unknown,
-  stateVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
-): PersistedCodexJob | undefined {
+function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   if (!isRecord(value)) return undefined;
   const jobId = typeof value.jobId === "string" && value.jobId ? value.jobId : undefined;
   const operation = value.operation;
@@ -16338,12 +16263,10 @@ function readPersistedJob(
   const status = value.status;
   const sessionDecision = readSessionDecision(value.sessionDecision);
   const lastProgress = readProgress(value.lastProgress);
-  const scopeId = stateVersion === 1 ? LEGACY_SCOPE_ID : value.scopeId;
-  const requestId = stateVersion === 1 ? `legacy:${String(value.jobId || "unknown")}` : value.requestId;
-  const requestHash = stateVersion === 1
-    ? createHash("sha256").update(String(requestId)).digest("hex")
-    : value.requestHash;
-  const requestHashVersion = stateVersion >= 4 ? value.requestHashVersion : 1;
+  const scopeId = value.scopeId;
+  const requestId = value.requestId;
+  const requestHash = value.requestHash;
+  const requestHashVersion = value.requestHashVersion;
   const activityPresentationId =
     typeof value.activityPresentationId === "string" &&
     SCOPE_ID_PATTERN.test(value.activityPresentationId)
@@ -16352,9 +16275,7 @@ function readPersistedJob(
   const activityId =
     typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
       ? value.activityId.toLowerCase()
-      : jobId
-        ? legacyActivityIdForJob(jobId)
-        : undefined;
+      : undefined;
   const executionMode =
     value.executionMode === "foreground" || value.executionMode === "background"
       ? value.executionMode
@@ -16396,16 +16317,16 @@ function readPersistedJob(
         .slice(-20)
     : [];
   const executionDecision = readExecutionDecision(value.executionDecision);
-  let project: { projectId: string; projectLabel: string } | undefined;
+  let project: { projectId: string; projectName: string } | undefined;
   let projectRequest: RuntimeProjectSelection | undefined;
   try {
-    if (stateVersion >= 9 && (value.projectId !== undefined || value.projectLabel !== undefined)) {
-      if (typeof value.projectId !== "string" || typeof value.projectLabel !== "string") {
+    if (value.projectId !== undefined || value.projectName !== undefined) {
+      if (typeof value.projectId !== "string" || typeof value.projectName !== "string") {
         return undefined;
       }
       project = {
         projectId: normalizeProjectId(value.projectId),
-        projectLabel: normalizeProjectName(value.projectLabel)
+        projectName: normalizeProjectName(value.projectName)
       };
     }
     if (value.projectRequest !== undefined) {
@@ -17701,7 +17622,7 @@ function stripInternalProjectData(value: unknown, depth = 0): unknown {
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (hidden.has(key)) continue;
-    const publicKey = key === "projectLabel" || key === "project_name_snapshot"
+    const publicKey = key === "projectLabel" || key === "projectName" || key === "project_name_snapshot"
       ? "projectName"
       : key;
     output[publicKey] = stripInternalProjectData(entry, depth + 1);

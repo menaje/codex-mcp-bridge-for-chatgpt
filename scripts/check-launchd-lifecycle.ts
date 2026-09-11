@@ -82,7 +82,6 @@ const environment = {
   PATH: process.env.PATH || "/usr/bin:/bin",
   XDG_CONFIG_HOME: path.join(root, "config-home"),
   CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "cli"),
-  CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE: path.join(root, "settings.json"),
   CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite")
 };
 // Match production KeepAlive, process type, throttle and shutdown grace.

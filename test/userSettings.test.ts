@@ -1,9 +1,7 @@
 import {
   mkdtempSync,
-  readFileSync,
   realpathSync,
-  statSync,
-  writeFileSync
+  statSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,49 +19,81 @@ import {
   SETTINGS_REVISION_CONFLICT,
   UserSettingsStore
 } from "../src/userSettings.js";
+import { replaceStoredSettingsPayloadForTest } from "./helpers/sqliteSettings.js";
 
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 
 describe("user settings and project registry", () => {
   it("validates and persists history retention while migrating legacy settings to thirty days", () => {
-    const stateFile=path.join(temporaryDirectory("settings-history-"),"settings.json"),config=configFor();
-    const store=new UserSettingsStore(config,{stateFile});
-    expect(store.current.historyRetentionDays).toBe(30);
-    for(const invalid of [1, -1, 31, "7", null])expect(()=>store.update({historyRetentionDays:invalid as any},store.current.settingsRevision)).toThrow(/retention/);
-    store.update({historyRetentionDays:0},0);
-    expect(new UserSettingsStore(config,{stateFile}).current.historyRetentionDays).toBe(0);
-    const saved=JSON.parse(readFileSync(stateFile,"utf8"));delete saved.settings.historyRetentionDays;
-    writeFileSync(stateFile,JSON.stringify(saved));
-    expect(new UserSettingsStore(config,{stateFile}).current.historyRetentionDays).toBe(30);
+    const databaseFile = path.join(temporaryDirectory("settings-history-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current.historyRetentionDays).toBe(30);
+    for (const invalid of [1, -1, 31, "7", null]) {
+      expect(() => first.settings.update(
+        { historyRetentionDays: invalid as any },
+        first.settings.current.settingsRevision
+      )).toThrow(/retention/);
+    }
+    first.settings.update({ historyRetentionDays: 0 }, 0);
+    first.stateStore.close();
+
+    const second = persistentSettings(config, databaseFile);
+    expect(second.settings.current.historyRetentionDays).toBe(0);
+    const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    delete legacy.historyRetentionDays;
+    second.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+
+    const restored = persistentSettings(config, databaseFile);
+    expect(restored.settings.current.historyRetentionDays).toBe(30);
+    restored.stateStore.close();
   });
 
   it("defaults new installations to durable conversations while retaining explicit and legacy hidden settings", () => {
-    const stateFile=path.join(temporaryDirectory("settings-storage-"),"settings.json"),config=configFor();
-    const fresh=new UserSettingsStore(config,{stateFile});
-    expect(fresh.current.showBridgeThreadsInCodexApp).toBe(true);
-    fresh.update({showBridgeThreadsInCodexApp:false},0);
-    expect(new UserSettingsStore(config,{stateFile}).current.showBridgeThreadsInCodexApp).toBe(false);
-    const legacy=JSON.parse(readFileSync(stateFile,"utf8"));delete legacy.settings.showBridgeThreadsInCodexApp;
-    writeFileSync(stateFile,JSON.stringify(legacy));
-    expect(new UserSettingsStore(config,{stateFile}).current.showBridgeThreadsInCodexApp).toBe(false);
+    const databaseFile = path.join(temporaryDirectory("settings-storage-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current.showBridgeThreadsInCodexApp).toBe(true);
+    first.settings.update({ showBridgeThreadsInCodexApp: false }, 0);
+    first.stateStore.close();
+
+    const second = persistentSettings(config, databaseFile);
+    expect(second.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    delete legacy.showBridgeThreadsInCodexApp;
+    second.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+
+    const restored = persistentSettings(config, databaseFile);
+    expect(restored.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    restored.stateStore.close();
   });
 
   it("persists inactive Ultra selections through restart and restores them when enabled", () => {
-    const stateFile = path.join(temporaryDirectory("settings-ultra-"), "settings.json");
+    const databaseFile = path.join(temporaryDirectory("settings-ultra-"), "state.sqlite");
     const config = configFor();
-    const store = new UserSettingsStore(config, { stateFile });
+    const first = persistentSettings(config, databaseFile);
     const selection = { model: "gpt-saved", reasoningEffort: "ultra" };
     const policy = {
       mode: "automatic" as const,
       allowedSelections: { kind: "explicit" as const, selections: [selection] },
       constraints: { allowDelegation: false }
     };
-    store.update({ modelPolicy: policy }, 0);
-    const restarted = new UserSettingsStore(config, { stateFile });
-    expect(restarted.current.modelPolicy).toEqual(policy);
-    expect(restarted.loadWarnings).toEqual([]);
-    restarted.update({ modelPolicy: { ...policy, constraints: { allowDelegation: true } } }, 1);
-    expect(restarted.current.modelPolicy).toHaveProperty("allowedSelections.selections", [selection]);
+    first.settings.update({ modelPolicy: policy }, 0);
+    first.stateStore.close();
+    const restarted = persistentSettings(config, databaseFile);
+    expect(restarted.settings.current.modelPolicy).toEqual(policy);
+    expect(restarted.settings.loadWarnings).toEqual([]);
+    restarted.settings.update(
+      { modelPolicy: { ...policy, constraints: { allowDelegation: true } } },
+      1
+    );
+    expect(restarted.settings.current.modelPolicy).toHaveProperty(
+      "allowedSelections.selections",
+      [selection]
+    );
+    restarted.stateStore.close();
   });
 
   it("notifies after committed changes but not rejected or unchanged writes", () => {
@@ -91,6 +121,8 @@ describe("user settings and project registry", () => {
     });
     expect(store.current).not.toHaveProperty("defaultProjectId");
     expect(store.current).not.toHaveProperty("defaultCwd");
+    expect(() => store.update({ projects: [] } as never, 0))
+      .toThrow("SETTINGS_FIELD_RETIRED");
     expect(() => store.resolveProject()).toThrow("PROJECT_SETUP_REQUIRED");
   });
 
@@ -266,7 +298,7 @@ describe("user settings and project registry", () => {
       activityId,
       scopeId: SCOPE,
       projectId: project.id,
-      projectLabel: project.name,
+      projectName: project.name,
       projectCwd: root,
       now: 1
     });
@@ -296,7 +328,7 @@ describe("user settings and project registry", () => {
     expect(store.projectRegistry.selectableProjects).toEqual([]);
     expect(state.getActivityProjectAdmission(activityId)).toEqual({
       projectId: project.id,
-      projectLabel: project.name,
+      projectName: project.name,
       projectCwd: root
     });
     expect(() => store.resolveProject({
@@ -469,7 +501,7 @@ describe("user settings and project registry", () => {
     state.createActivity({
       scopeId: SCOPE,
       projectId: pinned.id,
-      projectLabel: pinned.name,
+      projectName: pinned.name,
       projectCwd: first,
       now: 1
     });
@@ -512,7 +544,7 @@ describe("user settings and project registry", () => {
       agentId: agent.agentId,
       threadId: "restorable-thread",
       projectId: pinned.id,
-      projectLabel: pinned.name,
+      projectName: pinned.name,
       backendKind: "mcp-server",
       cwd: first,
       sandbox: "read-only",
@@ -536,91 +568,66 @@ describe("user settings and project registry", () => {
     state.close();
   });
 
-  it("persists the split v4 state and upgrades v3 project selectors exactly once", () => {
+  it("persists ordinary settings separately from the project registry in SQLite", () => {
     const root = temporaryDirectory("settings-persist-root-");
-    const stateFile = path.join(temporaryDirectory("settings-state-"), "settings.json");
+    const databaseFile = path.join(temporaryDirectory("settings-state-"), "state.sqlite");
     const config = configFor();
-    const store = new UserSettingsStore(config, { stateFile, now: () => 3_000 });
-    store.updateWithProjectOperations(
+    const first = persistentSettings(config, databaseFile, () => 3_000);
+    first.settings.updateWithProjectOperations(
       { uiLocalePreference: "ko" },
       [{ kind: "add", project: { name: "Persisted", cwd: root } }],
       0,
       0
     );
 
-    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(persisted).toMatchObject({
-      version: 4,
-      settings: { settingsRevision: 1, uiLocalePreference: "ko" },
-      projectRegistry: { registryRevision: 1 }
+    const persistedSettings = first.stateStore.getSettingsRecord();
+    const persistedProjects = first.stateStore.getProjectRegistrySnapshot();
+    expect(persistedSettings).toMatchObject({
+      settingsRevision: 1,
+      payload: { settingsRevision: 1, uiLocalePreference: "ko" }
     });
-    expect(persisted.settings).not.toHaveProperty("projects");
-    expect(persisted.projectRegistry.projects[0]).toMatchObject({
+    expect(persistedSettings!.payload).not.toHaveProperty("projects");
+    expect(persistedProjects).toMatchObject({ registryRevision: 1 });
+    expect(persistedProjects.projects[0]).toMatchObject({
       id: expect.stringMatching(UUID_PATTERN),
       projectRef: expect.stringMatching(/^prj_[A-Za-z0-9_-]{22}$/),
       projectRevision: 1,
       name: "Persisted",
       cwd: root
     });
-    expect(statSync(stateFile).mode & 0o777).toBe(0o600);
+    expect(statSync(databaseFile).mode & 0o777).toBe(0o600);
+    first.stateStore.close();
 
-    const restored = new UserSettingsStore(config, { stateFile });
-    expect(restored.current).toMatchObject({ settingsRevision: 1, registryRevision: 1 });
-    expect(restored.current.projects[0]).toMatchObject({ name: "Persisted", cwd: root });
-
-    const v3File = path.join(temporaryDirectory("settings-v3-selector-"), "settings.json");
-    const v3 = structuredClone(persisted);
-    v3.version = 3;
-    delete v3.projectRegistry.projects[0].projectRef;
-    delete v3.projectRegistry.projects[0].projectRevision;
-    writeFileSync(v3File, JSON.stringify(v3));
-    const migrated = new UserSettingsStore(config, { stateFile: v3File });
-    const migratedProject = migrated.current.projects[0]!;
-    expect(migratedProject).toMatchObject({
-      id: persisted.projectRegistry.projects[0].id,
-      projectRevision: 1
+    const restored = persistentSettings(config, databaseFile);
+    expect(restored.settings.current).toMatchObject({
+      settingsRevision: 1,
+      registryRevision: 1
     });
-    expect(migratedProject.projectRef).toMatch(/^prj_[A-Za-z0-9_-]{22}$/);
-    const rewrittenV3 = JSON.parse(readFileSync(v3File, "utf8"));
-    expect(rewrittenV3).toMatchObject({
-      version: 4,
-      projectRegistry: {
-        projects: [expect.objectContaining({
-          projectRef: migratedProject.projectRef,
-          projectRevision: 1
-        })]
-      }
+    expect(restored.settings.current.projects[0]).toMatchObject({
+      name: "Persisted",
+      cwd: root
     });
-
-    const legacyFile = path.join(temporaryDirectory("settings-legacy-"), "settings.json");
-    const legacy = structuredClone(persisted);
-    legacy.version = 2;
-    legacy.settings.projects = [{ id: "default", label: "Legacy", cwd: root }];
-    delete legacy.projectRegistry;
-    writeFileSync(legacyFile, JSON.stringify(legacy));
-    const imported = new UserSettingsStore(config, { stateFile: legacyFile });
-    expect(imported.current.projects).toEqual([]);
-    expect(imported.loadWarnings.join(" ")).toContain("intentionally not migrated");
+    restored.stateStore.close();
   });
 
   it("migrates the v2 preferred selection by removing the retired fallback", () => {
-    const stateFile = path.join(temporaryDirectory("settings-model-policy-v2-"), "settings.json");
+    const databaseFile = path.join(temporaryDirectory("settings-model-policy-v2-"), "state.sqlite");
     const config = configFor();
-    const original = new UserSettingsStore(config, { stateFile, now: () => 4_000 });
-    original.update({ uiLocalePreference: "ko" }, 0);
-
-    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    persisted.settings.schemaVersion = 2;
-    persisted.settings.modelPolicy = {
+    const original = persistentSettings(config, databaseFile, () => 4_000);
+    original.settings.update({ uiLocalePreference: "ko" }, 0);
+    const persisted = original.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    persisted.schemaVersion = 2;
+    persisted.modelPolicy = {
       mode: "automatic",
       preferredSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       allowedSelections: { kind: "catalog-visible" },
       constraints: { allowDelegation: true }
     };
-    writeFileSync(stateFile, JSON.stringify(persisted));
+    original.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, persisted);
 
-    const restored = new UserSettingsStore(config, { stateFile, now: () => 5_000 });
-    expect(restored.current).toMatchObject({
+    const restored = persistentSettings(config, databaseFile, () => 5_000);
+    expect(restored.settings.current).toMatchObject({
       schemaVersion: 4,
       settingsRevision: 2,
       modelPolicy: {
@@ -629,37 +636,40 @@ describe("user settings and project registry", () => {
         constraints: { allowDelegation: true }
       }
     });
-    expect(restored.current.modelPolicy).not.toHaveProperty("preferredSelection");
-    expect(restored.current.modelPolicy).not.toHaveProperty("fallbackSelection");
-    expect(restored.loadWarnings.join(" ")).toContain("retired automatic model default was removed");
-    const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(rewritten.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
-    expect(rewritten.settings.modelPolicy).not.toHaveProperty("preferredSelection");
+    expect(restored.settings.current.modelPolicy).not.toHaveProperty("preferredSelection");
+    expect(restored.settings.current.modelPolicy).not.toHaveProperty("fallbackSelection");
+    expect(restored.settings.loadWarnings.join(" ")).toContain(
+      "retired automatic model default was removed"
+    );
+    const rewritten = restored.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    expect(rewritten.modelPolicy).not.toHaveProperty("fallbackSelection");
+    expect(rewritten.modelPolicy).not.toHaveProperty("preferredSelection");
+    restored.stateStore.close();
   });
 
   it("removes a migrated model-only preference while preserving automatic policy", () => {
-    const stateFile = path.join(temporaryDirectory("settings-model-only-"), "settings.json");
+    const databaseFile = path.join(temporaryDirectory("settings-model-only-"), "state.sqlite");
     const config = configFor();
-    const original = new UserSettingsStore(config, { stateFile, now: () => 6_000 });
-    original.update({ uiLocalePreference: "ko" }, 0);
-
-    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    persisted.settings.legacyPreferredModel = "gpt-5.6-sol";
-    persisted.settings.modelPolicy = {
+    const original = persistentSettings(config, databaseFile, () => 6_000);
+    original.settings.update({ uiLocalePreference: "ko" }, 0);
+    const persisted = original.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    persisted.legacyPreferredModel = "gpt-5.6-sol";
+    persisted.modelPolicy = {
       mode: "automatic",
       allowedSelections: { kind: "catalog-visible" },
       constraints: { allowDelegation: true }
     };
-    writeFileSync(stateFile, JSON.stringify(persisted));
+    original.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, persisted);
 
-    const restored = new UserSettingsStore(config, { stateFile, now: () => 7_000 });
-    const updated = restored.update({
+    const restored = persistentSettings(config, databaseFile, () => 7_000);
+    const updated = restored.settings.update({
       modelPolicy: {
         mode: "automatic",
         allowedSelections: { kind: "catalog-visible" },
         constraints: { allowDelegation: true }
       }
-    }, restored.current.settingsRevision);
+    }, restored.settings.current.settingsRevision);
 
     expect(updated.modelPolicy).toMatchObject({
       mode: "automatic",
@@ -667,56 +677,58 @@ describe("user settings and project registry", () => {
     });
     expect(updated.modelPolicy).not.toHaveProperty("fallbackSelection");
     expect(updated).not.toHaveProperty("legacyPreferredModel");
+    restored.stateStore.close();
   });
 
   it("ignores retired environment model seeds for an automatic policy", () => {
-    const stateFile = path.join(temporaryDirectory("settings-fallback-seed-"), "settings.json");
-    const original = new UserSettingsStore(configFor(), { stateFile, now: () => 8_000 });
-    original.update({ uiLocalePreference: "ko" }, 0);
+    const databaseFile = path.join(temporaryDirectory("settings-fallback-seed-"), "state.sqlite");
+    const original = persistentSettings(configFor(), databaseFile, () => 8_000);
+    original.settings.update({ uiLocalePreference: "ko" }, 0);
+    original.stateStore.close();
 
-    const restored = new UserSettingsStore(configFor({
+    const restored = persistentSettings(configFor({
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
-    }), { stateFile, now: () => 9_000 });
+    }), databaseFile, () => 9_000);
 
-    expect(restored.current).toMatchObject({
+    expect(restored.settings.current).toMatchObject({
       settingsRevision: 1,
       modelPolicy: {
         mode: "automatic",
         allowedSelections: { kind: "catalog-visible" }
       }
     });
-    expect(restored.current.modelPolicy).not.toHaveProperty("fallbackSelection");
-    const rewritten = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(rewritten.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
+    expect(restored.settings.current.modelPolicy).not.toHaveProperty("fallbackSelection");
+    const rewritten = restored.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    expect(rewritten.modelPolicy).not.toHaveProperty("fallbackSelection");
+    restored.stateStore.close();
   });
 
   it("safely clamps but does not erase a saved full-access preference", () => {
-    const stateFile = path.join(temporaryDirectory("settings-narrow-"), "settings.json");
+    const databaseFile = path.join(temporaryDirectory("settings-narrow-"), "state.sqlite");
     const broad = configFor({
       CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
       CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "4",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "4"
     });
-    const original = new UserSettingsStore(broad, { stateFile });
-    original.update({ accessStrategy: "always-full", maxConcurrentJobs: 4 }, 0);
+    const original = persistentSettings(broad, databaseFile);
+    original.settings.update({ accessStrategy: "always-full", maxConcurrentJobs: 4 }, 0);
+    original.stateStore.close();
 
-    const narrowed = new UserSettingsStore(configFor({
+    const narrowed = persistentSettings(configFor({
       CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
-    }), {
-      stateFile,
-      now: () => Date.parse("2026-08-26T00:00:00Z")
-    });
-    expect(narrowed.current).toMatchObject({
+    }), databaseFile, () => Date.parse("2026-08-26T00:00:00Z"));
+    expect(narrowed.settings.current).toMatchObject({
       settingsRevision: 2,
       accessStrategy: "always-full",
       maxConcurrentJobs: 2,
       updatedAt: "2026-08-26T00:00:00.000Z"
     });
-    expect(narrowed.resolveSandbox()).toBe("read-only");
-    expect(narrowed.loadWarnings.join(" ")).toContain("retained but inactive");
-    expect(narrowed.loadWarnings.join(" ")).toContain("concurrent-job limit");
+    expect(narrowed.settings.resolveSandbox()).toBe("read-only");
+    expect(narrowed.settings.loadWarnings.join(" ")).toContain("retained but inactive");
+    expect(narrowed.settings.loadWarnings.join(" ")).toContain("concurrent-job limit");
+    narrowed.stateStore.close();
   });
 });
 
@@ -732,4 +744,16 @@ function configFor(extra: NodeJS.ProcessEnv = {}) {
 
 function temporaryDirectory(prefix: string): string {
   return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
+}
+
+function persistentSettings(
+  config: ReturnType<typeof configFor>,
+  databaseFile: string,
+  now?: () => number
+): { stateStore: BridgeStateStore; settings: UserSettingsStore } {
+  const stateStore = new BridgeStateStore({ file: databaseFile });
+  return {
+    stateStore,
+    settings: new UserSettingsStore(config, { stateStore, ...(now ? { now } : {}) })
+  };
 }

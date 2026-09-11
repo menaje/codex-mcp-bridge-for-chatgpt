@@ -36,10 +36,18 @@ Codex 0.153.3 exposes no verified option for creating a durable conversation whi
 
 ## Database retention and recovery
 
-Schema 14 takes a consistent private SQLite backup before migrating an existing database. Event cleanup then commits resumable batches of at most 500 source events. It does not read or delete Codex rollout files. Ordinary live maintenance does not run `VACUUM`.
+Schema 19 is created directly for new installations and takes one consistent
+private SQLite backup before upgrading a supported schema 3–18 database. It
+separates the retained thread execution context in `sessions` from live connection
+evidence in `thread_connections`; project names always come from `projects`.
+Event cleanup commits resumable batches of at most 500 source events. It does not
+read or delete Codex rollout files. Ordinary live maintenance does not run
+`VACUUM`. The full table, migration, backup, and offline compaction contract is in
+[database schema and lifecycle](database-schema.md).
 
-Schema 18 first backs up a schema-17 database, then restores every legacy
-archived Agent in one transaction. IDs, names, timestamps, projects, Activity
+The schema-17-to-18 checkpoint restores every legacy archived Agent in one
+transaction under the single pre-schema-19 recovery backup described above. IDs,
+names, timestamps, projects, Activity
 assignments, thread links, next-run settings, Jobs, results, history and review
 state remain unchanged. An archived Agent with a retained active Job becomes
 active or waiting for input from that Job's current state; an archived orphan

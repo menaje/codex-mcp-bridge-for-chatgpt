@@ -62,6 +62,7 @@ import {
 import { UserSettingsStore } from "../src/userSettings.js";
 import { CodexService } from "../src/codexService.js";
 import { projectCodexAccount } from "../src/codexAccount.js";
+import { replaceStoredSettingsPayloadForTest } from "./helpers/sqliteSettings.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
@@ -2373,15 +2374,15 @@ describe("bridge tools", () => {
         const project = scopeId === SCOPE_A ? settings.current.projects[0]! : secondProject;
         for (let index = 0; index < 7; index++) {
           // Seed completed jobs so this read-model test measures scope and pagination.
-          const activity = jobs.createActivity({ scopeId, projectId: project.id, projectLabel: project.name,
+          const activity = jobs.createActivity({ scopeId, projectId: project.id, projectName: project.name,
             projectCwd: project.cwd, title: `${scopeId === SCOPE_A ? "Here" : "Elsewhere"} ${index}` });
           const agent = jobs.createAgent({ scopeId, agentName: `Page Agent ${index}` });
           const threadId = `page-${scopeId}-${index}`;
           jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
-          jobs.linkAgentThread({ agentId: agent.agentId, threadId, projectId: project.id, projectLabel: project.name,
+          jobs.linkAgentThread({ agentId: agent.agentId, threadId, projectId: project.id, projectName: project.name,
             backendKind: "mcp", cwd: project.cwd, sandbox: "read-only", contextMode: "fresh" });
           const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
-            scopeId, projectId: project.id, projectLabel: project.name, operation: "start", cwd: project.cwd,
+            scopeId, projectId: project.id, projectName: project.name, operation: "start", cwd: project.cwd,
             sandbox: "read-only", requestId: nextRequestId(), requestHash: `page-${scopeId}-${index}`,
             requestHashVersion: 7, exclusiveKeys: [], executionMode: "foreground", backendKind: "mcp",
             sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
@@ -3842,6 +3843,10 @@ describe("bridge tools", () => {
         projectName: retainedProject.name
       })
     ]);
+    expect(jobs.get(task.jobId)).toMatchObject({
+      projectId: retainedProject.id,
+      projectName: retainedProject.name
+    });
 
     await close();
   });
@@ -5442,19 +5447,20 @@ describe("bridge tools", () => {
   it("exposes recovery availability without leaking validation reasons into capabilities", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
-    const stateFile = path.join(temporaryRoot(), "settings.json");
+    const databaseFile = path.join(temporaryRoot(), "state.sqlite");
     const broadConfig = configFor(first, {
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const original = new UserSettingsStore(broadConfig, { stateFile });
-    original.update({
-      projects: [
-        { id: "active", label: "Active", cwd: first },
-        { id: "recovery", label: "Recovery", cwd: second }
-      ]
-    }, 0);
+    const originalState = new BridgeStateStore({ file: databaseFile });
+    const original = new UserSettingsStore(broadConfig, { stateStore: originalState });
+    addTestProjects(original, [
+      { name: "Active", cwd: first },
+      { name: "Recovery", cwd: second }
+    ]);
+    originalState.close();
     const narrowConfig = configFor(first);
-    const recovered = new UserSettingsStore(narrowConfig, { stateFile });
+    const recoveredState = new BridgeStateStore({ file: databaseFile });
+    const recovered = new UserSettingsStore(narrowConfig, { stateStore: recoveredState });
     const { client, jobs, close } = await connectTestClient(
       narrowConfig,
       new FakeUpstream(),
@@ -5485,7 +5491,6 @@ describe("bridge tools", () => {
       projectRef: expect.stringMatching(/^prj_[A-Za-z0-9_-]{22}$/),
       projectRevision: 1,
       name: "Recovery",
-      label: "Recovery",
       nameKey: "recovery",
       cwd: realpathSync(second),
       sortOrder: 1,
@@ -5493,6 +5498,7 @@ describe("bridge tools", () => {
       updatedAt: expect.any(Number)
     });
     await close();
+    recoveredState.close();
   });
 
   it("keeps the path-free task descriptor stable when a project disappears and recovers", async () => {
@@ -5502,9 +5508,7 @@ describe("bridge tools", () => {
     mkdirSync(project);
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
-    settings.update({
-      projects: [{ id: "alpha", label: "Alpha Workspace", cwd: project }]
-    }, settings.current.revision);
+    addTestProjects(settings, [{ name: "Alpha Workspace", cwd: project }]);
     const upstream = new FakeUpstream();
     const { client, rawCallTool, close } = await connectTestClient(
       config,
@@ -6044,19 +6048,22 @@ describe("bridge tools", () => {
 
   it("removes a legacy model-only preference without exposing its value", async () => {
     const root = temporaryRoot();
-    const stateFile = path.join(temporaryRoot(), "settings.json");
+    const databaseFile = path.join(temporaryRoot(), "state.sqlite");
     const config = configFor(root);
-    const initial = new UserSettingsStore(config, { stateFile });
+    const initialState = new BridgeStateStore({ file: databaseFile });
+    const initial = new UserSettingsStore(config, { stateStore: initialState });
     initial.update({ uiLocalePreference: "ko" }, 0);
-    const persisted = JSON.parse(readFileSync(stateFile, "utf8"));
-    persisted.settings.legacyPreferredModel = "gpt-private-legacy-default";
-    persisted.settings.modelPolicy = {
+    const persisted = initialState.getSettingsRecord()!.payload as Record<string, unknown>;
+    persisted.legacyPreferredModel = "gpt-private-legacy-default";
+    persisted.modelPolicy = {
       mode: "automatic",
       allowedSelections: { kind: "catalog-visible" },
       constraints: { allowDelegation: true }
     };
-    writeFileSync(stateFile, JSON.stringify(persisted));
-    const settings = new UserSettingsStore(config, { stateFile });
+    initialState.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, persisted);
+    const restoredState = new BridgeStateStore({ file: databaseFile });
+    const settings = new UserSettingsStore(config, { stateStore: restoredState });
     const { client, close } = await connectTestClient(
       config,
       new FakeUpstream(),
@@ -6085,6 +6092,7 @@ describe("bridge tools", () => {
       "기존 Agent 스레드는 처음 사용한 백엔드에 계속 고정"
     );
     await close();
+    restoredState.close();
   });
 
   it("keeps the full-catalog task descriptor generic and bounded", async () => {
@@ -6121,7 +6129,12 @@ describe("bridge tools", () => {
         cwd
       };
     });
-    settings.update({ projects }, settings.current.revision);
+    settings.updateWithProjectOperations(
+      {},
+      projects.map((project) => ({ kind: "add" as const, project })),
+      undefined,
+      settings.current.registryRevision
+    );
     const { client, close } = await connectTestClient(
       config,
       new FakeUpstream(),
@@ -7905,7 +7918,7 @@ describe("bridge tools", () => {
       lifecycle: "open",
       continuationOfActivityId: sourceActivityId,
       projectId: project.id,
-      projectLabel: "Test Project",
+      projectName: "Test Project",
       cardGeneration: 1
     });
     expect(upstream.calls[1]).toMatchObject({
@@ -7955,21 +7968,21 @@ describe("bridge tools", () => {
       isCurrent: false,
       contextMode: "fresh",
       projectId: project.id,
-      projectLabel: "Test Project"
+      projectName: "Test Project"
     });
     expect(history.find((thread) => thread.threadId === "thread-forked")).toMatchObject({
       isCurrent: false,
       contextMode: "fork",
       sessionId: "session-tree-1",
       projectId: project.id,
-      projectLabel: "Test Project",
+      projectName: "Test Project",
       forkedFromThreadId: "thread-1"
     });
     expect(history.find((thread) => thread.threadId === "thread-2")).toMatchObject({
       isCurrent: true,
       contextMode: "fresh",
       projectId: project.id,
-      projectLabel: "Test Project"
+      projectName: "Test Project"
     });
     expect(jobs.getAgent(agentId)).toMatchObject({
       agentId,
@@ -8000,7 +8013,7 @@ describe("bridge tools", () => {
       agentId: agent.agentId,
       threadId: "mcp-thread",
       projectId: project.id,
-      projectLabel: project.name,
+      projectName: project.name,
       backendKind: retiredKind,
       cwd: root,
       sandbox: "read-only",
@@ -8012,7 +8025,7 @@ describe("bridge tools", () => {
       backendKind: retiredKind,
       cwd: root,
       projectId: project.id,
-      projectLabel: project.name,
+      projectName: project.name,
       sandbox: "read-only",
       selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
       policyRevision: 0,
@@ -12240,12 +12253,10 @@ describe("bridge tools", () => {
       false
     );
 
-    settings.update({
-      projects: [
-        { id: "first", label: "First", cwd: first },
-        { id: "second", label: "Second", cwd: second }
-      ]
-    }, settings.current.revision);
+    addTestProjects(settings, [
+      { name: "First", cwd: first },
+      { name: "Second", cwd: second }
+    ]);
     const firstResult = await runTask(client, {
       prompt: "first",
       projectId: "first",
@@ -12614,12 +12625,10 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
     const settings = new UserSettingsStore(config);
-    settings.update({
-      projects: [
-        { id: "alpha", label: "알파 저장소", cwd: first },
-        { id: "beta", label: "Beta Workspace", cwd: second }
-      ]
-    }, settings.current.revision);
+    addTestProjects(settings, [
+      { name: "알파 저장소", cwd: first },
+      { name: "Beta Workspace", cwd: second }
+    ]);
     const { client, rawCallTool, jobs, close } = await connectTestClient(
       config,
       upstream,
@@ -12682,11 +12691,11 @@ describe("bridge tools", () => {
     expect(alphaStructured.projectName).toBe("알파 저장소");
     expect(jobs.getActivity(alphaActivityId)).toMatchObject({
       projectId: alphaProject.id,
-      projectLabel: "알파 저장소"
+      projectName: "알파 저장소"
     });
     expect(sessions.get("thread-1")).toMatchObject({
       projectId: alphaProject.id,
-      projectLabel: "알파 저장소",
+      projectName: "알파 저장소",
       cwd: firstCwd
     });
 
@@ -12741,9 +12750,12 @@ describe("bridge tools", () => {
     expect(JSON.stringify(activityCard)).not.toContain(firstCwd);
     expect(JSON.stringify(activityCard)).not.toContain(secondCwd);
 
-    settings.update({
-      projects: [{ id: "beta", label: "Beta Workspace", cwd: second }]
-    }, settings.current.revision);
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "archive", projectId: alphaProject.id }],
+      undefined,
+      settings.current.registryRevision
+    );
     const continued = await runTask(client, {
       prompt: "continue the admitted alpha thread",
       activityId: alphaActivityId,
@@ -12844,12 +12856,10 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
     const settings = new UserSettingsStore(config);
-    settings.update({
-      projects: [
-        { id: "alpha", label: "Alpha", cwd: first },
-        { id: "beta", label: "Beta", cwd: second }
-      ]
-    }, settings.current.revision);
+    addTestProjects(settings, [
+      { name: "Alpha", cwd: first },
+      { name: "Beta", cwd: second }
+    ]);
     const { client, rawCallTool, jobs, close } = await connectTestClient(
       config,
       upstream,
@@ -12882,7 +12892,7 @@ describe("bridge tools", () => {
       threadId: parseToolJson(firstResult).threadId,
       activityId: parseToolJson(firstResult).activityId,
       jobId: parseToolJson(firstResult).jobId,
-      projectName: "Alpha",
+      projectName: "Alpha Renamed",
       replay: true
     });
     expect(JSON.stringify(replay)).not.toContain(alphaProject.id);
@@ -12891,7 +12901,7 @@ describe("bridge tools", () => {
     expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
     expect(jobs.listForScope(SCOPE_A)[0]).toMatchObject({
       projectId: alphaProject.id,
-      projectLabel: "Alpha",
+      projectName: "Alpha Renamed",
       requestHashVersion: 6
     });
 
@@ -13020,7 +13030,7 @@ describe("bridge tools", () => {
       activityId: admittedTask.activityId,
       agentId: admittedTask.agentId,
       threadId: admittedTask.threadId,
-      projectName: "Legacy Project",
+      projectName: "Migrated Project",
       replay: true
     });
     expect(migratedJobs.listForScope(SCOPE_A)).toHaveLength(1);
@@ -13053,12 +13063,10 @@ describe("bridge tools", () => {
       false
     );
 
-    settings.update({
-      projects: [
-        { id: "first", label: "First", cwd: first },
-        { id: "second", label: "Second", cwd: second }
-      ]
-    }, settings.current.revision);
+    addTestProjects(settings, [
+      { name: "First", cwd: first },
+      { name: "Second", cwd: second }
+    ]);
     const started = await runTask(client, {
       prompt: "start in the first folder",
       projectId: "first",
@@ -13099,7 +13107,7 @@ describe("bridge tools", () => {
     ]);
     expect(jobs.getActivityProjectAdmission(linkedActivityId)).toMatchObject({
       projectId: firstProject.id,
-      projectLabel: "First",
+      projectName: "First",
       projectCwd: realpathSync(first)
     });
     expect(settings.current.projects.find((project) => project.id === firstProject.id))
@@ -14706,7 +14714,10 @@ describe("bridge tools", () => {
         ]
       }
     });
-    expect(connection.sessions.get(seededTask.threadId)).toEqual(beforeSession);
+    expect(connection.sessions.get(seededTask.threadId)).toEqual({
+      ...beforeSession,
+      projectName: "Renamed During Probe"
+    });
     expect(connection.jobs.getAgent(seededTask.agentId)).toMatchObject({ lifecycle: "idle" });
     expect(connection.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
     expect(connection.jobs.listForScope(SCOPE_A)).toHaveLength(1);
@@ -14871,7 +14882,7 @@ describe("bridge tools", () => {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "add", project: { id: "outside", label: "Outside", cwd: outside } }
+              { kind: "add", project: { name: "Outside", cwd: outside } }
             ]
           }
         }
@@ -14887,7 +14898,7 @@ describe("bridge tools", () => {
           kind: "patch",
           settings: {
             projectOperations: [
-              { kind: "add", project: { id: "primary", label: "Primary", cwd: first } }
+              { kind: "add", project: { name: "Primary", cwd: first } }
             ]
           }
         }
@@ -15698,6 +15709,18 @@ function selectTestProject(
     project.id === legacyProjectId ||
     (requestedKey !== undefined && project.nameKey === requestedKey) ||
     slug(project.name) === slug(legacyProjectId)
+  );
+}
+
+function addTestProjects(
+  settings: UserSettingsStore,
+  projects: Array<{ name: string; cwd: string }>
+): void {
+  settings.updateWithProjectOperations(
+    {},
+    projects.map((project) => ({ kind: "add", project })),
+    undefined,
+    settings.current.registryRevision
   );
 }
 

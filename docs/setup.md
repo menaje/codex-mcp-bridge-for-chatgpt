@@ -341,6 +341,10 @@ Default server files are per-user:
 ~/.codex-mcp-bridge/state.sqlite      Settings, projects, Agents, Activities, and jobs
 ```
 
+This SQLite database is the sole bridge state authority; there are no parallel
+Settings, session, or Job JSON state files. See [database schema and lifecycle](database-schema.md)
+for upgrades, retention, backup sizing, and safe offline compaction.
+
 The macOS app also uses private helper/runtime files and, when remote management is enabled, a server identity and device registry. See [Native macOS app](macos-app.md#local-files-and-interfaces) and [Remote client mode](remote-client.md#server-files-and-lifecycle) for exact paths and permissions.
 
 ## Troubleshooting

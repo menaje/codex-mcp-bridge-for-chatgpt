@@ -69,7 +69,6 @@ export function createStdioBridgeRuntime(
   });
   const ownsStateStore = options.stateStore === undefined;
   const sessions = new SessionRegistry({
-    stateFile: config.sessionStateFile,
     stateStore,
     allowedRoots: config.allowedRoots
   });
@@ -79,12 +78,10 @@ export function createStdioBridgeRuntime(
     maxJobs: config.maxRetainedJobs,
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
-    stateFile: config.jobStateFile,
     stateStore,
     allowedRoots: config.allowedRoots
   });
   const userSettings = new UserSettingsStore(config, {
-    stateFile: config.settingsStateFile,
     stateStore
   });
   const scopeResolver = new ScopeResolver({ stateStore });

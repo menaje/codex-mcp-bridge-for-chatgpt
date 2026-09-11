@@ -14,7 +14,8 @@ export type UserQuestionRecord = {
   notificationAttempt?: string; notificationStartedAt?: number; consumedAt?: number;
 };
 
-export const QUESTION_STORE_SCHEMA = `
+/** Upgrade-only schema introduced at v13. Current databases use stateSchema.ts. */
+export const V13_QUESTION_STORE_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS user_questions (
     question_id TEXT PRIMARY KEY, scope_id TEXT NOT NULL, request_id TEXT NOT NULL,
     response_ref TEXT UNIQUE, expires_at INTEGER NOT NULL, payload TEXT NOT NULL,

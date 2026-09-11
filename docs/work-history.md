@@ -65,11 +65,11 @@ older resolved evidence remains in Automatic processing. A fresh failed inspecti
 is actionable immediately, even while older display details remain cached. A confirmed manual or
 display inspection can also close an unresolved inspection incident.
 
-Schema 17 adds persistent incident identities to the schema 16 automatic action
-journal and creates a private consistent pre-migration backup. Existing attempt
-budgets, failed outcomes and cancellation provenance remain unchanged. Automatic
-records follow history retention; unresolved budgets survive while their original
-work is retained.
+The schema-16-to-17 checkpoint adds persistent incident identities to the
+automatic-action journal. Current upgrades run it under the single private
+pre-schema-19 recovery backup. Existing attempt budgets, failed outcomes and
+cancellation provenance remain unchanged. Automatic records follow history
+retention; unresolved budgets survive while their original work is retained.
 
 ## Optional failure review and manual recovery
 
@@ -144,8 +144,9 @@ and the last non-empty cleanup time and count. Changing the policy affects the
 next maintenance pass; increasing it cannot restore already removed history.
 
 After the existing full-result retention has archived a terminal Job, history
-maintenance removes its expired display summary, timing/model/error/usage details,
-and disposable events. It preserves a compact terminal receipt and the original
+maintenance removes its expired execution/usage/review display summary and
+disposable events. It preserves formal terminal state and timing, a compact
+terminal receipt, and the original
 request reservation to prevent replay. Agent identity, thread linkage, project pins,
 cancellation/delivery journals, original Codex conversations, and project files
 remain intact. Active work, blocking responses, undelivered results, unresolved
@@ -156,8 +157,14 @@ log retention limits documented in [thread-lifecycle.md](thread-lifecycle.md).
 Each transaction scans at most 500 terminal rows. A persisted cursor progresses
 past protected batches. Late snapshots cannot resurrect expired display data.
 Native and card pagination discard cached history pages when cleanup changes the
-removal count. Schema 15 creates a consistent private pre-migration backup before
-enabling these rules.
+removal count. The schema-14-to-15 checkpoint enables these rules under the
+current upgrade's single private recovery backup.
+
+Schema 19 stores the per-Job acknowledgement/expiry sequence in
+`work_history_state` and the global revision, cursor, and cleanup totals in
+`work_history_control`. It removes their dynamic metadata keys and stores the one
+display summary in `jobs.summary`. See [database schema and lifecycle](database-schema.md)
+for the complete ownership and retention matrix.
 
 ## Process inspection
 

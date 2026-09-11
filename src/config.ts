@@ -44,9 +44,6 @@ export type BridgeConfig = {
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
   stateDatabaseFile: string;
-  settingsStateFile: string;
-  sessionStateFile: string;
-  jobStateFile: string;
   upstreamPoolSize: number;
   secretScan: boolean;
   enableRecoveryTools: boolean;
@@ -97,18 +94,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const stateDatabaseFile = parseAbsoluteFilePath(
     read("STATE_DATABASE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "state.sqlite"),
     "state database file"
-  );
-  const settingsStateFile = parseAbsoluteFilePath(
-    read("SETTINGS_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "settings.json"),
-    "settings state file"
-  );
-  const sessionStateFile = parseAbsoluteFilePath(
-    read("SESSION_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "sessions.json"),
-    "session state file"
-  );
-  const jobStateFile = parseAbsoluteFilePath(
-    read("JOB_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "jobs.json"),
-    "job state file"
   );
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const enableRecoveryTools = parseBool(read("ENABLE_RECOVERY_TOOLS"));
@@ -216,9 +201,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
     stateDatabaseFile,
-    settingsStateFile,
-    sessionStateFile,
-    jobStateFile,
     upstreamPoolSize,
     secretScan,
     enableRecoveryTools,

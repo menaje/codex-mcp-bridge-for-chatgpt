@@ -258,7 +258,7 @@ package names:
 - the installed executable;
 - the `CODEX_MCP_BRIDGE_*` environment prefix;
 - the private `~/.config/codex-mcp-bridge/.env` runtime configuration path;
-- `~/.codex-mcp-bridge` and its SQLite/legacy state files;
+- `~/.codex-mcp-bridge`, its SQLite state, sidecars, and migration backups;
 - the legacy default tunnel profile (the app-owned
   `codex-mcp-bridge-macos` profile is a separate migration namespace and must
   not overwrite it);

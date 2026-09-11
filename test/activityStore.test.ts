@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
@@ -14,114 +13,6 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("Activity SQLite state", () => {
-  it("migrates schema v1 jobs into one-job legacy Activities atomically", () => {
-    const file = stateFile();
-    createV1Database(file, {
-      payload: JSON.stringify({
-        jobId: "legacy-job",
-        scopeId: SCOPE_A,
-        requestId: "legacy-request",
-        status: "completed",
-        updatedAt: 20,
-        createdAt: 10,
-        sessionDecision: { threadId: "legacy-thread" }
-      })
-    });
-
-    const store = new BridgeStateStore({ file });
-    const [activity] = store.listActivities(SCOPE_A);
-    const [job] = store.listJobs() as Array<Record<string, unknown>>;
-
-    expect(store.schemaVersion).toBe(18);
-    expect(activity).toMatchObject({
-      scopeId: SCOPE_A,
-      title: "Legacy Codex job legacy-j",
-      kind: "other",
-      handoffPolicy: "none",
-      completionTrigger: "manual",
-      lifecycle: "open",
-      waitingOn: "orchestrator",
-      legacy: true,
-      counts: { total: 1, completed: 1, terminal: 1 }
-    });
-    expect(job).toMatchObject({
-      activityId: activity.activityId,
-      agentId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-      contextMode: "continue",
-      threadId: "legacy-thread",
-      executionMode: "background",
-      backendKind: "mcp-server",
-      terminalVersion: 1
-    });
-    const [agent] = store.listAgents(SCOPE_A);
-    expect(agent).toMatchObject({
-      agentId: job.agentId,
-      scopeId: SCOPE_A,
-      agentName: "Legacy Codex Agent 1",
-      lifecycle: "idle",
-      currentThreadId: "legacy-thread"
-    });
-    expect(store.listAgentThreads(agent.agentId)).toEqual([
-      expect.objectContaining({
-        threadId: "legacy-thread",
-        agentId: agent.agentId,
-        contextMode: "continue",
-        isCurrent: true
-      })
-    ]);
-    expect(store.listActivityAgentAssignments(activity.activityId, agent.agentId)).toEqual([
-      expect.objectContaining({ role: "legacy", contextMode: "continue", releasedAt: expect.any(Number) })
-    ]);
-    expect(store.getScopeVersion(SCOPE_A)).toBe(1);
-    expect(store.listActivityEvents(activity.activityId)).toEqual([
-      expect.objectContaining({ eventType: "legacy-job-grouped", scopeVersion: 1 })
-    ]);
-    expect(store.listJobEvents("legacy-job")).toEqual([
-      expect.objectContaining({ eventType: "legacy-imported", scopeVersion: 1 })
-    ]);
-    expect(store.listCompletionOutbox()).toHaveLength(0);
-    store.close();
-  });
-
-  it("rolls back a failed v1 migration without changing its schema marker", () => {
-    const file = stateFile();
-    createV1Database(file, { payload: "not-json" });
-
-    expect(() => new BridgeStateStore({ file })).toThrow(/Invalid job payload/);
-
-    const database = new Database(file, { readonly: true });
-    const marker = database
-      .prepare("SELECT value FROM bridge_meta WHERE key = 'schema_version'")
-      .get() as { value: string };
-    const activityTable = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activities'")
-      .get();
-    expect(marker.value).toBe("1");
-    expect(activityTable).toBeUndefined();
-    database.close();
-  });
-
-  it("normalizes legacy schema-v3 auto execution rows to background", () => {
-    const file = stateFile();
-    const initial = new BridgeStateStore({ file });
-    initial.createActivity({ activityId: ACTIVITY_A, scopeId: SCOPE_A, executionMode: "background" });
-    initial.upsertJob(job("legacy-auto-job", "legacy-auto-request", ACTIVITY_A, "running", 10));
-    initial.close();
-
-    const database = new Database(file);
-    database.prepare("UPDATE activities SET execution_mode = 'auto' WHERE activity_id = ?").run(ACTIVITY_A);
-    database.prepare("UPDATE jobs SET execution_mode = 'auto' WHERE job_id = ?").run("legacy-auto-job");
-    database.close();
-
-    const migrated = new BridgeStateStore({ file });
-    expect(migrated.getActivity(ACTIVITY_A)).toMatchObject({ executionMode: "background" });
-    expect(migrated.listJobs()).toEqual([
-      expect.objectContaining({ jobId: "legacy-auto-job", executionMode: "background" })
-    ]);
-    expect(migrated.getMeta("legacy_auto_execution_mode_migrated_at")).toBeTruthy();
-    migrated.close();
-  });
-
   it("keeps a default Activity open when its Codex turn reaches terminal state", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "running", 10));
@@ -626,42 +517,6 @@ function job(
     executionMode: "background" as const,
     backendKind: "mcp-server"
   };
-}
-
-function createV1Database(file: string, input: { payload: string }): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const database = new Database(file);
-  database.exec(`
-    CREATE TABLE bridge_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-    INSERT INTO bridge_meta(key, value) VALUES ('schema_version', '1');
-    CREATE TABLE sessions (
-      thread_id TEXT PRIMARY KEY,
-      scope_id TEXT NOT NULL,
-      cwd TEXT NOT NULL,
-      last_used_at INTEGER NOT NULL,
-      payload TEXT NOT NULL
-    ) STRICT;
-    CREATE TABLE jobs (
-      job_id TEXT PRIMARY KEY,
-      scope_id TEXT NOT NULL,
-      request_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      updated_at INTEGER NOT NULL,
-      payload TEXT NOT NULL,
-      UNIQUE(scope_id, request_id)
-    ) STRICT;
-    CREATE TABLE user_settings (
-      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-      payload TEXT NOT NULL
-    ) STRICT;
-  `);
-  database
-    .prepare(`
-      INSERT INTO jobs(job_id, scope_id, request_id, status, updated_at, payload)
-      VALUES ('legacy-job', ?, 'legacy-request', 'completed', 20, ?)
-    `)
-    .run(SCOPE_A, input.payload);
-  database.close();
 }
 
 function registry(stateStore: BridgeStateStore, root: string): CodexJobRegistry {

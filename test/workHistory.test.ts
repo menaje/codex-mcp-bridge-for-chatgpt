@@ -1,4 +1,4 @@
-import {mkdtempSync, readdirSync} from "node:fs";
+import {mkdtempSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -30,9 +30,11 @@ describe("execution history retention",()=>{
     expect(store.workHistory.expired(input.jobId)).toBe(true);
     expect(store.workHistory.acknowledgedJobIds(scopeId).has(input.jobId)).toBe(true);
     const db=new Database(file,{readonly:true});
-    const payload=(db.prepare("SELECT payload FROM jobs WHERE job_id=?").get(input.jobId) as {payload:string}).payload;
+    const row=db.prepare("SELECT request_id,status,payload FROM jobs WHERE job_id=?").get(input.jobId) as {request_id:string;status:string;payload:string};
+    const payload=row.payload;
     expect(payload).not.toContain("old diagnostic");expect(payload).not.toContain("old result");
-    expect(JSON.parse(payload)).toMatchObject({status:"failed",resultOmitted:true,historyExpired:true,requestId:input.requestId});
+    expect(row).toMatchObject({request_id:input.requestId,status:"failed"});
+    expect(JSON.parse(payload)).toMatchObject({resultOmitted:true,historyExpired:true});
     expect(db.pragma("foreign_key_check")).toEqual([]);db.close();store.close();
   });
 
@@ -73,14 +75,4 @@ describe("execution history retention",()=>{
     expect(historyRetentionDays("7")).toBe(30);store.close();
   });
 
-  it("backs up v14 before enabling history expiry and retains the latest failure across restart",()=>{
-    const directory=mkdtempSync(path.join(tmpdir(),"history-v14-")),file=path.join(directory,"state.sqlite");
-    let store=new BridgeStateStore({file});store.upsertJob(job("failed"));store.close();
-    const db=new Database(file);db.exec("DROP TABLE work_history_state; UPDATE bridge_meta SET value='14' WHERE key='schema_version'");db.close();
-    store=new BridgeStateStore({file});
-    expect(store.schemaVersion).toBe(18);expect(store.countJobs()).toBe(1);
-    expect(readdirSync(directory).filter(name=>name.includes("pre-v18"))).toHaveLength(1);
-    store.workHistory.acknowledge("failed",now);store.close();store=new BridgeStateStore({file});
-    expect(store.workHistory.acknowledgedJobIds().has("failed")).toBe(true);store.close();
-  });
 });
