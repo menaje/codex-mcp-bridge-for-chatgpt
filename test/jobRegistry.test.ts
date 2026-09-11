@@ -4,12 +4,82 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
 import { BridgeStateStore } from "../src/stateStore.js";
-import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import type { CodexProgress, CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("CodexJobRegistry persistence", () => {
+  it.each(["persistent", "ephemeral"] as const)(
+    "keeps %s progress writes on bounded state and event paths",
+    async (mode) => {
+      const root = temporaryRoot();
+      const clock = vi.spyOn(Date, "now");
+      let now = 1_000;
+      clock.mockImplementation(() => now);
+      const stateStore = mode === "persistent"
+        ? new BridgeStateStore({ file: path.join(root, "state.sqlite") })
+        : undefined;
+      const registry = new CodexJobRegistry({
+        stateStore,
+        allowedRoots: [root]
+      });
+      const store = registry.admissionStateStore;
+      const upsertJob = vi.spyOn(store, "upsertJob");
+      const replaceJobs = vi.spyOn(store, "replaceJobs");
+      const updateProgress = vi.spyOn(store, "updateJobProgressState");
+      const recordTelemetry = vi.spyOn(store, "recordJobTelemetryEvent");
+      let emitProgress: ((progress: CodexProgress) => void) | undefined;
+      try {
+        const job = registry.start(jobInput(root), async (progress) => {
+          emitProgress = progress;
+          return new Promise<ToolResult>(() => undefined);
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(emitProgress).toBeTypeOf("function");
+        upsertJob.mockClear();
+        replaceJobs.mockClear();
+
+        now = 31_001;
+        emitProgress?.({ progress: 0.25 });
+        expect(updateProgress).toHaveBeenCalledTimes(1);
+        expect(recordTelemetry).not.toHaveBeenCalled();
+
+        now = 31_002;
+        emitProgress?.({
+          progress: 0.5,
+          event: {
+            eventId: "bounded-progress-event",
+            type: "command",
+            phase: "updated",
+            createdAt: now,
+            summary: "Command is still running"
+          }
+        });
+        expect(recordTelemetry).toHaveBeenCalledTimes(1);
+        expect(upsertJob).not.toHaveBeenCalled();
+        expect(replaceJobs).not.toHaveBeenCalled();
+        expect(store.listJobs()).toEqual([
+          expect.objectContaining({
+            jobId: job.jobId,
+            status: "running",
+            version: 3,
+            lastProgressAt: now,
+            lastProgress: expect.objectContaining({ progress: 0.5 })
+          })
+        ]);
+        expect(store.listJobEvents(job.jobId).at(-1)).toMatchObject({
+          eventType: "app-command-updated",
+          status: "running"
+        });
+      } finally {
+        clock.mockRestore();
+        store.close();
+      }
+    }
+  );
+
   it("notifies native subscribers when work starts and settles, then unsubscribes", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
@@ -832,7 +902,9 @@ describe("CodexJobRegistry persistence", () => {
       async close() {},
       async forceTerminateWorker() { throw new Error("still alive"); }
     });
-    const job = registry.start(jobInput(root), async (_progress, assigned) => {
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    const job = registry.start(jobInput(root), async (progress, assigned) => {
+      emitProgress = progress;
       assigned({
         backendKind: "mcp-server",
         workerId: "worker-live",
@@ -854,6 +926,27 @@ describe("CodexJobRegistry persistence", () => {
     )).resolves.toMatchObject({ status: "termination-failed" });
     expect(registry.runningCount()).toBe(1);
     expect(registry.get(job.jobId)?.error).toContain("still alive");
+    const beforeResumeScopeVersion = registry.getScopeVersion(SCOPE_A);
+    const upsertJob = vi.spyOn(registry.admissionStateStore, "upsertJob");
+    emitProgress?.({ progress: 0.5 });
+    expect(upsertJob).not.toHaveBeenCalled();
+    expect(registry.get(job.jobId)).toMatchObject({ status: "running" });
+    expect(registry.get(job.jobId)?.error).toBeUndefined();
+    expect(registry.admissionStateStore.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "running",
+        version: job.version,
+        lastProgress: expect.objectContaining({ progress: 0.5 })
+      })
+    ]);
+    expect((registry.admissionStateStore.listJobs()[0] as { error?: string }).error).toBeUndefined();
+    expect(registry.getScopeVersion(SCOPE_A)).toBe(beforeResumeScopeVersion + 1);
+    expect(registry.admissionStateStore.listJobEvents(job.jobId).at(-1)).toMatchObject({
+      eventType: "job-running",
+      status: "running",
+      payload: { resumedFrom: "termination-failed" }
+    });
   });
 
   it("rejects an internal single-job cancellation before side effects when provenance is absent", async () => {

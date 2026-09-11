@@ -4015,7 +4015,8 @@ export class CodexJobRegistry {
   private recordProgress(job: CodexJob, progress: CodexProgress): void {
     if (job.status !== "running" && job.status !== "termination-failed") return;
     const now = Date.now();
-    if (job.status === "termination-failed") {
+    const resumedFromTerminationFailure = job.status === "termination-failed";
+    if (resumedFromTerminationFailure) {
       job.status = "running";
       job.error = undefined;
     }
@@ -4052,8 +4053,11 @@ export class CodexJobRegistry {
     this.notify(job.jobId);
     if (publicEvent) {
       this.persistTelemetryBestEffort(job, publicEvent);
-    } else if (now - this.lastPersistedAt >= JOB_PROGRESS_PERSIST_INTERVAL_MS) {
-      this.persistJobBestEffort(job);
+    } else if (
+      resumedFromTerminationFailure ||
+      now - this.lastPersistedAt >= JOB_PROGRESS_PERSIST_INTERVAL_MS
+    ) {
+      this.persistProgressStateBestEffort(job);
     }
   }
 
@@ -4463,37 +4467,12 @@ export class CodexJobRegistry {
     }
   }
 
-  private persistTelemetryBestEffort(job: CodexJob, publicEvent: CodexPublicEvent): boolean {
-    if (!this.stateStore) {
-      if (!this.persistJobBestEffort(job)) return false;
-      try {
-        this.activityStore.recordJobTelemetryEvent(
-          job.jobId,
-          `app-${publicEvent.type}-${publicEvent.phase}`,
-          publicEvent,
-          publicEvent.createdAt,
-          publicEvent.type === "approval-required" || publicEvent.type === "input-required"
-            ? publicEvent.phase === "waiting"
-              ? "user"
-              : publicEvent.phase === "completed"
-                ? "codex"
-                : undefined
-            : undefined
-        );
-        this.notifyScope(job.scopeId);
-        return true;
-      } catch (error) {
-        if (!this.persistenceWarningShown) {
-          console.error(
-            `Could not persist Codex job telemetry: ${error instanceof Error ? error.message : String(error)}`
-          );
-          this.persistenceWarningShown = true;
-        }
-        return false;
-      }
-    }
+  private persistTelemetryBestEffort(
+    job: CodexJob,
+    publicEvent: CodexPublicEvent
+  ): boolean {
     try {
-      this.stateStore.recordJobTelemetryEvent(
+      this.activityStore.recordJobTelemetryEvent(
         job.jobId,
         `app-${publicEvent.type}-${publicEvent.phase}`,
         publicEvent,
@@ -4521,6 +4500,30 @@ export class CodexJobRegistry {
       if (!this.persistenceWarningShown) {
         console.error(
           `Could not persist Codex job telemetry: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.persistenceWarningShown = true;
+      }
+      return false;
+    }
+  }
+
+  private persistProgressStateBestEffort(job: CodexJob): boolean {
+    try {
+      const scopeChanged = this.activityStore.updateJobProgressState(job.jobId, {
+        updatedAt: job.updatedAt,
+        version: job.version,
+        lastProgressAt: job.lastProgressAt,
+        lastProgress: job.lastProgress,
+        pendingInteractions: job.pendingInteractions
+      });
+      this.lastPersistedAt = Date.now();
+      this.persistenceWarningShown = false;
+      if (scopeChanged) this.notifyScope(job.scopeId);
+      return true;
+    } catch (error) {
+      if (!this.persistenceWarningShown) {
+        console.error(
+          `Could not persist Codex job progress: ${error instanceof Error ? error.message : String(error)}`
         );
         this.persistenceWarningShown = true;
       }

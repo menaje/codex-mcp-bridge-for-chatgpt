@@ -250,6 +250,76 @@ describe("state schema 19 normalization", () => {
     expect(readdirSync(root).filter((name) => name.includes("pre-v3-to-v19"))).toHaveLength(1);
   });
 
+  it.each([
+    {
+      name: "does not resurrect a rejected legacy session from a clean Agent mirror",
+      threadId: V18_LEGACY_THREAD_ID,
+      agentId: V18_LEGACY_AGENT_ID,
+      mutate(db: Database.Database) {
+        db.prepare(`UPDATE agent_threads SET
+          project_id=NULL,project_label=NULL,project_uuid=NULL,
+          project_name_snapshot=NULL,project_cwd_snapshot=NULL
+          WHERE thread_id=?`).run(V18_LEGACY_THREAD_ID);
+      },
+      sessionRetained: false,
+      relationRetained: false,
+      lifecycle: "orphaned"
+    },
+    {
+      name: "rejects an invalid Agent mirror beside a valid canonical session",
+      threadId: V18_THREAD_ID,
+      agentId: V18_AGENT_ID,
+      mutate(db: Database.Database) {
+        db.prepare(`UPDATE agent_threads SET
+          project_id='legacy-project-slug',project_label='Legacy Project',
+          project_uuid=NULL,project_name_snapshot='Legacy Project'
+          WHERE thread_id=?`).run(V18_THREAD_ID);
+      },
+      sessionRetained: true,
+      relationRetained: false,
+      lifecycle: "orphaned"
+    },
+    {
+      name: "uses a valid Agent mirror only when the canonical session is absent",
+      threadId: V18_THREAD_ID,
+      agentId: V18_AGENT_ID,
+      mutate(db: Database.Database) {
+        db.prepare("DELETE FROM sessions WHERE thread_id=?").run(V18_THREAD_ID);
+      },
+      sessionRetained: true,
+      relationRetained: true,
+      lifecycle: "waiting-input"
+    }
+  ])("$name", ({
+    mutate,
+    threadId,
+    agentId,
+    sessionRetained,
+    relationRetained,
+    lifecycle
+  }) => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-context-mismatch-"));
+    const file = path.join(root, "state.sqlite");
+    createSchema18Fixture(file);
+    const legacy = new Database(file);
+    mutate(legacy);
+    legacy.close();
+
+    const store = new BridgeStateStore({ file });
+    expect(store.listSessions().some((session) => session.threadId === threadId))
+      .toBe(sessionRetained);
+    expect(store.listAgentThreads(agentId).some((thread) => thread.threadId === threadId))
+      .toBe(relationRetained);
+    expect(store.getAgent(agentId)).toMatchObject({
+      lifecycle,
+      currentThreadId: relationRetained ? threadId : undefined
+    });
+    const current = new Database(file, { readonly: true });
+    expect(current.pragma("foreign_key_check")).toEqual([]);
+    current.close();
+    store.close();
+  });
+
   it("rolls back an interrupted rebuild and reuses one recovery backup on retry", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-retry-"));
     const file = path.join(root, "state.sqlite");
