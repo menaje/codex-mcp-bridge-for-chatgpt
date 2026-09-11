@@ -10,14 +10,10 @@ export function classifyChangedPaths(paths) {
   for (const rawPath of paths) {
     const relative = rawPath.replaceAll("\\", "/");
     if (relative.startsWith("macos/")) macos = true;
-    // These Node files define the local helper protocol and DTOs decoded by
-    // CodexBridgeKit. A TypeScript-only diff here still requires Swift checks.
-    if (
-      relative === "src/macosHelper.ts" ||
-      relative === "src/macosHelperServer.ts"
-    ) {
-      macos = true;
-    }
+    // CodexBridgeKit consumes the helper protocol, Dashboard/settings DTOs,
+    // and packaged Node runtime. Any production TypeScript change therefore
+    // exercises both sides of the local integration contract.
+    if (relative.startsWith("src/")) macos = true;
     if (
       relative.startsWith("src/") ||
       relative.startsWith("test/") ||

@@ -116,14 +116,7 @@ export class ThreadConnectionStore {
   }
 
   hasUnfinishedWork(threadId: string): boolean {
-    return Boolean(this.db.prepare(`SELECT 1 FROM jobs j WHERE (j.thread_id=? OR j.source_thread_id=?
-      OR j.agent_id=(SELECT agent_id FROM thread_connections WHERE thread_id=?)) AND j.archived_at IS NULL
-      AND (j.status IN ('running','terminating','termination-failed')
-        OR EXISTS (SELECT 1 FROM job_interactions interaction
-          WHERE interaction.job_id=j.job_id AND interaction.is_blocking=1)
-        OR EXISTS (SELECT 1 FROM cancellation_intents cancellation
-          WHERE (cancellation.target_job_id=j.job_id OR (cancellation.target_kind='activity' AND cancellation.target_activity_id=j.activity_id))
-          AND cancellation.status IN ('recorded','dispatched'))) LIMIT 1`).get(threadId, threadId, threadId));
+    return Boolean(this.db.prepare(THREAD_UNFINISHED_WORK_SQL).get(threadId, threadId, threadId));
   }
 
   update(threadId: string, patch: Pick<ThreadConnectionRecord, "phase"> & Partial<Pick<ThreadConnectionRecord, "handoffRequested" | "reason" | "evidence">>, now = Date.now(), expectedRevision?: number): ThreadConnectionRecord | undefined {
@@ -165,6 +158,27 @@ export class ThreadConnectionStore {
 }
 
 export const DEFAULT_THREAD_IDLE_MS = 6 * 60 * 60_000;
+
+export const THREAD_UNFINISHED_WORK_SQL = `WITH candidate_jobs AS (
+  SELECT job_id,activity_id,status FROM jobs
+   WHERE thread_id=? AND archived_at IS NULL
+  UNION ALL
+  SELECT job_id,activity_id,status FROM jobs
+   WHERE source_thread_id=? AND archived_at IS NULL
+  UNION ALL
+  SELECT job_id,activity_id,status FROM jobs
+   WHERE agent_id=(SELECT agent_id FROM thread_connections WHERE thread_id=?)
+     AND archived_at IS NULL
+)
+SELECT 1 FROM candidate_jobs j
+ WHERE j.status IN ('running','terminating','termination-failed')
+    OR EXISTS (SELECT 1 FROM job_interactions interaction
+      WHERE interaction.job_id=j.job_id AND interaction.is_blocking=1)
+    OR EXISTS (SELECT 1 FROM cancellation_intents cancellation
+      WHERE (cancellation.target_job_id=j.job_id OR
+        (cancellation.target_kind='activity' AND cancellation.target_activity_id=j.activity_id))
+      AND cancellation.status IN ('recorded','dispatched'))
+ LIMIT 1`;
 
 export class ThreadConnectionController {
   lastError?: string;

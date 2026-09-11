@@ -37,10 +37,19 @@ const TERMINAL_ORIGINS = new Set([
   "assignment-containment", "bridge-restart", "worker-loss", "sdk-abort", "sdk-timeout",
   "authentication-failure", "usage-limit", "legacy-unattributed-cancellation"
 ]);
+const EXACT_CRITICAL_TABLES = [
+  "project_registry", "projects", "user_settings", "activity_agents",
+  "activity_events", "job_events", "completion_outbox", "agent_mutations",
+  "cancellation_operations", "cancellation_intents", "steering_deliveries",
+  "transport_observations", "user_questions", "codex_question_deliveries",
+  "thread_connections", "result_holds", "automatic_recovery",
+  "automatic_recovery_incidents"
+] as const;
 
 const auditAt = Date.now();
 const root = await mkdtemp(path.join(tmpdir(), "bridge-state-restart-audit-"));
 await chmod(root, 0o700);
+const baseline = path.join(root, "source.sqlite");
 const copy = path.join(root, "state.sqlite");
 const report: Record<string, unknown> = {
   issue: 95,
@@ -58,6 +67,12 @@ let client: Client | undefined;
 
 try {
   source = new Database(sourceFile, { readonly: true, fileMustExist: true });
+  await source.backup(baseline);
+  source.close();
+  source = undefined;
+  await chmod(baseline, 0o600);
+
+  source = new Database(baseline, { readonly: true, fileMustExist: true });
   const sourceVersion = schemaVersion(source);
   assert.ok(
     sourceVersion === 18 || sourceVersion === 19,
@@ -68,6 +83,12 @@ try {
   const preservedKeys = preservationKeys(source, sourceVersion, auditAt);
   const jobReceipts = jobReceiptDigest(source, sourceVersion);
   const sessionContexts = sessionContextDigest(source, sourceVersion);
+  const agentThreadRelationships = agentThreadRelationshipDigest(source, sourceVersion);
+  const scopeState = scopeStateDigest(source, sourceVersion);
+  const activityState = activityStateDigest(source, sourceVersion);
+  const agentState = agentStateDigest(source, sourceVersion);
+  const workHistoryState = workHistoryStateDigest(source, sourceVersion);
+  const criticalPayloads = exactCriticalTableSnapshots(source);
   const criticalState = criticalStateCounts(source, sourceVersion, auditAt);
   report.criticalState = criticalState;
   report.approvedDrops = approvedDropCounts(source, sourceVersion);
@@ -94,6 +115,24 @@ try {
       sessionContexts.snapshot,
       "Surviving session execution contexts changed during migration"
     );
+    assert.deepEqual(
+      agentThreadRelationshipDigest(migrated, 19),
+      agentThreadRelationships,
+      "Surviving Agent/thread relationships changed during migration"
+    );
+    assert.deepEqual(scopeStateDigest(migrated, 19), scopeState,
+      "Scope versions or timestamps changed during migration");
+    assert.deepEqual(activityStateDigest(migrated, 19), activityState,
+      "Activity ownership or lifecycle state changed during migration");
+    assert.deepEqual(agentStateDigest(migrated, 19), agentState,
+      "Agent identity or lifecycle state changed during migration");
+    assert.deepEqual(workHistoryStateDigest(migrated, 19), workHistoryState,
+      "Work-history acknowledgement or expiry state changed during migration");
+    assert.deepEqual(
+      exactCriticalTableSnapshots(migrated),
+      criticalPayloads,
+      "Critical request, question, cancellation, recovery, or delivery payloads changed during migration"
+    );
     assert.deepEqual(criticalStateCounts(migrated, 19, auditAt), criticalState);
     assertCurrentSchema(migrated);
     report.currentSchema = 19;
@@ -105,6 +144,12 @@ try {
     );
     report.jobReceipts = jobReceipts;
     report.sessionContexts = sessionContexts.snapshot;
+    report.agentThreadRelationships = agentThreadRelationships;
+    report.scopeState = scopeState;
+    report.activityState = activityState;
+    report.agentState = agentState;
+    report.workHistoryState = workHistoryState;
+    report.exactCriticalTables = criticalPayloads;
   } finally {
     migrated.close();
   }
@@ -264,25 +309,9 @@ function preservationKeys(
   }
 
   if (version === 18) {
-    result.sessions = queryKeySnapshot(db, `
-      SELECT s.thread_id AS key FROM sessions s
-      LEFT JOIN projects p ON p.project_id=COALESCE(s.project_uuid,s.project_id)
-      WHERE p.project_id IS NOT NULL OR COALESCE(
-        s.project_id,s.project_label,s.project_uuid,s.project_name_snapshot,
-        json_extract(s.payload,'$.projectId'),json_extract(s.payload,'$.projectLabel')
-      ) IS NULL
-      UNION
-      SELECT t.thread_id AS key FROM agent_threads t
-      LEFT JOIN projects p ON p.project_id=COALESCE(t.project_uuid,t.project_id)
-      WHERE p.project_id IS NOT NULL OR COALESCE(
-        t.project_id,t.project_label,t.project_uuid,t.project_name_snapshot
-      ) IS NULL`);
-    result.agent_threads = queryKeySnapshot(db, `
-      SELECT t.thread_id AS key FROM agent_threads t
-      LEFT JOIN projects p ON p.project_id=COALESCE(t.project_uuid,t.project_id)
-      WHERE p.project_id IS NOT NULL OR COALESCE(
-        t.project_id,t.project_label,t.project_uuid,t.project_name_snapshot
-      ) IS NULL`);
+    const contexts = acceptedLegacyContexts(db);
+    result.sessions = snapshotValues(contexts.sessionThreadIds);
+    result.agent_threads = snapshotValues(contexts.agentThreadIds);
   } else {
     result.sessions = keySnapshot(db, "sessions");
     result.agent_threads = keySnapshot(db, "agent_threads");
@@ -330,6 +359,167 @@ function queryKeySnapshot(
   return { count: values.length, digest: hash(values) };
 }
 
+function snapshotValues(values: Iterable<string>): Snapshot {
+  const canonicalValues = [...values].map(canonical).sort();
+  return { count: canonicalValues.length, digest: hash(canonicalValues) };
+}
+
+function acceptedLegacyContexts(db: Database.Database): {
+  sessionThreadIds: Set<string>;
+  agentThreadIds: Set<string>;
+} {
+  const projects = new Set(allRows(db, "projects").map((row) => String(row.project_id)));
+  const legacySessions = allRows(db, "sessions");
+  const sessionsByThread = new Map(
+    legacySessions.map((row) => [String(row.thread_id), row])
+  );
+  const sessionThreadIds = new Set(
+    legacySessions
+      .filter((row) => acceptedLegacyProjectContext(row, projects, true))
+      .map((row) => String(row.thread_id))
+  );
+  const acceptedAgentRows = allRows(db, "agent_threads").filter((row) =>
+    acceptedLegacyProjectContext(row, projects, false)
+  );
+  for (const row of acceptedAgentRows) {
+    const threadId = String(row.thread_id);
+    if (!sessionsByThread.has(threadId)) sessionThreadIds.add(threadId);
+  }
+  const agentThreadIds = new Set(
+    acceptedAgentRows
+      .map((row) => String(row.thread_id))
+      .filter((threadId) => sessionThreadIds.has(threadId))
+  );
+  return { sessionThreadIds, agentThreadIds };
+}
+
+function acceptedLegacyProjectContext(
+  row: Row,
+  projects: Set<string>,
+  includeSessionPayload: boolean
+): boolean {
+  const projectId = row.project_uuid ?? row.project_id;
+  if (projectId !== null && projectId !== undefined && projects.has(String(projectId))) {
+    return true;
+  }
+  const metadata = [
+    row.project_id,
+    row.project_label,
+    row.project_uuid,
+    row.project_name_snapshot
+  ];
+  if (includeSessionPayload) {
+    const payload = parseObject(row.payload);
+    metadata.push(payload.projectId, payload.projectLabel);
+  }
+  return metadata.every((value) => value === null || value === undefined);
+}
+
+function agentThreadRelationshipDigest(db: Database.Database, version: number): Snapshot {
+  const accepted = version === 18 ? acceptedLegacyContexts(db).agentThreadIds : undefined;
+  const values = allRows(db, "agent_threads")
+    .filter((row) => accepted === undefined || accepted.has(String(row.thread_id)))
+    .map((row) => canonical({
+      threadId: row.thread_id,
+      agentId: row.agent_id,
+      contextMode: row.context_mode,
+      isCurrent: row.is_current,
+      linkedAt: row.linked_at,
+      replacedAt: row.replaced_at
+    }))
+    .sort();
+  return { count: values.length, digest: hash(values) };
+}
+
+function scopeStateDigest(db: Database.Database, version: number): Snapshot {
+  const rows = version === 19
+    ? allRows(db, "scopes")
+    : db.prepare(`SELECT s.scope_id,COALESCE(v.version,0) AS version,s.created_at,
+        MAX(s.updated_at,COALESCE(v.updated_at,s.updated_at)) AS updated_at
+      FROM scopes s LEFT JOIN scope_versions v ON v.scope_id=s.scope_id`).all() as Row[];
+  return snapshotRows(rows);
+}
+
+function activityStateDigest(db: Database.Database, version: number): Snapshot {
+  if (version === 19) return snapshotRows(allRows(db, "activities"));
+  const rows = db.prepare(`SELECT
+      a.activity_id,a.scope_id,p.project_id,
+      CASE WHEN p.project_id IS NOT NULL THEN
+        COALESCE(a.project_cwd_snapshot,a.project_cwd,p.cwd) END AS pinned_cwd,
+      a.continuation_of_activity_id,a.card_generation,a.title,a.kind,
+      CASE a.execution_mode WHEN 'foreground' THEN 'foreground' ELSE 'background' END
+        AS execution_mode,
+      a.handoff_policy,a.completion_trigger,a.lifecycle,a.waiting_on,a.verification,
+      a.version,a.completion_version,a.legacy,a.created_at,a.updated_at,a.sealed_at,
+      a.completed_at,a.total_jobs,a.running_jobs,a.completed_jobs,a.failed_jobs,
+      a.interrupted_jobs,a.cancelled_jobs,a.terminal_jobs
+    FROM activities a LEFT JOIN projects p
+      ON p.project_id=COALESCE(a.project_uuid,a.project_id)`).all() as Row[];
+  return snapshotRows(rows);
+}
+
+function agentStateDigest(db: Database.Database, version: number): Snapshot {
+  if (version === 19) return snapshotRows(allRows(db, "agents"));
+  const acceptedThreads = acceptedLegacyContexts(db).agentThreadIds;
+  const relationships = new Map(allRows(db, "agent_threads")
+    .filter((row) => acceptedThreads.has(String(row.thread_id)))
+    .map((row) => [String(row.thread_id), row]));
+  const rows = allRows(db, "agents").map((row) => {
+    const oldCurrentThreadId = nonempty(row.current_thread_id);
+    const relationship = oldCurrentThreadId ? relationships.get(oldCurrentThreadId) : undefined;
+    const currentThreadId = relationship?.agent_id === row.agent_id
+      ? oldCurrentThreadId || null
+      : null;
+    let lifecycle = row.lifecycle === "archived" ? "idle" : row.lifecycle;
+    let currentJobId = row.current_job_id;
+    let versionValue = Number(row.version);
+    let orphanedReason = row.orphaned_reason;
+    if ((lifecycle === "active" || lifecycle === "waiting-input") && !currentThreadId) {
+      lifecycle = "orphaned";
+      currentJobId = null;
+      orphanedReason ??= "legacy-project-context-removed";
+      versionValue += 1;
+    }
+    return {
+      agent_id: row.agent_id,
+      scope_id: row.scope_id,
+      agent_name: row.agent_name,
+      normalized_name: row.normalized_name,
+      lifecycle,
+      current_thread_id: currentThreadId,
+      current_job_id: currentJobId,
+      version: versionValue,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      orphaned_reason: orphanedReason
+    };
+  });
+  return snapshotRows(rows);
+}
+
+function workHistoryStateDigest(db: Database.Database, version: number): Snapshot {
+  if (version === 19) return snapshotRows(allRows(db, "work_history_state"));
+  const rows = db.prepare(`SELECT h.job_id,h.acknowledged_at,h.expired_at,
+      CAST((SELECT value FROM bridge_meta
+        WHERE key='work_history_review_seq:' || h.job_id) AS INTEGER) AS review_sequence
+    FROM work_history_state h JOIN jobs j ON j.job_id=h.job_id`).all() as Row[];
+  return snapshotRows(rows);
+}
+
+function snapshotRows(rows: Row[]): Snapshot {
+  const values = rows.map(canonical).sort();
+  return { count: values.length, digest: hash(values) };
+}
+
+function exactCriticalTableSnapshots(db: Database.Database): Record<string, Snapshot> {
+  const available = new Set(tableNames(db));
+  return Object.fromEntries(EXACT_CRITICAL_TABLES
+    .filter((table) => available.has(table))
+    .map((table) => {
+      return [table, snapshotRows(allRows(db, table))];
+    }));
+}
+
 function criticalStateCounts(
   db: Database.Database,
   version: number,
@@ -354,7 +544,11 @@ function criticalStateCounts(
 }
 
 function approvedDropCounts(db: Database.Database, version: number): Record<string, number> {
-  if (version !== 18) return { invalidProjectSessions: 0, invalidProjectAgentThreads: 0 };
+  if (version !== 18) return {
+    invalidProjectSessions: 0,
+    invalidProjectAgentThreads: 0,
+    sessionRejectedAgentThreads: 0
+  };
   const invalidProjectSessions = Number((db.prepare(`SELECT COUNT(*) AS count FROM sessions s
     LEFT JOIN projects p ON p.project_id=COALESCE(s.project_uuid,s.project_id)
     WHERE p.project_id IS NULL AND COALESCE(
@@ -366,7 +560,13 @@ function approvedDropCounts(db: Database.Database, version: number): Record<stri
     WHERE p.project_id IS NULL AND COALESCE(
       t.project_id,t.project_label,t.project_uuid,t.project_name_snapshot
     ) IS NOT NULL`).get() as { count: number }).count);
-  return { invalidProjectSessions, invalidProjectAgentThreads };
+  const contexts = acceptedLegacyContexts(db);
+  const projects = new Set(allRows(db, "projects").map((row) => String(row.project_id)));
+  const sessionRejectedAgentThreads = allRows(db, "agent_threads").filter((row) =>
+    acceptedLegacyProjectContext(row, projects, false) &&
+    !contexts.agentThreadIds.has(String(row.thread_id))
+  ).length;
+  return { invalidProjectSessions, invalidProjectAgentThreads, sessionRejectedAgentThreads };
 }
 
 function jobReceiptDigest(db: Database.Database, version: number): Snapshot {
@@ -472,7 +672,11 @@ function sessionContextDigest(
   const projects = new Set(allRows(db, "projects").map((row) => String(row.project_id)));
   const connections = new Map(allRows(db, "thread_connections")
     .map((row) => [String(row.thread_id), row]));
-  const rows = allRows(db, "sessions").flatMap((row) => {
+  const legacySessions = allRows(db, "sessions");
+  const legacySessionThreadIds = new Set(
+    legacySessions.map((row) => String(row.thread_id))
+  );
+  const rows = legacySessions.flatMap((row) => {
     const payload = parseObject(row.payload);
     const rawProjectId = row.project_uuid ?? row.project_id;
     const projectId = rawProjectId !== null && rawProjectId !== undefined &&
@@ -524,6 +728,37 @@ function sessionContextDigest(
       lastUsedAt: row.last_used_at
     }];
   });
+  for (const row of allRows(db, "agent_threads")) {
+    const threadId = String(row.thread_id);
+    if (
+      legacySessionThreadIds.has(threadId) ||
+      !acceptedLegacyProjectContext(row, projects, false)
+    ) {
+      continue;
+    }
+    const rawProjectId = row.project_uuid ?? row.project_id;
+    const projectId = rawProjectId !== null && rawProjectId !== undefined
+      ? String(rawProjectId)
+      : null;
+    const connection = connections.get(threadId);
+    rows.push({
+      threadId: row.thread_id,
+      scopeId: row.scope_id,
+      projectId,
+      backendKind: row.backend_kind,
+      cwd: row.cwd,
+      sandbox: row.sandbox,
+      sessionId: row.session_id,
+      forkedFromThreadId: row.forked_from_thread_id,
+      persistence: nonempty(connection?.persistence) || "unknown",
+      visibleInCodexApp: null,
+      selection: null,
+      policyRevision: null,
+      createdAt: row.linked_at,
+      updatedAt: row.replaced_at ?? row.linked_at,
+      lastUsedAt: row.replaced_at ?? row.linked_at
+    });
+  }
   const values = rows.map(canonical).sort();
   return {
     snapshot: { count: values.length, digest: hash(values) },
@@ -582,6 +817,10 @@ function assertCurrentSchema(db: Database.Database): void {
     WHERE entry.key NOT IN ('execution','usage','uncertainResponseReview')`)
     .get() as { count: number }).count);
   assert.equal(unexpectedSummaries, 0, "Job summaries retain fields without a current reader");
+  const budget = db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get();
+  const calculatedBudget = db.prepare(`SELECT COUNT(*) AS rows,
+    COALESCE(SUM(length(CAST(payload AS BLOB))),0) AS bytes FROM job_events`).get();
+  assert.deepEqual(budget, calculatedBudget, "Event budget does not match retained Job events");
 }
 
 function allRows(db: Database.Database, table: string): Row[] {

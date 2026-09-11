@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { THREAD_UNFINISHED_WORK_SQL } from "../src/threadConnections.js";
 
 const [sourceFile, outputFile = "docs/audits/issue-95-database-storage.json"] = process.argv.slice(2);
 assert.ok(
@@ -42,20 +43,9 @@ const LEGACY_UNFINISHED_SQL = `SELECT 1 FROM jobs j WHERE (
         (cancellation.target_kind='activity' AND cancellation.target_activity_id=j.activity_id))
       AND cancellation.status IN ('recorded','dispatched'))) LIMIT 1`;
 
-const CURRENT_UNFINISHED_SQL = `SELECT 1 FROM jobs j WHERE (
-  j.thread_id=? OR j.source_thread_id=? OR
-  j.agent_id=(SELECT agent_id FROM thread_connections WHERE thread_id=?))
-  AND j.archived_at IS NULL
-  AND (j.status IN ('running','terminating','termination-failed')
-    OR EXISTS (SELECT 1 FROM job_interactions interaction
-      WHERE interaction.job_id=j.job_id AND interaction.is_blocking=1)
-    OR EXISTS (SELECT 1 FROM cancellation_intents cancellation
-      WHERE (cancellation.target_job_id=j.job_id OR
-        (cancellation.target_kind='activity' AND cancellation.target_activity_id=j.activity_id))
-      AND cancellation.status IN ('recorded','dispatched'))) LIMIT 1`;
-
 const root = await mkdtemp(path.join(tmpdir(), "bridge-database-storage-audit-"));
 await chmod(root, 0o700);
+const baselineFile = path.join(root, "source.sqlite");
 const workingFile = path.join(root, "state.sqlite");
 const compactFile = path.join(root, "state.compact.sqlite");
 const precompactFile = path.join(root, "state.precompact.sqlite");
@@ -70,6 +60,14 @@ let working: Database.Database | undefined;
 
 try {
   source = new Database(sourceFile, { readonly: true, fileMustExist: true });
+  report.sourceCapacity = await capacity(source, sourceFile);
+  report.migrationBackups = await migrationBackupCapacity(sourceFile);
+  await source.backup(baselineFile);
+  source.close();
+  source = undefined;
+  await chmod(baselineFile, 0o600);
+
+  source = new Database(baselineFile, { readonly: true, fileMustExist: true });
   const sourceVersion = version(source);
   assert.ok(
     sourceVersion === 18 || sourceVersion === 19,
@@ -78,8 +76,6 @@ try {
   const threadIds = representativeThreadIds(source);
   const sourceConnection = connectionAudit(source, sourceVersion, threadIds);
   report.sourceSchema = sourceVersion;
-  report.sourceCapacity = await capacity(source, sourceFile);
-  report.migrationBackups = await migrationBackupCapacity(sourceFile);
   report.sourceRows = rowTotals(source);
   report.sourceSerialization = serializationMetrics(source, sourceVersion);
   report.beforeConnectionQuery = publicQueryMetrics(sourceConnection);
@@ -291,7 +287,7 @@ function connectionAudit(
   schemaVersion: number,
   threadIds: string[]
 ): ConnectionAudit {
-  const sql = schemaVersion === 18 ? LEGACY_UNFINISHED_SQL : CURRENT_UNFINISHED_SQL;
+  const sql = schemaVersion === 18 ? LEGACY_UNFINISHED_SQL : THREAD_UNFINISHED_WORK_SQL;
   const statement = db.prepare(sql);
   for (const threadId of threadIds.slice(0, Math.min(5, threadIds.length))) {
     statement.get(threadId, threadId, threadId);
@@ -333,11 +329,16 @@ function publicQueryMetrics(value: ConnectionAudit): Omit<ConnectionAudit, "resu
 }
 
 function assertIndexedConnectionPlan(plan: string[]): void {
-  assert.ok(!plan.some((detail) => /^SCAN j$/u.test(detail)), "Current unfinished-work query scans jobs");
   assert.ok(
-    plan.some((detail) => /jobs_(thread|source_thread|agent)_active/u.test(detail)),
-    "Current unfinished-work query does not use an active Job index"
+    !plan.some((detail) => /^SCAN (?:j|jobs)(?:\s|$)/u.test(detail)),
+    "Current unfinished-work query scans Jobs instead of seeking identity indexes"
   );
+  for (const index of ["jobs_thread_active", "jobs_source_thread_active", "jobs_agent_active"]) {
+    assert.ok(
+      plan.some((detail) => detail.includes(`SEARCH jobs USING INDEX ${index}`)),
+      `Current unfinished-work query does not seek ${index}`
+    );
+  }
 }
 
 function currentRetentionPlans(db: Database.Database): Record<string, string[]> {
@@ -452,16 +453,19 @@ function serializationMetrics(db: Database.Database, schemaVersion: number): Rec
 
 function telemetryWritePath(sourceVersion: number): Record<string, unknown> {
   return {
-    comparisonSourceSchema: sourceVersion,
-    before: {
-      sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions: 9,
+    auditedSourceSchema: sourceVersion,
+    comparisonBaseline: {
+      commit: "b1104aa",
+      schema: 18,
+      sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions: 9,
       fullJobRowUpserts: 1,
       fullJobSerializations: 1,
       unconditionalSummaryWrites: 1,
       unconditionalThreadConnectionWrites: 1
     },
     current: {
-      sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions: 7,
+      sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions: 7,
+      sqlWriteStatementsPerThrottledStateOnlyProgressWithoutInteractions: 2,
       fullJobRowUpserts: 0,
       fullJobSerializations: 0,
       boundedJobStateUpdates: 1,
@@ -469,7 +473,7 @@ function telemetryWritePath(sourceVersion: number): Record<string, unknown> {
       unconditionalThreadConnectionWrites: 0,
       interactionWrites: "one bounded delete plus one insert per current interaction"
     },
-    basis: "static SQL-path count from b1104aa persistTelemetryBestEffort and current recordJobTelemetryEvent; includes scope/coalescing/retention writes and excludes trigger-internal event_budget updates"
+    basis: "static SQL-path count from schema-18 commit b1104aa and current progress persistence; public-event counts include scope/coalescing/retention writes, state-only counts include the Job UPDATE plus interaction DELETE, and both exclude trigger-internal event_budget updates"
   };
 }
 

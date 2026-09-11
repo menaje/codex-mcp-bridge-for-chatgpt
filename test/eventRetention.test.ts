@@ -48,6 +48,58 @@ describe("bounded diagnostic retention",()=>{
     db.close();store.close();
   });
 
+  it("keeps the Agent lifecycle aligned with bounded interaction updates",()=>{
+    const store=new BridgeStateStore({file:":memory:"});
+    const agent=store.createAgent({scopeId,agentName:"Progress owner",now:1});
+    const input={...job("agent-progress"),agentId:agent.agentId,version:1,lastProgressAt:10};
+    store.upsertJob(input);
+
+    store.recordJobTelemetryEvent(input.jobId,"app-input-required-waiting",
+      {type:"input-required",phase:"waiting"},20,"user",{
+        updatedAt:20,version:2,lastProgressAt:20,lastProgress:{progress:1},
+        pendingInteractions:[{interactionId:"answer",isBlocking:true}]
+      });
+    expect(store.getAgent(agent.agentId)).toMatchObject({
+      lifecycle:"waiting-input",currentJobId:input.jobId
+    });
+
+    store.recordJobTelemetryEvent(input.jobId,"app-input-required-completed",
+      {type:"input-required",phase:"completed"},30,"codex",{
+        updatedAt:30,version:3,lastProgressAt:30,lastProgress:{progress:2},
+        pendingInteractions:[]
+      });
+    expect(store.getAgent(agent.agentId)).toMatchObject({
+      lifecycle:"active",currentJobId:input.jobId
+    });
+    store.close();
+  });
+
+  it("infers a resumed worker from durable termination failure on a later progress retry",()=>{
+    const store=new BridgeStateStore({file:":memory:"});
+    const input={
+      ...job("progress-retry"),status:"termination-failed",error:"still alive",
+      version:2,lastProgressAt:10
+    };
+    store.upsertJob(input);
+
+    expect(store.updateJobProgressState(input.jobId,{
+      updatedAt:30,version:3,lastProgressAt:30,lastProgress:{progress:0.75},
+      pendingInteractions:[]
+    })).toBe(true);
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId:input.jobId,status:"running",version:3,
+        lastProgress:expect.objectContaining({progress:0.75})
+      })
+    ]);
+    expect((store.listJobs()[0] as {error?:string}).error).toBeUndefined();
+    expect(store.listJobEvents(input.jobId).at(-1)).toMatchObject({
+      eventType:"job-running",status:"running",
+      payload:{resumedFrom:"termination-failed"}
+    });
+    store.close();
+  });
+
   it("coalesces one item's snapshots, keeps cursor order and preserves usage after result expiry",()=>{
     const store=new BridgeStateStore({file:":memory:"});const input=job();store.upsertJob(input);
     store.recordJobTelemetryEvent(input.jobId,"app-command-started",{...progress("same"),phase:"started"});

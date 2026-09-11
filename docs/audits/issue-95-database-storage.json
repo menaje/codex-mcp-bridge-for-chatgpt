@@ -1,9 +1,8 @@
 {
   "issue": 95,
-  "testedAt": "2026-09-11T11:46:35.494Z",
+  "testedAt": "2026-09-11T13:11:38.425Z",
   "source": "read-only metrics plus a consistent disposable SQLite backup",
   "productionDatabaseModified": false,
-  "sourceSchema": 18,
   "sourceCapacity": {
     "databaseBytes": 196378624,
     "walBytes": 4124152,
@@ -11,29 +10,30 @@
     "pageSize": 4096,
     "pageCount": 47944,
     "allocatedBytes": 196378624,
-    "freePages": 38984,
-    "reusableBytes": 159678464,
-    "btreeUsedBytes": 10431208,
-    "cellPayloadBytes": 9930121
+    "freePages": 39161,
+    "reusableBytes": 160403456,
+    "btreeUsedBytes": 9934645,
+    "cellPayloadBytes": 9438802
   },
   "migrationBackups": {
     "count": 5,
     "totalBytes": 239480832,
     "largestBytes": 189349888
   },
+  "sourceSchema": 18,
   "sourceRows": {
     "tables": 30,
-    "rows": 28251
+    "rows": 27984
   },
   "sourceSerialization": {
     "jobs": 672,
     "storedPayloadBytes": {
-      "total": 625483,
+      "total": 270049,
       "median": 402,
       "p95": 649,
-      "max": 356076
+      "max": 867
     },
-    "structuredDuplicateFields": 5157,
+    "structuredDuplicateFields": 5137,
     "summaries": {
       "rowsWithContent": 581,
       "storedPayloadBytes": {
@@ -47,25 +47,25 @@
     },
     "progressSerializationComparison": {
       "beforeFullJobBytes": {
-        "total": 625483,
+        "total": 270049,
         "median": 402,
         "p95": 649,
-        "max": 356076
+        "max": 867
       },
       "afterBoundedStateBytes": {
-        "total": 18280,
+        "total": 18144,
         "median": 27,
         "p95": 27,
-        "max": 163
+        "max": 27
       },
-      "totalReductionPercent": 97.077
+      "totalReductionPercent": 93.281
     }
   },
   "beforeConnectionQuery": {
     "lookups": 201,
-    "totalMs": 126.012,
-    "medianMs": 0.608,
-    "p95Ms": 0.69,
+    "totalMs": 80.106,
+    "medianMs": 0.396,
+    "p95Ms": 0.428,
     "plan": [
       "SCAN j",
       "SCALAR SUBQUERY 1",
@@ -83,21 +83,26 @@
   },
   "currentConnectionQuery": {
     "lookups": 201,
-    "totalMs": 0.677,
+    "totalMs": 0.679,
     "medianMs": 0.003,
-    "p95Ms": 0.004,
+    "p95Ms": 0.003,
     "plan": [
-      "SCAN j USING INDEX jobs_agent_active",
-      "SCALAR SUBQUERY 1",
-      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)",
-      "CORRELATED SCALAR SUBQUERY 2",
+      "COMPOUND QUERY",
+      "LEFT-MOST SUBQUERY",
+      "SEARCH jobs USING INDEX jobs_thread_active (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 5",
       "SEARCH interaction USING COVERING INDEX job_interactions_blocking (job_id=?)",
-      "CORRELATED SCALAR SUBQUERY 3",
+      "CORRELATED SCALAR SUBQUERY 6",
       "MULTI-INDEX OR",
       "INDEX 1",
       "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
       "INDEX 2",
-      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)"
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)",
+      "UNION ALL",
+      "SEARCH jobs USING INDEX jobs_source_thread_active (source_thread_id=?)",
+      "SEARCH jobs USING INDEX jobs_agent_active (agent_id=?)",
+      "SCALAR SUBQUERY 3",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)"
     ],
     "positiveResults": 0
   },
@@ -127,15 +132,15 @@
   },
   "currentRows": {
     "tables": 32,
-    "rows": 27495
+    "rows": 27228
   },
   "currentSerialization": {
     "jobs": 672,
     "storedPayloadBytes": {
-      "total": 87745,
+      "total": 80042,
       "median": 110,
       "p95": 357,
-      "max": 8053
+      "max": 578
     },
     "structuredDuplicateFields": 0,
     "summaries": {
@@ -161,16 +166,19 @@
     }
   },
   "telemetryWritePath": {
-    "comparisonSourceSchema": 18,
-    "before": {
-      "sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions": 9,
+    "auditedSourceSchema": 18,
+    "comparisonBaseline": {
+      "commit": "b1104aa",
+      "schema": 18,
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 9,
       "fullJobRowUpserts": 1,
       "fullJobSerializations": 1,
       "unconditionalSummaryWrites": 1,
       "unconditionalThreadConnectionWrites": 1
     },
     "current": {
-      "sqlWriteStatementsPerOrdinaryProgressEventWithoutInteractions": 7,
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 7,
+      "sqlWriteStatementsPerThrottledStateOnlyProgressWithoutInteractions": 2,
       "fullJobRowUpserts": 0,
       "fullJobSerializations": 0,
       "boundedJobStateUpdates": 1,
@@ -178,7 +186,7 @@
       "unconditionalThreadConnectionWrites": 0,
       "interactionWrites": "one bounded delete plus one insert per current interaction"
     },
-    "basis": "static SQL-path count from b1104aa persistTelemetryBestEffort and current recordJobTelemetryEvent; includes scope/coalescing/retention writes and excludes trigger-internal event_budget updates"
+    "basis": "static SQL-path count from schema-18 commit b1104aa and current progress persistence; public-event counts include scope/coalescing/retention writes, state-only counts include the Job UPDATE plus interaction DELETE, and both exclude trigger-internal event_budget updates"
   },
   "currentCapacity": {
     "databaseBytes": 196378624,
@@ -187,22 +195,22 @@
     "pageSize": 4096,
     "pageCount": 47944,
     "allocatedBytes": 196378624,
-    "freePages": 45309,
-    "reusableBytes": 185585664,
-    "btreeUsedBytes": 9289625,
-    "cellPayloadBytes": 8907409
+    "freePages": 45364,
+    "reusableBytes": 185810944,
+    "btreeUsedBytes": 9141643,
+    "cellPayloadBytes": 8763636
   },
   "compactedCapacity": {
-    "databaseBytes": 10412032,
+    "databaseBytes": 10252288,
     "walBytes": 0,
     "shmBytes": 0,
     "pageSize": 4096,
-    "pageCount": 2542,
-    "allocatedBytes": 10412032,
+    "pageCount": 2503,
+    "allocatedBytes": 10252288,
     "freePages": 0,
     "reusableBytes": 0,
-    "btreeUsedBytes": 9288601,
-    "cellPayloadBytes": 8907409
+    "btreeUsedBytes": 9140811,
+    "cellPayloadBytes": 8763636
   },
   "offlineCompaction": {
     "sourceStopped": true,

@@ -120,28 +120,32 @@ npx tsx scripts/card-state-restart-audit.ts /absolute/path/to/state.sqlite resta
 The first audit reports logical cell payload, allocated and reusable pages, main
 DB/WAL/SHM sizes, migration-backup totals, serialization bytes, the old/current
 progress write paths, query plans, representative unfinished-work latency, and a
-verified offline `VACUUM INTO` copy. The restart audit compares entity keys, full
-structured session execution contexts, Job receipts, pending
-questions/interactions, undelivered outbox state, cancellation, uncertain
-steering, recovery budgets and holds, while allowing only the declared invalid
-legacy-project context removal. Its second restart must be byte-semantically
-stable for every current table except the append-only bridge-instance journal.
+verified offline `VACUUM INTO` copy. The restart audit compares entity keys; full
+normalized scope, Activity, Agent, work-history, and session execution state;
+Agent/thread relationships; Job receipts; and exact rows for 18 critical
+settings, request, question, cancellation, delivery, and recovery tables. It
+allows only the declared invalid legacy-project context removal. Its second
+restart must be byte-semantically stable for every current table except the
+append-only bridge-instance journal.
 
 The checked-in [schema-18 restart audit](audits/issue-95-state-restart.json)
-preserved all 672 Job receipts and all 351 valid session execution contexts,
-removed exactly the 43 invalid legacy-project sessions and 43 corresponding
-Agent-thread relationships, exposed 31 tools on both reads, and found no business
+preserved all 672 Job receipts, all 351 valid session execution contexts, and all
+313 valid Agent/thread relationships; removed exactly the 43 invalid
+legacy-project sessions and 43 corresponding Agent-thread relationships, exposed
+31 tools on both reads, and found no business
 table change on the second restart. The point-in-time
 [storage audit](audits/issue-95-database-storage.json) measured a 196,378,624-byte
-main DB, 4,124,152-byte WAL, 159,678,464 reusable bytes, and five older backups
+main DB, 4,124,152-byte WAL, 160,403,456 reusable bytes, and five older backups
 totalling 239,480,832 bytes. On its disposable migrated copy, structured Job and
-interaction payload duplicates and redundant summary fields were zero. The ordinary
-progress path changed from nine to seven SQL write statements excluding trigger
-updates, with full-Job serialization/upsert and unconditional summary/connection
-writes each changing from one to zero. The sampled progress-state serialization
-estimate was 97.077% smaller, 201 unfinished-work probes changed
-from 126.012 ms total to 0.677 ms total with indexed answers unchanged, and the
-verified compact copy was 10,412,032 bytes. These are measurements of that local
+interaction payload duplicates and redundant summary fields were zero. The public-event
+progress path changed from nine to seven SQL write statements, and a throttled
+state-only progress tick uses two, excluding trigger updates. Full Job
+serialization/upsert and unconditional summary/connection writes each changed from
+one to zero. The sampled progress-state serialization
+estimate was 93.281% smaller, 201 unfinished-work probes changed
+from 80.106 ms total to 0.679 ms total with answers unchanged and keyed searches
+on all three current identity indexes, and the verified compact copy was
+10,252,288 bytes. These are measurements of that local
 copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
@@ -162,10 +166,14 @@ rolls that rebuild back and can be retried after the source problem is corrected
 
 Schema-18 project values are accepted only when their UUID matches `projects`.
 A session or Agent-thread context with project metadata but no registered-project
-match is removed. Its Agent becomes orphaned if it would otherwise claim that
-removed current context. Historical Job request/terminal receipts remain, with
-project metadata removed and no guessed relationship. Migration never creates a
-project from a slug, name, cwd, or old snapshot.
+match is removed. An Agent-thread row can supply a fallback session only when no
+legacy session exists for that thread; it cannot replace a rejected session. The
+Agent-thread relationship is also validated independently, so a bad relationship
+beside a valid session is removed without removing the session. Its Agent becomes
+orphaned if it would otherwise claim a removed current context. Historical Job
+request/terminal receipts remain, with project metadata removed and no guessed
+relationship. Migration never creates a project from a slug, name, cwd, or old
+snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
 and passes every fixed checkpoint through schema 19. Schemas 1 and 2 are outside

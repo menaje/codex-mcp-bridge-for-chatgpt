@@ -162,6 +162,30 @@ type JobRowInput = {
   cancellationIntentId?: string;
 };
 
+type JobProgressStateInput = {
+  updatedAt: number;
+  version: number;
+  lastProgressAt: number;
+  lastProgress?: unknown;
+  pendingInteractions: unknown[];
+};
+
+type JobProgressStorageRow = {
+  job_id: string;
+  request_id: string;
+  activity_id: string;
+  scope_id: string;
+  status: string;
+  agent_id: string | null;
+};
+
+type JobProgressUpdateResult = {
+  row: JobProgressStorageRow;
+  status: string;
+  resumedFromTerminationFailure: boolean;
+  agentStateChanged: boolean;
+};
+
 export type DashboardRetainedJobSummary = {
   jobId: string;
   scopeId: string;
@@ -2326,44 +2350,32 @@ export class BridgeStateStore {
     payload: unknown,
     createdAt = Date.now(),
     waitingOn?: "codex" | "user",
-    state?: {
-      updatedAt: number;
-      version: number;
-      lastProgressAt: number;
-      lastProgress?: unknown;
-      pendingInteractions: unknown[];
-    }
+    state?: JobProgressStateInput
   ): number {
     return this.transaction(() => {
-      const row = this.database
-        .prepare(`
-          SELECT job_id, activity_id, scope_id, status
-            FROM jobs
-           WHERE job_id = ? AND archived_at IS NULL
-        `)
-        .get(jobId) as
-        | { job_id: string; activity_id: string; scope_id: string; status: string }
-        | undefined;
+      const update = state ? this.updateJobProgressStateInternal(jobId, state) : undefined;
+      const row = update?.row || this.getJobProgressStorageRow(jobId);
       if (!row) throw new Error("Cannot attach telemetry to an unknown Codex job.");
-      if (state) {
-        this.database.prepare(`UPDATE jobs SET updated_at=?,job_version=?,last_progress_at=?,last_progress=?
-          WHERE job_id=? AND archived_at IS NULL`).run(
-          state.updatedAt,
-          state.version,
-          state.lastProgressAt,
-          state.lastProgress === undefined ? null : JSON.stringify(state.lastProgress),
-          jobId
-        );
-        this.replaceJobInteractions(jobId, state.pendingInteractions);
-      }
       const scopeVersion = this.nextScopeVersion(row.scope_id, createdAt);
+      if (update?.resumedFromTerminationFailure) {
+        this.insertJobEvent({
+          jobId: row.job_id,
+          activityId: row.activity_id,
+          scopeId: row.scope_id,
+          scopeVersion,
+          eventType: "job-running",
+          status: "running",
+          createdAt: state?.updatedAt ?? createdAt,
+          payload: { resumedFrom: "termination-failed" }
+        });
+      }
       this.insertJobEvent({
         jobId: row.job_id,
         activityId: row.activity_id,
         scopeId: row.scope_id,
         scopeVersion,
         eventType: normalizeEventType(eventType),
-        status: row.status,
+        status: update?.status || row.status,
         createdAt,
         payload
       });
@@ -2385,6 +2397,27 @@ export class BridgeStateStore {
         });
       }
       return scopeVersion;
+    });
+  }
+
+  updateJobProgressState(jobId: string, state: JobProgressStateInput): boolean {
+    return this.transaction(() => {
+      const update = this.updateJobProgressStateInternal(jobId, state);
+      if (!update.resumedFromTerminationFailure && !update.agentStateChanged) return false;
+      const scopeVersion = this.nextScopeVersion(update.row.scope_id, state.updatedAt);
+      if (update.resumedFromTerminationFailure) {
+        this.insertJobEvent({
+          jobId: update.row.job_id,
+          activityId: update.row.activity_id,
+          scopeId: update.row.scope_id,
+          scopeVersion,
+          eventType: "job-running",
+          status: "running",
+          createdAt: state.updatedAt,
+          payload: { resumedFrom: "termination-failed" }
+        });
+      }
+      return true;
     });
   }
 
@@ -3903,9 +3936,13 @@ export class BridgeStateStore {
             LEFT JOIN legacy_v18_projects p
               ON p.project_id=COALESCE(t.project_uuid,t.project_id)
             LEFT JOIN legacy_v18_thread_connections c ON c.thread_id=t.thread_id
-           WHERE p.project_id IS NOT NULL OR COALESCE(
+           WHERE (p.project_id IS NOT NULL OR COALESCE(
              t.project_id,t.project_label,t.project_uuid,t.project_name_snapshot
-           ) IS NULL;
+           ) IS NULL)
+             AND NOT EXISTS (
+               SELECT 1 FROM legacy_v18_sessions original
+                WHERE original.thread_id=t.thread_id
+             );
 
           INSERT INTO activities(
             activity_id,scope_id,project_id,pinned_cwd,continuation_of_activity_id,
@@ -3940,7 +3977,12 @@ export class BridgeStateStore {
           INSERT INTO agent_threads(thread_id,agent_id,context_mode,is_current,linked_at,replaced_at)
           SELECT t.thread_id,t.agent_id,t.context_mode,t.is_current,t.linked_at,t.replaced_at
             FROM legacy_v18_agent_threads t
-            JOIN sessions s ON s.thread_id=t.thread_id;
+            JOIN sessions s ON s.thread_id=t.thread_id
+            LEFT JOIN legacy_v18_projects p
+              ON p.project_id=COALESCE(t.project_uuid,t.project_id)
+           WHERE p.project_id IS NOT NULL OR COALESCE(
+             t.project_id,t.project_label,t.project_uuid,t.project_name_snapshot
+           ) IS NULL;
 
           UPDATE agents
              SET current_thread_id=(
@@ -4609,6 +4651,71 @@ export class BridgeStateStore {
         JSON.stringify(interactionPayloadForStorage(interaction))
       );
     }
+  }
+
+  private getJobProgressStorageRow(jobId: string): JobProgressStorageRow | undefined {
+    return this.database.prepare(`SELECT job_id,request_id,activity_id,scope_id,status,agent_id
+      FROM jobs WHERE job_id=? AND archived_at IS NULL`).get(jobId) as
+      | JobProgressStorageRow
+      | undefined;
+  }
+
+  private updateJobProgressStateInternal(
+    jobId: string,
+    state: JobProgressStateInput
+  ): JobProgressUpdateResult {
+    if (!Number.isFinite(state.updatedAt) || !Number.isFinite(state.lastProgressAt)) {
+      throw new Error("Invalid Codex job progress timestamps.");
+    }
+    if (!Number.isInteger(state.version) || state.version < 1) {
+      throw new Error("Invalid Codex job progress version.");
+    }
+    if (!Array.isArray(state.pendingInteractions)) {
+      throw new Error("Invalid Codex job pending interactions.");
+    }
+    const row = this.getJobProgressStorageRow(jobId);
+    if (!row || !isActiveActivityJobStatus(row.status)) {
+      throw new Error("Cannot update progress for an unknown or terminal Codex job.");
+    }
+    // Receiving fresh progress proves that a worker which previously failed to
+    // terminate is running again. Infer this from durable state so a transient
+    // write failure can be repaired by the next progress write.
+    const resumedFromTerminationFailure = row.status === "termination-failed";
+    const resumed = resumedFromTerminationFailure ? 1 : 0;
+    const result = this.database.prepare(`
+      UPDATE jobs
+         SET updated_at=?,job_version=?,last_progress_at=?,last_progress=?,
+             payload=CASE WHEN ?=1 AND status='termination-failed'
+               THEN json_remove(payload,'$.error') ELSE payload END,
+             status=CASE WHEN ?=1 AND status='termination-failed'
+               THEN 'running' ELSE status END
+       WHERE job_id=? AND archived_at IS NULL
+         AND status IN ('running','terminating','termination-failed')
+    `).run(
+      state.updatedAt,
+      state.version,
+      state.lastProgressAt,
+      state.lastProgress === undefined ? null : JSON.stringify(state.lastProgress),
+      resumed,
+      resumed,
+      jobId
+    );
+    if (result.changes !== 1) {
+      throw new Error("Cannot update progress for an unknown or terminal Codex job.");
+    }
+    this.replaceJobInteractions(jobId, state.pendingInteractions);
+    const status = resumedFromTerminationFailure ? "running" : row.status;
+    const agentStateChanged = row.agent_id
+      ? this.syncAgentForJob({
+          jobId,
+          scopeId: row.scope_id,
+          requestId: row.request_id,
+          status,
+          updatedAt: state.updatedAt,
+          pendingInteractions: state.pendingInteractions
+        }, row.agent_id, row.activity_id, state.updatedAt)
+      : false;
+    return { row, status, resumedFromTerminationFailure, agentStateChanged };
   }
 
   private reconcileActivity(activityId: string, scopeVersion: number, now: number): void {

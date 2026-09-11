@@ -19,6 +19,26 @@ function fake(release: (threadId: string, options: ThreadReleaseOptions) => Prom
 }
 
 describe("durable thread connection lifetime", () => {
+  it("finds unfinished work through each indexed thread, source, and Agent identity", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    store.upsertJob(job("direct-thread"));
+    store.upsertJob({ ...job("worker-thread"), sourceThreadId: "source-thread" });
+    const agent = store.createAgent({ scopeId, agentName: "Indexed owner", now: 1000 });
+    store.threadConnections.register({
+      threadId: "agent-thread",
+      agentId: agent.agentId,
+      scopeId,
+      persistence: "persistent"
+    });
+    store.upsertJob({ ...job("agent-worker"), agentId: agent.agentId });
+
+    expect(store.threadConnections.hasUnfinishedWork("direct-thread")).toBe(true);
+    expect(store.threadConnections.hasUnfinishedWork("source-thread")).toBe(true);
+    expect(store.threadConnections.hasUnfinishedWork("agent-thread")).toBe(true);
+    expect(store.threadConnections.hasUnfinishedWork("unrelated-thread")).toBe(false);
+    store.close();
+  });
+
   it("uses a separate six-hour clock, untouched by reads, sessions and terminal refreshes", async () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     let now = 2000, calls = 0;
