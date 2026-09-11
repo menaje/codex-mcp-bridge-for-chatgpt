@@ -3,7 +3,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "en": {
     "dashboard.responseRequired": "Response needed",
     "dashboard.problems": "Issues",
-    "dashboard.showAll": "Show all",
     "dashboard.backgroundCount": "Background processes: {count}",
     "dashboard.backgroundUnknown": "Background process status needs checking",
     "dashboard.active": "Current work",
@@ -15,7 +14,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "ko": {
     "dashboard.responseRequired": "응답 필요",
     "dashboard.problems": "문제",
-    "dashboard.showAll": "전체 보기",
     "dashboard.backgroundCount": "백그라운드 프로세스 {count}",
     "dashboard.backgroundUnknown": "백그라운드 프로세스 상태 확인 필요",
     "dashboard.active": "현재 작업",
@@ -27,7 +25,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "ja": {
     "dashboard.responseRequired": "応答が必要",
     "dashboard.problems": "問題",
-    "dashboard.showAll": "すべて表示",
     "dashboard.backgroundCount": "バックグラウンドプロセス {count}件",
     "dashboard.backgroundUnknown": "バックグラウンドプロセスの状態確認が必要です",
     "dashboard.active": "現在の作業",
@@ -39,7 +36,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "zh-Hans": {
     "dashboard.responseRequired": "需要回应",
     "dashboard.problems": "问题",
-    "dashboard.showAll": "显示全部",
     "dashboard.backgroundCount": "后台进程：{count}",
     "dashboard.backgroundUnknown": "需要检查后台进程状态",
     "dashboard.active": "当前工作",
@@ -51,7 +47,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "zh-Hant": {
     "dashboard.responseRequired": "需要回應",
     "dashboard.problems": "問題",
-    "dashboard.showAll": "顯示全部",
     "dashboard.backgroundCount": "背景程序：{count}",
     "dashboard.backgroundUnknown": "需要檢查背景程序狀態",
     "dashboard.active": "目前工作",
@@ -63,7 +58,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "es": {
     "dashboard.responseRequired": "Respuesta necesaria",
     "dashboard.problems": "Problemas",
-    "dashboard.showAll": "Mostrar todo",
     "dashboard.backgroundCount": "Procesos en segundo plano: {count}",
     "dashboard.backgroundUnknown": "Hay que comprobar los procesos en segundo plano",
     "dashboard.active": "Trabajo actual",
@@ -75,7 +69,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "fr": {
     "dashboard.responseRequired": "Réponse requise",
     "dashboard.problems": "Problèmes",
-    "dashboard.showAll": "Tout afficher",
     "dashboard.backgroundCount": "Processus en arrière-plan : {count}",
     "dashboard.backgroundUnknown": "État des processus en arrière-plan à vérifier",
     "dashboard.active": "Travail en cours",
@@ -87,7 +80,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "de": {
     "dashboard.responseRequired": "Antwort nötig",
     "dashboard.problems": "Probleme",
-    "dashboard.showAll": "Alle anzeigen",
     "dashboard.backgroundCount": "Hintergrundprozesse: {count}",
     "dashboard.backgroundUnknown": "Status der Hintergrundprozesse muss geprüft werden",
     "dashboard.active": "Aktuelle Arbeit",
@@ -99,7 +91,6 @@ export const DASHBOARD_SUMMARY_TRANSLATIONS = {
   "pt": {
     "dashboard.responseRequired": "Resposta necessária",
     "dashboard.problems": "Problemas",
-    "dashboard.showAll": "Mostrar tudo",
     "dashboard.backgroundCount": "Processos em segundo plano: {count}",
     "dashboard.backgroundUnknown": "É preciso verificar os processos em segundo plano",
     "dashboard.active": "Trabalho atual",

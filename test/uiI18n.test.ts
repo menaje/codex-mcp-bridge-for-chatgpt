@@ -513,6 +513,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="response-required"');
     expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="problems"');
     expect(DASHBOARD_CARD_HTML).toContain('id="history-filter"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-all"');
+    expect(DASHBOARD_CARD_HTML).toContain('.count[aria-pressed="true"],#history-filter[aria-pressed="true"]');
     expect(DASHBOARD_CARD_HTML).toContain('id="active-section" hidden');
     expect(DASHBOARD_CARD_HTML).toContain('id="terminal-section" hidden');
     expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');

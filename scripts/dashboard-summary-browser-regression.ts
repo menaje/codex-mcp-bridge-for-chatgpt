@@ -89,9 +89,16 @@ try {
   }
   await cli("snapshot");
   await cli("run-code", `async page=>{
-    await page.locator('#status-all').click();
+    const historyBoxBefore=await page.locator('#history-filter').boundingBox();
     await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelector('#history-filter').getAttribute('aria-pressed')==='true');
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===12);
+    const historyBoxPressed=await page.locator('#history-filter').boundingBox();
+    if(!historyBoxBefore||!historyBoxPressed||historyBoxBefore.width!==historyBoxPressed.width||historyBoxBefore.height!==historyBoxPressed.height)throw new Error('History pressed state changed button size');
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelector('#history-filter').getAttribute('aria-pressed')==='false'&&!document.querySelector('#active-section').offsetParent&&!document.querySelector('#terminal-section').offsetParent);
+    await page.locator('#history-filter').click();
+    await page.waitForFunction(()=>document.querySelector('#history-filter').getAttribute('aria-pressed')==='true');
     await page.locator('#terminal-more').click();
     await page.waitForFunction(()=>document.querySelectorAll('#terminal-list .activity-agent').length===24);
     await page.locator('#terminal-more').click();

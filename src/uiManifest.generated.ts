@@ -3354,8 +3354,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "dashboard": {
-      "digest": "2fc770d257b50516aa0796caa236de93f6c5cdf80332042fdbda0e06502d23a6",
-      "uri": "ui://codex-mcp-bridge/dashboard/2fc770d257b5.html",
+      "digest": "cd499413aab2ef83ff7d7f0d63d01a76a420131325b084dd4d5fc25b6bdb5438",
+      "uri": "ui://codex-mcp-bridge/dashboard/cd499413aab2.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",
@@ -3385,6 +3385,38 @@ export const UI_RESOURCE_MANIFEST = {
         }
       },
       "previous": [
+        {
+          "digest": "2fc770d257b50516aa0796caa236de93f6c5cdf80332042fdbda0e06502d23a6",
+          "uri": "ui://codex-mcp-bridge/dashboard/2fc770d257b5.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated request review.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and approval/input request review.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 29
+            }
+          }
+        },
         {
           "digest": "627d36d131e610d2631dcaa0c5bd6b50be74fa1431213bcd67e87c6fc99248d3",
           "uri": "ui://codex-mcp-bridge/dashboard/627d36d131e6.html",
