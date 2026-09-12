@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Update the transitive Hono runtime to 4.13.7 so release artifacts exclude the newly disclosed path, parser-depth, and URL-fragment vulnerabilities.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "macOS 앱에 단일 활성 서버 기반의 보안 원격 클라이언트 모드와 저장 서버 전환을 추가합니다.",
-  "breaking": false,
-  "migration": null
-}

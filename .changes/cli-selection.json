@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Add user-owned CLI selection and bridge-managed Codex installation, updates and recovery.",
-  "breaking": false,
-  "migration": null
-}

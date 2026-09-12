@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Update the reproducible App Server protocol test baseline to Codex CLI 0.153.3.",
-  "breaking": false,
-  "migration": null
-}

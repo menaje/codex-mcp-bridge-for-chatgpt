@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "App Server 단일 실행 경로에 맞춰 설정 화면의 백엔드 출처와 라우팅 안내를 제거합니다.",
-  "breaking": false,
-  "migration": null
-}

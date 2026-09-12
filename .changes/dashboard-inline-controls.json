@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "전역 현황의 요청 확인을 해당 항목에서 펼치고, 조작할 내용이 없는 버튼과 다음 실행 설정의 중복 표시를 제거합니다.",
-  "breaking": false,
-  "migration": null
-}

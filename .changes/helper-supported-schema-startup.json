@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Allow the macOS helper to start the managed runtime from supported pre-migration state schemas while preserving project-path safety checks.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "전역 현황 카드와 메뉴바의 활성 에이전트를 상태 우선순위 내에서 먼저 시작한 순서로 정렬해 진행·토큰 갱신 중 표시 순서가 바뀌지 않도록 수정합니다.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "BREAKING: Restore legacy archived Agents, remove Agent archive/restore and Dashboard work management, and align Dashboard history, execution details, page size, and canonical effort values with the macOS menu.",
-  "breaking": true,
-  "migration": "Schema 18 creates a private pre-migration backup and restores every archived Agent without replaying work or loading Codex conversations. Agent identities, links, settings, timestamps, Jobs, results, history, and review state are preserved. Retained archive/restore requests now fail with AGENT_ARCHIVE_REMOVED without changing state."
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Secure MCP Tunnel 첫 실행에서 기존 비공개 설정을 자동 탐색하고, 공식 설정 바로가기와 API 키·Tunnel ID 단일 붙여넣기 흐름을 제공합니다.",
-  "breaking": false,
-  "migration": null
-}

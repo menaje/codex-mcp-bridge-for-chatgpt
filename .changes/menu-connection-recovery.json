@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "연결이 끊긴 동안 메뉴에서 요청한 현황 조회를 서버 연결 복구 후 완료해 수동 재연결이 필요해 보이는 화면 멈춤을 수정합니다.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "README를 사용자 이점과 빠른 시작 중심으로 간소화하고 실제 UI 화면과 macOS 및 Windows/Linux 설정 가이드를 제공합니다.",
-  "breaking": false,
-  "migration": null
-}

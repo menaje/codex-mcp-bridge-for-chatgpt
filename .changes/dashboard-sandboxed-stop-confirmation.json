@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Fix overview Job and background-process stop controls in ChatGPT's sandbox by confirming inside the card, including previously retained control cards.",
-  "breaking": false,
-  "migration": "Reload an existing overview card to use its in-card stop confirmation. Saved work, permissions and resource identities are preserved."
-}

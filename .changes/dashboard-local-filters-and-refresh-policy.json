@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "메뉴바와 현황 카드가 명시적 확인 때만 갱신하고, 같은 스냅샷에서 상태를 분류하며, 실행 기록은 필요할 때 불러오도록 개선합니다.",
-  "breaking": false,
-  "migration": null
-}

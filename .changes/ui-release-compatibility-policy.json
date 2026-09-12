@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Package only the final active cards, supported published baselines, and explicit deployed-client exceptions through a verified UI release catalog, with Activity retained for compatibility but retired from new presentations.",
-  "breaking": false,
-  "migration": null
-}

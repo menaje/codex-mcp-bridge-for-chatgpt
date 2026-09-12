@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Use HTTP for the macOS app's managed Tunnel so Activity watches do not block card reads; retain the last overview after refresh failures and allow recovery in the same card.",
-  "breaking": false,
-  "migration": null
-}

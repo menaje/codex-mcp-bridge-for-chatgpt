@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Apply the same permission admission and effective-policy verification to every CLI and thread operation, inspect CLI operation contracts before execution, and handle MCP forms, URL elicitations, and nonblocking questions in Activity cards.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "앱 재시작이나 상태 확인 공백을 연속된 정상 복구 시간으로 계산하지 않아 같은 장애의 알림이 중복 발행되는 것을 방지합니다.",
-  "breaking": false,
-  "migration": null
-}

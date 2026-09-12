@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "macOS 연결 버튼을 모든 지원 언어로 표시하고 Codex 대화 열기 명칭을 명확히 하며 ChatGPT 카드의 동작하지 않는 앱 딥링크를 제거합니다.",
-  "breaking": false,
-  "migration": null
-}
