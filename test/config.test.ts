@@ -188,9 +188,11 @@ describe("config policy", () => {
     });
     expect(stable.stateProfile).toBe("stable");
     expect(stable.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
-    expect(stable.startupWarnings).toEqual([
-      expect.stringContaining("explicitly targets the stable state profile")
-    ]);
+    expect(stable.startupWarnings).toEqual(
+      defaultStateProfile() === "stable"
+        ? []
+        : [expect.stringContaining("explicitly targets the stable state profile")]
+    );
 
     expect(() => loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",

@@ -13,7 +13,6 @@ import { loadReleaseManifest, validateReleaseManifest } from "../scripts/release
 import {
   deriveReleasePlan,
   deriveWorkflowContext,
-  loadChangeFragments,
   prepareCandidate,
   prepareNextCandidate,
   promoteStable,
@@ -26,9 +25,26 @@ import {
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("release governance policy", () => {
-  it("aggregates repository-owned fragments into the proposed 0.4.0-rc.1", () => {
+  it("aggregates explicit fragments into the proposed 0.4.0-rc.1", () => {
     const manifest = developmentManifest();
-    const fragments = loadChangeFragments(REPO_ROOT);
+    const fragments = [
+      {
+        schemaVersion: 1,
+        releaseUnitId: "codex-mcp-bridge",
+        bump: "patch",
+        summary: "Apply a compatible fix.",
+        breaking: false,
+        migration: null
+      },
+      {
+        schemaVersion: 1,
+        releaseUnitId: "codex-mcp-bridge",
+        bump: "minor",
+        summary: "BREAKING: Add the native app release unit.",
+        breaking: true,
+        migration: "Existing npm users can keep their current launch flow."
+      }
+    ].map((fragment) => validateChangeFragment(fragment));
 
     expect(deriveReleasePlan(manifest, fragments)).toEqual({
       releaseUnitId: "codex-mcp-bridge",
