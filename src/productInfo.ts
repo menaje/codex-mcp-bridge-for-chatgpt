@@ -7,6 +7,7 @@ export const PRODUCT_INFO = Object.freeze({
   packageName: manifest.package.name,
   binaryName: manifest.package.binaryName,
   version: manifest.release.version,
+  releaseStage: manifest.release.stage as "development" | "candidate" | "stable" | "deprecated",
   repositorySlug: `${manifest.repository.owner}/${manifest.repository.name}`,
   repositoryUrl: `https://github.com/${manifest.repository.owner}/${manifest.repository.name}`
 });

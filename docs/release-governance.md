@@ -16,16 +16,35 @@ product. They never receive independent product versions.
 | Candidate provenance | `release.sourceVersion` | Suffix-free development version from which the target bump was calculated |
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
-| Manifest schema | `manifestVersion` (currently 4) | Release metadata schema compatibility |
+| Manifest schema | `manifestVersion` (currently 5) | Release metadata and state-compatibility schema |
 | UI compatibility | Published card baselines, explicit deployment exceptions, UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer; inventory separation is pending under #53 |
-| State compatibility | SQLite schema version (currently 19) | Local data migration axis; see [database schema and lifecycle](database-schema.md) |
+| State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
 | Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 
 `npm run release:check` checks the version mirrors, generated plugin and UI
-metadata, manifest schema, release stage, branch combination, and active change
-fragments in one entry point. `npm run release:sync` repairs derived metadata;
-it does not choose a stage or grant publication authority.
+metadata, manifest schema, state contract/runtime constants, migration and fixture
+checksums, release stage, branch combination, and active change fragments in one
+entry point. `npm run release:sync` repairs derived metadata. It refuses to change
+or remove an existing migration, fixture, or checkpoint record; a changed deployed
+transformation requires a new schema step. The command does not choose a stage or
+grant publication authority.
+
+## Database candidate boundary
+
+Stable uses `~/.codex-mcp-bridge/state.sqlite`; candidate and development builds
+default to their own profile paths. A candidate can touch operational state only
+through an explicit stable-profile or absolute-file selection after every owner
+has stopped and the preflight succeeds.
+
+The candidate workflow runs the state release audit in the unpacked npm tarball
+and in each mounted arm64/x64 DMG runtime. Each report binds its artifact checksum,
+commit/build, OS/architecture, Node ABI, `better-sqlite3` and SQLite versions,
+migration-catalog digest, source fixture, migration/restart results, verified
+backup restore, and prior v0.3 runtime execution. Reports contain no user payload
+and are retained as private workflow evidence for 90 days. All three must belong
+to the same final RC. See the [runbook](state-upgrade-recovery.md) for the exact
+pre-service restore and post-service forward-repair boundary.
 
 ## Card compatibility at release boundaries
 
@@ -137,7 +156,7 @@ None of these local metadata commands publishes a tag or GitHub release.
 | Fast | `npm run validate:fast` | manifest/mirror/UI drift, fragments, App Server schema lock |
 | Affected | `npm run validate:affected` | fast checks plus Node and/or Swift checks selected from changed paths |
 | Full integration | `npm run validate:full` | full Node build/tests, exact App Server schema, full Swift tests |
-| Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all five assets, npm archive, both app/DMG structures, architectures, ad-hoc signatures, checksums |
+| Candidate | `npm run validate:candidate`, the read-only release PR, plus the manual release workflow | clean installs, all five assets, npm archive, both app/DMG structures, architectures, ad-hoc signatures, checksums, and three artifact-bound state migration/restore reports |
 | Stable promotion | `npm run validate:stable`, the required Stable promotion gate, the main release workflow, and physical-Mac evidence | latest source RC, normalized payload equivalence, exact stage/tag, installation readiness |
 
 A successful result applies only to the exact commit and inputs that produced
@@ -160,7 +179,8 @@ container details are the enumerated normalization boundary.
 
 Everything else participates in a sorted SHA-256 tree digest, including file
 paths, modes, symlinks, JavaScript, the native executable, UI resources, public
-contracts, runtime scripts, and production dependencies. Any unclassified
+contracts, `release-manifest.json`, `state-migrations.json`, migration/recovery
+code, runtime scripts, and production dependencies. Any unclassified
 difference stops stable publication and requires another RC. The four payload
 files receive entries in the aggregate checksum; payload evidence is workflow
 evidence and does not add a sixth public asset.

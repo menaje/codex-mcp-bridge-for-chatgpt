@@ -3,6 +3,25 @@ import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { CURRENT_STATE_SCHEMA, CURRENT_STATE_SCHEMA_VERSION } from "./stateSchema.js";
+import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
+import { PRODUCT_INFO } from "./productInfo.js";
+import {
+  STATE_MIGRATION_CATALOG_VERSION,
+  SUPPORTED_STATE_SCHEMA_VERSIONS,
+  stateMigration,
+  stateMigrationPath,
+  type StateMigrationCatalogEntry
+} from "./stateCompatibility.js";
+import {
+  prepareStateDatabaseOpen,
+  type StateDatabaseOpenLease,
+  type StateMigrationLease
+} from "./stateDatabaseLifecycle.js";
+import {
+  createMigrationBackupMetadata,
+  migrationBackupMetadataPath,
+  requireMigrationBackupMetadata
+} from "./stateBackup.js";
 import {
   V15_WORK_HISTORY_MIGRATION_SCHEMA,
   WorkHistoryStore,
@@ -100,9 +119,6 @@ import {
 } from "./cancellation.js";
 
 const CURRENT_SCHEMA_VERSION = CURRENT_STATE_SCHEMA_VERSION;
-const SUPPORTED_SCHEMA_VERSIONS = new Set([
-  "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"
-]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
@@ -490,6 +506,17 @@ export type BeginSteeringDeliveryInput = {
 
 export type BridgeStateStoreOptions = {
   file: string;
+  /** Test hook fired in the crash window after schema commit and before provenance commit. */
+  onMigrationSchemaCommitted?: (progress: StateMigrationProgress) => void;
+  /** Test/diagnostic hook fired after each durable schema checkpoint. */
+  onMigrationProgress?: (progress: StateMigrationProgress) => void;
+};
+
+export type StateMigrationProgress = {
+  migrationId: string;
+  sourceSchema: number;
+  targetSchema: number;
+  originalSourceSchema: number;
 };
 
 /**
@@ -503,7 +530,9 @@ export class BridgeStateStore {
   readonly eventRetention: EventRetention;
   readonly workHistory: WorkHistoryStore;
   readonly automaticRecovery: AutomaticRecoveryStore;
-  private readonly database: Database.Database;
+  private database!: Database.Database;
+  private readonly databaseLease: StateDatabaseOpenLease | null;
+  private readonly migrationLease: StateMigrationLease | null;
   private readonly currentInstanceId = randomUUID();
   private transactionDepth = 0;
   private closed = false;
@@ -512,44 +541,104 @@ export class BridgeStateStore {
     if (options.file !== ":memory:") {
       mkdirSync(path.dirname(options.file), { recursive: true, mode: 0o700 });
     }
-    this.database = new Database(options.file);
-    this.database.pragma("foreign_keys = ON");
-    this.database.pragma("busy_timeout = 5000");
-    this.database.pragma("journal_mode = WAL");
-    this.database.pragma("synchronous = FULL");
-    this.database.exec(`
-      CREATE TABLE IF NOT EXISTS bridge_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      ) STRICT;
-    `);
-
-    const existingVersion = this.getMeta("schema_version");
-    if (existingVersion !== undefined && !SUPPORTED_SCHEMA_VERSIONS.has(existingVersion)) {
-      this.database.close();
-      throw new Error(`Unsupported bridge state database schema version: ${existingVersion}.`);
-    }
-
+    this.databaseLease = prepareStateDatabaseOpen(options.file);
+    this.migrationLease = this.databaseLease?.requiresMigration
+      ? this.databaseLease as StateMigrationLease
+      : null;
+    let openedDatabase: Database.Database | undefined;
     try {
+      const databaseFile = this.databaseLease?.databaseFile ?? options.file;
+      this.database = new Database(databaseFile);
+      openedDatabase = this.database;
+      this.database.pragma("busy_timeout = 5000");
+      if (this.migrationLease) this.claimExclusiveMigrationConnection();
+      this.configureDatabaseConnection();
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS bridge_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        ) STRICT;
+      `);
+
+      const existingVersion = this.getMeta("schema_version");
+      if (
+        existingVersion !== undefined &&
+        !SUPPORTED_STATE_SCHEMA_VERSIONS.has(Number(existingVersion))
+      ) {
+        throw new Error(`Unsupported bridge state database schema version: ${existingVersion}.`);
+      }
+
+      let reopenAfterMigration = false;
       if (existingVersion === undefined) {
         this.transaction(() => {
           this.database.exec(CURRENT_STATE_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v19_created_at", new Date().toISOString());
+          this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
+          this.setMeta("state_database_id", randomUUID());
+          this.recordSchemaOrigin("fresh");
         });
       } else if (existingVersion !== CURRENT_SCHEMA_VERSION) {
         this.prepareV19Migration(existingVersion);
         this.migrateSupportedSchema();
+        this.validateStateMigrationProvenance();
+        this.migrationLease?.reportVerifying();
+        this.verifyOpenDatabase();
+        reopenAfterMigration = true;
+      } else {
+        this.reconcilePendingMigration();
+        this.validateStateMigrationProvenance();
+        if (this.migrationLease) {
+          this.migrationLease.reportVerifying();
+          this.verifyOpenDatabase();
+          reopenAfterMigration = true;
+        }
+        if (
+          this.getMeta("state_last_migration_id") === undefined &&
+          this.getMeta("state_schema_origin") === undefined
+        ) {
+          this.transaction(() => this.recordSchemaOrigin("pre-contract-current"));
+        }
       }
-      this.questions = new QuestionStore(this.database);
+      if (reopenAfterMigration) {
+        // Release SQLite's exclusive migration lock only while the alias-safe
+        // startup lease is still held. A second current runtime cannot enter
+        // before this instance has registered durable ownership below.
+        this.database.close();
+        openedDatabase = undefined;
+        this.database = new Database(databaseFile);
+        openedDatabase = this.database;
+        this.database.pragma("busy_timeout = 5000");
+        this.configureDatabaseConnection();
+      }
+      this.questions = this.transaction(() => {
+        const questions = new QuestionStore(this.database);
+        if (Object.values(questions.startupMaintenance).some((count) => count > 0)) {
+          this.setMeta("state_startup_maintenance_last", JSON.stringify({
+            reason: "question-expiry-and-dispatch-recovery",
+            at: new Date().toISOString(),
+            ...questions.startupMaintenance
+          }));
+        }
+        return questions;
+      });
       this.workHistory = new WorkHistoryStore(this.database);
       this.automaticRecovery = new AutomaticRecoveryStore(this.database);
       this.threadConnections = new ThreadConnectionStore(this.database);
       this.eventRetention = new EventRetention(this.database);
+      if (this.getMeta("state_database_id") === undefined) {
+        this.transaction(() => this.setMeta("state_database_id", randomUUID()));
+      }
       this.registerBridgeInstance();
       this.enforcePrivateFileModes();
+      this.databaseLease?.complete();
     } catch (error) {
-      this.database.close();
+      try {
+        openedDatabase?.close();
+      } catch {
+        // Preserve the original startup failure.
+      }
+      this.databaseLease?.fail(error);
       throw error;
     }
   }
@@ -568,6 +657,77 @@ export class BridgeStateStore {
 
   get bridgeInstanceId(): string {
     return this.currentInstanceId;
+  }
+
+  /** Record the point after which snapshot rollback could discard admitted work. */
+  markServiceOpen(transport: "http" | "stdio"): void {
+    this.transaction(() => {
+      this.setMeta("state_runtime_product_version", PRODUCT_INFO.version);
+      this.setMeta("state_runtime_build_id", BRIDGE_BUILD_INFO.id);
+      const migrationId = this.getMeta("state_last_migration_id");
+      if (!migrationId) return;
+      this.setMeta("state_service_opened_after_migration", "1");
+      this.setMeta("state_service_opened_at", new Date().toISOString());
+      this.setMeta("state_service_opened_transport", transport);
+      this.setMeta("state_service_opened_migration_id", migrationId);
+    });
+  }
+
+  private claimExclusiveMigrationConnection(): void {
+    const mode = String(this.database.pragma("locking_mode = EXCLUSIVE", { simple: true }));
+    if (mode.toLowerCase() !== "exclusive") {
+      throw new Error("Could not place the state database in exclusive migration mode.");
+    }
+    this.database.exec("BEGIN EXCLUSIVE");
+    try {
+      const version = this.getMeta("schema_version");
+      if (version !== String(this.migrationLease?.observedSchema)) {
+        throw new Error(
+          `Bridge state schema changed to ${version ?? "unknown"} before exclusive migration access.`
+        );
+      }
+      const liveOwners = (this.database.prepare(
+        "SELECT DISTINCT process_id FROM bridge_instances WHERE stopped_at IS NULL"
+      ).all() as Array<{ process_id: number }>).map((row) => Number(row.process_id))
+        .filter((processId) => Number.isSafeInteger(processId) && processIsAlive(processId));
+      if (liveOwners.length > 0) {
+        throw new Error(
+          `Bridge state upgrade requires every database owner to stop; live process(es): ${liveOwners.join(", ")}.`
+        );
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      if (this.database.inTransaction) this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private configureDatabaseConnection(): void {
+    this.database.pragma("foreign_keys = ON");
+    this.database.pragma("journal_mode = WAL");
+    this.database.pragma("synchronous = FULL");
+  }
+
+  private verifyOpenDatabase(): void {
+    if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `Bridge state migration verification found schema ${this.getMeta("schema_version") ?? "unknown"}; ` +
+        `expected ${CURRENT_SCHEMA_VERSION}.`
+      );
+    }
+    const integrity = this.database.pragma("integrity_check") as Array<Record<string, unknown>>;
+    if (
+      integrity.length !== 1 ||
+      String(Object.values(integrity[0] || {})[0]).toLowerCase() !== "ok"
+    ) {
+      throw new Error("Bridge state migration failed PRAGMA integrity_check.");
+    }
+    const violations = this.database.pragma("foreign_key_check") as unknown[];
+    if (violations.length > 0) {
+      throw new Error(
+        `Bridge state migration produced ${violations.length} foreign-key violation(s).`
+      );
+    }
   }
 
   transaction<T>(operation: () => T): T {
@@ -900,14 +1060,22 @@ export class BridgeStateStore {
       FROM steering_deliveries WHERE job_id=? AND status IN ('prepared','dispatching','uncertain')`).get(jobId) as {pending:number;count:number;latestUpdateAt:number};
   }
 
-  maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> & {historyRemoved:number} {
+  maintainRetention(now = Date.now()): ReturnType<EventRetention["sweep"]> &
+    ReturnType<AutomaticRecoveryStore["prune"]> & { historyRemoved: number } {
     return this.transaction(() => {
       const result = this.eventRetention.sweep(now);
       const settings = this.getSettingsRecord()?.payload;
       const days = historyRetentionDays(isRecord(settings) ? settings.historyRetentionDays : undefined);
       const historyRemoved = this.workHistory.sweep(days, jobId => this.retentionProtection(jobId, now).length > 0, now);
-      this.automaticRecovery.prune(days, now);
-      return {...result,historyRemoved};
+      const recovery = this.automaticRecovery.prune(days, now);
+      const report = { ...result, historyRemoved, ...recovery };
+      this.setMeta("state_retention_last_run", JSON.stringify({
+        reason: "configured-retention-policy",
+        at: new Date(now).toISOString(),
+        historyRetentionDays: days,
+        ...report
+      }));
+      return report;
     });
   }
 
@@ -3032,23 +3200,50 @@ export class BridgeStateStore {
   }
 
   private migrationBackupPath(sourceVersion: string): string {
-    return `${this.options.file}.pre-v${sourceVersion}-to-v${CURRENT_SCHEMA_VERSION}.sqlite`;
+    return `${this.migrationLease?.databaseFile ?? this.options.file}.pre-v${sourceVersion}-to-v${CURRENT_SCHEMA_VERSION}.sqlite`;
   }
 
   private prepareV19Migration(currentVersion: string): void {
     const recordedSource = this.getMeta("schema_v19_upgrade_source");
     if (
       recordedSource !== undefined &&
-      (!SUPPORTED_SCHEMA_VERSIONS.has(recordedSource) || recordedSource === CURRENT_SCHEMA_VERSION)
+      (!SUPPORTED_STATE_SCHEMA_VERSIONS.has(Number(recordedSource)) || recordedSource === CURRENT_SCHEMA_VERSION)
     ) {
       throw new Error(`Invalid schema v19 migration source marker: ${recordedSource}.`);
     }
 
+    let databaseId = this.getMeta("state_database_id");
+    if (recordedSource !== undefined && databaseId === undefined) {
+      throw new Error(
+        "Schema v19 migration cannot resume because the source database identity marker is missing."
+      );
+    }
+    if (databaseId === undefined) {
+      databaseId = randomUUID();
+      this.transaction(() => this.setMeta("state_database_id", databaseId as string));
+    }
+
     if (this.persistent) {
       if (recordedSource === undefined) {
-        this.createMigrationBackup(currentVersion);
+        this.createMigrationBackup(currentVersion, databaseId);
       } else {
-        this.requireMigrationBackup(recordedSource);
+        this.requireMigrationBackup(recordedSource, databaseId);
+        if (
+          currentVersion !== recordedSource &&
+          this.getMeta("state_last_migration_id") === undefined &&
+          this.getMeta("state_migration_pending") === undefined &&
+          this.getMeta("state_migration_provenance_gap") === undefined
+        ) {
+          this.transaction(() => this.setMeta(
+            "state_migration_provenance_gap",
+            JSON.stringify({
+              kind: "pre-contract-intermediate-checkpoint",
+              originalSourceSchema: Number(recordedSource),
+              observedSchema: Number(currentVersion),
+              recordedAt: new Date().toISOString()
+            })
+          ));
+        }
       }
     }
     if (recordedSource === undefined) {
@@ -3056,19 +3251,35 @@ export class BridgeStateStore {
     }
   }
 
-  private createMigrationBackup(sourceVersion: string): void {
+  private createMigrationBackup(sourceVersion: string, databaseId: string): void {
+    this.migrationLease?.reportBackup();
     const backup = this.migrationBackupPath(sourceVersion);
     // One compact recovery point is enough for a retryable transition. Reusing
     // it after the source marker is recorded prevents failed starts from
     // accumulating full database copies. Before the marker exists, replace any
     // stale file left by an older database that previously occupied this path.
     rmSync(backup, { force: true });
+    rmSync(
+      migrationBackupMetadataPath(
+        this.migrationLease?.databaseFile ?? this.options.file,
+        Number(sourceVersion),
+        Number(CURRENT_SCHEMA_VERSION)
+      ),
+      { force: true }
+    );
     this.database.prepare("VACUUM INTO ?").run(backup);
     chmodSync(backup, 0o600);
-    this.requireMigrationBackup(sourceVersion);
+    createMigrationBackupMetadata({
+      databaseFile: this.migrationLease?.databaseFile ?? this.options.file,
+      backupFile: backup,
+      databaseId,
+      sourceSchema: Number(sourceVersion),
+      targetSchema: Number(CURRENT_SCHEMA_VERSION)
+    });
+    this.requireMigrationBackup(sourceVersion, databaseId);
   }
 
-  private requireMigrationBackup(sourceVersion: string): void {
+  private requireMigrationBackup(sourceVersion: string, databaseId: string): void {
     const backup = this.migrationBackupPath(sourceVersion);
     if (!existsSync(backup)) {
       throw new Error(
@@ -3076,73 +3287,266 @@ export class BridgeStateStore {
       );
     }
     chmodSync(backup, 0o600);
-    const recovery = new Database(backup, { readonly: true, fileMustExist: true });
-    try {
-      const row = recovery
-        .prepare("SELECT value FROM bridge_meta WHERE key='schema_version'")
-        .get() as { value: string } | undefined;
-      if (row?.value !== sourceVersion) {
-        throw new Error(
-          `Schema v19 migration recovery backup has version ${row?.value ?? "unknown"}; expected ${sourceVersion}.`
-        );
-      }
-    } finally {
-      recovery.close();
-    }
+    requireMigrationBackupMetadata({
+      databaseFile: this.migrationLease?.databaseFile ?? this.options.file,
+      backupFile: backup,
+      databaseId,
+      sourceSchema: Number(sourceVersion),
+      targetSchema: Number(CURRENT_SCHEMA_VERSION)
+    });
   }
 
   private migrateSupportedSchema(): void {
-    if (this.getMeta("schema_version") === "3") this.migrateV3ToV4();
-    if (this.getMeta("schema_version") === "4") this.migrateV4ToV5();
-    if (this.getMeta("schema_version") === "5") this.migrateV5ToV6();
-    if (this.getMeta("schema_version") === "6") this.migrateV6ToV7();
-    if (this.getMeta("schema_version") === "7") this.migrateV7ToV8();
-    if (this.getMeta("schema_version") === "8") this.migrateV8ToV9();
-    if (this.getMeta("schema_version") === "9") this.migrateV9ToV10();
-    if (this.getMeta("schema_version") === "10") this.migrateV10ToV11();
-    if (this.getMeta("schema_version") === "11") this.migrateV11ToV12();
-    if (this.getMeta("schema_version") === "12") {
-      this.transaction(() => {
-        this.database.exec(V13_QUESTION_STORE_MIGRATION_SCHEMA);
-        this.setMeta("schema_version", "13");
-      });
-    }
-    if (this.getMeta("schema_version") === "13") {
-      this.transaction(() => {
-        this.database.exec(V14_THREAD_CONNECTION_MIGRATION_SCHEMA);
-        this.database.exec(V14_EVENT_RETENTION_MIGRATION_SCHEMA);
-        // Visibility was historically coupled to ephemeral at creation. Missing evidence stays unknown.
-        this.database.exec(`INSERT OR IGNORE INTO thread_connections(thread_id,scope_id,persistence,phase,updated_at)
-          SELECT thread_id,scope_id,CASE json_extract(payload,'$.visibleInCodexApp')
-            WHEN 1 THEN 'persistent' WHEN 0 THEN 'ephemeral' ELSE 'unknown' END,'blocked',last_used_at FROM sessions;
-          UPDATE thread_connections SET reason='runtime-unverified';`);
-        this.database.exec(`UPDATE thread_connections SET
-          agent_id=(SELECT agent_id FROM agent_threads WHERE thread_id=thread_connections.thread_id),
-          last_finished_at=(SELECT MAX(e.created_at) FROM job_events e JOIN jobs j ON j.job_id=e.job_id
-            WHERE j.thread_id=thread_connections.thread_id AND j.upstream_request_id IS NOT NULL
-            AND e.event_type IN ('job-completed','job-failed','job-interrupted','job-cancelled')),
-          worker_pid=(SELECT json_extract(payload,'$.workerPid') FROM jobs WHERE thread_id=thread_connections.thread_id
-            ORDER BY updated_at DESC LIMIT 1);`);
-        this.setMeta("schema_version", "14");
-      });
-    }
-    if (this.getMeta("schema_version") === "14") {
-      this.transaction(() => {
-        this.database.exec(V15_WORK_HISTORY_MIGRATION_SCHEMA);
-        this.setMeta("schema_version", "15");
-      });
-    }
+    this.reconcilePendingMigration();
+    const originalSourceSchema = Number(
+      this.getMeta("schema_v19_upgrade_source") || this.getMeta("schema_version")
+    );
+    this.runMigration("3", "4", originalSourceSchema, () => this.migrateV3ToV4());
+    this.runMigration("4", "5", originalSourceSchema, () => this.migrateV4ToV5());
+    this.runMigration("5", "6", originalSourceSchema, () => this.migrateV5ToV6());
+    this.runMigration("6", "7", originalSourceSchema, () => this.migrateV6ToV7());
+    this.runMigration("7", "8", originalSourceSchema, () => this.migrateV7ToV8());
+    this.runMigration("8", "9", originalSourceSchema, () => this.migrateV8ToV9());
+    this.runMigration("9", "10", originalSourceSchema, () => this.migrateV9ToV10());
+    this.runMigration("10", "11", originalSourceSchema, () => this.migrateV10ToV11());
+    this.runMigration("11", "12", originalSourceSchema, () => this.migrateV11ToV12());
+    this.runMigration("12", "13", originalSourceSchema, () => this.migrateV12ToV13());
+    this.runMigration("13", "14", originalSourceSchema, () => this.migrateV13ToV14());
+    this.runMigration("14", "15", originalSourceSchema, () => this.migrateV14ToV15());
     if (["15", "16"].includes(this.getMeta("schema_version") || "")) {
-      this.transaction(() => {
-        this.database.exec(V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA);
-        this.setMeta("schema_version", "17");
-      });
+      const source = this.getMeta("schema_version") as "15" | "16";
+      this.runMigration(source, "17", originalSourceSchema, () => this.migrateV15OrV16ToV17());
     }
-    if (this.getMeta("schema_version") === "17") this.migrateV17ToV18();
-    if (this.getMeta("schema_version") === "18") this.migrateV18ToV19();
+    this.runMigration("17", "18", originalSourceSchema, () => this.migrateV17ToV18());
+    this.runMigration("18", "19", originalSourceSchema, () => this.migrateV18ToV19());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
+  }
+
+  private runMigration(
+    sourceSchema: string,
+    targetSchema: string,
+    originalSourceSchema: number,
+    migrate: () => void
+  ): void {
+    if (this.getMeta("schema_version") !== sourceSchema) return;
+    const entry = stateMigration(Number(sourceSchema), Number(targetSchema));
+    const progress = {
+      migrationId: entry.id,
+      sourceSchema: Number(sourceSchema),
+      targetSchema: Number(targetSchema),
+      originalSourceSchema
+    };
+    this.recordPendingMigration(entry, originalSourceSchema);
+    this.migrationLease?.reportMigration(entry);
+    migrate();
+    this.options.onMigrationSchemaCommitted?.(progress);
+    this.finalizeMigrationProvenance(entry, originalSourceSchema);
+    this.migrationLease?.reportCheckpoint(entry);
+    this.options.onMigrationProgress?.(progress);
+  }
+
+  private recordPendingMigration(
+    entry: StateMigrationCatalogEntry,
+    originalSourceSchema: number
+  ): void {
+    const pending = {
+      id: entry.id,
+      fromSchema: entry.fromSchema,
+      toSchema: entry.toSchema,
+      implementationSha256: entry.sha256,
+      originalSourceSchema,
+      productVersion: PRODUCT_INFO.version,
+      buildId: BRIDGE_BUILD_INFO.id,
+      startedAt: new Date().toISOString()
+    };
+    this.transaction(() => {
+      const existing = this.getMeta("state_migration_pending");
+      if (existing !== undefined) {
+        const parsed = legacyJsonRecord(existing);
+        if (
+          parsed?.id !== entry.id ||
+          parsed?.fromSchema !== entry.fromSchema ||
+          parsed?.toSchema !== entry.toSchema ||
+          parsed?.implementationSha256 !== entry.sha256 ||
+          parsed?.originalSourceSchema !== originalSourceSchema
+        ) {
+          throw new Error(`Pending state migration provenance conflicts with ${entry.id}.`);
+        }
+      } else {
+        this.setMeta("state_migration_pending", JSON.stringify(pending));
+      }
+    });
+  }
+
+  private finalizeMigrationProvenance(
+    entry: StateMigrationCatalogEntry,
+    originalSourceSchema: number
+  ): void {
+    const pending = legacyJsonRecord(this.getMeta("state_migration_pending"));
+    if (
+      pending?.id !== entry.id ||
+      pending.fromSchema !== entry.fromSchema ||
+      pending.toSchema !== entry.toSchema ||
+      pending.implementationSha256 !== entry.sha256 ||
+      pending.originalSourceSchema !== originalSourceSchema ||
+      typeof pending.productVersion !== "string" ||
+      typeof pending.buildId !== "string" ||
+      typeof pending.startedAt !== "string" ||
+      !Number.isFinite(Date.parse(pending.startedAt))
+    ) {
+      throw new Error(`State migration checkpoint ${entry.id} has no matching pending provenance.`);
+    }
+    const appliedAt = new Date().toISOString();
+    const applied = {
+      id: entry.id,
+      fromSchema: entry.fromSchema,
+      toSchema: entry.toSchema,
+      implementationSha256: entry.sha256,
+      originalSourceSchema,
+      productVersion: String(pending.productVersion),
+      buildId: String(pending.buildId),
+      appliedAt
+    };
+    this.transaction(() => {
+      const key = `state_migration:${entry.id}`;
+      const existing = this.getMeta(key);
+      if (existing !== undefined) {
+        this.assertMigrationProvenanceRecord(existing, entry, originalSourceSchema);
+      } else {
+        this.setMeta(key, JSON.stringify(applied));
+      }
+      this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
+      this.setMeta("state_last_migration_id", entry.id);
+      if (entry.toSchema === Number(CURRENT_SCHEMA_VERSION)) {
+        this.setMeta("state_last_migration_source_schema", String(originalSourceSchema));
+        this.setMeta("state_last_migration_target_schema", String(entry.toSchema));
+        this.setMeta("state_last_migration_completed_at", appliedAt);
+        this.setMeta("state_service_opened_after_migration", "0");
+        this.database.prepare(`DELETE FROM bridge_meta WHERE key IN (
+          'schema_v19_upgrade_source','state_service_opened_at',
+          'state_service_opened_transport','state_service_opened_migration_id'
+        )`).run();
+      }
+      this.database.prepare("DELETE FROM bridge_meta WHERE key='state_migration_pending'").run();
+    });
+  }
+
+  private reconcilePendingMigration(): void {
+    const raw = this.getMeta("state_migration_pending");
+    if (raw === undefined) return;
+    const pending = legacyJsonRecord(raw);
+    const fromSchema = Number(pending?.fromSchema);
+    const toSchema = Number(pending?.toSchema);
+    const originalSourceSchema = Number(pending?.originalSourceSchema);
+    const entry = Number.isSafeInteger(fromSchema) && Number.isSafeInteger(toSchema)
+      ? stateMigration(fromSchema, toSchema)
+      : null;
+    if (
+      !entry ||
+      pending?.id !== entry.id ||
+      pending.implementationSha256 !== entry.sha256 ||
+      !SUPPORTED_STATE_SCHEMA_VERSIONS.has(originalSourceSchema)
+    ) {
+      throw new Error("Pending state migration provenance is invalid or references changed code.");
+    }
+    const currentSchema = Number(this.getMeta("schema_version"));
+    if (currentSchema === fromSchema) return;
+    if (currentSchema !== toSchema) {
+      throw new Error(
+        `Pending state migration ${entry.id} stopped at unexpected schema ${currentSchema}.`
+      );
+    }
+    if (toSchema === Number(CURRENT_SCHEMA_VERSION) && this.persistent) {
+      const databaseId = this.getMeta("state_database_id");
+      if (!databaseId) {
+        throw new Error("Completed state migration checkpoint has no logical database identity.");
+      }
+      this.requireMigrationBackup(String(originalSourceSchema), databaseId);
+    }
+    this.finalizeMigrationProvenance(entry, originalSourceSchema);
+  }
+
+  private validateStateMigrationProvenance(): void {
+    const lastMigrationId = this.getMeta("state_last_migration_id");
+    if (lastMigrationId === undefined) return;
+    const originalSourceSchema = Number(
+      this.getMeta("state_last_migration_source_schema") ||
+      this.getMeta("schema_v19_upgrade_source")
+    );
+    if (!SUPPORTED_STATE_SCHEMA_VERSIONS.has(originalSourceSchema)) {
+      throw new Error("State migration provenance has no supported original source schema.");
+    }
+    const currentSchema = Number(this.getMeta("schema_version"));
+    const completePath = stateMigrationPath(originalSourceSchema);
+    let pathStart = 0;
+    const gapRaw = this.getMeta("state_migration_provenance_gap");
+    if (gapRaw !== undefined) {
+      const gap = legacyJsonRecord(gapRaw);
+      const observedSchema = Number(gap?.observedSchema);
+      const gapIndex = completePath.findIndex((entry) => entry.toSchema === observedSchema);
+      if (
+        gap?.kind !== "pre-contract-intermediate-checkpoint" ||
+        gap?.originalSourceSchema !== originalSourceSchema ||
+        gapIndex < 0 ||
+        typeof gap.recordedAt !== "string" ||
+        !Number.isFinite(Date.parse(gap.recordedAt))
+      ) {
+        throw new Error("State migration provenance gap marker is invalid.");
+      }
+      pathStart = gapIndex + 1;
+    }
+    const expected: StateMigrationCatalogEntry[] = [];
+    for (const entry of completePath.slice(pathStart)) {
+      if (entry.toSchema > currentSchema) break;
+      expected.push(entry);
+      if (entry.toSchema === currentSchema) break;
+    }
+    if (expected.at(-1)?.toSchema !== currentSchema) {
+      throw new Error(`State migration provenance cannot reach schema ${currentSchema}.`);
+    }
+    for (const entry of expected) {
+      const raw = this.getMeta(`state_migration:${entry.id}`);
+      if (raw === undefined) {
+        throw new Error(`State migration provenance is missing ${entry.id}.`);
+      }
+      this.assertMigrationProvenanceRecord(raw, entry, originalSourceSchema);
+    }
+    if (lastMigrationId !== expected.at(-1)?.id) {
+      throw new Error("State last-migration identity does not match its applied path.");
+    }
+  }
+
+  private assertMigrationProvenanceRecord(
+    raw: string,
+    entry: StateMigrationCatalogEntry,
+    originalSourceSchema: number
+  ): void {
+    const parsed = legacyJsonRecord(raw);
+    if (
+      parsed?.id !== entry.id ||
+      parsed.fromSchema !== entry.fromSchema ||
+      parsed.toSchema !== entry.toSchema ||
+      parsed.implementationSha256 !== entry.sha256 ||
+      parsed.originalSourceSchema !== originalSourceSchema ||
+      typeof parsed.productVersion !== "string" ||
+      typeof parsed.buildId !== "string" ||
+      typeof parsed.appliedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.appliedAt))
+    ) {
+      throw new Error(`State migration provenance conflicts with ${entry.id}.`);
+    }
+  }
+
+  private recordSchemaOrigin(kind: "fresh" | "pre-contract-current"): void {
+    this.setMeta("state_schema_origin", JSON.stringify({
+      kind,
+      schema: Number(CURRENT_SCHEMA_VERSION),
+      productVersion: PRODUCT_INFO.version,
+      buildId: BRIDGE_BUILD_INFO.id,
+      recordedAt: new Date().toISOString()
+    }));
   }
 
   private migrateV3ToV4(): void {
@@ -3775,6 +4179,47 @@ export class BridgeStateStore {
     });
   }
 
+  private migrateV12ToV13(): void {
+    this.transaction(() => {
+      this.database.exec(V13_QUESTION_STORE_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "13");
+    });
+  }
+
+  private migrateV13ToV14(): void {
+    this.transaction(() => {
+      this.database.exec(V14_THREAD_CONNECTION_MIGRATION_SCHEMA);
+      this.database.exec(V14_EVENT_RETENTION_MIGRATION_SCHEMA);
+      // Visibility was historically coupled to ephemeral at creation. Missing evidence stays unknown.
+      this.database.exec(`INSERT OR IGNORE INTO thread_connections(thread_id,scope_id,persistence,phase,updated_at)
+        SELECT thread_id,scope_id,CASE json_extract(payload,'$.visibleInCodexApp')
+          WHEN 1 THEN 'persistent' WHEN 0 THEN 'ephemeral' ELSE 'unknown' END,'blocked',last_used_at FROM sessions;
+        UPDATE thread_connections SET reason='runtime-unverified';`);
+      this.database.exec(`UPDATE thread_connections SET
+        agent_id=(SELECT agent_id FROM agent_threads WHERE thread_id=thread_connections.thread_id),
+        last_finished_at=(SELECT MAX(e.created_at) FROM job_events e JOIN jobs j ON j.job_id=e.job_id
+          WHERE j.thread_id=thread_connections.thread_id AND j.upstream_request_id IS NOT NULL
+          AND e.event_type IN ('job-completed','job-failed','job-interrupted','job-cancelled')),
+        worker_pid=(SELECT json_extract(payload,'$.workerPid') FROM jobs WHERE thread_id=thread_connections.thread_id
+          ORDER BY updated_at DESC LIMIT 1);`);
+      this.setMeta("schema_version", "14");
+    });
+  }
+
+  private migrateV14ToV15(): void {
+    this.transaction(() => {
+      this.database.exec(V15_WORK_HISTORY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "15");
+    });
+  }
+
+  private migrateV15OrV16ToV17(): void {
+    this.transaction(() => {
+      this.database.exec(V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "17");
+    });
+  }
+
   /** Restore every bridge-local archived Agent before archive/restore support is removed. */
   private migrateV17ToV18(): void {
     this.transaction(() => {
@@ -4169,7 +4614,6 @@ export class BridgeStateStore {
         this.setMeta("schema_v19_removed_legacy_session_count", String(removedSessions));
         this.setMeta("schema_v19_removed_legacy_agent_thread_count", String(removedAgentThreads));
         this.setMeta("schema_v19_migrated_at", new Date(now).toISOString());
-        this.database.prepare("DELETE FROM bridge_meta WHERE key='schema_v19_upgrade_source'").run();
       });
     } finally {
       this.database.pragma("legacy_alter_table = OFF");
@@ -4180,6 +4624,18 @@ export class BridgeStateStore {
   private registerBridgeInstance(): void {
     this.transaction(() => {
       const now = Date.now();
+      const liveOwners = (this.database.prepare(`
+        SELECT DISTINCT process_id
+          FROM bridge_instances
+         WHERE stopped_at IS NULL AND instance_id <> ?
+      `).all(this.currentInstanceId) as Array<{ process_id: number }>)
+        .map((row) => Number(row.process_id))
+        .filter((processId) => Number.isSafeInteger(processId) && processIsAlive(processId));
+      if (liveOwners.length > 0) {
+        throw new Error(
+          `Bridge state startup lost exclusive ownership to live process(es): ${liveOwners.join(", ")}.`
+        );
+      }
       this.database
         .prepare(`
           UPDATE bridge_instances
@@ -4197,8 +4653,14 @@ export class BridgeStateStore {
           this.currentInstanceId,
           now,
           process.pid,
-          JSON.stringify({ schemaVersion: Number(CURRENT_SCHEMA_VERSION) })
+          JSON.stringify({
+            schemaVersion: Number(CURRENT_SCHEMA_VERSION),
+            productVersion: PRODUCT_INFO.version,
+            buildId: BRIDGE_BUILD_INFO.id
+          })
         );
+      this.setMeta("state_runtime_product_version", PRODUCT_INFO.version);
+      this.setMeta("state_runtime_build_id", BRIDGE_BUILD_INFO.id);
     });
   }
 
@@ -5237,7 +5699,8 @@ export class BridgeStateStore {
 
   private enforcePrivateFileModes(): void {
     if (this.options.file === ":memory:") return;
-    for (const file of [this.options.file, `${this.options.file}-wal`, `${this.options.file}-shm`]) {
+    const databaseFile = this.databaseLease?.databaseFile ?? this.options.file;
+    for (const file of [databaseFile, `${databaseFile}-wal`, `${databaseFile}-shm`]) {
       if (existsSync(file)) chmodSync(file, 0o600);
     }
   }
@@ -6067,4 +6530,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasBlockingInteraction(value: unknown): boolean {
   return Array.isArray(value) && value.some(entry => !entry || typeof entry !== "object" || entry.isBlocking !== false);
+}
+
+function processIsAlive(processId: number): boolean {
+  if (!Number.isSafeInteger(processId) || processId <= 0) return false;
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }

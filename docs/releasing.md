@@ -4,7 +4,8 @@
 SemVer. `release-manifest.json#/release/stage` is the independent release-stage
 authority, and its `release.version` is a synchronized mirror.
 `npm run release:sync` copies the package version into the manifest;
-`npm run release:check` rejects a mismatch. Its shape is fixed by
+`npm run release:check` rejects a mismatch and also derives the state migration
+catalog from the packaged implementation and source fixtures. Its shape is fixed by
 `release-manifest.schema.json` and validated again by the built-in-only
 `scripts/release-manifest.mjs` command, so release checks do not depend on a
 globally installed schema utility. The complete authority, branch, RC, and
@@ -35,7 +36,10 @@ The manifest controls:
   contract generations, and currently required logical resources;
 - the single release unit, synchronized SemVer mirror, independent stage,
   derived publication channel, source-RC provenance, tag prefix, and release title;
-- generated release-note policy and the manifest-v4 release asset contract;
+- generated release-note policy and the manifest-v5 release/state asset contract;
+- state schema 19, supported source schemas 3 through 18, retired JSON imports,
+  persistent Settings/task/helper/companion contracts, state-profile policy,
+  recovery boundary, and the digest of `state-migrations.json`;
 - two native targets: ad-hoc-signed, unnotarized macOS 13+ `arm64` and `x64`
   DMGs alongside the existing generic npm server archive.
 
@@ -46,11 +50,29 @@ history and possible future reference. ChatGPT does not consume these files,
 so they are not an active product surface and must not be installed or packaged.
 
 The archive directory is deliberately outside the npm `files` allowlist and is
-not copied into the native macOS app. Manifest version 4 does not declare a
+not copied into the native macOS app. Manifest version 5 does not declare a
 skills artifact, and the release workflow neither builds nor publishes a skills
 ZIP. A complete release therefore contains only the two architecture-specific
 macOS DMGs, generic npm server tarball, npm tarball checksum, and aggregate
 checksum file.
+
+## State compatibility and recovery
+
+`state-migrations.json` is packaged in the npm archive and both macOS runtimes.
+It records the supported source range, unsupported schemas, exact and derived
+fixture provenance, and each migration ID/from/to/implementation checksum. Once
+recorded, an existing catalog entry is append-only. `release:sync` refuses to
+rewrite it when migration code or a fixture changes; correct changed behavior
+with a new schema step and catalog entry.
+
+Stable, candidate, and development packages use separate default state profiles.
+The release workflow audits migration and actual backup restore in the unpacked
+npm archive and each mounted architecture-specific DMG. It also starts the
+published v0.3.0 runtime against the restored schema-3 database. All reports are
+artifact-bound, sanitized private workflow evidence rather than public release
+assets. The exact upgrade, backup-retention, pre-service restore, and post-service
+forward-repair procedure is in the
+[state upgrade and recovery runbook](state-upgrade-recovery.md).
 
 ## Personal/local plugin package identity
 
@@ -170,7 +192,12 @@ App Server is the only execution path. Schema snapshots detect development drift
 
 Check catalog freshness, worker health, retryable failures and orphaned Agents. Verify restart continuation and two allowed model/effort selections, recording requested/effective/actual selection and any reroute. Exercise command, file, permission and user-input resolution, including cancel, decline, session acceptance, automatic resolution and expiry.
 
-If recovery is needed, restore the previous bridge release or an explicitly selected CLI installation. Preserve history and authentication. Do not reactivate a retired execution backend or replay requests as a recovery step. See [runtime policy](codex-runtimes.md).
+If recovery is needed, preserve history and authentication. A DB snapshot and
+previous bridge runtime are one verified pair and are supported only before the
+migrated service opens; follow the [state recovery runbook](state-upgrade-recovery.md).
+For an App Server-only failure, restore an explicitly selected CLI installation.
+Do not reactivate a retired execution backend or replay requests as a recovery
+step. See [runtime policy](codex-runtimes.md).
 
 For the issue-40 steering gate, use a deliberately long-running root Job and
 record that one `codex_steer` call reaches the same active turn without another
@@ -348,16 +375,19 @@ source-RC-backed stable promotion. The workflow:
 3. builds the macOS app on native arm64 and Intel runners, ad-hoc signs both app
    and DMG variants, and verifies the version, minimum OS, architecture,
    signatures, bundled native module, and container;
-4. assembles exactly those npm assets and both macOS DMGs, rejecting undeclared
+4. runs the state migration/restart/restore audit in the unpacked npm archive and
+   both mounted DMG runtimes, including published-v0.3 rollback execution, and
+   retains three sanitized artifact-bound reports;
+5. assembles exactly those npm assets and both macOS DMGs, rejecting undeclared
    files and writing deterministic aggregate checksums;
-5. aggregates the read-only jobs for release PRs and prevents candidate state
+6. aggregates the read-only jobs for release PRs and prevents candidate state
    from being merged to `main`;
-6. compares unpacked npm and macOS payloads with the latest named source RC in
+7. compares unpacked npm and macOS payloads with the latest named source RC in
    both the stable PR and final publication run, allowing only enumerated
    release/build/signature metadata;
-7. refuses a repository mismatch or conflicting tag and skips an already
+8. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
-8. publishes all five assets together and marks only candidate-stage runs as
+9. publishes all five assets together and marks only candidate-stage runs as
    GitHub prereleases.
 
 The macOS jobs have no Apple signing or notarization secrets. Their public assets

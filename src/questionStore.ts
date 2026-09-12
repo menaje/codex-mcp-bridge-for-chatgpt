@@ -32,15 +32,27 @@ export const V13_QUESTION_STORE_MIGRATION_SCHEMA = `
 /** Same SQLite transaction boundary as Jobs. Raw card answers have a bounded,
  * explicit retention policy; Codex response journals contain hashes only. */
 export class QuestionStore {
+  readonly startupMaintenance: {
+    dispatchesMarkedUncertain: number;
+    expiredQuestionsRemoved: number;
+    deliveredJournalsRemoved: number;
+  };
+
   constructor(private readonly db: Database.Database) {
-    this.db.prepare("UPDATE codex_question_deliveries SET status='uncertain' WHERE status='dispatching'").run();
-    this.prune();
+    const dispatchesMarkedUncertain = this.db
+      .prepare("UPDATE codex_question_deliveries SET status='uncertain' WHERE status='dispatching'")
+      .run().changes;
+    this.startupMaintenance = { dispatchesMarkedUncertain, ...this.prune() };
   }
 
-  private prune(): void {
-    this.db.prepare("DELETE FROM user_questions WHERE expires_at <= ?").run(Date.now());
-    this.db.prepare("DELETE FROM codex_question_deliveries WHERE status='delivered' AND created_at < ?")
-      .run(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  private prune(): { expiredQuestionsRemoved: number; deliveredJournalsRemoved: number } {
+    const now = Date.now();
+    const expiredQuestionsRemoved = this.db
+      .prepare("DELETE FROM user_questions WHERE expires_at <= ?").run(now).changes;
+    const deliveredJournalsRemoved = this.db
+      .prepare("DELETE FROM codex_question_deliveries WHERE status='delivered' AND created_at < ?")
+      .run(now - 7 * 24 * 60 * 60 * 1000).changes;
+    return { expiredQuestionsRemoved, deliveredJournalsRemoved };
   }
 
   create(scopeId: string, input: { requestId: string; title: string; questions: UserQuestionField[]; expiresInMinutes?: number }): UserQuestionRecord {

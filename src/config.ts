@@ -3,6 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
+import { PRODUCT_INFO } from "./productInfo.js";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
@@ -14,6 +15,7 @@ export function isCodexBackendKind(value: unknown): value is CodexBackendKind {
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk";
 }
 export type McpTransportMode = "stateless" | "stateful";
+export type StateProfile = "stable" | "candidate" | "development";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
 export const DEFAULT_USER_MAX_CONCURRENT_JOBS = 30;
@@ -44,6 +46,7 @@ export type BridgeConfig = {
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
   stateDatabaseFile: string;
+  stateProfile: StateProfile | "explicit";
   upstreamPoolSize: number;
   secretScan: boolean;
   enableRecoveryTools: boolean;
@@ -91,10 +94,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     read("MODEL_CATALOG_STATE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "models.json"),
     "model catalog state file"
   );
+  const explicitStateDatabaseFile = normalizeOptional(read("STATE_DATABASE_FILE"));
+  const selectedStateProfile = parseStateProfile(
+    normalizeOptional(read("STATE_PROFILE")) || defaultStateProfile()
+  );
   const stateDatabaseFile = parseAbsoluteFilePath(
-    read("STATE_DATABASE_FILE") || path.join(homedir(), ".codex-mcp-bridge", "state.sqlite"),
+    explicitStateDatabaseFile || stateDatabaseFileForProfile(selectedStateProfile),
     "state database file"
   );
+  const stateProfile: StateProfile | "explicit" = explicitStateDatabaseFile
+    ? "explicit"
+    : selectedStateProfile;
   const secretScan = !parseBool(read("DISABLE_SECRET_SCAN"));
   const enableRecoveryTools = parseBool(read("ENABLE_RECOVERY_TOOLS"));
   const maxConcurrentJobs = parsePositiveInt(
@@ -109,6 +119,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  if (
+    PRODUCT_INFO.releaseStage !== "stable" &&
+    (stateProfile === "stable" ||
+      (stateProfile === "explicit" && stateDatabaseFile === stateDatabaseFileForProfile("stable")))
+  ) {
+    startupWarnings.push(
+      `This ${PRODUCT_INFO.releaseStage} build explicitly targets the stable state profile. ` +
+      "Stop the stable runtime and complete the database preflight before continuing."
+    );
+  }
   if (read("DEFAULT_BACKEND") && read("DEFAULT_BACKEND") !== "app-server") {
     startupWarnings.push("The saved execution backend has been retired. New work uses Codex App Server. Existing history is preserved; use a fresh context with an explicit summary to continue retired sessions.");
   }
@@ -201,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
     stateDatabaseFile,
+    stateProfile,
     upstreamPoolSize,
     secretScan,
     enableRecoveryTools,
@@ -471,6 +492,31 @@ function parseBackendKind(raw: string): "app-server" {
 function parseMcpTransportMode(raw: string): McpTransportMode {
   if (raw === "stateless" || raw === "stateful") return raw;
   throw new Error(`Invalid MCP transport mode: ${raw}`);
+}
+
+export function defaultStateProfile(): StateProfile {
+  return PRODUCT_INFO.releaseStage === "stable"
+    ? "stable"
+    : PRODUCT_INFO.releaseStage === "candidate"
+      ? "candidate"
+      : "development";
+}
+
+export function stateDatabaseFileForProfile(
+  profile: StateProfile,
+  homeDirectory = homedir()
+): string {
+  const base = path.join(homeDirectory, ".codex-mcp-bridge");
+  return profile === "stable"
+    ? path.join(base, "state.sqlite")
+    : path.join(base, "profiles", profile, "state.sqlite");
+}
+
+export function parseStateProfile(raw: string): StateProfile {
+  if (raw === "stable" || raw === "candidate" || raw === "development") return raw;
+  throw new Error(
+    "Invalid state profile; CODEX_MCP_BRIDGE_STATE_PROFILE must be stable, candidate, or development."
+  );
 }
 
 function normalizeOptional(raw: string | undefined): string | undefined {

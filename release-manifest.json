@@ -1,6 +1,6 @@
 {
   "$schema": "./release-manifest.schema.json",
-  "manifestVersion": 4,
+  "manifestVersion": 5,
   "product": {
     "displayName": "Codex MCP Bridge for ChatGPT",
     "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
@@ -30,7 +30,8 @@
       ".codex-plugin",
       ".app.json",
       "release-manifest.json",
-      "release-manifest.schema.json"
+      "release-manifest.schema.json",
+      "state-migrations.json"
     ],
     "keywords": [
       "codex",
@@ -89,6 +90,64 @@
       "dashboard",
       "question"
     ]
+  },
+  "stateCompatibility": {
+    "currentSchema": 19,
+    "supportedSourceSchemas": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "unsupportedSourceSchemas": [
+      1,
+      2
+    ],
+    "retiredLegacyImports": [
+      "settings-state-json",
+      "session-state-json",
+      "job-state-json"
+    ],
+    "migrationCatalog": "state-migrations.json",
+    "migrationCatalogSha256": "810399dee06f768ee70896c69998b3d22c659db0f4dc9beb8baabb62ecad2909",
+    "stateProfilePolicy": "release-stage-isolated-v1",
+    "rollbackPolicy": "verified-original-before-service-open-v1",
+    "persistentContracts": {
+      "userSettingsSchema": 4,
+      "taskInputContract": 2,
+      "macosHelperProtocol": 2,
+      "localCompanionProtocol": 2,
+      "remoteCompanionProtocol": 1
+    },
+    "contractSources": {
+      "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",
+      "userSettings": "src/modelPolicy.ts#MODEL_POLICY_SCHEMA_VERSION",
+      "taskInput": "src/tools.ts#CODEX_TASK_INPUT_CONTRACT_VERSION",
+      "macosHelper": "src/macosHelperServer.ts#MACOS_HELPER_PROTOCOL_VERSION",
+      "localCompanion": "src/companionServer.ts#COMPANION_PROTOCOL_VERSION",
+      "remoteCompanion": "src/remoteCompanionServer.ts#REMOTE_COMPANION_PROTOCOL_VERSION",
+      "uiResources": "uiResources.minimumContractGeneration",
+      "executionBackend": "toolchain.codexCli+app-server-schema.lock.json"
+    },
+    "recoveryContract": {
+      "backupMetadataVersion": 1,
+      "restoreReceiptVersion": 1,
+      "sourceRuntimeMatch": "exact-product-version-and-build",
+      "settingsRestore": "database-snapshot-and-source-runtime-configuration",
+      "automaticSnapshotRestoreUntil": "service-open"
+    }
   },
   "release": {
     "releaseUnitId": "codex-mcp-bridge",

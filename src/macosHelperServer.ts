@@ -16,6 +16,17 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
+import {
+  defaultStateProfile,
+  parseStateProfile,
+  stateDatabaseFileForProfile
+} from "./config.js";
+import { CURRENT_STATE_DATABASE_SCHEMA } from "./stateCompatibility.js";
+import {
+  inspectStateDatabase,
+  readStateMigrationStatus,
+  stateMigrationExtendsStartupDeadline
+} from "./stateDatabaseLifecycle.js";
 import * as z from "zod/v4";
 import {
   commitRuntimeEnvUpdate,
@@ -61,6 +72,8 @@ const HELPER_LOG_LIMIT = 200;
 const DEFAULT_START_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const MAX_DRAIN_TIMEOUT_MS = 5 * 60_000;
+const MIGRATION_PROGRESS_GRACE_MS = 5 * 60_000;
+const MAX_MIGRATION_START_TIMEOUT_MS = 30 * 60_000;
 const MANAGED_LAUNCHER_SHUTDOWN_TIMEOUT_MS = 20_000;
 const MANAGED_PROCESS_TREE_TERM_TIMEOUT_MS = 3_000;
 const MANAGED_PROCESS_TREE_KILL_TIMEOUT_MS = 2_000;
@@ -1231,7 +1244,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         this.runtimeStatusFile,
         child,
         BRIDGE_BUILD_INFO.id,
-        this.startTimeoutMs
+        this.startTimeoutMs,
+        this.envFile
       );
       if (this.child === child && isChildRunning(child)) {
         this.phase = "running";
@@ -2020,9 +2034,13 @@ async function waitForManagedRuntime(
   runtimeStatusFile: string,
   child: ChildProcess,
   expectedBuildId: string,
-  timeoutMs: number
+  timeoutMs: number,
+  envFile: string
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  let deadline = startedAt + timeoutMs;
+  const migrationDeadline = startedAt + MAX_MIGRATION_START_TIMEOUT_MS;
+  const stateDatabaseFile = configuredStateDatabaseFile(envFile);
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("RUNTIME_READINESS_EXITED: Managed runtime exited before the bridge and tunnel became ready.");
@@ -2034,6 +2052,13 @@ async function waitForManagedRuntime(
       expectedBuildId
     );
     if (bridge && tunnel.connected) return;
+    const migration = readStateMigrationStatus(stateDatabaseFile);
+    if (stateMigrationExtendsStartupDeadline(stateDatabaseFile, migration)) {
+      deadline = Math.min(
+        migrationDeadline,
+        Math.max(deadline, Date.now() + MIGRATION_PROGRESS_GRACE_MS)
+      );
+    }
     await delay(250);
   }
   throw new Error("RUNTIME_READINESS_TIMEOUT: Timed out waiting for the bridge companion and Secure MCP Tunnel readiness.");
@@ -2472,17 +2497,16 @@ function readRegisteredProjectRoots(
   envFile: string,
   options: { allowBroadReadOnlyPermissions?: boolean } = {}
 ): string[] {
-  const fileValues = readRuntimeEnvSubset(envFile, [
-    "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE",
-    "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE"
-  ], options);
-  const stateDatabaseFile = configuredRuntimePath(
-    fileValues,
-    "STATE_DATABASE_FILE",
-    path.join(homedir(), ".codex-mcp-bridge", "state.sqlite")
-  );
+  const stateDatabaseFile = configuredStateDatabaseFile(envFile, options);
   if (existsSync(stateDatabaseFile)) {
     assertRegularStateFile(stateDatabaseFile);
+    const inspection = inspectStateDatabase(stateDatabaseFile);
+    if (inspection.schemaVersion !== CURRENT_STATE_DATABASE_SCHEMA) {
+      throw new Error(
+        `Project registry is unavailable while state schema ${String(inspection.schemaVersion)} ` +
+        `is outside the helper's schema ${CURRENT_STATE_DATABASE_SCHEMA} contract.`
+      );
+    }
     const database = new Database(stateDatabaseFile, {
       readonly: true,
       fileMustExist: true
@@ -2507,6 +2531,28 @@ function readRegisteredProjectRoots(
     }
   }
   return [];
+}
+
+function configuredStateDatabaseFile(
+  envFile: string,
+  options: { allowBroadReadOnlyPermissions?: boolean } = {}
+): string {
+  const fileValues = readRuntimeEnvSubset(envFile, [
+    "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE",
+    "CODEX_GPT_BRIDGE_STATE_DATABASE_FILE",
+    "CODEX_MCP_BRIDGE_STATE_PROFILE",
+    "CODEX_GPT_BRIDGE_STATE_PROFILE"
+  ], options);
+  const profileValue = process.env.CODEX_MCP_BRIDGE_STATE_PROFILE ||
+    process.env.CODEX_GPT_BRIDGE_STATE_PROFILE ||
+    fileValues.CODEX_MCP_BRIDGE_STATE_PROFILE ||
+    fileValues.CODEX_GPT_BRIDGE_STATE_PROFILE;
+  const profile = profileValue ? parseStateProfile(profileValue) : defaultStateProfile();
+  return configuredRuntimePath(
+    fileValues,
+    "STATE_DATABASE_FILE",
+    stateDatabaseFileForProfile(profile, homedir())
+  );
 }
 
 function configuredRuntimePath(

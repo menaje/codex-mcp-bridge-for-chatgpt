@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Add a manifest-backed schema 3–18 to 19 upgrade and verified pre-service recovery contract, with isolated development and candidate state profiles.",
+  "breaking": true,
+  "migration": "Stable releases keep ~/.codex-mcp-bridge/state.sqlite. Development and candidate builds now use separate profile databases; stop every runtime and set CODEX_MCP_BRIDGE_STATE_PROFILE=stable or an explicit absolute state file only for a planned operational upgrade. Retain the generated backup and metadata through validation, and use the documented recovery command only before service-open."
+}

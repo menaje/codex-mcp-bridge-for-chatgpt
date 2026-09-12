@@ -27,7 +27,8 @@
     ".codex-plugin",
     ".app.json",
     "release-manifest.json",
-    "release-manifest.schema.json"
+    "release-manifest.schema.json",
+    "state-migrations.json"
   ],
   "scripts": {
     "app-server:compat:check": "tsx scripts/app-server-schema.ts check",

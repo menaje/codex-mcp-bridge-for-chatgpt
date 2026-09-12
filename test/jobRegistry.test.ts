@@ -105,8 +105,9 @@ describe("CodexJobRegistry persistence", () => {
     const registry = persistentRegistry(root, stateFile);
     const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async () => { throw new Error(message); });
     await job.promise;
-    expect(persistentRegistry(root, stateFile).get(job.jobId)).toMatchObject({ backendKind: "app-server", terminalOrigin: origin });
     expect(registry.listCancellationIntents({ jobId: job.jobId })).toHaveLength(0);
+    registry.admissionStateStore.close();
+    expect(persistentRegistry(root, stateFile).get(job.jobId)).toMatchObject({ backendKind: "app-server", terminalOrigin: origin });
   });
   it("retains completed results across bridge registry restarts", async () => {
     const root = temporaryRoot();
@@ -115,6 +116,7 @@ describe("CodexJobRegistry persistence", () => {
     const job = registry.start(jobInput(root), async () => result("thread-completed"));
 
     await job.promise;
+    registry.admissionStateStore.close();
     const restored = persistentRegistry(root, stateFile);
     const loaded = restored.get(job.jobId);
 
@@ -146,6 +148,7 @@ describe("CodexJobRegistry persistence", () => {
     );
 
     await job.promise;
+    registry.admissionStateStore.close();
     const restored = persistentRegistry(root, stateFile);
     expect(restored.get(job.jobId)).toMatchObject({
       requestHashVersion: 3
@@ -166,6 +169,7 @@ describe("CodexJobRegistry persistence", () => {
     );
 
     await job.promise;
+    registry.admissionStateStore.close();
     const restored = persistentRegistry(root, stateFile);
     expect(restored.get(job.jobId)).toMatchObject({
       requestHashVersion: 4,
@@ -181,6 +185,7 @@ describe("CodexJobRegistry persistence", () => {
     const job = registry.start({ ...jobInput(root), backendKind }, execute);
     await Promise.resolve();
 
+    registry.admissionStateStore.close();
     const restored = persistentRegistry(root, stateFile);
     const loaded = restored.get(job.jobId);
 
@@ -271,6 +276,7 @@ describe("CodexJobRegistry persistence", () => {
     const job = registry.start(jobInput(firstRoot), async () => result("thread-one"));
     await job.promise;
 
+    registry.admissionStateStore.close();
     const restored = persistentRegistry(secondRoot, stateFile);
 
     expect(restored.get(job.jobId)).toBeUndefined();

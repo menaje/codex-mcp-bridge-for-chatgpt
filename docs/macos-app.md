@@ -178,6 +178,15 @@ and the Tunnel's control-plane readiness probe are current. Status from another
 launcher PID, an older runtime build, an expired heartbeat, or a future-dated
 record is treated as unavailable.
 
+The bridge database has a separate canonical-file migration lock and private
+progress status. While the launched runtime owns that lock, the helper accepts
+only fresh, same-database status from the live PID. Each checkpoint extends
+startup readiness by at most five minutes, capped at 30 minutes for the whole
+start. Stale, malformed, wrong-database, or dead-process status grants no extra
+time. The candidate and development app builds use isolated default state
+profiles; an operational stable-DB upgrade requires an explicit selection. See
+the [state upgrade and recovery runbook](state-upgrade-recovery.md).
+
 Routine companion status probes allow two seconds for a response. A failed
 observation while the runtime remains running is presented as checking for at
 most eight seconds, with one-second retries and retained Dashboard/Settings

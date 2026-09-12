@@ -77,6 +77,21 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain("is not the latest RC");
   });
 
+  it("audits state migration and restore in the unpacked npm archive and both mounted DMGs", () => {
+    expect(WORKFLOW).toContain("scripts/state-release-audit.ts");
+    expect(WORKFLOW).toContain("--artifact-kind npm");
+    expect(WORKFLOW).toContain('--artifact-kind "macos-$MACOS_TARGET_ARCHITECTURE"');
+    expect(WORKFLOW).toContain('hdiutil attach -nobrowse -readonly');
+    expect(WORKFLOW).toContain('"$app_bundle/Contents/Resources/Runtime"');
+    expect(WORKFLOW.match(/gh release download v0\.3\.0/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/Published v0\.3\.0 package checksum mismatch/g)).toHaveLength(2);
+    expect(WORKFLOW).toContain("npm-state-compatibility-audit");
+    expect(WORKFLOW).toContain("macos-state-compatibility-audit-${{ matrix.architecture }}");
+    expect(WORKFLOW.match(/retention-days: 90/g)).toHaveLength(2);
+    expect(MACOS_BUILDER).toContain('release-manifest.schema.json');
+    expect(MACOS_BUILDER).toContain('state-migrations.json');
+  });
+
   it("publishes every manifest-derived filename in the one release command", () => {
     const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
     for (const output of [

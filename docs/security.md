@@ -502,15 +502,23 @@ Connection release and retained data follow the separate [lifecycle policy](thre
 
 Schema 19 normalizes project, execution-context, Job, event-summary, scope-version,
 and history state while preserving the supported schema-3 and schema-18 upgrade
-paths. A private consistent backup is created before migration. Diagnostic cleanup
+paths. Persistent opens inspect schema and integrity before writable setup, share
+one canonical-file migration lock across path aliases, and reject a live old or
+new owner. Development, candidate, and stable packages use separate default state
+profiles. A private consistent backup and metadata sidecar bind the logical and
+physical source, migration checksums, snapshot checksum, integrity/foreign-key
+results, and source/target runtime identity before migration. Diagnostic cleanup
 removes raw progress after result expiry while keeping minimal outcome/usage and
 replay/delivery/cancellation identities. Outstanding delivery, blocking
 interaction, uncertain response, active cancellation and expiring manual holds
 protect results. Event payload budgets do not cap identity tables or physical
 SQLite/WAL/backup size. Backups remain source-sensitive and are not automatically
 erased. Maintenance never edits Codex rollout files or runs a live `VACUUM`.
-See [database schema and lifecycle](database-schema.md) for the complete ownership,
-retention, backup, capacity, and offline recovery rules.
+HTTP listen and stdio connection record the point after which snapshot restore is
+refused because it could erase new request and delivery authority. See
+[database schema and lifecycle](database-schema.md) for ownership and retention,
+and the [state upgrade and recovery runbook](state-upgrade-recovery.md) for the
+backup, restore, and post-service forward-repair rules.
 
 - The project ref/revision tuple guarantees freshness of the selected
   name-to-UUID/cwd mapping. It cannot distinguish an intended project from a

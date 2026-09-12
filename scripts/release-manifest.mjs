@@ -12,6 +12,7 @@ const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
+const STATE_MIGRATION_CATALOG = "state-migrations.json";
 const UI_RESOURCE_NAMES = ["settings", "activity", "dashboard", "question"];
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
@@ -20,7 +21,8 @@ const REQUIRED_PACKAGE_FILES = new Set([
   ".codex-plugin",
   ".app.json",
   "release-manifest.json",
-  "release-manifest.schema.json"
+  "release-manifest.schema.json",
+  STATE_MIGRATION_CATALOG
 ]);
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const PACKAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
@@ -35,6 +37,73 @@ const RELEASE_ASSET_NAMES = [
   "macos-arm64-app",
   "macos-x64-app",
   "release-checksums"
+];
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 16 }, (_, index) => index + 3);
+const STATE_MIGRATION_DEFINITIONS = [
+  [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
+    ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
+    ["src/stateStore.ts", "parsePayload"], ["src/agent.ts", "normalizeAgentName"],
+    ["src/activity.ts", "ACTIVITY_JOB_STATUSES"], ["src/activity.ts", "isActiveActivityJobStatus"],
+    ["src/activity.ts", "isTerminalActivityJobStatus"]
+  ]],
+  [4, 5, "migrateV4ToV5", "c9d89641409d841a0027b2c147ab7ef429e4d77a", []],
+  [5, 6, "migrateV5ToV6", "3772b3efbbe016516cf09fd9b416e3c3761c11dd", []],
+  [6, 7, "migrateV6ToV7", "8d01014653bc6d28d4b5e07df14206d648aa5360", []],
+  [7, 8, "migrateV7ToV8", "c2c6eb18c10bd6aa853eabbe8b5f5bcb55a5baad", [
+    ["src/stateStore.ts", "parsePayload"]
+  ]],
+  [8, 9, "migrateV8ToV9", "810e75677a087d89860664a243bdf600fa72f423", []],
+  [9, 10, "migrateV9ToV10", "b9b040941685919fe2b70fbb6fec794309a622b1", [
+    ["src/projectRegistry.ts", "createProjectRef"]
+  ]],
+  [10, 11, "migrateV10ToV11", "df77fc7f8944b759826dc75d73205b8bc0c3c672", [
+    ["src/stateStore.ts", "tableHasColumn"],
+    ["src/cancellation.ts", "CANCELLATION_REASON_MAX_LENGTH"]
+  ]],
+  [11, 12, "migrateV11ToV12", "df77fc7f8944b759826dc75d73205b8bc0c3c672", [
+    ["src/stateStore.ts", "tableHasColumn"]
+  ]],
+  [12, 13, "migrateV12ToV13", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/questionStore.ts", "V13_QUESTION_STORE_MIGRATION_SCHEMA"]
+  ]],
+  [13, 14, "migrateV13ToV14", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/threadConnections.ts", "V14_THREAD_CONNECTION_MIGRATION_SCHEMA"],
+    ["src/eventRetention.ts", "V14_EVENT_RETENTION_MIGRATION_SCHEMA"]
+  ]],
+  [14, 15, "migrateV14ToV15", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/workHistory.ts", "V15_WORK_HISTORY_MIGRATION_SCHEMA"]
+  ]],
+  [15, 17, "migrateV15OrV16ToV17", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/automaticRecovery.ts", "V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA"]
+  ]],
+  [16, 17, "migrateV15OrV16ToV17", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/automaticRecovery.ts", "V17_AUTOMATIC_RECOVERY_MIGRATION_SCHEMA"]
+  ]],
+  [17, 18, "migrateV17ToV18", "25a7886c37f7b26ef36863627f1d56b01b2f2288", [
+    ["src/stateStore.ts", "parsePayload"], ["src/stateStore.ts", "hasBlockingInteraction"],
+    ["src/stateStore.ts", "nextScopeVersion"],
+    ["src/activity.ts", "ACTIVITY_JOB_STATUSES"], ["src/activity.ts", "isActiveActivityJobStatus"]
+  ]],
+  [18, 19, "migrateV18ToV19", "848d56510a7871b0d182955fba6838e8306a09d5", [
+    ["src/stateSchema.ts", "CURRENT_STATE_SCHEMA"],
+    ["src/eventRetention.ts", "sanitizeRetainedJobSummary"],
+    ["src/stateStore.ts", "legacyJsonRecord"],
+    ["src/stateStore.ts", "nonNegativeInteger"],
+    ["src/stateStore.ts", "optionalNonNegativeInteger"],
+    ["src/stateStore.ts", "sqlIdentifier"]
+  ]]
+];
+const STATE_FIXTURE_DEFINITIONS = [
+  [3, "published-release", "v0.3.0", "test/fixtures/state-v3-seeded.sql"],
+  [16, "deployed-development", "17d7398c88fe83688165dcec2b27e85cdc9ce949", "test/fixtures/state-schema-v16.sql"],
+  [18, "deployed-development", "b1104aa4b2f72b929f49f89b6c1734cf6cb9d61d", "test/fixtures/state-schema-v18.sql"]
+];
+const STATE_DERIVED_CHECKPOINTS = [
+  ...Array.from({ length: 12 }, (_, index) => {
+    const schema = index + 4;
+    return [schema, 3, `bridge-state-${schema - 1}-to-${schema}`];
+  }),
+  [17, 16, "bridge-state-16-to-17"]
 ];
 
 export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {
@@ -53,11 +122,11 @@ export function validateReleaseManifest(value) {
   const root = requiredRecord(value, "release manifest");
   assertKeys(
     root,
-    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "release"],
+    ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "stateCompatibility", "release"],
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
-  if (root.manifestVersion !== 4) fail("manifestVersion must be 4");
+  if (root.manifestVersion !== 5) fail("manifestVersion must be 5");
 
   const product = requiredRecord(root.product, "product");
   assertKeys(product, ["displayName", "description", "runtimeName"], "product");
@@ -184,6 +253,113 @@ export function validateReleaseManifest(value) {
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
     fail("uiResources.resources must contain settings, activity, dashboard, and question exactly once");
+  }
+
+  const stateCompatibility = requiredRecord(root.stateCompatibility, "stateCompatibility");
+  assertKeys(
+    stateCompatibility,
+    [
+      "currentSchema",
+      "supportedSourceSchemas",
+      "unsupportedSourceSchemas",
+      "retiredLegacyImports",
+      "migrationCatalog",
+      "migrationCatalogSha256",
+      "stateProfilePolicy",
+      "rollbackPolicy",
+      "persistentContracts",
+      "contractSources",
+      "recoveryContract"
+    ],
+    "stateCompatibility"
+  );
+  if (stateCompatibility.currentSchema !== 19) fail("stateCompatibility.currentSchema must be 19");
+  if (
+    !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
+    stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
+    stateCompatibility.supportedSourceSchemas.some(
+      (schema, index) => schema !== STATE_SOURCE_SCHEMAS[index]
+    )
+  ) {
+    fail(`stateCompatibility.supportedSourceSchemas must be ${STATE_SOURCE_SCHEMAS.join(", ")} in that order`);
+  }
+  if (JSON.stringify(stateCompatibility.unsupportedSourceSchemas) !== JSON.stringify([1, 2])) {
+    fail("stateCompatibility.unsupportedSourceSchemas must be 1, 2 in that order");
+  }
+  if (
+    JSON.stringify(stateCompatibility.retiredLegacyImports) !==
+    JSON.stringify(["settings-state-json", "session-state-json", "job-state-json"])
+  ) {
+    fail("stateCompatibility.retiredLegacyImports must list the three retired JSON state stores");
+  }
+  if (stateCompatibility.migrationCatalog !== STATE_MIGRATION_CATALOG) {
+    fail(`stateCompatibility.migrationCatalog must be ${STATE_MIGRATION_CATALOG}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(stateCompatibility.migrationCatalogSha256)) {
+    fail("stateCompatibility.migrationCatalogSha256 must be a SHA-256 digest");
+  }
+  if (stateCompatibility.stateProfilePolicy !== "release-stage-isolated-v1") {
+    fail("stateCompatibility.stateProfilePolicy must be release-stage-isolated-v1");
+  }
+  if (stateCompatibility.rollbackPolicy !== "verified-original-before-service-open-v1") {
+    fail("stateCompatibility.rollbackPolicy must be verified-original-before-service-open-v1");
+  }
+  const persistentContracts = requiredRecord(
+    stateCompatibility.persistentContracts,
+    "stateCompatibility.persistentContracts"
+  );
+  assertKeys(
+    persistentContracts,
+    [
+      "userSettingsSchema",
+      "taskInputContract",
+      "macosHelperProtocol",
+      "localCompanionProtocol",
+      "remoteCompanionProtocol"
+    ],
+    "stateCompatibility.persistentContracts"
+  );
+  const requiredContracts = {
+    userSettingsSchema: 4,
+    taskInputContract: 2,
+    macosHelperProtocol: 2,
+    localCompanionProtocol: 2,
+    remoteCompanionProtocol: 1
+  };
+  for (const [name, expected] of Object.entries(requiredContracts)) {
+    if (persistentContracts[name] !== expected) {
+      fail(`stateCompatibility.persistentContracts.${name} must be ${expected}`);
+    }
+  }
+  const requiredContractSources = {
+    databaseSchema: "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",
+    userSettings: "src/modelPolicy.ts#MODEL_POLICY_SCHEMA_VERSION",
+    taskInput: "src/tools.ts#CODEX_TASK_INPUT_CONTRACT_VERSION",
+    macosHelper: "src/macosHelperServer.ts#MACOS_HELPER_PROTOCOL_VERSION",
+    localCompanion: "src/companionServer.ts#COMPANION_PROTOCOL_VERSION",
+    remoteCompanion: "src/remoteCompanionServer.ts#REMOTE_COMPANION_PROTOCOL_VERSION",
+    uiResources: "uiResources.minimumContractGeneration",
+    executionBackend: "toolchain.codexCli+app-server-schema.lock.json"
+  };
+  const contractSources = requiredRecord(stateCompatibility.contractSources, "stateCompatibility.contractSources");
+  assertKeys(contractSources, Object.keys(requiredContractSources), "stateCompatibility.contractSources");
+  if (!sameJson(contractSources, requiredContractSources)) {
+    fail("stateCompatibility.contractSources must reference the canonical runtime contracts");
+  }
+  const recoveryContract = requiredRecord(
+    stateCompatibility.recoveryContract,
+    "stateCompatibility.recoveryContract"
+  );
+  const requiredRecoveryContract = {
+    backupMetadataVersion: 1,
+    restoreReceiptVersion: 1,
+    sourceRuntimeMatch: "exact-product-version-and-build",
+    settingsRestore: "database-snapshot-and-source-runtime-configuration",
+    automaticSnapshotRestoreUntil: "service-open"
+  };
+  assertKeys(recoveryContract, Object.keys(requiredRecoveryContract), "stateCompatibility.recoveryContract");
+  if (!sameJson(recoveryContract, requiredRecoveryContract)) {
+    fail("stateCompatibility.recoveryContract does not match the supported recovery implementation");
   }
 
   const release = requiredRecord(root.release, "release");
@@ -398,6 +574,234 @@ export function derivePluginManifests(manifest) {
   };
 }
 
+export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
+  const stateStoreSource = readFileSync(path.join(repoRoot, "src/stateStore.ts"), "utf8");
+  const migrations = STATE_MIGRATION_DEFINITIONS.map(
+    ([fromSchema, toSchema, implementation, introducedCommit, dependencies]) => {
+      const method = extractPrivateMethod(stateStoreSource, implementation);
+      const hash = createHash("sha256");
+      hash.update(`src/stateStore.ts#${implementation}\0`);
+      hash.update(method);
+      for (const [relative, symbol] of dependencies) {
+        hash.update(`\0${relative}#${symbol}\0`);
+        hash.update(extractNamedDeclaration(
+          readFileSync(path.join(repoRoot, relative), "utf8"),
+          symbol
+        ));
+      }
+      return {
+        id: `bridge-state-${fromSchema}-to-${toSchema}`,
+        fromSchema,
+        toSchema,
+        implementation,
+        introducedCommit,
+        sha256: hash.digest("hex")
+      };
+    }
+  );
+  const fixtures = STATE_FIXTURE_DEFINITIONS.map(([schema, kind, source, relative]) => ({
+    schema,
+    kind,
+    source,
+    path: relative,
+    sha256: sha256(readFileSync(path.join(repoRoot, relative)))
+  }));
+  return {
+    catalogVersion: 1,
+    immutabilityPolicy: "append-only-after-release-v1",
+    currentSchema: 19,
+    supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
+    unsupportedSourceSchemas: [1, 2],
+    retiredLegacyImports: [
+      "settings-state-json",
+      "session-state-json",
+      "job-state-json"
+    ],
+    migrations,
+    fixtures,
+    derivedCheckpoints: STATE_DERIVED_CHECKPOINTS.map(
+      ([schema, sourceFixtureSchema, afterMigrationId]) => ({
+        schema,
+        kind: "derived-migration-checkpoint",
+        sourceFixtureSchema,
+        afterMigrationId
+      })
+    )
+  };
+}
+
+export function checkStateCompatibility(repoRoot, manifest) {
+  const catalogFile = path.join(repoRoot, STATE_MIGRATION_CATALOG);
+  const expectedCatalog = expectedStateMigrationCatalog(repoRoot);
+  if (!jsonFileMatches(catalogFile, expectedCatalog)) {
+    throw new Error(
+      `${STATE_MIGRATION_CATALOG} does not match the migration implementations or fixtures. ` +
+      "Run npm run release:sync and review every checksum change."
+    );
+  }
+  const catalogDigest = sha256(readFileSync(catalogFile));
+  if (manifest.stateCompatibility.migrationCatalogSha256 !== catalogDigest) {
+    throw new Error(
+      `release-manifest.json state migration catalog digest is ${manifest.stateCompatibility.migrationCatalogSha256}, ` +
+      `expected ${catalogDigest}. Run npm run release:sync.`
+    );
+  }
+  const runtimeContracts = {
+    currentSchema: sourceInteger(
+      repoRoot,
+      "src/stateSchema.ts",
+      /CURRENT_STATE_SCHEMA_VERSION\s*=\s*["'](\d+)["']/,
+      "CURRENT_STATE_SCHEMA_VERSION"
+    ),
+    userSettingsSchema: sourceInteger(
+      repoRoot,
+      "src/modelPolicy.ts",
+      /MODEL_POLICY_SCHEMA_VERSION\s*=\s*(\d+)/,
+      "MODEL_POLICY_SCHEMA_VERSION"
+    ),
+    taskInputContract: sourceInteger(
+      repoRoot,
+      "src/tools.ts",
+      /CODEX_TASK_INPUT_CONTRACT_VERSION\s*=\s*["'](\d+)["']/,
+      "CODEX_TASK_INPUT_CONTRACT_VERSION"
+    ),
+    macosHelperProtocol: sourceInteger(
+      repoRoot,
+      "src/macosHelperServer.ts",
+      /MACOS_HELPER_PROTOCOL_VERSION\s*=\s*(\d+)/,
+      "MACOS_HELPER_PROTOCOL_VERSION"
+    ),
+    localCompanionProtocol: sourceInteger(
+      repoRoot,
+      "src/companionServer.ts",
+      /COMPANION_PROTOCOL_VERSION\s*=\s*(\d+)/,
+      "COMPANION_PROTOCOL_VERSION"
+    ),
+    remoteCompanionProtocol: sourceInteger(
+      repoRoot,
+      "src/remoteCompanionServer.ts",
+      /REMOTE_COMPANION_PROTOCOL_VERSION\s*=\s*(\d+)/,
+      "REMOTE_COMPANION_PROTOCOL_VERSION"
+    )
+  };
+  if (runtimeContracts.currentSchema !== manifest.stateCompatibility.currentSchema) {
+    throw new Error("State schema runtime constant drifted from release-manifest.json.");
+  }
+  for (const name of [
+    "userSettingsSchema",
+    "taskInputContract",
+    "macosHelperProtocol",
+    "localCompanionProtocol",
+    "remoteCompanionProtocol"
+  ]) {
+    if (runtimeContracts[name] !== manifest.stateCompatibility.persistentContracts[name]) {
+      throw new Error(`${name} runtime constant drifted from release-manifest.json.`);
+    }
+  }
+  return expectedCatalog;
+}
+
+function extractPrivateMethod(source, name) {
+  const marker = `\n  private ${name}(`;
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`Could not find state migration implementation ${name}.`);
+  const next = source.indexOf("\n  private ", start + marker.length);
+  if (next < 0) throw new Error(`Could not find the end of state migration implementation ${name}.`);
+  return source.slice(start + 1, next).trimEnd();
+}
+
+function extractNamedDeclaration(source, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`(?:export\\s+)?const\\s+${escaped}\\b`),
+    new RegExp(`(?:export\\s+)?function\\s+${escaped}\\b`),
+    new RegExp(`private\\s+${escaped}\\s*\\(`)
+  ];
+  let match = null;
+  for (const pattern of patterns) {
+    match = pattern.exec(source);
+    if (match) break;
+  }
+  if (!match) throw new Error(`Could not find migration dependency declaration ${name}.`);
+  const start = match.index;
+  const isConstant = /(?:export\s+)?const\s+/.test(match[0]);
+  let quote = null;
+  let escapedCharacter = false;
+  let lineComment = false;
+  let blockComment = false;
+  let braces = 0;
+  let parentheses = 0;
+  let brackets = 0;
+  let sawBody = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escapedCharacter) escapedCharacter = false;
+      else if (character === "\\") escapedCharacter = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "/" && next === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") {
+      braces += 1;
+      sawBody = true;
+    } else if (character === "}") {
+      braces -= 1;
+      if (!isConstant && sawBody && braces === 0) {
+        const nextToken = source.slice(index + 1).match(/\S/)?.[0];
+        if (nextToken !== "{") return source.slice(start, index + 1);
+      }
+    } else if (character === "(") parentheses += 1;
+    else if (character === ")") parentheses -= 1;
+    else if (character === "[") brackets += 1;
+    else if (character === "]") brackets -= 1;
+    else if (
+      isConstant &&
+      character === ";" &&
+      braces === 0 &&
+      parentheses === 0 &&
+      brackets === 0
+    ) return source.slice(start, index + 1);
+  }
+  throw new Error(`Could not find the end of migration dependency declaration ${name}.`);
+}
+
+function sourceInteger(repoRoot, relative, pattern, label) {
+  const source = readFileSync(path.join(repoRoot, relative), "utf8");
+  const match = pattern.exec(source);
+  if (!match) throw new Error(`Could not read ${label} from ${relative}.`);
+  return Number(match[1]);
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
   const packageVersion = packageVersionFromSource(repoRoot);
@@ -423,6 +827,7 @@ export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   }
   const appServerSchemaLock = readJson(path.join(repoRoot, APP_SERVER_SCHEMA_LOCK));
   validateAppServerSchemaLockMetadata(appServerSchemaLock, manifest.toolchain.codexCli);
+  checkStateCompatibility(repoRoot, manifest);
   if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
     checkUiResources(repoRoot, manifest);
   }
@@ -453,7 +858,19 @@ export function validateAppServerSchemaLockMetadata(value, expectedCodexCliVersi
 
 export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
-  const synchronizedManifest = manifestForPackageVersion(manifest, packageVersionFromSource(repoRoot));
+  const catalog = expectedStateMigrationCatalog(repoRoot);
+  if (existsSync(path.join(repoRoot, STATE_MIGRATION_CATALOG))) {
+    assertImmutableStateMigrationHistory(
+      readJson(path.join(repoRoot, STATE_MIGRATION_CATALOG)),
+      catalog
+    );
+  }
+  writeJsonArtifactIfChanged(path.join(repoRoot, STATE_MIGRATION_CATALOG), catalog);
+  const withStateCatalog = structuredClone(manifest);
+  withStateCatalog.stateCompatibility.migrationCatalogSha256 = sha256(
+    `${JSON.stringify(catalog, null, 2)}\n`
+  );
+  const synchronizedManifest = manifestForPackageVersion(withStateCatalog, packageVersionFromSource(repoRoot));
   const prepared = preparePackageMetadata(repoRoot, synchronizedManifest);
   writeJsonIfChanged(path.join(repoRoot, MANIFEST_FILENAME), manifest, synchronizedManifest);
   writeJsonIfChanged(path.join(repoRoot, "package.json"), prepared.packageJson, prepared.nextPackageJson);
@@ -463,6 +880,35 @@ export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
     syncUiResources(repoRoot, synchronizedManifest);
   }
   return deriveReleaseMetadata(synchronizedManifest);
+}
+
+function assertImmutableStateMigrationHistory(previous, next) {
+  for (const collection of ["migrations", "fixtures", "derivedCheckpoints"]) {
+    if (!Array.isArray(previous?.[collection]) || !Array.isArray(next?.[collection])) {
+      throw new Error(`State migration catalog ${collection} must be an array.`);
+    }
+    for (const recorded of previous[collection]) {
+      const identity = collection === "migrations"
+        ? recorded?.id
+        : collection === "fixtures"
+          ? recorded?.schema
+          : `${recorded?.schema}:${recorded?.sourceFixtureSchema}`;
+      const candidate = next[collection].find((entry) => {
+        const nextIdentity = collection === "migrations"
+          ? entry?.id
+          : collection === "fixtures"
+            ? entry?.schema
+            : `${entry?.schema}:${entry?.sourceFixtureSchema}`;
+        return nextIdentity === identity;
+      });
+      if (!candidate || !sameJson(recorded, candidate)) {
+        throw new Error(
+          `Immutable state migration ${collection} entry ${String(identity)} changed or disappeared. ` +
+          "Keep the deployed entry and add a new schema migration or provenance record."
+        );
+      }
+    }
+  }
 }
 
 export function deriveUiResourceManifest(manifest, rendered, previous) {

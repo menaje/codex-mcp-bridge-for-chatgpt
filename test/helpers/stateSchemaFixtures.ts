@@ -17,6 +17,10 @@ const schema18 = readFileSync(
   new URL("../fixtures/state-schema-v18.sql", import.meta.url),
   "utf8"
 );
+const schema16 = readFileSync(
+  new URL("../fixtures/state-schema-v16.sql", import.meta.url),
+  "utf8"
+);
 const seededSchema3 = readFileSync(
   new URL("../fixtures/state-v3-seeded.sql", import.meta.url),
   "utf8"
@@ -403,6 +407,13 @@ export function createSchema18Fixture(
   );
   db.prepare("INSERT INTO automatic_recovery_incidents(identity_key,recovery_key,agent_id,active,updated_at) VALUES (?,?,?,?,?)")
     .run("incident-v18", "recovery-v18", V18_AGENT_ID, 1, 86);
+  db.close();
+}
+
+/** Exact empty database emitted by deployed dev 17d7398 (schema 16). */
+export function createSchema16Fixture(file: string): void {
+  const db = new Database(file);
+  db.exec(schema16);
   db.close();
 }
 
