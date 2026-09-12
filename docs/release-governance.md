@@ -104,9 +104,9 @@ Inspect the non-mutating plan on `dev`:
 npm run release:plan
 ```
 
-For the current accumulated fragments, the expected plan is
-`release/0.4.0` and `0.4.0-rc.1`. This is a plan only: it does not change the
-version, create a branch, publish a tag, or publish a release.
+Use the command's reported branch and candidate version as the authority for
+the next release. The plan does not change the version, create a branch,
+publish a tag, or publish a release.
 
 After creating and switching to the exact planned branch, prepare metadata:
 
@@ -118,16 +118,45 @@ Open one draft pull request from that same-repository `release/X.Y.Z` branch to
 `main`. While the manifest is `candidate`, the pull request runs the complete
 read-only release validation. Its required **Stable promotion gate** succeeds only
 while the candidate PR remains draft; the draft state is the merge hold. Marking a
-candidate PR ready before stable promotion makes the gate fail. Publish each
-validated RC only through the manual release workflow.
+candidate PR ready before stable promotion makes the gate fail.
 
-If a candidate validation or publication run fails for a transient runner or
-network reason without changing the commit or payload, rerun that exact commit.
-If the fix changes any source or payload, keep the PR on `HOLD`, commit the fix
-on the release branch, run `release:next-rc`, and publish the new RC; never
-replace an existing RC tag, release, or asset.
+## Non-publishing rehearsal and RC identity
 
-Each changed candidate increments only `rc.N`:
+The first public RC must not be the first end-to-end exercise of the release
+path. Before dispatching the manual publication workflow, use the exact draft-PR
+candidate commit and its retained artifacts for a non-publishing rehearsal. In a
+clean temporary worktree, project that candidate to stable with
+`release:promote`, run `validate:stable`, rebuild and compare the npm archive,
+promote and compare both candidate DMGs, and verify the five-asset assembly. The
+rehearsal creates no tag or GitHub release. Record the candidate commit, PR run,
+release-workflow commit, input artifact checksums, and comparison results. The
+physical candidate checks remain separate required evidence.
+
+An `X.Y.Z-rc.N` identifier is provisional until its GitHub prerelease exists. A
+defect found during the rehearsal may be fixed on the same unpublished `rc.N`;
+commit the fix and rerun every required check at the new exact head. Earlier
+runs and artifacts remain evidence only for their old commits. Do not run
+`release:next-rc` merely because an unpublished rehearsal failed.
+
+Publication freezes the RC identifier, tag, commit, release notes, and assets.
+After that point, use the following decision boundary:
+
+| Change after a public RC | Required action |
+| --- | --- |
+| Transient runner or network failure with the same commit and inputs | Rerun the exact commit and keep the RC |
+| Product code, UI, runtime dependency, manifest, shipped documentation, build input, or any other published payload change | Fix on the release branch and publish the next RC |
+| Packaging, candidate-promotion, payload-normalization, signing, asset-assembly, or publication-authority workflow change | Publish the next RC, even if one sampled payload still compares equal |
+| Validation-only change excluded from every public artifact and unable to affect the dependency graph, build plan, package construction, promotion, or authority boundary | The stable-promotion head may retain the public source RC only after full exact-head validation and all payload comparisons pass |
+| Unclassified or uncertain change | Keep the release on `HOLD` and publish the next RC |
+
+A path or filename is not proof that a change is validation-only. Tests can
+participate in a build graph, and repository documentation is shipped in the npm
+archive. If the actual candidate and stable artifacts differ outside the
+enumerated normalization boundary, the validation-only exception does not
+apply. The release PR must state which rule was used and link its evidence.
+
+Use the next RC only after a public candidate is frozen and a new candidate is
+required:
 
 ```bash
 npm run release:next-rc

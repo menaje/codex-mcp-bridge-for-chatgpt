@@ -318,8 +318,47 @@ read-only validation, and the required Stable promotion gate succeeds while the
 candidate remains draft. The draft state blocks merging; marking the candidate
 ready before stable promotion makes the gate fail.
 
-Use `npm run release:next-rc` after any candidate payload change and
-`npm run release:promote` only after the final candidate passes every gate.
+### Rehearse before the first public RC
+
+Treat the prepared `X.Y.Z-rc.N` as provisional until a GitHub prerelease is
+actually published. Before the first manual publication run:
+
+1. let the draft PR produce the npm and arm64/x64 candidate artifacts at the
+   exact candidate commit;
+2. download those retained workflow artifacts and record their checksums;
+3. use a clean temporary worktree at that commit, run `release:promote` without
+   pushing or tagging it, and run `npm run validate:stable`;
+4. rebuild and compare the npm archive, promote and compare both candidate DMGs
+   with the repository scripts, and dry-run the exact five-asset assembly;
+5. record the candidate commit, PR run, release-workflow commit, artifact
+   checksums and all comparison results in the release PR;
+6. complete the physical candidate smoke gates before dispatching publication.
+
+This rehearsal publishes nothing. If it exposes a defect, commit the fix on the
+same provisional `rc.N` and rerun all evidence at the new exact head. Do not
+advance an RC number that has never been published; old workflow runs remain
+bound to their old commits and cannot be combined with the fixed head.
+
+### Decide when the RC number changes
+
+Once GitHub publishes an RC, its identifier, tag, commit and assets are
+immutable. Run `npm run release:next-rc` for any subsequent published-payload
+change, including shipped documentation, or for any change to build inputs,
+packaging, candidate promotion, payload normalization, signing, asset assembly,
+or publication authority. A transient runner or network failure may rerun the
+same exact commit and RC.
+
+A stable-promotion commit may keep the published source RC only for a
+validation-only correction that is excluded from every public artifact and
+cannot affect dependency resolution, the Swift or Node build plan, packaging,
+promotion, comparison, signing, or publication authority. Full validation at
+the exact stable head and all three RC-to-stable payload comparisons must pass.
+File placement alone is insufficient evidence; if impact is uncertain or an
+artifact differs, keep the PR on `HOLD` and publish the next RC. Record the
+classification and evidence in the PR.
+
+Use `npm run release:promote` only after the final candidate passes the
+pre-publication rehearsal and every candidate gate.
 The promotion preserves the numeric version, records the source RC, removes the
 RC suffix, rebuilds and compares the npm distribution, and promotes each
 published candidate app into its stable DMG by updating only version/build
@@ -327,10 +366,6 @@ metadata before re-signing. The same PR then reruns the strict stable payload
 comparisons before merge. See
 [release-governance.md](release-governance.md) for the full lifecycle and
 validation ladder.
-
-Rerun an unchanged candidate commit only for a transient Actions failure. Any
-source or payload correction requires a committed fix and the next `rc.N`; a
-published candidate is immutable and is never repaired in place.
 
 If another manifest field is intentionally edited, run:
 
@@ -402,6 +437,12 @@ only a source-RC-backed stable promotion. The workflow:
 9. publishes all five assets together and marks only candidate-stage runs as
    GitHub prereleases.
 
+Candidate artifacts retained by the read-only PR run are inputs to the required
+non-publishing rehearsal. They are identified by run and commit and are not a
+public RC. Only the manual candidate publication freezes an RC identity. A
+change to this workflow's build, promotion, comparison, signing, assembly, or
+publication-authority behavior after a public RC requires a new RC.
+
 The macOS jobs have no Apple signing or notarization secrets. Their public assets
 are intentionally named with `macOS-arm64-unnotarized.dmg` and
 `macOS-x64-unnotarized.dmg`, and the release notes must identify both variants
@@ -412,7 +453,8 @@ silently change the trust model.
 Development pushes and PRs targeting `dev` do not start this workflow at all.
 Never merge, fast-forward, cherry-pick, or push development work to `main`
 unless the user explicitly instructs that specific promotion. Before that
-promotion, prepare the planned unused RC, open the release PR, and complete both
-physical release-candidate smoke gates, including the clean-Mac Gatekeeper
-path. Apply the workflow before enabling its required remote status check so
-`main` is not left waiting for a context that cannot yet run.
+promotion, prepare the provisional unpublished RC, open the release PR, finish
+the non-publishing stable rehearsal, and complete both physical
+release-candidate smoke gates, including the clean-Mac Gatekeeper path. Apply
+the workflow before enabling its required remote status check so `main` is not
+left waiting for a context that cannot yet run.
