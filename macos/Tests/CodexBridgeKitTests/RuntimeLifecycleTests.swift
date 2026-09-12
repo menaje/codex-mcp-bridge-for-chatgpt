@@ -231,14 +231,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         _ = await model.shutdownApplication(force: false)
         f.state.setPhase("handoff-ready")
         await model.refreshStatus()
-        for _ in 0..<200 {
-            let receipt = try? Data(contentsOf: f.receiptFile)
-            if model.runtimeErrorMessage != nil,
-               receipt.map({ String(decoding: $0, as: UTF8.self).contains("failed") }) == true {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        for _ in 0..<100 { if FileManager.default.fileExists(atPath: f.receiptFile.path) { break }; try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(model.applicationShutdownCompleted)
         XCTAssertNotNil(model.runtimeErrorMessage)
         XCTAssertTrue(String(decoding: try Data(contentsOf: f.receiptFile), as: UTF8.self).contains("failed"))
