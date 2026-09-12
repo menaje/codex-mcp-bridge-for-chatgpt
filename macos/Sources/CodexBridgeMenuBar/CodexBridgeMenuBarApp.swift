@@ -333,7 +333,7 @@ struct CodexBridgeMenuBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            DashboardPopoverView()
+            DashboardPopoverView(fitsMenuBarWindow: true)
                 .environmentObject(model)
         } label: {
             BridgeMenuBarIcon(health: model.health)

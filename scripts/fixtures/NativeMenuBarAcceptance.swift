@@ -88,15 +88,14 @@ struct NativeMenuBarAcceptanceApp: App {
                     Toggle("다크 모드", isOn: $dark)
                 }.padding(8)
                 if visible {
-                    DashboardPopoverView().environmentObject(acceptance.model)
+                    DashboardPopoverView(fitsMenuBarWindow: true).environmentObject(acceptance.model)
                 }
             }
             .preferredColorScheme(dark ? .dark : .light)
             .fixedSize()
         }
-        .windowResizability(.contentSize)
         MenuBarExtra {
-            DashboardPopoverView().environmentObject(acceptance.model)
+            DashboardPopoverView(fitsMenuBarWindow: true).environmentObject(acceptance.model)
         } label: {
             Text("89").accessibilityLabel("Bridge Menu Acceptance")
         }
