@@ -6106,8 +6106,9 @@ describe("bridge tools", () => {
     expect(privateView.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
     expect(privateView.warnings.join(" ")).not.toContain("Legacy model-only preference");
     expect(privateView.warnings.join(" ")).toContain(
-      "기존 Agent 스레드는 처음 사용한 백엔드에 계속 고정"
+      "폐기된 자동 모델 기본값을 제거했습니다"
     );
+    expect(privateView.warnings.join(" ")).not.toContain("백엔드 라우팅");
     await close();
     restoredState.close();
   });
@@ -8060,10 +8061,13 @@ describe("bridge tools", () => {
     );
 
     const settingsResult = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
-    expect((settingsResult as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
-      .toEqual(expect.arrayContaining([
-        expect.stringContaining("handoffSummary")
-      ]));
+    const settingsWarnings = (settingsResult as {
+      structuredContent?: { warnings?: string[] };
+    }).structuredContent?.warnings || [];
+    expect(settingsWarnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("CODEX_MCP_BRIDGE_ROOTS")
+    ]));
+    expect(settingsWarnings.join("\n")).not.toMatch(/Backend routing:|handoffSummary/);
 
     const continued = await runTask(client, {
       prompt: "continue on the pinned backend",

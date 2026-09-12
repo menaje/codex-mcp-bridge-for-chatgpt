@@ -15600,8 +15600,6 @@ async function buildSettingsView(
       models: (catalog?.models || []) as CodexModelDescriptor[]
     },
     warnings: [
-      `Backend routing: ${config.defaultBackend} applies only to new or deliberately fresh Agent threads. ` +
-        "Existing Agent threads retain their original execution identity. Retired execution paths cannot resume. Choose context='fresh' with an explicit handoffSummary to create an App Server context; the prior transcript and backend state are not copied.",
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])

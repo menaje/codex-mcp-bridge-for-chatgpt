@@ -1328,13 +1328,6 @@ private struct RuntimeStatusPane: View {
         return maximumAccess != savedConfiguration.maximumAccess
     }
 
-    private var nonRoutingWarnings: [String] {
-        snapshot.warnings.filter { warning in
-            !warning.localizedCaseInsensitiveContains("Backend routing:") &&
-                !warning.contains("백엔드 라우팅:")
-        }
-    }
-
     private var canRetryWithForce: Bool {
         model.runtimeFailureCanRetryWithForce
     }
@@ -1384,9 +1377,9 @@ private struct RuntimeStatusPane: View {
                 }
             }
 
-            if !nonRoutingWarnings.isEmpty {
+            if !snapshot.warnings.isEmpty {
                 Section("확인할 사항") {
-                    ForEach(nonRoutingWarnings, id: \.self) { warning in
+                    ForEach(snapshot.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)

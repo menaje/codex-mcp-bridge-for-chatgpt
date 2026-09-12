@@ -239,17 +239,10 @@ describe("human-facing UI localization", () => {
   });
 
   it("localizes audited settings warnings without exposing raw English diagnostics", () => {
-    const backendWarning =
-      "Backend routing: app-server applies only to new or deliberately fresh Agent threads. " +
-      "Existing Agent threads remain pinned to their original backend. To cross backends, " +
-      "choose the existing Agent with context='fresh' and provide an explicit handoffSummary; " +
-      "the prior transcript and backend state are not copied.";
-    expect(localizeSettingsWarning(backendWarning, "ko")).toContain(
-      "기존 Agent 스레드는 처음 사용한 백엔드에 계속 고정"
-    );
-    expect(localizeSettingsWarning(backendWarning, "ko")).not.toContain(
-      "Existing Agent threads remain pinned"
-    );
+    expect(localizeSettingsWarning(
+      "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction.",
+      "ko"
+    )).toBe(UI_TRANSLATIONS.ko["settings.warning.legacyRoots"]);
     expect(localizeSettingsWarning(
       'PROJECT_UNAVAILABLE: Saved project "샘플" is unavailable and cannot admit new work.',
       "ko"
@@ -712,7 +705,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain('id="retry-models" type="button"');
     expect(SETTINGS_CARD_HTML).toContain('id="catalog-status" role="status"');
     expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-label"');
-    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-source"');
+    expect(SETTINGS_CARD_HTML).not.toContain('catalog-status-source');
+    expect(SETTINGS_CARD_HTML).not.toContain('settings.catalogSource');
     expect(SETTINGS_CARD_HTML).toContain('elements.catalogStatus.dataset.state=catalogState');
     expect(UI_TRANSLATIONS.en["settings.catalogStatus.valid"]).toBe("Model catalog valid");
     expect(UI_TRANSLATIONS.ko["settings.catalogStatus.valid"]).toBe("모델 카탈로그 정상");

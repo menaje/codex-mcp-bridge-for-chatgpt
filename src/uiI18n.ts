@@ -99,7 +99,6 @@ const ENGLISH = {
   "settings.catalogStatus.valid": "Model catalog valid",
   "settings.catalogStatus.lastKnownGood": "Model catalog using last known good data",
   "settings.catalogStatus.invalid": "Model catalog unavailable",
-  "settings.catalogSource": "Source: {source}",
   "settings.selectionRequired": "Choose an exact model and reasoning effort.",
   "settings.explicitRequired": "Select at least one allowed exact selection.",
   "settings.modelEffortRequired": "Choose at least one reasoning effort for {model}.",
@@ -161,7 +160,6 @@ const ENGLISH = {
   "settings.invalidResponse": "The settings tool returned an invalid response.",
   "settings.sharedNotice": "These settings are shared by all conversations using this bridge instance, not stored per ChatGPT account. Bridge security policy cannot be changed here.",
 
-  "settings.warning.backendRouting": "Backend routing: {backend} applies only to new or deliberately fresh Agent threads. Existing Agent threads remain pinned to their original backend. To cross backends, choose the existing Agent with context='fresh' and provide an explicit handoffSummary; the prior transcript and backend state are not copied.",
   "settings.warning.catalogStale": "The model catalog could not be refreshed. The last successfully verified catalog is shown temporarily.",
   "settings.warning.catalogUnavailable": "The model catalog is unavailable. Restore backend access and retry model lookup.",
   "settings.warning.legacyRoots": "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. Remove it to manage project folders only from Codex settings.",
@@ -1248,7 +1246,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "모델 카탈로그 정상",
     "settings.catalogStatus.lastKnownGood": "모델 카탈로그: 마지막 정상 데이터 사용 중",
     "settings.catalogStatus.invalid": "모델 카탈로그 사용 불가",
-    "settings.catalogSource": "출처: {source}"
   },
   ja: {
     "settings.allowedScope": "GPT が選択できる範囲",
@@ -1263,7 +1260,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "モデルカタログは有効です",
     "settings.catalogStatus.lastKnownGood": "モデルカタログは最後の正常データを使用中です",
     "settings.catalogStatus.invalid": "モデルカタログを利用できません",
-    "settings.catalogSource": "ソース: {source}"
   },
   "zh-Hans": {
     "settings.allowedScope": "GPT 可选范围",
@@ -1278,7 +1274,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "模型目录有效",
     "settings.catalogStatus.lastKnownGood": "模型目录正在使用最近的有效数据",
     "settings.catalogStatus.invalid": "模型目录不可用",
-    "settings.catalogSource": "来源：{source}"
   },
   "zh-Hant": {
     "settings.allowedScope": "GPT 可選範圍",
@@ -1293,7 +1288,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "模型目錄有效",
     "settings.catalogStatus.lastKnownGood": "模型目錄正使用最近的有效資料",
     "settings.catalogStatus.invalid": "模型目錄無法使用",
-    "settings.catalogSource": "來源：{source}"
   },
   es: {
     "settings.allowedScope": "Opciones disponibles para GPT",
@@ -1308,7 +1302,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
     "settings.catalogStatus.lastKnownGood": "El catálogo usa los últimos datos válidos",
     "settings.catalogStatus.invalid": "Catálogo de modelos no disponible",
-    "settings.catalogSource": "Fuente: {source}"
   },
   fr: {
     "settings.allowedScope": "Choix disponibles pour GPT",
@@ -1323,7 +1316,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "Catalogue de modèles valide",
     "settings.catalogStatus.lastKnownGood": "Le catalogue utilise les dernières données valides",
     "settings.catalogStatus.invalid": "Catalogue de modèles indisponible",
-    "settings.catalogSource": "Source : {source}"
   },
   de: {
     "settings.allowedScope": "Auswahlbereich für GPT",
@@ -1338,7 +1330,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "Modellkatalog gültig",
     "settings.catalogStatus.lastKnownGood": "Modellkatalog verwendet die letzten gültigen Daten",
     "settings.catalogStatus.invalid": "Modellkatalog nicht verfügbar",
-    "settings.catalogSource": "Quelle: {source}"
   },
   pt: {
     "settings.allowedScope": "Opções disponíveis para o GPT",
@@ -1353,7 +1344,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
     "settings.catalogStatus.valid": "Catálogo de modelos válido",
     "settings.catalogStatus.lastKnownGood": "O catálogo usa os últimos dados válidos",
     "settings.catalogStatus.invalid": "Catálogo de modelos indisponível",
-    "settings.catalogSource": "Fonte: {source}"
   }
 };
 
@@ -2254,11 +2244,6 @@ export function localizeSettingsWarning(
       locale,
       context.stale ? "settings.warning.catalogStale" : "settings.warning.catalogUnavailable"
     );
-  }
-
-  const backend = warning.match(/^Backend routing:\s*(\S+)\s+applies only/i)?.[1];
-  if (backend) {
-    return uiTranslation(locale, "settings.warning.backendRouting", { backend });
   }
 
   if (warning.startsWith("CODEX_MCP_BRIDGE_ROOTS ")) {

@@ -4580,58 +4580,6 @@
         }
       }
     },
-    "변경 사항은 서버를 재시작한 뒤 새 에이전트 또는 새로 시작한 에이전트부터 적용됩니다. 기존 에이전트는 생성 당시 백엔드를 계속 사용하며, 다른 백엔드로 새로 시작할 때는 이전 작업을 요약해 전달해야 합니다.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After the server restarts, the change applies only to new Agents or Agents deliberately started fresh. Existing Agents stay on their original backend; starting fresh on another backend requires a summary of prior work."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "変更はサーバー再起動後、新しいAgentまたは新規開始したAgentから適用されます。既存のAgentは作成時のバックエンドを引き続き使用します。別のバックエンドで新規開始する場合は、それまでの作業概要を引き継ぐ必要があります。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器重启后，更改仅应用于新代理或重新开始的代理。现有代理继续使用创建时的后端；在其他后端重新开始时，需要提供先前工作的摘要。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "伺服器重啟後，更改僅應用於新代理程式或重新開始的代理程式。現有代理程式繼續使用建立時的後端；在其他後端重新開始時，需要提供先前工作的摘要。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tras reiniciar el servidor, el cambio solo se aplica a agentes nuevos o reiniciados desde cero. Los agentes existentes mantienen el backend con el que se crearon; al empezar de nuevo con otro backend debe proporcionarse un resumen del trabajo anterior."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Après le redémarrage du serveur, la modification ne s’applique qu’aux nouveaux agents ou à ceux relancés avec un nouveau contexte. Les agents existants conservent leur backend d’origine ; un redémarrage sur un autre backend nécessite un résumé du travail précédent."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nach dem Serverneustart gilt die Änderung nur für neue oder bewusst neu gestartete Agenten. Vorhandene Agenten behalten ihr ursprüngliches Backend. Bei einem Neustart auf einem anderen Backend muss eine Zusammenfassung der bisherigen Arbeit übergeben werden."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Após reiniciar o servidor, a alteração se aplica apenas a agentes novos ou reiniciados com novo contexto. Os agentes existentes mantêm o backend original; para recomeçar em outro backend, é necessário fornecer um resumo do trabalho anterior."
-          }
-        }
-      }
-    },
     "변경사항 자동 저장": {
       "localizations": {
         "en": {

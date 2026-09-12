@@ -44,8 +44,8 @@ export const UI_RESOURCE_MANIFEST = {
     "selected": [
       {
         "name": "settings",
-        "digest": "e898a4132b43f3eeb28266e38488ee45fd6aeea992942331a9303e9e8f720a7b",
-        "uri": "ui://codex-mcp-bridge/settings/e898a4132b43.html",
+        "digest": "ea1fe7c9776bede4c19fb8a2a8eef1642ee49127825e66d5a1d23e2773ca72ed",
+        "uri": "ui://codex-mcp-bridge/settings/ea1fe7c9776b.html",
         "inventories": [
           "development-current"
         ],
@@ -193,8 +193,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "e898a4132b43f3eeb28266e38488ee45fd6aeea992942331a9303e9e8f720a7b",
-      "uri": "ui://codex-mcp-bridge/settings/e898a4132b43.html",
+      "digest": "ea1fe7c9776bede4c19fb8a2a8eef1642ee49127825e66d5a1d23e2773ca72ed",
+      "uri": "ui://codex-mcp-bridge/settings/ea1fe7c9776b.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",

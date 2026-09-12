@@ -229,10 +229,8 @@ describe("native companion server", () => {
       settings: { settingsRevision: 3, uiLocalePreference: "ko" },
       catalog: { stale: false, warning: null, models: [] },
       warnings: [
-        "Backend routing: app-server applies only to new or deliberately fresh Agent threads. " +
-          "Existing Agent threads remain pinned to their original backend. To cross backends, " +
-          "choose the existing Agent with context='fresh' and provide an explicit handoffSummary; " +
-          "the prior transcript and backend state are not copied."
+        "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. " +
+          "Remove it to manage all project folders only from Codex settings."
       ],
       scopeNotice: "unlocalized"
     } as SettingsView);
@@ -246,7 +244,10 @@ describe("native companion server", () => {
       params: { refreshModels: false, locale: "ko-KR" }
     });
 
-    expect(response.result.warnings[0]).toContain("백엔드 라우팅");
+    expect(response.result.warnings[0]).toBe(
+      "CODEX_MCP_BRIDGE_ROOTS는 이전 버전 호환용 제한입니다. " +
+        "프로젝트 폴더를 Codex 설정에서만 관리하려면 이 값을 제거하세요."
+    );
     expect(response.result.scopeNotice).not.toBe("unlocalized");
   });
 
