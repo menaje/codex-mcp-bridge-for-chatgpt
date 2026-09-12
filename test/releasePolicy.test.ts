@@ -27,7 +27,7 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("release governance policy", () => {
   it("aggregates repository-owned fragments into the proposed 0.4.0-rc.1", () => {
-    const manifest = loadReleaseManifest(REPO_ROOT);
+    const manifest = developmentManifest();
     const fragments = loadChangeFragments(REPO_ROOT);
 
     expect(deriveReleasePlan(manifest, fragments)).toEqual({
@@ -62,7 +62,7 @@ describe("release governance policy", () => {
       migration: "Update callers."
     })).toThrow(/must start with BREAKING/);
 
-    const manifest = loadReleaseManifest(REPO_ROOT);
+    const manifest = developmentManifest();
     expect(() => deriveReleasePlan(manifest, [{ ...base, breaking: true, summary: "BREAKING: API", migration: "Update." }]))
       .toThrow(/requires at least a minor bump/);
   });
@@ -79,7 +79,7 @@ describe("release governance policy", () => {
       GITHUB_REF_NAME: "main"
     })).toBe("main");
 
-    const development = loadReleaseManifest(REPO_ROOT);
+    const development = developmentManifest();
     expect(validateBranchStage(development, "dev")).toMatchObject({ stage: "development" });
     expect(() => validateBranchStage(development, "main")).toThrow(/main requires stable/);
 
@@ -169,7 +169,7 @@ describe("release governance policy", () => {
 });
 
 function candidateManifest(version: string): any {
-  const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+  const manifest = developmentManifest();
   manifest.release.version = version;
   manifest.release.stage = "candidate";
   manifest.release.channel = "prerelease";
@@ -179,7 +179,7 @@ function candidateManifest(version: string): any {
 }
 
 function stableManifest(version: string, sourceCandidate: string): any {
-  const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+  const manifest = developmentManifest();
   manifest.release.version = version;
   manifest.release.stage = "stable";
   manifest.release.channel = "stable";
@@ -202,7 +202,7 @@ function releasePullRequestInput(): any {
 function fixtureRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "codex-release-policy-"));
   mkdirSync(path.join(root, ".changes"));
-  writeJson(path.join(root, "release-manifest.json"), loadReleaseManifest(REPO_ROOT));
+  writeJson(path.join(root, "release-manifest.json"), developmentManifest());
   copyFileSync(
     path.join(REPO_ROOT, "app-server-schema.lock.json"),
     path.join(root, "app-server-schema.lock.json")
@@ -226,7 +226,20 @@ function fixtureRoot(): string {
     breaking: true,
     migration: "Existing npm users can keep their current launch flow."
   });
+  const releaseNotes = path.join(root, "docs/releases/0.4.0.md");
+  mkdirSync(path.dirname(releaseNotes), { recursive: true });
+  copyFileSync(path.join(REPO_ROOT, "docs/releases/0.4.0.md"), releaseNotes);
   return root;
+}
+
+function developmentManifest(): any {
+  const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+  manifest.release.version = "0.3.0";
+  manifest.release.stage = "development";
+  manifest.release.channel = "none";
+  manifest.release.sourceVersion = null;
+  manifest.release.sourceCandidate = null;
+  return validateReleaseManifest(manifest);
 }
 
 function writeJson(file: string, value: unknown): void {

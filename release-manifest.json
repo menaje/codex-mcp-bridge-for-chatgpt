@@ -162,11 +162,11 @@
   },
   "release": {
     "releaseUnitId": "codex-mcp-bridge",
-    "version": "0.3.0",
-    "stage": "development",
+    "version": "0.4.0-rc.1",
+    "stage": "candidate",
     "tagPrefix": "v",
-    "channel": "none",
-    "sourceVersion": null,
+    "channel": "prerelease",
+    "sourceVersion": "0.3.0",
     "sourceCandidate": null,
     "generateNotes": true,
     "targets": {

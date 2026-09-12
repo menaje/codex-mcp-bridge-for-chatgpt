@@ -26,6 +26,7 @@ describe("release manifest", () => {
   it("bootstraps GitHub workflow metadata before dependencies are installed", () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-release-bootstrap-"));
     const scriptsDirectory = path.join(root, "scripts");
+    const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
     mkdirSync(scriptsDirectory);
     copyFileSync(
       path.join(REPO_ROOT, "scripts/release-manifest.mjs"),
@@ -39,6 +40,9 @@ describe("release manifest", () => {
       path.join(REPO_ROOT, "release-manifest.json"),
       path.join(root, "release-manifest.json")
     );
+    const releaseNotes = path.join(root, metadata.releaseNotesFile);
+    mkdirSync(path.dirname(releaseNotes), { recursive: true });
+    copyFileSync(path.join(REPO_ROOT, metadata.releaseNotesFile), releaseNotes);
 
     const output = execFileSync(
       process.execPath,
@@ -49,7 +53,7 @@ describe("release manifest", () => {
     expect(output).toContain("node_version=22\n");
     expect(output).toContain("npm_version=10.9.3\n");
     expect(output).toContain("codex_cli_version=0.153.3\n");
-    expect(output).toContain("release_notes_file=docs/releases/0.3.0.md\n");
+    expect(output).toContain(`release_notes_file=${metadata.releaseNotesFile}\n`);
   });
 
   it("requires the dual-architecture macOS, npm, state, and UI manifestVersion 6 contract", () => {
@@ -74,10 +78,8 @@ describe("release manifest", () => {
 
     expect(manifest.release).toMatchObject({
       releaseUnitId: "codex-mcp-bridge",
-      stage: "development",
-      channel: "none",
-      sourceVersion: null,
-      sourceCandidate: null
+      tagPrefix: "v",
+      generateNotes: true
     });
 
     manifest.manifestVersion = 3;
@@ -153,6 +155,7 @@ describe("release manifest", () => {
   it("derives release metadata from the synchronized package version and manifest policy", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const metadata = checkReleaseMetadata(REPO_ROOT);
+    const baseVersion = manifest.release.version.replace(/-rc\.\d+$/, "");
 
     expect(metadata).toEqual(deriveReleaseMetadata(manifest));
     expect(metadata).toMatchObject({
@@ -172,17 +175,17 @@ describe("release manifest", () => {
       macosArchitectures: ["arm64", "x64"],
       macosMinimumVersion: "13.0",
       macosArchiveFilenames: {
-        arm64: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
-        x64: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg"
+        arm64: `Codex-MCP-Bridge-for-ChatGPT-${manifest.release.version}-macOS-arm64-unnotarized.dmg`,
+        x64: `Codex-MCP-Bridge-for-ChatGPT-${manifest.release.version}-macOS-x64-unnotarized.dmg`
       },
-      macosArm64ArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg",
-      macosX64ArchiveFilename: "Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg",
+      macosArm64ArchiveFilename: `Codex-MCP-Bridge-for-ChatGPT-${manifest.release.version}-macOS-arm64-unnotarized.dmg`,
+      macosX64ArchiveFilename: `Codex-MCP-Bridge-for-ChatGPT-${manifest.release.version}-macOS-x64-unnotarized.dmg`,
       releaseChecksumsFilename: "SHA256SUMS.txt",
       releaseUnitId: "codex-mcp-bridge",
-      releaseNotesFile: "docs/releases/0.3.0.md",
-      stage: "development",
-      channel: "none",
-      prerelease: false
+      releaseNotesFile: `docs/releases/${baseVersion}.md`,
+      stage: manifest.release.stage,
+      channel: manifest.release.channel,
+      prerelease: manifest.release.stage === "candidate"
     });
   });
 
@@ -321,7 +324,7 @@ describe("release manifest", () => {
   });
 
   it("keeps UI cache keys independent from SemVer and changes them for HTML or host metadata", () => {
-    const manifest = loadReleaseManifest(REPO_ROOT);
+    const manifest = developmentManifest();
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const initialLock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
     const rendered = renderedFromLock(initialLock);
@@ -431,7 +434,7 @@ describe("release manifest", () => {
 
 function fixtureRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "codex-release-manifest-"));
-  const manifest = loadReleaseManifest(REPO_ROOT);
+  const manifest = developmentManifest();
   writeJson(path.join(root, "release-manifest.json"), manifest);
   writeJson(
     path.join(root, "app-server-schema.lock.json"),
@@ -478,6 +481,16 @@ function fixtureRoot(): string {
     packages: { "": { name: "drifted-package", version: "9.9.9" } }
   });
   return root;
+}
+
+function developmentManifest(): any {
+  const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
+  manifest.release.version = "0.3.0";
+  manifest.release.stage = "development";
+  manifest.release.channel = "none";
+  manifest.release.sourceVersion = null;
+  manifest.release.sourceCandidate = null;
+  return validateReleaseManifest(manifest);
 }
 
 function renderedFromLock(lock: any): any {

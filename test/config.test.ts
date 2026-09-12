@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HARD_MAX_CONCURRENT_JOBS,
+  defaultStateProfile,
   enforceSandbox,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -34,8 +35,12 @@ describe("config policy", () => {
     expect(config.modelCatalogCacheTtlMs).toBe(600000);
     expect(config.modelCatalogTimeoutMs).toBe(30000);
     expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
-    expect(config.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/profiles\/development\/state\.sqlite$/);
-    expect(config.stateProfile).toBe("development");
+    expect(config.stateProfile).toBe(defaultStateProfile());
+    expect(config.stateDatabaseFile).toMatch(
+      defaultStateProfile() === "stable"
+        ? /\.codex-mcp-bridge\/state\.sqlite$/
+        : new RegExp(`\\.codex-mcp-bridge/profiles/${defaultStateProfile()}/state\\.sqlite$`)
+    );
     expect(config).not.toHaveProperty("settingsStateFile");
     expect(config).not.toHaveProperty("sessionStateFile");
     expect(config).not.toHaveProperty("jobStateFile");
@@ -159,9 +164,16 @@ describe("config policy", () => {
     ).toThrow(/absolute path/);
   });
 
-  it("isolates development and candidate state unless stable or an explicit file is selected", () => {
-    const development = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+  it("selects the build-stage profile by default and keeps explicit profiles isolated", () => {
+    const implicit = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+    expect(implicit.stateProfile).toBe(defaultStateProfile());
+
+    const development = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_PROFILE: "development"
+    });
     expect(development.stateProfile).toBe("development");
+    expect(development.stateDatabaseFile).toMatch(/profiles\/development\/state\.sqlite$/);
 
     const candidate = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",

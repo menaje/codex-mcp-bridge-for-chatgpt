@@ -1,6 +1,6 @@
 {
   "name": "codex-mcp-bridge-for-chatgpt",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.1",
   "packageManager": "npm@10.9.3",
   "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
   "type": "module",
