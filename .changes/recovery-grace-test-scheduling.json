@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Make the recovery-grace regression test wait for the main-actor expiry update instead of racing its scheduled task on loaded release runners.",
+  "breaking": false,
+  "migration": null
+}

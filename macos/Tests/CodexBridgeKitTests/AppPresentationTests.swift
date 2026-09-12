@@ -363,7 +363,10 @@ final class AppPresentationTests: XCTestCase {
         let model = AppModel()
         model.recordLocalConnectionStatus(try helperStatus(bridgeConnected: false))
         XCTAssertEqual(model.health, .checking)
-        try await Task.sleep(nanoseconds: 8_100_000_000)
+        for _ in 0..<40 {
+            if model.health == .unavailable { break }
+            try await Task.sleep(for: .milliseconds(250))
+        }
         XCTAssertEqual(model.health, .unavailable)
     }
 
