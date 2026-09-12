@@ -7,7 +7,8 @@ import { PRODUCT_INFO } from "./productInfo.js";
 import {
   currentUiResourceUri,
   htmlForUiResource,
-  uiResourceRevisions
+  uiResourceRevisions,
+  uiRevisionMetadata
 } from "./uiResources.js";
 import {
   hostToolResultMetadata,
@@ -103,23 +104,22 @@ export const ACTIVITY_CARD_CONTENT_METADATA = {
 
 export function registerActivityCardResource(server: McpServer): void {
   for (const [index, revision] of uiResourceRevisions("activity").entries()) {
+    const revisionMetadata = uiRevisionMetadata(
+      revision,
+      ACTIVITY_CARD_RESOURCE_DESCRIPTOR,
+      ACTIVITY_CARD_CONTENT_METADATA
+    );
     server.registerResource(
       index === 0 ? "codex-activity-card" : `codex-activity-card-compat-${index}`,
       revision.uri,
-      ACTIVITY_CARD_RESOURCE_DESCRIPTOR,
+      revisionMetadata.descriptor,
       async () => ({
         contents: [
           {
             uri: revision.uri,
             mimeType: ACTIVITY_CARD_MIME_TYPE,
             text: htmlForUiResource("activity", revision.uri, ACTIVITY_CARD_HTML),
-            _meta: {
-              ...ACTIVITY_CARD_CONTENT_METADATA,
-              "codex/uiContractGeneration": revision.contractGeneration ||
-                (index === 0
-                  ? ACTIVITY_CARD_CONTRACT_GENERATION
-                  : RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION)
-            }
+            _meta: revisionMetadata.content
           }
         ]
       })

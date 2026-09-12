@@ -36,7 +36,8 @@ The manifest controls:
   contract generations, and currently required logical resources;
 - the single release unit, synchronized SemVer mirror, independent stage,
   derived publication channel, source-RC provenance, tag prefix, and release title;
-- generated release-note policy and the manifest-v5 release/state asset contract;
+- the version-derived `docs/releases/X.Y.Z.md` release notes and the manifest-v6
+  release, state, and UI asset contract;
 - state schema 19, supported source schemas 3 through 18, retired JSON imports,
   persistent Settings/task/helper/companion contracts, state-profile policy,
   recovery boundary, and the digest of `state-migrations.json`;
@@ -50,7 +51,7 @@ history and possible future reference. ChatGPT does not consume these files,
 so they are not an active product surface and must not be installed or packaged.
 
 The archive directory is deliberately outside the npm `files` allowlist and is
-not copied into the native macOS app. Manifest version 5 does not declare a
+not copied into the native macOS app. Manifest version 6 does not declare a
 skills artifact, and the release workflow neither builds nor publishes a skills
 ZIP. A complete release therefore contains only the two architecture-specific
 macOS DMGs, generic npm server tarball, npm tarball checksum, and aggregate
@@ -108,37 +109,37 @@ The command is the only supported writer for:
 - `src/uiManifest.generated.ts`, which gives the server the same identities;
 - build-time `dist/ui-manifest.json` and packaged snapshots.
 
-The existing server registers all current and previous entries from the lock.
-Only Settings history is filtered by minimum contract generation; Activity,
-Dashboard and Question history still accumulates across development syncs.
-The build copies that entire selection into the packaged runtime. This is the
-current implementation, not a published-release support policy.
+The server registers every revision selected by `ui-release-catalog.json` with
+that revision's original descriptor and content metadata. The release manifest
+binds the catalog digest, and the generated lock records inventory provenance,
+presenter, and required tool contracts. Packages contain one current revision
+for each active card plus supported published baselines and explicit deployed
+exceptions. Unclassified development lock history is not copied.
 The resource descriptor, `_meta.ui.resourceUri`, and compatibility
 `openai/outputTemplate` must all name the same current URI.
 
 The [UI card release and retirement policy](ui-release-compatibility.md) defines
-the required replacement: separate supported stable baselines, one development
-current per active card, and exact exceptions for already deployed development
-or RC clients. Only the final current cards enter the next stable baseline;
-development intermediates do not enter automatically. Activity is retired from
-the active set, with remaining compatibility and removal decided through that
-policy. Implementation and baseline reconstruction remain open in #53.
+separate supported stable baselines, one development current per active card,
+and exact exceptions for deployed development or RC clients. Only the final
+current cards enter the next stable baseline. Activity is compatibility-only;
+its selected resources and presenter remain available, while new work uses
+Dashboard and Question.
 
-Before the final RC, select the supported identities and required tool contracts,
-resolve deployment exceptions and the Activity migration, and verify the same
-selection in the npm archive and both DMGs (#52). Include the actual v0.3.0
-non-hashed card URIs in the support/retirement review; the current hashed lock
-does not establish their compatibility. Document the resulting upgrade and
-card-reopening behavior against that candidate (#11). Do not prune cards during
-stable promotion; a changed UI payload requires another RC.
+Before the final RC, verify the catalog's exact selection in the npm archive and
+both DMGs (#52). The current selection contains eight unique snapshots: current
+Settings, Dashboard, and Question; the actual v0.3.0 non-hashed Settings and
+Activity resources; and the explicitly deployed development Settings,
+Activity, Dashboard, and shared Question revision. Document card refresh and
+reopening against that candidate (#11). Do not prune cards during stable
+promotion; a changed UI payload requires another RC.
 
 `npm run release:check` reproduces the render and fails on content, digest,
 metadata, snapshot, missing-resource, duplicate-URI, descriptor, or output
 template drift. Do not edit generated manifests or snapshots by hand. A SemVer
 change with identical cards preserves the URIs; a card or relevant metadata
 change produces new URIs even before the next version bump.
-These existing checks do not yet enforce published provenance or the new
-inventory separation.
+The same check rejects UI catalog digest drift, missing classifications,
+unreviewed Activity renderer changes, and catalog/lock lifecycle differences.
 
 Retained snapshots that reference the source compiler's missing `__name`
 helper receive a small name-decorator bootstrap when served. Their stored
@@ -306,6 +307,11 @@ npm run release:plan
 
 Create the exact reported `release/X.Y.Z` branch, switch to it, and then run
 `npm run release:prepare-candidate`. Only `X.Y.Z-rc.N` candidates are accepted.
+Before the candidate check, add `docs/releases/X.Y.Z.md` with the user-visible
+changes, migration steps, supported retained cards, macOS architecture choices,
+and trust model. Candidate and stable publication both use that exact file and
+may append GitHub's generated change list; a missing or incomplete file fails
+the release check.
 Open a draft pull request from that same-repository release branch to `main`;
 it is the only PR shape admitted by the release workflow. Candidate commits run
 read-only validation while the required Stable promotion gate remains on

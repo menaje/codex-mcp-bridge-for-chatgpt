@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { serializedUiTranslations } from "./uiI18n.js";
 import { CARD_BROWSER_RUNTIME } from "./cardBrowserRuntime.js";
 import { QUESTION_DRAFT_SCRIPT } from "./questionDraft.js";
-import { currentUiResourceUri, htmlForUiResource, uiResourceRevisions } from "./uiResources.js";
+import { currentUiResourceUri, htmlForUiResource, uiResourceRevisions, uiRevisionMetadata } from "./uiResources.js";
 
 export const QUESTION_CARD_URI = currentUiResourceUri("question");
 export const QUESTION_CARD_CONTRACT_GENERATION = 1;
@@ -17,9 +17,14 @@ export const QUESTION_CARD_CONTENT_METADATA = {
 } as const;
 export function registerQuestionCardResource(server: McpServer): void {
   for (const [index, revision] of uiResourceRevisions("question").entries()) {
+    const revisionMetadata = uiRevisionMetadata(
+      revision,
+      QUESTION_CARD_RESOURCE_DESCRIPTOR,
+      QUESTION_CARD_CONTENT_METADATA
+    );
     server.registerResource(index ? `codex-question-card-compat-${index}` : "codex-question-card", revision.uri,
-      QUESTION_CARD_RESOURCE_DESCRIPTOR, async () => ({ contents: [{ uri: revision.uri, mimeType: QUESTION_CARD_RESOURCE_DESCRIPTOR.mimeType,
-        text: htmlForUiResource("question", revision.uri, QUESTION_CARD_HTML), _meta: QUESTION_CARD_CONTENT_METADATA }] }));
+      revisionMetadata.descriptor, async () => ({ contents: [{ uri: revision.uri, mimeType: QUESTION_CARD_RESOURCE_DESCRIPTOR.mimeType,
+        text: htmlForUiResource("question", revision.uri, QUESTION_CARD_HTML), _meta: revisionMetadata.content }] }));
   }
 }
 const keys = ["common.refresh", "common.loading", "common.error", "common.cancel", "activity.otherAnswer",

@@ -75,10 +75,14 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain("--kind macos");
     expect(WORKFLOW).toContain("source_candidate_tag");
     expect(WORKFLOW).toContain("is not the latest RC");
+    expect(WORKFLOW).toContain("RELEASE_NOTES_FILE: ${{ steps.metadata.outputs.release_notes_file }}");
+    expect(WORKFLOW).toContain('--notes-file "$RELEASE_NOTES_FILE"');
+    expect(WORKFLOW).not.toContain('--notes "The macOS Apple Silicon');
   });
 
   it("audits state migration and restore in the unpacked npm archive and both mounted DMGs", () => {
     expect(WORKFLOW).toContain("scripts/state-release-audit.ts");
+    expect(WORKFLOW).toContain("ui-release-catalog.json");
     expect(WORKFLOW).toContain("--artifact-kind npm");
     expect(WORKFLOW).toContain('--artifact-kind "macos-$MACOS_TARGET_ARCHITECTURE"');
     expect(WORKFLOW).toContain('hdiutil attach -nobrowse -readonly');
@@ -89,6 +93,7 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain("macos-state-compatibility-audit-${{ matrix.architecture }}");
     expect(WORKFLOW.match(/retention-days: 90/g)).toHaveLength(2);
     expect(MACOS_BUILDER).toContain('release-manifest.schema.json');
+    expect(MACOS_BUILDER).toContain('ui-release-catalog.json');
     expect(MACOS_BUILDER).toContain('state-migrations.json');
   });
 

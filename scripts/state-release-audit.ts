@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import os from "node:os";
 import { createServer } from "node:net";
@@ -30,6 +40,9 @@ assert.equal(runtimeCatalog.currentSchema, runtimeManifest.stateCompatibility.cu
 assert.deepEqual(runtimeCatalog.supportedSourceSchemas, runtimeManifest.stateCompatibility.supportedSourceSchemas);
 assert.deepEqual(runtimeCatalog.unsupportedSourceSchemas, [1, 2]);
 assert.equal(runtimeCatalog.immutabilityPolicy, "append-only-after-release-v1");
+const runtimeUiCatalog = readJson(path.join(runtimeRoot, "ui-release-catalog.json"));
+const uiCatalogBytes = readFileSync(path.join(runtimeRoot, "ui-release-catalog.json"));
+assert.equal(sha256(uiCatalogBytes), runtimeManifest.uiResources.releaseCatalogSha256);
 
 const expectedArchitecture = options.artifactKind === "macos-arm64"
   ? "arm64"
@@ -67,6 +80,7 @@ try {
   cases.push(await auditMigrationCase(18, "test/fixtures/state-schema-v18.sql", false));
   const supportedStartCoverage = auditSupportedStarts();
   const interruptionRecovery = auditSchemaCommitInterruption();
+  const uiCompatibility = auditUiCompatibility();
 
   const report = {
     reportVersion: 1,
@@ -79,7 +93,8 @@ try {
       releaseStage: runtimeManifest.release.stage,
       buildCommit: buildInfo.commit,
       buildId: buildInfo.id,
-      migrationCatalogSha256: runtimeManifest.stateCompatibility.migrationCatalogSha256
+      migrationCatalogSha256: runtimeManifest.stateCompatibility.migrationCatalogSha256,
+      uiReleaseCatalogSha256: runtimeManifest.uiResources.releaseCatalogSha256
     },
     runtime: {
       platform: process.platform,
@@ -100,6 +115,7 @@ try {
       stateProfilePolicy: runtimeManifest.stateCompatibility.stateProfilePolicy,
       rollbackPolicy: runtimeManifest.stateCompatibility.rollbackPolicy
     },
+    uiCompatibility,
     supportedStartCoverage,
     interruptionRecovery,
     cases,
@@ -120,6 +136,130 @@ try {
   );
 } finally {
   rmSync(auditRoot, { recursive: true, force: true });
+}
+
+function auditUiCompatibility(): Record<string, unknown> {
+  const manifest = readJson(path.join(runtimeRoot, "dist/ui-manifest.json"));
+  assert.equal(manifest.manifestVersion, 2);
+  assert.equal(manifest.releaseInventory.catalog, "ui-release-catalog.json");
+  assert.equal(manifest.releaseInventory.catalogSha256, runtimeManifest.uiResources.releaseCatalogSha256);
+  assert.deepEqual(manifest.releaseInventory.activeResources, runtimeUiCatalog.activeResources);
+  assert.deepEqual(manifest.releaseInventory.compatibilityResources, runtimeUiCatalog.compatibilityResources);
+  assert.deepEqual(manifest.releaseInventory.retirement, runtimeUiCatalog.retirement);
+  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard", "question"]);
+  assert.deepEqual(runtimeUiCatalog.compatibilityResources, ["activity"]);
+  assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, false);
+
+  const selected = [] as Array<any>;
+  const physicalFiles = new Set<string>();
+  const counts = {
+    selected: 0,
+    developmentCurrent: 0,
+    publishedBaseline: 0,
+    temporaryException: 0,
+    uniqueBytes: 0
+  };
+  const toolSource = walkFiles(path.join(runtimeRoot, "dist"))
+    .filter((file) => file.endsWith(".js"))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+
+  for (const [name, resource] of Object.entries(manifest.resources) as Array<[string, any]>) {
+    for (const revision of [resource, ...(resource.previous || [])]) {
+      const relativeDirectory = path.join("dist", "ui", name);
+      const plain = path.join(runtimeRoot, relativeDirectory, `${revision.digest}.html`);
+      const encoded = `${plain}.base64`;
+      const file = existsSync(plain) ? plain : encoded;
+      assert.ok(existsSync(file), `selected UI snapshot is missing: ${name}/${revision.digest}`);
+      const stored = readFileSync(file, "utf8");
+      const html = file.endsWith(".base64")
+        ? Buffer.from(stored.trim(), "base64").toString("utf8")
+        : stored;
+      assert.equal(
+        sha256(Buffer.from(stableJson({ html, metadata: revision.metadata }))),
+        revision.digest,
+        `selected UI snapshot digest must match: ${name}/${revision.digest}`
+      );
+      const provenance = revision.releaseProvenance;
+      assert.ok(Array.isArray(provenance?.inventories) && provenance.inventories.length > 0);
+      assert.ok(Array.isArray(provenance?.sourceIds) && provenance.sourceIds.length > 0);
+      assert.ok(Array.isArray(provenance?.requiredTools) && provenance.requiredTools.length > 0);
+      assert.ok(provenance.requiredTools.includes(provenance.presenterTool));
+      for (const tool of provenance.requiredTools) {
+        assert.ok(
+          toolSource.includes(`"${tool}"`) || toolSource.includes(`'${tool}'`),
+          `selected UI tool contract is missing from the artifact: ${tool}`
+        );
+      }
+      const relative = path.relative(runtimeRoot, file);
+      physicalFiles.add(relative);
+      counts.uniqueBytes += Buffer.byteLength(html);
+      counts.selected += 1;
+      if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
+      if (provenance.inventories.includes("published-baseline")) counts.publishedBaseline += 1;
+      if (provenance.inventories.includes("temporary-exception")) counts.temporaryException += 1;
+      selected.push({
+        name,
+        digest: revision.digest,
+        uri: revision.uri,
+        inventories: provenance.inventories,
+        sourceIds: provenance.sourceIds,
+        presenterTool: provenance.presenterTool,
+        requiredTools: provenance.requiredTools,
+        bytes: Buffer.byteLength(html)
+      });
+    }
+  }
+  assert.deepEqual(
+    selected.map(({ bytes: _bytes, ...entry }) => entry),
+    manifest.releaseInventory.selected
+  );
+  const packagedFiles = new Set(
+    walkFiles(path.join(runtimeRoot, "dist", "ui")).map((file) => path.relative(runtimeRoot, file))
+  );
+  assert.deepEqual(packagedFiles, physicalFiles, "artifact must contain only explicitly selected UI snapshots");
+
+  const catalogRevisions = [
+    ...runtimeUiCatalog.publishedBaselines.flatMap((source: any) =>
+      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
+    ),
+    ...runtimeUiCatalog.temporaryExceptions.flatMap((source: any) =>
+      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
+    )
+  ];
+  for (const { sourceId, revision } of catalogRevisions) {
+    assert.ok(selected.some((entry) =>
+      entry.name === revision.name && entry.digest === revision.digest &&
+      entry.uri === revision.uri && entry.sourceIds.includes(sourceId)
+    ), `catalog revision was not selected: ${sourceId}/${revision.name}`);
+  }
+  assert.equal(counts.selected, 8);
+  assert.equal(counts.developmentCurrent, 3);
+  assert.equal(counts.publishedBaseline, 2);
+  assert.equal(counts.temporaryException, 4);
+  return {
+    catalogVersion: runtimeUiCatalog.catalogVersion,
+    activeResources: runtimeUiCatalog.activeResources,
+    compatibilityResources: runtimeUiCatalog.compatibilityResources,
+    selectionCounts: counts,
+    selected,
+    unclassifiedSnapshotCount: 0,
+    publishedBaseline: runtimeUiCatalog.publishedBaselines.map((entry: any) => ({
+      id: entry.id,
+      version: entry.version,
+      tag: entry.tag,
+      commit: entry.commit,
+      artifactSha256: entry.artifact.sha256
+    })),
+    temporaryExceptions: runtimeUiCatalog.temporaryExceptions.map((entry: any) => ({
+      id: entry.id,
+      kind: entry.kind,
+      commit: entry.commit,
+      buildId: entry.buildId,
+      exitCondition: entry.exitCondition
+    })),
+    activityRetirement: runtimeUiCatalog.retirement.activity
+  };
 }
 
 function auditSupportedStarts(): Array<{
@@ -599,6 +739,27 @@ function parseArguments(argv: string[]): Arguments {
 function usage(): string {
   return "Usage: state-release-audit.ts --runtime-root <dir> --artifact-kind <npm|macos-arm64|macos-x64> " +
     "--fixture-root <repo> --report <json> --previous-runtime-root <dir> [--artifact-sha256 <digest>]";
+}
+
+function walkFiles(directory: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...walkFiles(file));
+    else if (entry.isFile()) files.push(file);
+  }
+  return files.sort();
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(record[key])}`
+    ).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function readJson(file: string): any {

@@ -1,12 +1,14 @@
 # UI card release and retirement policy
 
-This policy was recorded on 2026-09-11. Its implementation is a release-readiness
-requirement tracked in [#53](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/53),
-with artifact verification in [#52](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/52)
-and upgrade guidance in [#11](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/11).
-The current generator still accumulates development revisions. Recording this
-policy does not claim that pruning, Activity-card removal, or a release has
-already happened.
+This policy was recorded on 2026-09-11 and implemented for the 0.4.0 release
+line through `ui-release-catalog.json`, release manifest version 6, and the
+generated UI inventory. Final candidate artifact verification remains tracked
+in [#53](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/53),
+[#52](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/52), and
+[#11](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/11).
+The implementation prunes unselected development revisions from packages; it
+does not claim that the final candidate has been published or that the retained
+Activity compatibility resources can already be removed.
 
 ## Three separate inventories
 
@@ -57,11 +59,12 @@ schema, revision and permission checks.
 
 ## Activity-card retirement
 
-The target active card set is **Settings, Dashboard and Question**. Activity
-cards are retired from new use and must not keep generating a new current
-release card. Existing supported Activity identities belong only to the
-compatibility inventories above until their migration is complete. The current
-four-resource manifest and generator have not yet implemented this distinction.
+The active card set is **Settings, Dashboard and Question**. Activity is
+compatibility-only and no longer receives a development-current entry or a new
+presentation. Existing supported Activity identities belong only to the
+published-baseline and temporary-exception inventories until their migration is
+complete. The renderer is frozen to the selected deployed revision; changing it
+requires an explicit catalog entry and review.
 
 The physical-removal change must inventory the renderer, resource registration,
 original `codex_activity` presenter, app-only reads and controls, rehydration,
@@ -97,25 +100,30 @@ See the [dated host evidence](audits/2026-09-08-card-tool-consolidation.md#actua
 
 ## Implementation and release evidence
 
-The following requirements remain open under #53:
+`ui-release-catalog.json` is the source of truth for published baselines,
+temporary exceptions, current tool contracts, and Activity retirement. The
+release manifest binds its SHA-256 digest. `release:sync` derives only the three
+active current cards plus catalog-selected compatibility revisions, and
+`release:check` rejects catalog drift, missing snapshots, changed immutable
+metadata, an unclassified compatibility card, or a modified Activity renderer.
+Each retained revision is registered with its original descriptor, content
+metadata, presenter, and required tool set. Legacy source bytes that do not fit
+the repository's text-file convention are stored as base64 and decoded without
+changing the served content.
 
-- Reconstruct the published baseline from actual release artifacts, including
-  legacy non-hashed URIs. For each identity, either verify compatible behavior
-  or record its intentional retirement and migration; never silently omit it.
-- Implement the three inventories and Activity lifecycle in generation,
-  registration and packaging. Repeated development syncs must not grow the
-  published inventory; the next stable's final cards are added once.
-- Review deployed development/RC clients and record the exact temporary support
-  set and exit conditions. Finalize Activity retention/removal before the final RC.
-- Test retained URI/metadata/tool resolution, strict Settings mutations, final
-  current selection, deduplication and rejection of unclassified revisions.
-  Test any implemented retirement/transition behavior and state preservation.
+The packaged inventory contains eight unique snapshots totaling 1,152,927 HTML
+bytes: three Settings, two Activity, two Dashboard, and one Question. Their
+provenance memberships are three development-current, two published-baseline,
+and four temporary-exception entries; the current Question belongs to both the
+development-current and deployed-exception inventories and is stored once.
+Repeated synchronization ignores the old lock history and cannot grow this set.
 
-#52 verifies that the npm archive and both macOS DMGs contain the same selected
-UI inventory and required contracts, exclude unselected development snapshots,
-and preserve the selection through RC-to-stable payload comparison. Record
-counts and sizes by current, published-compatibility and temporary-exception
-class; a file's presence alone does not establish compatibility.
+#52 verifies that the npm archive and both macOS DMGs contain this same selected
+inventory and required contracts, exclude unselected development snapshots, and
+preserve the selection through RC-to-stable payload comparison. The artifact
+audit records counts, bytes, catalog digest, identities, and required tools
+without including card HTML or user data. Final evidence must come from all
+three artifacts built from the same candidate commit.
 
 #11 documents supported release versions and exact migration/retirement
 behavior, plugin refresh and card reopening, the existing overview conversation,
@@ -124,7 +132,7 @@ candidate. Pending answers, saved results and running work must survive the
 changed support boundary. A development acceptance record is not evidence that
 the final candidate or previously published clients were tested.
 
-## Observed baseline: 2026-09-11
+## Reconstructed baseline and pre-implementation measurement
 
 Source: dev commit `25a7886`. The latest stable is
 [v0.3.0, published 2026-08-22](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases/tag/v0.3.0).
@@ -134,7 +142,9 @@ after that release. Those two original stable URIs are absent from the current
 hashed registry. Historical #69 testing of deployed development cards does not
 establish v0.3.0 upgrade compatibility.
 
-| Card | Current entries in the existing lock | Previous entries | Registered HTML total |
+Before the catalog implementation, the accumulated lock contained:
+
+| Card | Current entries | Previous entries | Registered HTML total |
 | --- | ---: | ---: | ---: |
 | Settings | 1 | 48 | 49 |
 | Activity, currently compatibility-only | 1 | 65 | 66 |
@@ -142,10 +152,8 @@ establish v0.3.0 upgrade compatibility.
 | Question | 1 | 2 | 3 |
 | Total | 4 | 179 | 183 |
 
-The selected HTML snapshots total approximately 35.03 MiB before compression.
-`deriveUiResourceManifest` currently adds displaced current revisions to
-`previous`; only Settings history is pruned by minimum contract generation.
-`write-build-info.mjs` copies every current/previous entry into `dist/ui`.
-There is no published-versus-development classification check yet. The existing
-release check passes this baseline, which demonstrates the enforcement gap
-rather than completion of the requirements above.
+Those 183 snapshots totaled approximately 35.03 MiB before compression. This is
+the measured input that exposed the enforcement gap; it is not the current
+package selection. The catalog reconstructs the v0.3.0 non-hashed Settings and
+Activity resources from the published npm artifact and records the one locally
+deployed development build as an explicit, bounded exception.
