@@ -11,6 +11,7 @@ import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MACOS_HELPER_PROTOCOL_NAME,
@@ -25,6 +26,10 @@ import { CodexRuntimeManager } from "../src/codexRuntime.js";
 import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
+import {
+  createSchema18Fixture,
+  createSeededSchema3Fixture
+} from "./helpers/stateSchemaFixtures.js";
 
 import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
 
@@ -115,6 +120,85 @@ afterEach(async () => {
 });
 
 describe("macOS runtime helper RPC", () => {
+  it("allows supported state schemas to reach migration while retaining the project path guard", async () => {
+    const root = temporaryDirectory();
+    const stateDatabaseFile = path.join(root, "state.sqlite");
+    const project = path.join(root, "project");
+    createSchema18Fixture(stateDatabaseFile, { projectCwd: project });
+
+    const validEnvFile = path.join(root, "config", ".env");
+    writeStateBackedRuntimeEnv(validEnvFile, stateDatabaseFile);
+    const valid = new MacOSBridgeSupervisor({
+      bridgeRoot: path.join(root, "runtime"),
+      envFile: validEnvFile,
+      bridgeSocketPath: path.join(root, "valid.sock"),
+      runtimeLockDirectory: path.join(root, "valid-run", "launcher.lock")
+    });
+    try {
+      expect((await valid.health()).configuration).toMatchObject({ valid: true });
+    } finally {
+      await valid.close({ runtime: "force-stop" });
+    }
+
+    const conflictingEnvFile = path.join(project, ".runtime", ".env");
+    writeStateBackedRuntimeEnv(conflictingEnvFile, stateDatabaseFile);
+    const conflicting = new MacOSBridgeSupervisor({
+      bridgeRoot: path.join(root, "runtime"),
+      envFile: conflictingEnvFile,
+      bridgeSocketPath: path.join(root, "conflicting.sock"),
+      runtimeLockDirectory: path.join(root, "conflicting-run", "launcher.lock")
+    });
+    try {
+      expect((await conflicting.health()).configuration).toMatchObject({
+        valid: false,
+        issue: expect.stringContaining("RUNTIME_ENV_PROJECT_CONFLICT")
+      });
+    } finally {
+      await conflicting.close({ runtime: "force-stop" });
+    }
+  });
+
+  it("allows the earliest supported state schema and rejects a future schema", async () => {
+    const root = temporaryDirectory();
+    const schema3File = path.join(root, "schema-3.sqlite");
+    createSeededSchema3Fixture(schema3File);
+    const schema3EnvFile = path.join(root, "schema-3", ".env");
+    writeStateBackedRuntimeEnv(schema3EnvFile, schema3File);
+    const schema3 = new MacOSBridgeSupervisor({
+      bridgeRoot: path.join(root, "runtime"),
+      envFile: schema3EnvFile,
+      bridgeSocketPath: path.join(root, "schema-3.sock"),
+      runtimeLockDirectory: path.join(root, "schema-3-run", "launcher.lock")
+    });
+    try {
+      expect((await schema3.health()).configuration).toMatchObject({ valid: true });
+    } finally {
+      await schema3.close({ runtime: "force-stop" });
+    }
+
+    const futureFile = path.join(root, "schema-20.sqlite");
+    createSeededSchema3Fixture(futureFile);
+    const futureDatabase = new Database(futureFile);
+    futureDatabase.prepare("UPDATE bridge_meta SET value = '20' WHERE key = 'schema_version'").run();
+    futureDatabase.close();
+    const futureEnvFile = path.join(root, "schema-20", ".env");
+    writeStateBackedRuntimeEnv(futureEnvFile, futureFile);
+    const future = new MacOSBridgeSupervisor({
+      bridgeRoot: path.join(root, "runtime"),
+      envFile: futureEnvFile,
+      bridgeSocketPath: path.join(root, "schema-20.sock"),
+      runtimeLockDirectory: path.join(root, "schema-20-run", "launcher.lock")
+    });
+    try {
+      expect((await future.health()).configuration).toMatchObject({
+        valid: false,
+        issue: expect.stringContaining("state schema 20")
+      });
+    } finally {
+      await future.close({ runtime: "force-stop" });
+    }
+  });
+
   it("falls back to admission only when an older companion explicitly rejects health", async () => {
     for (const code of [-32600, -32601, -32603]) {
       const root = temporaryDirectory();
@@ -1435,6 +1519,16 @@ function temporarySocketPath(): string {
 
 function temporaryDirectory(): string {
   return mkdtempSync(path.join(tmpdir(), "codex-macos-supervisor-"));
+}
+
+function writeStateBackedRuntimeEnv(envFile: string, stateDatabaseFile: string): void {
+  mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
+  writeFileSync(envFile, [
+    "CONTROL_PLANE_API_KEY=sk-state-migration-test-1234567890",
+    "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
+    `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateDatabaseFile}`,
+    ""
+  ].join("\n"), { mode: 0o600 });
 }
 
 

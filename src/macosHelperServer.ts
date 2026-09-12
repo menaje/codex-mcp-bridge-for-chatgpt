@@ -21,7 +21,10 @@ import {
   parseStateProfile,
   stateDatabaseFileForProfile
 } from "./config.js";
-import { CURRENT_STATE_DATABASE_SCHEMA } from "./stateCompatibility.js";
+import {
+  CURRENT_STATE_DATABASE_SCHEMA,
+  SUPPORTED_STATE_SCHEMA_VERSIONS
+} from "./stateCompatibility.js";
 import {
   inspectStateDatabase,
   readStateMigrationStatus,
@@ -2501,12 +2504,17 @@ function readRegisteredProjectRoots(
   if (existsSync(stateDatabaseFile)) {
     assertRegularStateFile(stateDatabaseFile);
     const inspection = inspectStateDatabase(stateDatabaseFile);
-    if (inspection.schemaVersion !== CURRENT_STATE_DATABASE_SCHEMA) {
+    const schemaVersion = inspection.schemaVersion;
+    if (schemaVersion === null || !SUPPORTED_STATE_SCHEMA_VERSIONS.has(schemaVersion)) {
       throw new Error(
-        `Project registry is unavailable while state schema ${String(inspection.schemaVersion)} ` +
-        `is outside the helper's schema ${CURRENT_STATE_DATABASE_SCHEMA} contract.`
+        `Project registry is unavailable while state schema ${String(schemaVersion)} ` +
+        `is outside the helper's supported state schemas through ${CURRENT_STATE_DATABASE_SCHEMA}.`
       );
     }
+    // The UUID project registry was introduced by schema 8. Supported older
+    // schemas intentionally discard their legacy project JSON during upgrade,
+    // so they have no authoritative project roots for the helper to guard.
+    if (schemaVersion < 8) return [];
     const database = new Database(stateDatabaseFile, {
       readonly: true,
       fileMustExist: true
