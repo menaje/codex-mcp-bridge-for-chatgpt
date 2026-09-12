@@ -232,5 +232,9 @@ tests the committed-schema/pending-provenance interruption and resume path. The
 audit records clean process shutdown separately; process termination and physical
 power-loss behavior are not claimed without separate evidence.
 
+The checked-in [issue 98 development artifact evidence](audits/issue-98-development-state-release.md)
+covers a clean generic npm package and local arm64 DMG. Its development stage and
+single native architecture do not satisfy the three-artifact final-RC gate.
+
 See [database schema and lifecycle](database-schema.md) for table ownership and
 [release governance](release-governance.md) for the candidate-to-stable gate.
