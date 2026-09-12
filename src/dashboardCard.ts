@@ -179,13 +179,13 @@ export const DASHBOARD_CARD_RESOURCE_DESCRIPTOR = {
 } as const;
 export const DASHBOARD_CARD_CONTENT_METADATA = {
   ui: {
-    prefersBorder: true,
+    prefersBorder: false,
     csp: { connectDomains: [] as string[], resourceDomains: [] as string[] },
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
     "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and approval/input request review.",
-  "openai/widgetPrefersBorder": true,
+  "openai/widgetPrefersBorder": false,
   "openai/widgetCSP": {
     connect_domains: [] as string[],
     resource_domains: [] as string[],

@@ -44,8 +44,8 @@ export const UI_RESOURCE_MANIFEST = {
     "selected": [
       {
         "name": "settings",
-        "digest": "d101f8a95ccc6a0fed7fac6186713ec37a720049c0935f7c4a588d4d059f53fc",
-        "uri": "ui://codex-mcp-bridge/settings/d101f8a95ccc.html",
+        "digest": "e898a4132b43f3eeb28266e38488ee45fd6aeea992942331a9303e9e8f720a7b",
+        "uri": "ui://codex-mcp-bridge/settings/e898a4132b43.html",
         "inventories": [
           "development-current"
         ],
@@ -136,8 +136,8 @@ export const UI_RESOURCE_MANIFEST = {
       },
       {
         "name": "dashboard",
-        "digest": "cd499413aab2ef83ff7d7f0d63d01a76a420131325b084dd4d5fc25b6bdb5438",
-        "uri": "ui://codex-mcp-bridge/dashboard/cd499413aab2.html",
+        "digest": "0c7a99fb68880f3395ed51382a63ecfb480e26040463f4a16216fb57b7a47494",
+        "uri": "ui://codex-mcp-bridge/dashboard/0c7a99fb6888.html",
         "inventories": [
           "development-current"
         ],
@@ -193,8 +193,8 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "digest": "d101f8a95ccc6a0fed7fac6186713ec37a720049c0935f7c4a588d4d059f53fc",
-      "uri": "ui://codex-mcp-bridge/settings/d101f8a95ccc.html",
+      "digest": "e898a4132b43f3eeb28266e38488ee45fd6aeea992942331a9303e9e8f720a7b",
+      "uri": "ui://codex-mcp-bridge/settings/e898a4132b43.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -203,7 +203,7 @@ export const UI_RESOURCE_MANIFEST = {
         },
         "content": {
           "ui": {
-            "prefersBorder": true,
+            "prefersBorder": false,
             "csp": {
               "connectDomains": [],
               "resourceDomains": []
@@ -211,7 +211,7 @@ export const UI_RESOURCE_MANIFEST = {
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
           "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
-          "openai/widgetPrefersBorder": true,
+          "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
@@ -417,8 +417,8 @@ export const UI_RESOURCE_MANIFEST = {
       ]
     },
     "dashboard": {
-      "digest": "cd499413aab2ef83ff7d7f0d63d01a76a420131325b084dd4d5fc25b6bdb5438",
-      "uri": "ui://codex-mcp-bridge/dashboard/cd499413aab2.html",
+      "digest": "0c7a99fb68880f3395ed51382a63ecfb480e26040463f4a16216fb57b7a47494",
+      "uri": "ui://codex-mcp-bridge/dashboard/0c7a99fb6888.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",
@@ -427,7 +427,7 @@ export const UI_RESOURCE_MANIFEST = {
         },
         "content": {
           "ui": {
-            "prefersBorder": true,
+            "prefersBorder": false,
             "csp": {
               "connectDomains": [],
               "resourceDomains": []
@@ -435,7 +435,7 @@ export const UI_RESOURCE_MANIFEST = {
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
           "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and approval/input request review.",
-          "openai/widgetPrefersBorder": true,
+          "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": [],

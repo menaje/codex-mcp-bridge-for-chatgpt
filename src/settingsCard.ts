@@ -23,13 +23,13 @@ export const SETTINGS_CARD_RESOURCE_DESCRIPTOR = {
 } as const;
 export const SETTINGS_CARD_CONTENT_METADATA = {
   ui: {
-    prefersBorder: true,
+    prefersBorder: false,
     csp: { connectDomains: [] as string[], resourceDomains: [] as string[] },
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
     `Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for ${PRODUCT_INFO.displayName}.`,
-  "openai/widgetPrefersBorder": true,
+  "openai/widgetPrefersBorder": false,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
   "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION

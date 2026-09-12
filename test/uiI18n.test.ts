@@ -22,6 +22,7 @@ import {
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import { htmlForUiResource } from "../src/uiResources.js";
 import {
+  SETTINGS_CARD_CONTENT_METADATA,
   SETTINGS_CARD_HTML,
   SETTINGS_CARD_HTML_MAX_BYTES,
   uiBridgeErrorMessage
@@ -645,6 +646,10 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
     expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
       .toEqual(["https://chatgpt.com"]);
+    expect(DASHBOARD_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
+    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
+    expect(SETTINGS_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
+    expect(SETTINGS_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
     expect(DASHBOARD_CARD_HTML.indexOf('id="active-section"'))
       .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('id="terminal-section"'));
     expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.idle"');
