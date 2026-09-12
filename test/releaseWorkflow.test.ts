@@ -93,6 +93,8 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain('"$app_bundle/Contents/Resources/Runtime"');
     expect(WORKFLOW.match(/gh release download v0\.3\.0/g)).toHaveLength(2);
     expect(WORKFLOW.match(/Published v0\.3\.0 package checksum mismatch/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/npm install --prefix .* --omit=dev --legacy-peer-deps --no-audit --no-fund/g))
+      .toHaveLength(3);
     expect(WORKFLOW).toContain("npm-state-compatibility-audit");
     expect(WORKFLOW).toContain("macos-state-compatibility-audit-${{ matrix.architecture }}");
     expect(WORKFLOW.match(/retention-days: 90/g)).toHaveLength(2);

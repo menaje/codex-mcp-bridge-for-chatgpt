@@ -209,8 +209,8 @@ jobs:
           NODE
           tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
             -C "$audit_root/previous"
-          npm install --prefix "$audit_root/current/package" --omit=dev --no-audit --no-fund
-          npm install --prefix "$audit_root/previous/package" --omit=dev --no-audit --no-fund
+          npm install --prefix "$audit_root/current/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
+          npm install --prefix "$audit_root/previous/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
           artifact_sha="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "release-assets/$PACKAGE_FILE")"
           npx tsx scripts/state-release-audit.ts \
             --runtime-root "$audit_root/current/package" \
@@ -356,7 +356,7 @@ jobs:
           NODE
           tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
             -C "$audit_root/previous"
-          npm install --prefix "$audit_root/previous/package" --omit=dev --no-audit --no-fund
+          npm install --prefix "$audit_root/previous/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
           hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "release-assets/$MACOS_FILE" >/dev/null
           mounted="true"
           app_count="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
