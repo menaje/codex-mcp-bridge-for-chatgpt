@@ -163,11 +163,11 @@
   "release": {
     "releaseUnitId": "codex-mcp-bridge",
     "version": "0.4.0",
-    "stage": "stable",
+    "stage": "development",
     "tagPrefix": "v",
-    "channel": "stable",
-    "sourceVersion": "0.3.0",
-    "sourceCandidate": "0.4.0-rc.7",
+    "channel": "none",
+    "sourceVersion": null,
+    "sourceCandidate": null,
     "generateNotes": true,
     "targets": {
       "macos": {
