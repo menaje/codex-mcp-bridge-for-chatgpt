@@ -1410,6 +1410,7 @@ describe("bridge tools", () => {
     );
     const listed = await client.listResources();
     const listedUris = new Set(listed.resources.map((resource) => resource.uri));
+    const listedTools = new Set((await client.listTools()).tools.map((tool) => tool.name));
 
     for (const [name, currentUri] of [
       ["settings", SETTINGS_CARD_URI],
@@ -1420,11 +1421,16 @@ describe("bridge tools", () => {
       expect(revisions.length).toBeGreaterThanOrEqual(1);
       expect(new Set(revisions.map((revision) => revision.uri)).size).toBe(revisions.length);
       expect(revisions.every((revision) =>
-        revision.uri.startsWith(`ui://codex-mcp-bridge/${name}/`)
+        revision.uri.startsWith(`ui://codex-mcp-bridge/${name}/`) ||
+        revision.uri === `ui://codex-mcp-bridge/${name}-v${name === "settings" ? "6" : "1"}.html`
       )).toBe(true);
       expect(revisions.length).toBeGreaterThan(1);
       expect(revisions[0].uri).toBe(currentUri);
       for (const revision of revisions) {
+        const publishedBaseline = revision.releaseProvenance?.inventories.includes("published-baseline") || false;
+        for (const tool of revision.releaseProvenance?.requiredTools || []) {
+          expect(listedTools, `${revision.uri} requires ${tool}`).toContain(tool);
+        }
         expect(listedUris).toContain(revision.uri);
         const resource = await client.readResource({ uri: revision.uri });
         expect(resource.contents[0]).toMatchObject({
@@ -1435,8 +1441,13 @@ describe("bridge tools", () => {
         expect(html).toContain("<!doctype html>");
         expect(html).not.toContain("Plugin refresh required");
         if (name === "settings") {
-          expect(html).not.toContain('id="default-project"');
-          expect(html).not.toContain("defaultProjectId");
+          if (publishedBaseline) {
+            expect(revision.uri).toBe("ui://codex-mcp-bridge/settings-v6.html");
+            expect(html).toContain('callTool("codex_update_settings"');
+          } else {
+            expect(html).not.toContain('id="default-project"');
+            expect(html).not.toContain("defaultProjectId");
+          }
           if (revision.uri === currentUri) {
             expect(html).toContain('callTool("codex_ui_read"');
             expect(html).not.toContain('callTool("codex_settings",');
@@ -1444,10 +1455,18 @@ describe("bridge tools", () => {
           }
         }
         if (name === "activity") {
-          expect(html).toContain('callTool("codex_activity_snapshot"');
-          expect(html).toContain("afterVersion");
-          expect(html).toContain("waitMs");
-          expect(html).toContain("consumeToolOutput");
+          if (publishedBaseline) {
+            expect(revision.uri).toBe("ui://codex-mcp-bridge/activity-v1.html");
+            expect(html).toContain('callTool("codex_status"');
+            expect(html).toContain('callTool("codex_activity_update"');
+            expect(html).toContain('callTool("codex_cancel"');
+          } else {
+            expect(html).toContain('callTool("codex_activity_snapshot"');
+            expect(html).toContain("afterVersion");
+            expect(html).toContain("waitMs");
+            expect(html).toContain("consumeToolOutput");
+            expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
+          }
           if (revision.uri === currentUri) {
             expect(html).toContain('id="weekly-usage"');
             expect(html).toContain('data-i18n="usage.weeklyRemaining"');
@@ -1465,7 +1484,6 @@ describe("bridge tools", () => {
             expect(html).not.toContain('callTool("codex_agent"');
             expect(html).toContain('callTool("codex_interaction_respond"');
           }
-          expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
         } else if (name === "dashboard") {
           expect(html).toMatch(/callTool\("codex_(dashboard_snapshot|ui_read)"/);
           expect(html).toContain('window.addEventListener("pageshow"');
@@ -1539,15 +1557,14 @@ describe("bridge tools", () => {
           expect(html).not.toContain("projects:projectSettings.projects");
           expect(html).not.toContain("reset:true");
         }
-        expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
-          .toMatchObject({
-            "codex/uiContractGeneration": revision.contractGeneration ||
-              (name === "activity"
-                ? ACTIVITY_CARD_CONTRACT_GENERATION
-                : name === "dashboard"
-                  ? DASHBOARD_CARD_CONTRACT_GENERATION
-                  : SETTINGS_CARD_CONTRACT_GENERATION)
+        const resourceMetadata = (resource.contents[0] as { _meta?: Record<string, unknown> })._meta || {};
+        if (revision.contractGeneration === undefined) {
+          expect(resourceMetadata).not.toHaveProperty("codex/uiContractGeneration");
+        } else {
+          expect(resourceMetadata).toMatchObject({
+            "codex/uiContractGeneration": revision.contractGeneration
           });
+        }
       }
     }
 
@@ -1590,7 +1607,7 @@ describe("bridge tools", () => {
         _meta: { "openai/widgetSessionId": widgetInstanceId }
       }));
       expect(refreshed.wait).toMatchObject({ timedOut: true, changed: false });
-      expect(revision.uri).toMatch(/^ui:\/\/codex-mcp-bridge\/activity\//);
+      expect(revision.uri).toMatch(/^ui:\/\/codex-mcp-bridge\/(?:activity\/|activity-v1\.html$)/);
       jobs.releaseActivityCardLease(
         SCOPE_A,
         card.activityId,

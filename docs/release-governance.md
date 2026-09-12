@@ -16,8 +16,8 @@ product. They never receive independent product versions.
 | Candidate provenance | `release.sourceVersion` | Suffix-free development version from which the target bump was calculated |
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
-| Manifest schema | `manifestVersion` (currently 5) | Release metadata and state-compatibility schema |
-| UI compatibility | Published card baselines, explicit deployment exceptions, UI contract generations and content-hashed resource URIs | Cached-card compatibility, independent of SemVer; inventory separation is pending under #53 |
+| Manifest schema | `manifestVersion` (currently 6) | Release metadata plus state and UI compatibility contracts |
+| UI compatibility | `ui-release-catalog.json`, its manifest digest, the generated release inventory, UI contract generations and immutable resource URIs | Cached-card compatibility and retirement, independent of SemVer |
 | State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
 | Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
@@ -63,11 +63,13 @@ execution logic and resolve the existing #69 client-support conditions. Finalize
 card selection and any removal before the final RC; stable promotion must not
 prune or add UI payload files.
 
-This policy is recorded; the current generator still accumulates development
-history. #53 tracks baseline reconstruction, inventory/lifecycle implementation
-and the Activity retention/removal decision. #52 verifies the selected inventory
-in all payloads, and #11 verifies the upgrade instructions against the candidate.
-These remain release-readiness requirements, not completed implementation.
+Manifest version 6 implements this policy. The generator selects one current
+revision for each active card, the exact supported v0.3.0 baseline, and one
+explicit deployed-development exception; it does not carry unclassified lock
+history into a package. Activity remains registered only for those compatibility
+identities and rejects new presentations. #53 tracks the support window and
+eventual removal decision, #52 verifies the selection in all artifacts, and #11
+verifies the upgrade instructions against the exact candidate.
 
 ## Stage and branch lifecycle
 

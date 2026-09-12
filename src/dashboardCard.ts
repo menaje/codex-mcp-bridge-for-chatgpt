@@ -8,7 +8,8 @@ import { PRODUCT_INFO } from "./productInfo.js";
 import {
   currentUiResourceUri,
   htmlForUiResource,
-  uiResourceRevisions
+  uiResourceRevisions,
+  uiRevisionMetadata
 } from "./uiResources.js";
 import {
   hostToolResultMetadata,
@@ -295,21 +296,22 @@ export function reconcileDashboardPageCaches<
 
 export function registerDashboardCardResource(server: McpServer): void {
   for (const [index, revision] of uiResourceRevisions("dashboard").entries()) {
+    const revisionMetadata = uiRevisionMetadata(
+      revision,
+      DASHBOARD_CARD_RESOURCE_DESCRIPTOR,
+      DASHBOARD_CARD_CONTENT_METADATA
+    );
     server.registerResource(
       index === 0 ? "codex-dashboard-card" : `codex-dashboard-card-compat-${index}`,
       revision.uri,
-      DASHBOARD_CARD_RESOURCE_DESCRIPTOR,
+      revisionMetadata.descriptor,
       async () => ({
         contents: [
           {
             uri: revision.uri,
             mimeType: DASHBOARD_CARD_MIME_TYPE,
             text: htmlForUiResource("dashboard", revision.uri, DASHBOARD_CARD_HTML),
-            _meta: {
-              ...DASHBOARD_CARD_CONTENT_METADATA,
-              "codex/uiContractGeneration": revision.contractGeneration ||
-                DASHBOARD_CARD_CONTRACT_GENERATION
-            }
+            _meta: revisionMetadata.content
           }
         ]
       })

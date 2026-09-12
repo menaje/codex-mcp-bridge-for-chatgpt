@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -36,7 +38,7 @@ describe("serialized card runtime compatibility", () => {
     it(`serves executable ${name} helpers across every retained revision`, () => {
       let exercised = 0;
       for (const revision of uiResourceRevisions(name).slice(1)) {
-        const snapshot = readFileSync(new URL(`../ui-resources/${name}/${revision.digest}.html`, import.meta.url), "utf8");
+        const snapshot = readSnapshot(name, revision.digest);
         const compatibleSnapshot = repairRetainedDashboardStops(snapshot);
         const html = htmlForUiResource(name, revision.uri, currentHtml);
         if (!snapshot.includes("__name(")) expect(html).toBe(compatibleSnapshot);
@@ -66,7 +68,47 @@ describe("serialized card runtime compatibility", () => {
           exercised++;
         }
       }
-      if (name !== "activity") expect(exercised).toBeGreaterThan(0);
+      if (name === "settings") expect(exercised).toBeGreaterThan(0);
     });
   }
+
+  it("retains the exact published v0.3.0 resource identities and original cache metadata", () => {
+    const settings = uiResourceRevisions("settings").find((entry) =>
+      entry.uri === "ui://codex-mcp-bridge/settings-v6.html"
+    );
+    const activity = uiResourceRevisions("activity").find((entry) =>
+      entry.uri === "ui://codex-mcp-bridge/activity-v1.html"
+    );
+    expect(settings).toMatchObject({
+      releaseProvenance: {
+        inventories: ["published-baseline"],
+        sourceIds: ["stable-v0.3.0"],
+        presenterTool: "codex_settings"
+      },
+      metadata: {
+        content: {
+          "openai/widgetDescription": "Configure saved access, model, working-directory, session, and concurrency defaults for Codex MCP Bridge for ChatGPT."
+        }
+      }
+    });
+    expect(activity).toMatchObject({
+      releaseProvenance: {
+        inventories: ["published-baseline"],
+        sourceIds: ["stable-v0.3.0"],
+        presenterTool: "codex_activity"
+      },
+      metadata: {
+        descriptor: { title: "Codex MCP Bridge for ChatGPT Activity Manager" }
+      }
+    });
+    expect(readSnapshot("settings", settings!.digest)).toContain("codex_update_settings");
+    expect(readSnapshot("activity", activity!.digest)).toContain("codex_activity_handoff");
+  });
 });
+
+function readSnapshot(name: string, digest: string): string {
+  const directory = fileURLToPath(new URL(`../ui-resources/${name}/`, import.meta.url));
+  const plain = path.join(directory, `${digest}.html`);
+  if (existsSync(plain)) return readFileSync(plain, "utf8");
+  return Buffer.from(readFileSync(`${plain}.base64`, "utf8").trim(), "base64").toString("utf8");
+}

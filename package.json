@@ -28,6 +28,7 @@
     ".app.json",
     "release-manifest.json",
     "release-manifest.schema.json",
+    "ui-release-catalog.json",
     "state-migrations.json"
   ],
   "scripts": {

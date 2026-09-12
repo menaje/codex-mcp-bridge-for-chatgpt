@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeSourceHash, hasTrackedSourceChanges } from "./build-fingerprint.mjs";
@@ -33,10 +33,13 @@ function copyUiResources() {
     const targetDirectory = path.join(repoRoot, "dist", "ui", name);
     mkdirSync(targetDirectory, { recursive: true });
     for (const revision of revisions) {
-      copyFileSync(
-        path.join(repoRoot, "ui-resources", name, `${revision.digest}.html`),
-        path.join(targetDirectory, `${revision.digest}.html`)
-      );
+      const sourceDirectory = path.join(repoRoot, "ui-resources", name);
+      const source = [
+        path.join(sourceDirectory, `${revision.digest}.html`),
+        path.join(sourceDirectory, `${revision.digest}.html.base64`)
+      ].find(existsSync);
+      if (!source) throw new Error(`Selected UI snapshot is missing: ${name}/${revision.digest}`);
+      copyFileSync(source, path.join(targetDirectory, path.basename(source)));
     }
   }
 }

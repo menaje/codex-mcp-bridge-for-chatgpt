@@ -1,6 +1,6 @@
 {
   "$schema": "./release-manifest.schema.json",
-  "manifestVersion": 5,
+  "manifestVersion": 6,
   "product": {
     "displayName": "Codex MCP Bridge for ChatGPT",
     "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
@@ -31,6 +31,7 @@
       ".app.json",
       "release-manifest.json",
       "release-manifest.schema.json",
+      "ui-release-catalog.json",
       "state-migrations.json"
     ],
     "keywords": [
@@ -89,7 +90,17 @@
       "activity",
       "dashboard",
       "question"
-    ]
+    ],
+    "activeResources": [
+      "settings",
+      "dashboard",
+      "question"
+    ],
+    "compatibilityResources": [
+      "activity"
+    ],
+    "releaseCatalog": "ui-release-catalog.json",
+    "releaseCatalogSha256": "fcb76cea1b7f3a955f88ef47fe59d96dc44197576dc955d8bf2226148af9a9eb"
   },
   "stateCompatibility": {
     "currentSchema": 19,

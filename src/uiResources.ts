@@ -78,11 +78,32 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
   }
 };
 
-type UiResourceRevision = {
+export type UiResourceRevision = {
   digest: string;
   uri: string;
   contractGeneration?: number;
+  metadata?: {
+    descriptor?: Readonly<Record<string, unknown>>;
+    content?: Readonly<Record<string, unknown>>;
+  };
+  releaseProvenance?: {
+    inventories: readonly string[];
+    sourceIds: readonly string[];
+    presenterTool: string;
+    requiredTools: readonly string[];
+  };
 };
+
+export function uiRevisionMetadata<Descriptor, Content>(
+  revision: UiResourceRevision,
+  fallbackDescriptor: Descriptor,
+  fallbackContent: Content
+): { descriptor: Descriptor; content: Content } {
+  return {
+    descriptor: (revision.metadata?.descriptor as Descriptor | undefined) ?? fallbackDescriptor,
+    content: (revision.metadata?.content as Content | undefined) ?? fallbackContent
+  };
+}
 
 export function currentUiResourceUri(name: UiResourceName): string {
   return UI_RESOURCE_MANIFEST.resources[name].uri;
@@ -101,12 +122,16 @@ export function uiResourceRevisions(name: UiResourceName): UiResourceRevision[] 
     {
       digest: resource.digest,
       uri: resource.uri,
-      contractGeneration: readContractGeneration(resource.metadata)
+      contractGeneration: readContractGeneration(resource.metadata),
+      metadata: resource.metadata,
+      releaseProvenance: (resource as UiResourceRevision).releaseProvenance
     },
     ...resource.previous.map((entry) => ({
       digest: entry.digest,
       uri: entry.uri,
-      contractGeneration: readContractGeneration(entry.metadata)
+      contractGeneration: readContractGeneration(entry.metadata),
+      metadata: entry.metadata,
+      releaseProvenance: entry.releaseProvenance
     }))
   ];
 }
@@ -131,7 +156,12 @@ export function htmlForUiResource(
   if (revision.uri === currentUiResourceUri(name)) return currentHtml;
 
   for (const candidate of snapshotCandidates(name, revision.digest)) {
-    if (existsSync(candidate)) return retainedUiRuntime(readFileSync(candidate, "utf8"));
+    if (!existsSync(candidate.file)) continue;
+    const stored = readFileSync(candidate.file, "utf8");
+    const html = candidate.encoding === "base64"
+      ? Buffer.from(stored.trim(), "base64").toString("utf8")
+      : stored;
+    return retainedUiRuntime(html);
   }
   return staleUiResourceNotice(name);
 }
@@ -145,10 +175,15 @@ function retainedUiRuntime(html: string): string {
   return html.replace("<script>", '<script>\nfunction __name(target,value){Object.defineProperty(target,"name",{value,configurable:true});return target}\n');
 }
 
-function snapshotCandidates(name: UiResourceName, digest: string): string[] {
+function snapshotCandidates(
+  name: UiResourceName,
+  digest: string
+): Array<{ file: string; encoding: "utf8" | "base64" }> {
   return [
-    fileURLToPath(new URL(`./ui/${name}/${digest}.html`, import.meta.url)),
-    fileURLToPath(new URL(`../ui-resources/${name}/${digest}.html`, import.meta.url))
+    { file: fileURLToPath(new URL(`./ui/${name}/${digest}.html`, import.meta.url)), encoding: "utf8" },
+    { file: fileURLToPath(new URL(`./ui/${name}/${digest}.html.base64`, import.meta.url)), encoding: "base64" },
+    { file: fileURLToPath(new URL(`../ui-resources/${name}/${digest}.html`, import.meta.url)), encoding: "utf8" },
+    { file: fileURLToPath(new URL(`../ui-resources/${name}/${digest}.html.base64`, import.meta.url)), encoding: "base64" }
   ];
 }
 

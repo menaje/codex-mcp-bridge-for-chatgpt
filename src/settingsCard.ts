@@ -7,7 +7,8 @@ import { MODEL_DESCRIPTION_EDITOR_SCRIPT } from "./modelDescriptionCard.js";
 import {
   currentUiResourceUri,
   htmlForUiResource,
-  uiResourceRevisions
+  uiResourceRevisions,
+  uiRevisionMetadata
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
@@ -83,21 +84,22 @@ export function uiBridgeErrorMessage(
 
 export function registerSettingsCardResource(server: McpServer): void {
   for (const [index, revision] of uiResourceRevisions("settings").entries()) {
+    const revisionMetadata = uiRevisionMetadata(
+      revision,
+      SETTINGS_CARD_RESOURCE_DESCRIPTOR,
+      SETTINGS_CARD_CONTENT_METADATA
+    );
     server.registerResource(
       index === 0 ? "codex-settings-card" : `codex-settings-card-compat-${index}`,
       revision.uri,
-      SETTINGS_CARD_RESOURCE_DESCRIPTOR,
+      revisionMetadata.descriptor,
       async () => ({
         contents: [
           {
             uri: revision.uri,
             mimeType: SETTINGS_CARD_MIME_TYPE,
             text: htmlForUiResource("settings", revision.uri, SETTINGS_CARD_HTML),
-            _meta: {
-              ...SETTINGS_CARD_CONTENT_METADATA,
-              "codex/uiContractGeneration": revision.contractGeneration ||
-                SETTINGS_CARD_CONTRACT_GENERATION
-            }
+            _meta: revisionMetadata.content
           }
         ]
       })

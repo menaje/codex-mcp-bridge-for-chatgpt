@@ -174,9 +174,10 @@ consumption remain distinct states.
 
 The [UI card release and retirement policy](ui-release-compatibility.md) separates
 published release baselines, development-current cards and explicit deployment
-exceptions. It replaces the assumption that every development snapshot must be
-carried into stable compatibility. The current generator has not yet implemented
-that separation; its `previous` list is not a verified published-release baseline.
+exceptions. `ui-release-catalog.json` implements that separation and binds each
+selected identity to its original metadata, presenter and required tools. The
+generated `previous` lists now contain only catalog-selected compatibility
+revisions; development intermediates are excluded from packages.
 
 For supported legacy clients, the existing default remains **at least 60 days
 and two stable releases after the first stable release containing #69, whichever
@@ -190,11 +191,12 @@ mounted clients depending on the old contracts, and the applicable completion
 checks below. Elapsed time alone never removes compatibility.
 
 Activity is a retired UI, outside the target active set of Settings, Dashboard
-and Question. #53 tracks the remaining inventory/lifecycle implementation and
-the exact removal decision; #52 and #11 track package and upgrade evidence.
-The accepted #69 implementation remains completed. Finalize any physical removal
-before the final RC, including the renderer, original presenter, exclusive
-app-only handlers, snapshots, leases/watchers, handoff and legacy settings.
+and Question. It remains registered for the exact v0.3.0 and deployed-development
+identities selected by the catalog, but new work cannot present it. #53 tracks
+the support window and exact future removal decision; #52 and #11 track package
+and upgrade evidence. The accepted #69 implementation remains completed. A later
+physical removal must cover the renderer, original presenter, exclusive app-only
+handlers, snapshots, leases/watchers, handoff and legacy settings.
 Audit the 14 retired names against current callers rather than deleting them as
 one group. Preserve common handlers still used by current cards/native clients
 and all retained work, question, result and idempotency data.
@@ -208,9 +210,8 @@ The 14 retained names are `codex_activity`, `codex_activity_cancel`,
 original scope/widget checks. Only `codex_activity_cancel` and `codex_input` are
 unadvertised; the other 12 are app-only compatibility descriptors needed by
 retained cards. Current renderer code and model instructions use the consolidated
-contracts. The existing implementation retains immutable old resource files,
-including the overview, pending the inventory and migration work above. A narrow
-serve-time compatibility repair supplies a missing
+contracts. The implementation retains the two selected Activity resource files
+for the migration window. A narrow serve-time compatibility repair supplies a missing
 name helper and replaces the two #71 overview stop handlers that depended on
 blocked native dialogs; resource identities, metadata and domain checks remain
 intact. No execution is restarted to rebuild a result.

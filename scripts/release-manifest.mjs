@@ -3,6 +3,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  UI_ACTIVE_RESOURCE_NAMES,
+  UI_COMPATIBILITY_RESOURCE_NAMES,
+  UI_RELEASE_CATALOG_FILENAME,
+  UI_RESOURCE_NAMES,
+  catalogCompatibilityRevisions,
+  loadUiReleaseCatalog,
+  uiReleaseCatalogSha256,
+  validateUiReleaseCatalog
+} from "./ui-release-catalog.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_FILENAME = "release-manifest.json";
@@ -13,7 +23,7 @@ const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
 const UI_SNAPSHOT_DIRECTORY = "ui-resources";
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
 const STATE_MIGRATION_CATALOG = "state-migrations.json";
-const UI_RESOURCE_NAMES = ["settings", "activity", "dashboard", "question"];
+const RELEASE_NOTES_DIRECTORY = "docs/releases";
 const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
@@ -22,6 +32,7 @@ const REQUIRED_PACKAGE_FILES = new Set([
   ".app.json",
   "release-manifest.json",
   "release-manifest.schema.json",
+  UI_RELEASE_CATALOG_FILENAME,
   STATE_MIGRATION_CATALOG
 ]);
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
@@ -126,7 +137,7 @@ export function validateReleaseManifest(value) {
     "release manifest"
   );
   if (root.$schema !== "./release-manifest.schema.json") fail("$schema must reference ./release-manifest.schema.json");
-  if (root.manifestVersion !== 5) fail("manifestVersion must be 5");
+  if (root.manifestVersion !== 6) fail("manifestVersion must be 6");
 
   const product = requiredRecord(root.product, "product");
   assertKeys(product, ["displayName", "description", "runtimeName"], "product");
@@ -223,7 +234,17 @@ export function validateReleaseManifest(value) {
   const uiResources = requiredRecord(root.uiResources, "uiResources");
   assertKeys(
     uiResources,
-    ["strategy", "hashAlgorithm", "hashLength", "minimumContractGeneration", "resources"],
+    [
+      "strategy",
+      "hashAlgorithm",
+      "hashLength",
+      "minimumContractGeneration",
+      "resources",
+      "activeResources",
+      "compatibilityResources",
+      "releaseCatalog",
+      "releaseCatalogSha256"
+    ],
     "uiResources"
   );
   if (uiResources.strategy !== "content-hash") fail("uiResources.strategy must be content-hash");
@@ -253,6 +274,20 @@ export function validateReleaseManifest(value) {
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
     fail("uiResources.resources must contain settings, activity, dashboard, and question exactly once");
+  }
+  if (!sameJson(uiResources.activeResources, UI_ACTIVE_RESOURCE_NAMES)) {
+    fail(`uiResources.activeResources must be ${UI_ACTIVE_RESOURCE_NAMES.join(", ")} in that order`);
+  }
+  if (!sameJson(uiResources.compatibilityResources, UI_COMPATIBILITY_RESOURCE_NAMES)) {
+    fail(
+      `uiResources.compatibilityResources must be ${UI_COMPATIBILITY_RESOURCE_NAMES.join(", ")} in that order`
+    );
+  }
+  if (uiResources.releaseCatalog !== UI_RELEASE_CATALOG_FILENAME) {
+    fail(`uiResources.releaseCatalog must be ${UI_RELEASE_CATALOG_FILENAME}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(uiResources.releaseCatalogSha256)) {
+    fail("uiResources.releaseCatalogSha256 must be a SHA-256 digest");
   }
 
   const stateCompatibility = requiredRecord(root.stateCompatibility, "stateCompatibility");
@@ -464,6 +499,8 @@ export function deriveReleaseMetadata(manifest) {
   const repositorySlug = `${manifest.repository.owner}/${manifest.repository.name}`;
   const repositoryUrl = `https://github.com/${repositorySlug}`;
   const version = manifest.release.version;
+  const semver = SEMVER_PATTERN.exec(version);
+  const baseVersion = `${semver[1]}.${semver[2]}.${semver[3]}`;
   const tag = `${manifest.release.tagPrefix}${version}`;
   const packageFilename = `${manifest.package.name}-${version}.tgz`;
   const macosTarget = manifest.release.targets.macos;
@@ -508,6 +545,7 @@ export function deriveReleaseMetadata(manifest) {
     sourceCandidateMacosX64ArchiveFilename: sourceCandidateMacosArchiveFilenames.x64,
     tag,
     releaseTitle: `${manifest.product.displayName} ${tag}`,
+    releaseNotesFile: `${RELEASE_NOTES_DIRECTORY}/${baseVersion}.md`,
     channel: manifest.release.channel,
     prerelease: manifest.release.channel === "prerelease",
     generateNotes: manifest.release.generateNotes,
@@ -831,7 +869,21 @@ export function checkReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   if (existsSync(path.join(repoRoot, "scripts/render-ui-resources.ts"))) {
     checkUiResources(repoRoot, manifest);
   }
-  return deriveReleaseMetadata(manifest);
+  const metadata = deriveReleaseMetadata(manifest);
+  checkReleaseNotesFile(repoRoot, metadata);
+  return metadata;
+}
+
+function checkReleaseNotesFile(repoRoot, metadata) {
+  if (metadata.stage !== "candidate" && metadata.stage !== "stable") return;
+  const file = path.join(repoRoot, metadata.releaseNotesFile);
+  if (!existsSync(file) || !statSync(file).isFile()) {
+    throw new Error(`Release notes ${metadata.releaseNotesFile} are required for ${metadata.stage} stage.`);
+  }
+  const notes = readFileSync(file, "utf8").trim();
+  if (notes.length < 200) {
+    throw new Error(`Release notes ${metadata.releaseNotesFile} are incomplete.`);
+  }
 }
 
 export function validateAppServerSchemaLockMetadata(value, expectedCodexCliVersion) {
@@ -859,6 +911,7 @@ export function validateAppServerSchemaLockMetadata(value, expectedCodexCliVersi
 export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   const manifest = loadReleaseManifest(repoRoot);
   const catalog = expectedStateMigrationCatalog(repoRoot);
+  const uiReleaseCatalog = loadUiReleaseCatalog(repoRoot);
   if (existsSync(path.join(repoRoot, STATE_MIGRATION_CATALOG))) {
     assertImmutableStateMigrationHistory(
       readJson(path.join(repoRoot, STATE_MIGRATION_CATALOG)),
@@ -870,6 +923,7 @@ export function syncReleaseMetadata(repoRoot = DEFAULT_REPO_ROOT) {
   withStateCatalog.stateCompatibility.migrationCatalogSha256 = sha256(
     `${JSON.stringify(catalog, null, 2)}\n`
   );
+  withStateCatalog.uiResources.releaseCatalogSha256 = uiReleaseCatalogSha256(uiReleaseCatalog);
   const synchronizedManifest = manifestForPackageVersion(withStateCatalog, packageVersionFromSource(repoRoot));
   const prepared = preparePackageMetadata(repoRoot, synchronizedManifest);
   writeJsonIfChanged(path.join(repoRoot, MANIFEST_FILENAME), manifest, synchronizedManifest);
@@ -911,11 +965,22 @@ function assertImmutableStateMigrationHistory(previous, next) {
   }
 }
 
-export function deriveUiResourceManifest(manifest, rendered, previous) {
+export function deriveUiResourceManifest(
+  manifest,
+  rendered,
+  _previous,
+  catalog = loadUiReleaseCatalog(DEFAULT_REPO_ROOT)
+) {
   validateReleaseManifest(manifest);
+  validateUiReleaseCatalog(catalog);
   const config = manifest.uiResources;
+  if (!sameJson(catalog.activeResources, config.activeResources) ||
+      !sameJson(catalog.compatibilityResources, config.compatibilityResources)) {
+    throw new Error("UI release catalog lifecycle does not match release-manifest.json.");
+  }
   const resources = {};
   const seenUris = new Set();
+  const catalogEntries = catalogCompatibilityRevisions(catalog);
   for (const name of config.resources) {
     const html = rendered?.resources?.[name]?.html;
     if (typeof html !== "string" || !html.trim()) {
@@ -938,54 +1003,114 @@ export function deriveUiResourceManifest(manifest, rendered, previous) {
         `the supported minimum ${minimumContractGeneration}.`
       );
     }
-    const prior = previous?.resources?.[name];
-    const candidates = prior && prior.digest !== digest
-      ? [{ digest: prior.digest, uri: prior.uri, ...(prior.metadata ? { metadata: prior.metadata } : {}) }, ...(Array.isArray(prior.previous) ? prior.previous : [])]
-      : Array.isArray(prior?.previous)
-        ? prior.previous
-        : [];
-    const previousRevisions = [];
-    const seenDigests = new Set([digest]);
-    for (const entry of candidates) {
-      if (!validUiRevision(entry) || seenDigests.has(entry.digest)) continue;
-      const contractGeneration = uiContractGeneration(entry);
-      // Activity and Dashboard resources are immutable mount targets. Keep
-      // every historical revision registered so an already-mounted ChatGPT
-      // conversation can refresh through app-only tools after the minimum
-      // generation advances. Settings generations may encode incompatible
-      // mutation contracts and are pruned below the supported minimum.
-      if (
-        contractGeneration === undefined ||
-        (name === "settings" && contractGeneration < minimumContractGeneration)
-      ) continue;
-      seenDigests.add(entry.digest);
-      previousRevisions.push({
-        digest: entry.digest,
-        uri: entry.uri,
-        ...(entry.metadata ? { metadata: entry.metadata } : {})
+    const selected = [];
+    if (config.activeResources.includes(name)) {
+      const contract = catalog.currentContracts[name];
+      mergeSelectedUiRevision(selected, {
+        digest,
+        uri,
+        metadata: structuredClone(metadata),
+        releaseProvenance: {
+          inventories: ["development-current"],
+          sourceIds: ["rendered-current"],
+          presenterTool: contract.presenterTool,
+          requiredTools: [...contract.requiredTools]
+        }
       });
     }
-    for (const candidateUri of [uri, ...previousRevisions.map((entry) => entry.uri)]) {
+    for (const catalogEntry of catalogEntries.filter((entry) => entry.revision.name === name)) {
+      const revision = catalogEntry.revision;
+      mergeSelectedUiRevision(selected, {
+        digest: revision.digest,
+        uri: revision.uri,
+        metadata: structuredClone(revision.metadata),
+        releaseProvenance: {
+          inventories: [catalogEntry.inventory],
+          sourceIds: [catalogEntry.sourceId],
+          presenterTool: revision.presenterTool,
+          requiredTools: [...revision.requiredTools]
+        }
+      });
+    }
+    if (selected.length === 0) {
+      throw new Error(`UI resource ${name} has no selected release revision.`);
+    }
+    if (config.compatibilityResources.includes(name)) {
+      const compatibility = selected[0];
+      if (compatibility.digest !== digest || compatibility.uri !== uri || !sameJson(compatibility.metadata, metadata)) {
+        throw new Error(
+          `Compatibility-only ${name} renderer changed from its selected deployed revision. ` +
+          `Record and review a new temporary exception before changing its release payload.`
+        );
+      }
+    }
+    const [current, ...previousRevisions] = selected;
+    for (const candidateUri of selected.map((entry) => entry.uri)) {
       if (seenUris.has(candidateUri)) throw new Error(`UI resource URI collision: ${candidateUri}.`);
       seenUris.add(candidateUri);
     }
-    resources[name] = { digest, uri, metadata: structuredClone(metadata), previous: previousRevisions };
+    resources[name] = { ...current, previous: previousRevisions };
   }
+  const selected = Object.entries(resources).flatMap(([name, resource]) =>
+    [resource, ...resource.previous].map((revision) => ({
+      name,
+      digest: revision.digest,
+      uri: revision.uri,
+      ...structuredClone(revision.releaseProvenance)
+    }))
+  );
   return {
-    manifestVersion: 1,
+    manifestVersion: 2,
     strategy: config.strategy,
     hashAlgorithm: config.hashAlgorithm,
     hashLength: config.hashLength,
     minimumContractGeneration: structuredClone(config.minimumContractGeneration),
+    releaseInventory: {
+      catalog: UI_RELEASE_CATALOG_FILENAME,
+      catalogSha256: uiReleaseCatalogSha256(catalog),
+      activeResources: [...catalog.activeResources],
+      compatibilityResources: [...catalog.compatibilityResources],
+      retirement: structuredClone(catalog.retirement),
+      selected
+    },
     resources
   };
 }
 
+function mergeSelectedUiRevision(selected, candidate) {
+  const existing = selected.find((entry) => entry.uri === candidate.uri);
+  if (!existing) {
+    if (selected.some((entry) => entry.digest === candidate.digest && !sameJson(entry.metadata, candidate.metadata))) {
+      throw new Error(`UI revision ${candidate.digest} has conflicting cache metadata.`);
+    }
+    selected.push(candidate);
+    return;
+  }
+  if (existing.digest !== candidate.digest || !sameJson(existing.metadata, candidate.metadata)) {
+    throw new Error(`UI resource URI ${candidate.uri} has conflicting immutable content or metadata.`);
+  }
+  if (existing.releaseProvenance.presenterTool !== candidate.releaseProvenance.presenterTool ||
+      !sameJson(existing.releaseProvenance.requiredTools, candidate.releaseProvenance.requiredTools)) {
+    throw new Error(`UI resource URI ${candidate.uri} has conflicting presenter or tool contracts.`);
+  }
+  for (const inventory of candidate.releaseProvenance.inventories) {
+    if (!existing.releaseProvenance.inventories.includes(inventory)) {
+      existing.releaseProvenance.inventories.push(inventory);
+    }
+  }
+  for (const sourceId of candidate.releaseProvenance.sourceIds) {
+    if (!existing.releaseProvenance.sourceIds.includes(sourceId)) {
+      existing.releaseProvenance.sourceIds.push(sourceId);
+    }
+  }
+}
+
 export function syncUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
   const rendered = renderUiResources(repoRoot);
+  const catalog = loadUiReleaseCatalog(repoRoot);
   const lockFile = path.join(repoRoot, UI_LOCK_FILENAME);
   const previous = existsSync(lockFile) ? readJson(lockFile) : undefined;
-  const next = deriveUiResourceManifest(manifest, rendered, previous);
+  const next = deriveUiResourceManifest(manifest, rendered, previous, catalog);
 
   for (const name of manifest.uiResources.resources) {
     const entry = next.resources[name];
@@ -993,8 +1118,7 @@ export function syncUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRel
     mkdirSync(directory, { recursive: true });
     writeTextAtomically(path.join(directory, `${entry.digest}.html`), rendered.resources[name].html);
     for (const retained of entry.previous) {
-      const retainedFile = path.join(directory, `${retained.digest}.html`);
-      if (!existsSync(retainedFile)) {
+      if (!uiSnapshotFile(repoRoot, name, retained.digest)) {
         throw new Error(
           `Cannot retain previous ${name} UI revision ${retained.digest}: its immutable HTML snapshot is missing.`
         );
@@ -1014,8 +1138,15 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     throw new Error(`${UI_LOCK_FILENAME} is missing. Run npm run release:sync.`);
   }
   const lock = readJson(lockFile);
+  const catalog = loadUiReleaseCatalog(repoRoot);
+  const catalogDigest = uiReleaseCatalogSha256(catalog);
+  if (manifest.uiResources.releaseCatalogSha256 !== catalogDigest) {
+    throw new Error(
+      `${UI_RELEASE_CATALOG_FILENAME} digest does not match release-manifest.json. Run npm run release:sync.`
+    );
+  }
   const rendered = renderUiResources(repoRoot);
-  const expected = deriveUiResourceManifest(manifest, rendered, lock);
+  const expected = deriveUiResourceManifest(manifest, rendered, lock, catalog);
   const drift = [];
   if (!sameJson(lock, expected)) drift.push(UI_LOCK_FILENAME);
   const generatedFile = path.join(repoRoot, UI_GENERATED_SOURCE);
@@ -1028,12 +1159,12 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     const entry = expected.resources[name];
     if (rendered.resources[name].uri !== entry.uri) drift.push(`runtime ${name} resource URI`);
     for (const revision of [entry, ...entry.previous]) {
-      const snapshotFile = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name, `${revision.digest}.html`);
-      if (!existsSync(snapshotFile)) {
+      const snapshotFile = uiSnapshotFile(repoRoot, name, revision.digest);
+      if (!snapshotFile) {
         drift.push(`${name} snapshot ${revision.digest}`);
         continue;
       }
-      const html = readFileSync(snapshotFile, "utf8");
+      const html = readUiSnapshot(snapshotFile);
       if (uiResourceDigest(expected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
         drift.push(`${name} snapshot digest ${revision.digest}`);
       }
@@ -1291,6 +1422,19 @@ function renderUiResources(repoRoot) {
   return rendered;
 }
 
+function uiSnapshotFile(repoRoot, name, digest) {
+  for (const suffix of [".html", ".html.base64"]) {
+    const file = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name, `${digest}${suffix}`);
+    if (existsSync(file)) return file;
+  }
+  return undefined;
+}
+
+function readUiSnapshot(file) {
+  const value = readFileSync(file, "utf8");
+  return file.endsWith(".base64") ? Buffer.from(value.trim(), "base64").toString("utf8") : value;
+}
+
 function validUiRevision(value) {
   return isRecord(value) &&
     typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest) &&
@@ -1393,6 +1537,7 @@ function printGithubOutput(metadata) {
     source_candidate_macos_x64_archive_filename: metadata.sourceCandidateMacosX64ArchiveFilename,
     tag: metadata.tag,
     release_title: metadata.releaseTitle,
+    release_notes_file: metadata.releaseNotesFile,
     channel: metadata.channel,
     prerelease: metadata.prerelease,
     generate_notes: metadata.generateNotes,
@@ -1426,7 +1571,9 @@ async function main() {
     // must only depend on built-in Node modules and the canonical manifest.
     // The later build/check step performs the full generated-file/UI drift
     // validation once development dependencies such as tsx are installed.
-    printGithubOutput(deriveReleaseMetadata(loadReleaseManifest()));
+    const metadata = deriveReleaseMetadata(loadReleaseManifest());
+    checkReleaseNotesFile(DEFAULT_REPO_ROOT, metadata);
+    printGithubOutput(metadata);
     return;
   }
   throw new Error("Usage: release-manifest.mjs <check|sync|github-output>");

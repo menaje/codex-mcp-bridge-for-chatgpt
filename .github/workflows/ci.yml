@@ -181,7 +181,7 @@ jobs:
           done
           cat "$smoke_root/server.log" >&2
           exit 1
-      - name: Audit packaged DB migration, restore, and published v0.3 runtime
+      - name: Audit packaged DB and UI compatibility against published v0.3
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
@@ -191,6 +191,7 @@ jobs:
           trap cleanup_audit EXIT
           mkdir -p "$audit_root/current" "$audit_root/previous" state-audit
           tar -xzf "release-assets/$PACKAGE_FILE" -C "$audit_root/current"
+          test -f "$audit_root/current/package/ui-release-catalog.json"
           gh release download v0.3.0 \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
@@ -318,7 +319,7 @@ jobs:
           npm run macos:package -- \
             --architecture "$MACOS_TARGET_ARCHITECTURE" \
             --output "release-assets/$MACOS_FILE"
-      - name: Audit DMG DB runtime, migration, restore, and published v0.3 runtime
+      - name: Audit DMG DB and UI compatibility against published v0.3
         env:
           GH_TOKEN: ${{ github.token }}
           MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
@@ -355,6 +356,7 @@ jobs:
           app_count="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
           test "$app_count" = "1"
           app_bundle="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -f "$app_bundle/Contents/Resources/Runtime/ui-release-catalog.json"
           artifact_sha="$(shasum -a 256 "release-assets/$MACOS_FILE" | awk '{print $1}')"
           npx tsx scripts/state-release-audit.ts \
             --runtime-root "$app_bundle/Contents/Resources/Runtime" \
@@ -603,6 +605,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
           RELEASE_TITLE: ${{ steps.metadata.outputs.release_title }}
+          RELEASE_NOTES_FILE: ${{ steps.metadata.outputs.release_notes_file }}
           RELEASE_CHANNEL: ${{ steps.metadata.outputs.channel }}
           GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
           PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
@@ -620,7 +623,7 @@ jobs:
             "release-assets/$CHECKSUM_FILE#npm package SHA-256"
             "release-assets/$RELEASE_CHECKSUMS_FILE#all release SHA-256 checksums"
             --title "$RELEASE_TITLE"
-            --notes "The macOS Apple Silicon and Intel apps are ad-hoc signed and not Apple-notarized. Choose the DMG matching your Mac architecture. Approve only this app in System Settings > Privacy & Security if first launch is blocked; do not disable Gatekeeper globally. The npm archive remains available for users who choose to run the existing server directly in their own Node.js environment."
+            --notes-file "$RELEASE_NOTES_FILE"
           )
           if [[ "$GENERATE_NOTES" == "true" ]]; then
             release_args+=(--generate-notes)
